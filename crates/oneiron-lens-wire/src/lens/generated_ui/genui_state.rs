@@ -552,12 +552,15 @@ pub(super) fn validate_generated_ui_interactivity(
                 "generated-ui action declarations must reference a declared element".to_string(),
             )
         })?;
-        let LensAtom::SelfUi(control) = element.atom else {
+        // A `self.ui` control, a quick filter and an app component each carry their
+        // own action; the manifest may only declare that same action for them.
+        let Some(action) = element.atom.action() else {
             return Err(Error::InvalidConfig(
-                "generated-ui action declarations must reference a self.ui control".to_string(),
+                "generated-ui action declarations must reference an element that carries an action"
+                    .to_string(),
             ));
         };
-        if control.action() != &declaration.action {
+        if action != &declaration.action {
             return Err(Error::InvalidConfig(
                 "generated-ui element action must match its manifest declaration".to_string(),
             ));
@@ -625,6 +628,14 @@ pub fn validate_generated_ui_state_bindings(
                 )));
             }
             control.accepts_bound_value(binding.property, value)?;
+        }
+    }
+
+    // An app component's prop expressions read `$state` too: each key they read
+    // stays declared and present, so a patch cannot remove it.
+    for element in elements {
+        if let LensAtom::Component(component) = element.atom {
+            super::genui_expr::check_prop_expressions(&component.props, state)?;
         }
     }
 

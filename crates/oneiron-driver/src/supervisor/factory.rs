@@ -25,7 +25,7 @@ use oneiron::{
     DreamerClaimAuthoringStrategy, LlmBackend, ModelId, Result, WriteActor,
 };
 use oneiron::{EntityId, Vault, WavePlanner};
-use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
+use oneiron_llm::local::{LocalLlmBackend, LocalLlmRuntime};
 
 use super::attachment::{LinkedShutdown, PassAttachment, PassAttachmentSource};
 use super::dreamer_jobs::DreamerJobsExecutor;
