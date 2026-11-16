@@ -221,7 +221,7 @@ impl ModelRuntime {
             return Ok(RoleRoute {
                 model: seat.model.clone(),
                 locality: seat.locality,
-                ladder: Arc::clone(&seat.ladder),
+                ladder: self.ladder_for_role(role, &seat.ladder),
                 seat_bound: true,
             });
         };
@@ -276,7 +276,7 @@ impl ModelRuntime {
                     return Err(RoleRefusal::RouteNotServed { model, route });
                 }
                 Ok(RoleRoute {
-                    ladder: rung.unwrap_or(ladder),
+                    ladder: self.ladder_for_role(role, &rung.unwrap_or(ladder)),
                     model,
                     locality: served,
                     seat_bound: false,
@@ -334,7 +334,7 @@ impl ModelRuntime {
             ladder
         };
         Ok(Some(RoleRoute {
-            ladder,
+            ladder: self.ladder_for_role(role, &ladder),
             model,
             locality: served,
             seat_bound: true,
@@ -361,6 +361,22 @@ impl ModelRuntime {
         self.raw_router
             .served_at(choice.model(), route)
             .filter(|(served, _)| *served <= widest)
+    }
+
+    /// `ladder` for a call of `role`: for a role whose work never leaves the
+    /// device, a call-local copy whose owner's fallbacks keep the call there
+    /// ([`OfferLadder::with_stays_on_device`]); else `ladder` itself. Every
+    /// ladder a role's call takes passes here, since it may be one the
+    /// role's seat does not scope: a model's bare ladder that a manifest
+    /// pin or the model pack's pick routes on, or the seat or rung of
+    /// another role the call comes with (FIX-LIST
+    /// ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK).
+    fn ladder_for_role(&self, role: ModelRole, ladder: &Arc<OfferLadder>) -> Arc<OfferLadder> {
+        if self.stays_on_device.contains(&role) {
+            ladder.with_stays_on_device()
+        } else {
+            Arc::clone(ladder)
+        }
     }
 
     /// Admits `request` as a call of `role` against the vault's live policy.
@@ -454,7 +470,10 @@ impl ModelRuntime {
             )
             .map_err(RoleRefusal::refused)?
             .into_request();
-        Ok(RoleCall { request, ladder })
+        Ok(RoleCall {
+            request,
+            ladder: self.ladder_for_role(role, &ladder),
+        })
     }
 
     /// Admits `request`, an exact replay of a call that `role`'s admission
@@ -492,14 +511,10 @@ impl ModelRuntime {
         // widens nothing; a choice the owner has since turned off or
         // narrowed refuses it for its own reason (Engine ruling 13 Nov). A
         // role whose work never leaves the device takes no third party's
-        // fallback, read from the role itself: a manifest's pin off the
-        // role's seat routes on the model's bare ladder, whose scope does not
-        // carry the role's rule (review of #7309).
-        let kept_on_device =
-            self.stays_on_device.contains(&role) && locality == ModelLocality::ThirdParty;
-        if locality > route.locality
-            && (kept_on_device || !route.ladder.owner_fallback_serves(&model, locality))
-        {
+        // fallback: the route's ladder carries the role's rule, whatever
+        // ladder it routes on (review of #7309; FIX-LIST
+        // ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK).
+        if locality > route.locality && !route.ladder.owner_fallback_serves(&model, locality) {
             return Err(RoleRefusal::FallbackNoLongerAllowed {
                 model: model.clone(),
                 locality,
