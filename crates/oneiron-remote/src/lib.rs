@@ -118,18 +118,12 @@ pub struct HostRootProfile {
     pub wrong_root: bool,
 }
 
-/// Current wall-clock time, in whole Unix seconds.
-///
-/// The SDK's own clock read, because the engine's is crate-private. This is
-/// the value an omitted `occurredAt`/`occurred_at` is stamped with, and it is
-/// read at the CALL boundary so a long-lived handle does not stamp writes with
-/// the time it was constructed.
-#[must_use]
-pub fn unix_seconds_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
+/// Current wall-clock time, in whole Unix seconds: the engine's one clock
+/// read, re-exported for the SDK. This is the value an omitted
+/// `occurredAt`/`occurred_at` is stamped with, and it is read at the CALL
+/// boundary so a long-lived handle does not stamp writes with the time it was
+/// constructed.
+pub use oneiron_base::unix_seconds_now;
 
 /// Resolves an optional caller timestamp into engine Unix seconds (I14).
 ///

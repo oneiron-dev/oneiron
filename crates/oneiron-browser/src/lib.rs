@@ -558,11 +558,7 @@ fn asked_up(reason: AskUpReason) -> BatchStopCause {
 fn candidate(row: &Row) -> String {
     let mut label = format!("{} \"{}\"", row.role, row.name);
     if label.len() > 200 {
-        let mut end = 200;
-        while !label.is_char_boundary(end) {
-            end -= 1;
-        }
-        label.truncate(end);
+        label.truncate(label.floor_char_boundary(200));
         label.push('…');
     }
     format!("{label} [{}]", row.locator)

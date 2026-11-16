@@ -202,8 +202,12 @@ impl<'s> ClaimIndex<'s> {
                 MachineAdmitter::Roster => None,
             })
             .collect();
-        let shared = roster_trusted
+        // Every chain's key, the roster's own head too: a hosted node stands
+        // on that head alone, and another machine's claim of its key in a
+        // trusted scope vetoes it as it vetoes a trusted chain (L7-34).
+        let shared = roster_head
             .iter()
+            .chain(roster_trusted.iter())
             .chain(anchored.values())
             .map(|chain| chain.profile.machine_key)
             .map(|key| (key, self.shared_scopes(id, &key)))

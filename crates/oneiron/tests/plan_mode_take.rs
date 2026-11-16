@@ -169,6 +169,8 @@ fn approved_plan(fixture: &Fixture) -> PlanDocView {
         PlanDocVerdictRequest {
             plan_ref: plan.plan_ref,
             expected_revision: plan.revision.clone(),
+            approving_turn_ref: None,
+            approving_thread_ref: None,
         },
     )
     .expect("the owner approves the revision read");
@@ -380,6 +382,8 @@ fn a_take_after_the_owner_rejects_the_plan_lands_no_run() {
                 PlanDocVerdictRequest {
                     plan_ref,
                     expected_revision: revision.clone(),
+                    approving_turn_ref: None,
+                    approving_thread_ref: None,
                 },
             )
             .expect("the owner rejects the plan while the planner is asked");

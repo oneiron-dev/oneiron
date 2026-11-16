@@ -4,17 +4,8 @@ use oneiron_model::llm::BudgetRead;
 
 use super::deadline::{DREAMER_WRAP_UP_NOTICE_PERCENT, WakePassDeadline};
 
-/// Budget legibility attached to EVERY host-call response inside a wake
-/// pass (1184-D4-D): remaining budget, remaining wall-clock, the wrap-up
-/// notice, and the finalize deadline once the graceful-wrap window opens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BudgetLegibilityEnvelope {
-    pub remaining_units: u64,
-    pub limit_units: u64,
-    pub remaining_ms: u64,
-    pub wrap_up: bool,
-    pub finalize_by_ms: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_wake::legibility::BudgetLegibilityEnvelope;
 
 /// Composes the legibility envelope from the ONE wake-budget counter read
 /// ([`BudgetRead`]) and the pass deadline. The runner-store reservation

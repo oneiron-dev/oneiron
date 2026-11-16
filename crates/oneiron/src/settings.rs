@@ -9,6 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::setting::SettingValue;
 
+pub mod agent_world_access;
 pub mod backup;
 pub(crate) mod board_layout;
 pub mod default_facet;
@@ -55,14 +56,12 @@ pub use model_versioning::{
 };
 pub use room_threads::RoomThreadAdminSettings;
 
-/// Version of the persisted customization settings record.
-pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
-
-/// The four SET-03 customization layers persisted by this module.
-pub const CUSTOMIZATION_SETTINGS_LAYER_COUNT: usize = 4;
-
-const TOKEN_MAX_BYTES: usize = 64;
-const WORLD_LABEL_MAX_BYTES: usize = 128;
+#[doc(hidden)]
+pub use oneiron_records::settings::{
+    CUSTOMIZATION_SETTINGS_LAYER_COUNT, CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer,
+};
+#[doc(hidden)]
+use oneiron_records::settings::{validate_label, validate_token};
 
 /// Complete persisted customization profile: the value of the catalogue key
 /// `client.customization`, which every member reads.
@@ -111,35 +110,6 @@ impl SettingValue for CustomizationSettings {
         }
         self.validate()?;
         Ok(self)
-    }
-}
-
-/// A persisted customization layer discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CustomizationLayer {
-    Accent,
-    Type,
-    Mode,
-    World,
-}
-
-impl CustomizationLayer {
-    /// Returns the stable on-disk layer name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Accent => "accent",
-            Self::Type => "type",
-            Self::Mode => "mode",
-            Self::World => "world",
-        }
-    }
-
-    /// Returns all persisted layers in canonical order.
-    #[must_use]
-    pub const fn all() -> [Self; CUSTOMIZATION_SETTINGS_LAYER_COUNT] {
-        [Self::Accent, Self::Type, Self::Mode, Self::World]
     }
 }
 
@@ -307,29 +277,6 @@ impl Vault {
         settings.validate()?;
         Ok(settings)
     }
-}
-
-fn validate_token(field: &'static str, value: &str) -> Result<()> {
-    if value.is_empty()
-        || value.len() > TOKEN_MAX_BYTES
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
-        return Err(Error::InvalidConfig(format!(
-            "{field} must be a non-empty ASCII token"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_label(field: &'static str, value: &str) -> Result<()> {
-    if value.is_empty() || value.len() > WORLD_LABEL_MAX_BYTES || value.contains(char::is_control) {
-        return Err(Error::InvalidConfig(format!(
-            "{field} must be non-empty visible text"
-        )));
-    }
-    Ok(())
 }
 
 pub(crate) mod tables;
