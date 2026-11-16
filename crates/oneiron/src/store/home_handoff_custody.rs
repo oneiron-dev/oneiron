@@ -58,21 +58,9 @@ impl KeyRef {
     /// # Errors
     /// Any other spelling.
     pub(crate) fn from_hex(text: &str) -> Result<Self> {
-        let bytes = (text.len() == 64)
-            .then(|| {
-                (0..64)
-                    .step_by(2)
-                    .map(|at| {
-                        text.get(at..at + 2)
-                            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                    })
-                    .collect::<Option<Vec<u8>>>()
-            })
-            .flatten()
-            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-            .filter(|bytes| crate::entity_id::bytes_to_hex_lower(bytes) == text)
-            .ok_or(Error::CorruptedIndex("erasable key ref"))?;
-        Ok(Self(bytes))
+        oneiron_hex::decode::<32>(text)
+            .ok_or(Error::CorruptedIndex("erasable key ref"))
+            .map(Self)
     }
 
     /// Its 64 lowercase hex digits.
