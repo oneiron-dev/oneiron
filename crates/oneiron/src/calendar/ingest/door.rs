@@ -98,7 +98,9 @@ pub fn import_ics_as_owner(
 /// carries them again; under a CalDAV seat's (a stopped seat's too), until the remote object
 /// changes; under a pack calendar source's, until its next complete listing. So the upload
 /// takes another system, under which its UIDs still attach to the same EVENTs. A system whose
-/// feed was uninstalled is open to an upload, since no poll of that feed runs again.
+/// feed was uninstalled is open to an upload, since no poll of that feed runs again. The check
+/// reads the installed sources once, before the upload writes; installs take no admission turn,
+/// so a feed or seat the owner installs on the same system while the upload runs is not seen.
 fn refuse_installed_source_system(memory: &Memory<'_>, system: &str) -> MemoryResult<()> {
     crate::mail_pack::refuse_calendar_source_system(system)?;
     let vault = memory.vault();
