@@ -112,6 +112,13 @@ fn held_out_compare(
             "incumbent and candidate come from different retrievers".to_owned(),
         ));
     }
+    if incumbent.budget_rows != candidate_card.budget_rows {
+        let found = candidate_card.budget_rows;
+        let wanted = incumbent.budget_rows;
+        return Err(ScorecardFailure::Input(format!(
+            "candidate scorecard budget_rows is {found}, want the incumbent's {wanted}"
+        )));
+    }
     let reference = match flags.get("reference").map(String::as_str) {
         None => None,
         Some(path) => {
@@ -242,6 +249,8 @@ fn held_out_compare(
             incumbent: incumbent_id,
             candidate: candidate_id,
             candidate_params,
+            model_id: candidate_card.model_id.clone(),
+            budget_rows: candidate_card.budget_rows,
             incumbent_scorecard_sha256: incumbent_sha256,
             candidate_scorecard_sha256: candidate_sha256,
             axes: axes.clone(),
@@ -488,6 +497,15 @@ fn sealed_compare(
         return Err(ScorecardFailure::Input(
             "candidate sealed scorecard does not match the proposal's candidate".to_owned(),
         ));
+    }
+    for (side, card) in [("incumbent", &incumbent), ("candidate", &candidate_card)] {
+        if card.model_id != listing.held_out.model_id
+            || card.budget_rows != listing.held_out.budget_rows
+        {
+            return Err(ScorecardFailure::Input(format!(
+                "{side} sealed scorecard does not match the proposal's retriever and budget_rows"
+            )));
+        }
     }
     let plan = campaign::axis_plan(&campaign);
     let axes = campaign::axis_comparisons(&plan, &incumbent, &candidate_card)?;

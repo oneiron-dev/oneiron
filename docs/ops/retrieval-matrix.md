@@ -129,7 +129,8 @@ oneiron-bench scorecard compare --campaign <campaign> \
 
 Judgment follows the ruler: dominance, then the paired-bootstrap lower
 bound above 0 on the Primary axes, then the ruler-path check; the
-incumbent and the candidate must come from the same retriever. The
+incumbent and the candidate must come from the same retriever at the
+same `--budget-rows`, and the proposal records both. The
 reference never changes the verdict: the 90 % of Lucene gap per
 language and metric is a report (ruling L8-38-TARGET = A), and each
 language under it gets a FIX-LIST row for analyser work.
@@ -137,13 +138,16 @@ language under it gets a FIX-LIST row for analyser work.
 ## 6. The one sealed run, the proposal, the stamp
 
 One sealed run per side (the claim is spent before the slice opens),
-then the sealed check, then the owner's stamp:
+then the sealed check, then the owner's stamp. A proposal's sealed run
+must use the proposal's retriever (with or without `--dict-dir`, as on
+held_out) and its `--budget-rows`; another arm is refused before the
+claim, and the sealed check refuses sealed scorecards of another arm:
 
 ```sh
 oneiron-bench scorecard run --arm keyword \
     --pack-dir <data-root>/packs --slice sealed \
     --rank-profile <profile> --dict-dir <dicts> \
-    --engine-commit <sha> --out <sealed.json> \
+    --budget-rows 100 --engine-commit <sha> --out <sealed.json> \
     --sealed-ledger <ledger> --campaign <campaign> \
     --proposal <id> --proposals <proposals>
 oneiron-bench scorecard compare --sealed --campaign <campaign> \

@@ -241,6 +241,7 @@ fn run_sealed(
         pack_digest: campaign.splits.sealed.revision.clone(),
     };
     let (pack_dir, out, budget_rows, repeats) = replay_flags(flags)?;
+    let mut proposal_model_id: Option<String> = None;
     if let SealedMode::Proposal { id, dir } = mode {
         let store = ProposalStore::open(Path::new(dir))
             .map_err(|error| ScorecardFailure::Input(error.to_string()))?;
@@ -264,6 +265,27 @@ fn run_sealed(
                 "this run is not the proposal's candidate".to_owned(),
             ));
         }
+        if listing.held_out.budget_rows != budget_rows {
+            let wanted = listing.held_out.budget_rows;
+            return Err(ScorecardFailure::Input(format!(
+                "this run's budget_rows is {budget_rows}, the proposal's is {wanted}"
+            )));
+        }
+        let wanted = listing.held_out.model_id.as_str();
+        let same_retriever = match &owned {
+            OwnedArm::Keyword { dict_dir, .. } => {
+                keyword::retriever_id(dict_dir.as_deref()) == wanted
+            }
+            OwnedArm::Pipeline(_) => {
+                ![keyword::RETRIEVER, keyword::RETRIEVER_DICTS].contains(&wanted)
+            }
+        };
+        if !same_retriever {
+            return Err(ScorecardFailure::Input(format!(
+                "this run's arm is not the proposal's retriever {wanted}"
+            )));
+        }
+        proposal_model_id = Some(wanted.to_owned());
     }
     let claim = match mode {
         SealedMode::Incumbent => {
@@ -288,6 +310,14 @@ fn run_sealed(
         return Err(ScorecardFailure::Run(
             "sealed pack has no vectors: the sealed run was spent".to_owned(),
         ));
+    }
+    if kind == ArmKind::Pipeline
+        && let Some(wanted) = &proposal_model_id
+        && loaded.slice.embedding.as_ref().map(|pin| &pin.model_id) != Some(wanted)
+    {
+        return Err(ScorecardFailure::Run(format!(
+            "sealed pack is not embedded by the proposal's model {wanted}: the sealed run was spent"
+        )));
     }
     let mut summary = replay(
         &loaded,
@@ -478,7 +508,7 @@ fn replay_pipeline(
     }
     let mut repeats_of: Vec<Vec<RepeatRun>> = Vec::new();
     repeats_of.resize_with(loaded.slice.queries.len(), Vec::new);
-    let limit = usize::try_from(budget_rows).unwrap_or(usize::MAX).max(20);
+    let limit = usize::try_from(budget_rows).unwrap_or(usize::MAX);
     for corpus in &loaded.slice.corpora {
         let dir = tempfile::tempdir().map_err(|error| {
             ScorecardFailure::Run(format!("pack vault tempdir failed: {error}"))

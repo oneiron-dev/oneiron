@@ -486,6 +486,8 @@ fn compare_promotes_a_clear_held_out_win_and_writes_the_proposal() {
     let bytes = std::fs::read(&record).expect("record reads");
     let held: Value = serde_json::from_slice(&bytes).expect("record is JSON");
     assert_eq!(held["decided_at"], json!(1_700_000_000));
+    assert_eq!(held["model_id"], json!("model"));
+    assert_eq!(held["budget_rows"], json!(10));
     let weights = &promotion.weights;
     assert_eq!(
         held["candidate_params"],
@@ -696,6 +698,39 @@ fn compare_refuses_bad_input_before_writing() {
             &cand_digest,
         );
         candidate.pack_digest = SEALED_DIGEST.to_owned();
+        let base = case.join("base.json");
+        let cand = case.join("cand.json");
+        write_card(&base, &incumbent);
+        write_card(&cand, &candidate);
+        let proposals = case.join("proposals");
+        let result = scorecard(&[
+            "compare",
+            "--campaign",
+            campaign.to_str().expect("campaign path"),
+            "--candidate-params",
+            params_path.to_str().expect("params path"),
+            "--proposals",
+            proposals.to_str().expect("proposals path"),
+            "--at",
+            "1700000000",
+            base.to_str().expect("base path"),
+            cand.to_str().expect("cand path"),
+        ]);
+        assert_input_error(&result, &proposals);
+    }
+    // A candidate graded at another budget than the incumbent.
+    {
+        let case = dir.path().join("budget");
+        std::fs::create_dir(&case).expect("case dir");
+        let campaign = write_campaign(&case, "campaign.json", standard_axes());
+        let (params_path, cand_digest) = write_params(&case, "params.json", candidate_weights());
+        let (incumbent, mut candidate) = clear_win_cards(
+            ENGINE_COMMIT,
+            ENGINE_COMMIT,
+            &learned_digest(),
+            &cand_digest,
+        );
+        candidate.budget_rows = 20;
         let base = case.join("base.json");
         let cand = case.join("cand.json");
         write_card(&base, &incumbent);
@@ -992,6 +1027,74 @@ fn sealed_compare_withdraws_on_a_floor_loss_and_the_owner_can_still_stamp() {
         "1700000003",
     ]);
     assert_eq!(again.status.code(), Some(2));
+}
+
+#[test]
+fn sealed_compare_refuses_a_sealed_card_of_another_retriever_or_budget() {
+    let dir = tempfile::tempdir().expect("sealed arm fixture dir");
+    let promotion = promote(dir.path());
+    let campaign_arg = promotion
+        .campaign
+        .to_str()
+        .expect("campaign path")
+        .to_owned();
+    let proposals_arg = promotion
+        .proposals
+        .to_str()
+        .expect("proposals path")
+        .to_owned();
+    let sealed_record = promotion
+        .proposals
+        .join(&promotion.proposal_id)
+        .join("sealed.json");
+    for case in ["candidate-retriever", "incumbent-retriever", "budget"] {
+        let mut incumbent = card(
+            Slice::Sealed,
+            &promotion.inc_engine,
+            &promotion.inc_params,
+            SEALED_DIGEST,
+            Vec::new(),
+        );
+        incumbent.query_count = 30;
+        let mut candidate = card(
+            Slice::Sealed,
+            &promotion.cand_engine,
+            &promotion.cand_params,
+            SEALED_DIGEST,
+            Vec::new(),
+        );
+        candidate.query_count = 30;
+        match case {
+            "candidate-retriever" => candidate.model_id = "bm25f+dicts".to_owned(),
+            "incumbent-retriever" => incumbent.model_id = "bm25f+dicts".to_owned(),
+            _ => {
+                incumbent.budget_rows = 20;
+                candidate.budget_rows = 20;
+            }
+        }
+        let base = dir.path().join(format!("sealed-base-{case}.json"));
+        let cand = dir.path().join(format!("sealed-cand-{case}.json"));
+        write_card(&base, &incumbent);
+        write_card(&cand, &candidate);
+        let base_arg = base.to_str().expect("base path").to_owned();
+        let cand_arg = cand.to_str().expect("cand path").to_owned();
+        let judged = scorecard(&[
+            "compare",
+            "--sealed",
+            "--campaign",
+            campaign_arg.as_str(),
+            "--proposals",
+            proposals_arg.as_str(),
+            "--proposal",
+            promotion.proposal_id.as_str(),
+            "--at",
+            "1700000001",
+            base_arg.as_str(),
+            cand_arg.as_str(),
+        ]);
+        assert_eq!(judged.status.code(), Some(2), "{case} is refused");
+        assert!(!sealed_record.exists(), "{case} writes no sealed outcome");
+    }
 }
 
 #[test]
