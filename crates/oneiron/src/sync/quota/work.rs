@@ -38,19 +38,8 @@ const QUEUE: RetainedWorkQueue = RetainedWorkQueue::MaintenanceIngest;
 /// with the signer after the last one served.
 pub const MAINTENANCE_DRAIN_TURNS: usize = 4096;
 
-/// Where a retained maintenance operation stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MaintenanceWorkState {
-    /// It waits for its turn.
-    Pending,
-    /// Its wait ended before it landed.
-    Expired,
-    /// Its replay refused it for good.
-    Rejected,
-    /// An erase took its row.
-    Erased,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::quota::work::MaintenanceWorkState;
 
 #[derive(Serialize, Deserialize)]
 struct RetainedMaintenance {

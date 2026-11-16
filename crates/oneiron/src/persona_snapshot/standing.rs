@@ -56,12 +56,9 @@ pub enum StandingBlockEdit {
     },
     Text(String),
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StandingBlockEviction {
-    pub block: String,
-    #[serde(with = "crate::serialize::entity_ref::sequence")]
-    pub claims: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::persona_snapshot::standing::StandingBlockEviction;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandingBlockSession {
     pub block: String,
@@ -387,7 +384,7 @@ impl Vault {
                 continue;
             }
             if let Some(disclosure) = disclosure
-                && !disclosure.admits(&self.store, &txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
+                && !disclosure.admits_in(self, &txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
             {
                 continue;
             }

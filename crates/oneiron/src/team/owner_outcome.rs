@@ -41,13 +41,8 @@ const TEAM_DELIVERABLE: SideTable<[u8; 16], TeamDeliverableBinding, Named> =
 /// Longest output revision kept.
 const MAX_REVISION_BYTES: usize = 256;
 
-/// What a bound review asks the owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeliverableReview {
-    /// Whether the team's deliverable, as pinned, is accepted.
-    Acceptance,
-}
+#[doc(hidden)]
+pub use oneiron_records::team::owner_outcome::DeliverableReview;
 
 /// One review of a team's deliverable. Host-only: never guest input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
