@@ -63,11 +63,14 @@ use serde::Serialize;
 /// 41: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-/// 42: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
 /// waits for the owner's proof, and an enrolment of the owner's key outside the line of the
 /// enrolment that made it the owner's is refused, and a device revocation proved through such
 /// an enrolment of its key ends nothing (row CARRIER-PROOF-OLD-PARENTS).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

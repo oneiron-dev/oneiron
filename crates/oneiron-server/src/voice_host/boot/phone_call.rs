@@ -108,6 +108,9 @@ pub(in crate::voice_host) fn prepare_phone_call(
         payer,
         funding: None,
         out,
+        // A phone call keeps no turn yet: a stranger's words, under the
+        // owner's call-transcript settings, are UNBUILT-02 PR 3.
+        record: None,
     })
     .map_err(failed)?;
     let render = settings
