@@ -41,10 +41,11 @@ mod file_admission;
 mod sections;
 mod validation;
 
-pub(crate) use self::file_admission::read_config_file;
+pub(crate) use self::file_admission::{read_config_file, read_referenced_file};
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
 use self::validation::{validate_embedder_config, validate_serve_config};
+pub(crate) use super::diagnostics::parse_json;
 
 /// Environment-derived serve settings.
 #[derive(Clone, Debug, Default)]
