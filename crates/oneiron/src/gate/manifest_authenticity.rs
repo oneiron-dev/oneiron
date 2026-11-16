@@ -514,10 +514,8 @@ impl Vault {
         }
         self.write_policy_manifest_in_txn(txn, id, data, now)?;
         let key = HexId(id);
-        TRUSTED_ORIGIN.delete(&self.store, txn, &key)?;
         RETENTION_HOLDER.delete(&self.store, txn, &key)?;
         SEEDED.delete(&self.store, txn, &key)?;
-        quarantine_current_in_txn(self, txn, &id, None)?;
         Ok(())
     }
 

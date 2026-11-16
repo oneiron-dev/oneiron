@@ -110,10 +110,7 @@ impl PolicyEnforcementAction {
     /// deliver.
     #[must_use]
     pub const fn halts(self) -> bool {
-        matches!(
-            self,
-            Self::Reword | Self::Block | Self::RouteToHelp | Self::Hold
-        )
+        matches!(self, Self::Block | Self::RouteToHelp)
     }
 }
 
