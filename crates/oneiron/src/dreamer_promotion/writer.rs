@@ -438,7 +438,7 @@ pub(super) fn promote_one_answering(
                 &candidate.claim_id,
                 old_id,
                 &envelope,
-                run.now_ms,
+                run.now_secs(),
             )?;
         }
         // Failed apply or stage rolls back the claim, binding and gate receipt.
@@ -501,7 +501,7 @@ pub(super) fn promote_one_answering(
                     wtxn,
                     candidate.claim_id,
                     subject,
-                    run.now_ms,
+                    run.now_secs(),
                 )?;
             }
         }
