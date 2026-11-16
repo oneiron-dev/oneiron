@@ -39,6 +39,12 @@ doc = false
 # doctest compile pass entirely.
 doctest = false
 
+# A mailbox's own person approves its drafted replies at the served door (FIX 18868).
+[[test]]
+name = "mail_reply_approve_mailbox_person_door"
+path = "tests/mail_reply_approve_mailbox_person_door.rs"
+required-features = ["oneiron/test-support"]
+
 [dependencies]
 heed.workspace = true
 arc-swap.workspace = true
