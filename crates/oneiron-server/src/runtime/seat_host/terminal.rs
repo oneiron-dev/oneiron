@@ -20,9 +20,10 @@ use oneiron::dispatch_byoa::{
     ByoaTerminalDisposition, CaptureByoaExhaust, ProviderAdapterRegistry, RunnerSeatPolicy,
     SeatRoute, skipped_seats_note, spent_seat_in,
 };
+use oneiron_container::SessionManifest;
 use oneiron_vault_contract::now_ts;
 
-use super::super::seat_login::RunnerSeatPolicySettings;
+use super::super::seat_login::{RunnerSeatPolicySettings, failed_seat_run_exhaust};
 use super::{NoEgress, NoEndpoints};
 
 /// The owner's policy, its registry, and the seat a bound work's attempt
@@ -30,12 +31,15 @@ use super::{NoEgress, NoEndpoints};
 type Routing = (ProviderAdapterRegistry, RunnerSeatPolicy, usize);
 
 /// Captures the claimed run under `fence` that ended as `ran`, routing a
-/// bound work's end under `runner_seats` when its owner names one.
+/// bound work's end under `runner_seats` when its owner names one. A failed
+/// run is captured with its failure and `session_manifest`, the receipt of
+/// the runner it started ([`failed_seat_run_exhaust`]).
 pub(super) fn settle_host_seat(
     dispatcher: &mut ByoaDispatcher<'_, NoEndpoints, NoEgress>,
     runner_seats: Option<&RunnerSeatPolicySettings>,
     fence: &ByoaExecutionFence,
     ran: ByoaResult<ByoaExhaust>,
+    session_manifest: Option<SessionManifest>,
 ) {
     let routing = runner_seats.and_then(|settings| routing_of(dispatcher, settings, fence));
     let (disposition, exhaust, reason, spent) = match ran {
@@ -58,16 +62,12 @@ pub(super) fn settle_host_seat(
         Err(error) => {
             tracing::warn!(%error, "a seat run failed; its failure is captured");
             let reason = Some(error.to_string());
+            let exhaust = failed_seat_run_exhaust(&error, session_manifest);
             let spent = match error {
                 ByoaError::SeatSpent(spent) => Some(spent),
                 _ => None,
             };
-            (
-                ByoaTerminalDisposition::Failed,
-                ByoaExhaust::default(),
-                reason,
-                spent,
-            )
+            (ByoaTerminalDisposition::Failed, exhaust, reason, spent)
         }
     };
     let capture = CaptureByoaExhaust {
