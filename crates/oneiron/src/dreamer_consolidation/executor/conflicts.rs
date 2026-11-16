@@ -32,7 +32,7 @@ impl ConsolidationExecutor<'_> {
     /// a checkpoint or a failed set ends the attempt with; `Continue` what
     /// every set decided.
     pub(super) async fn resolve_sets(
-        &mut self,
+        &self,
         input: ConflictInput<'_>,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
@@ -292,14 +292,15 @@ impl ConsolidationExecutor<'_> {
                     // A durable outage fallback is still an unresolved question,
                     // not permission to lose the prior head's conflict marker.
                     resources.require_output(resources.scope())?;
-                    super::super::open_conflict::park_open_conflict(
+                    // A window slot's early finish holds the marker on its
+                    // branch for its settle (FIX 21927).
+                    resources.park_open_conflict(
                         ctx.vault,
                         self.actor,
                         step_identity.0,
                         conflict,
                         &members,
                         &decisions,
-                        &resources.write_fence(),
                         ctx.now_ms,
                     )?;
                     dropped.extend(conflict.candidate_indexes.iter().copied());
