@@ -437,19 +437,19 @@ pub fn recipe_park_cause(error: &Error) -> crate::dreamer_runner::DreamerParkCau
 }
 
 /// The refusal a write meets when `relationship` names no live RELATIONSHIP
-/// row, as the claim write and the MESSAGE door raise it.
+/// row, as the claim write raises it: `found` is the type of the live row
+/// the id names here, `None` when it names none.
 #[must_use]
-pub fn invalid_relationship_error(relationship: EntityId) -> Error {
+pub fn invalid_relationship_error(relationship: EntityId, found: Option<u8>) -> Error {
     crate::error::RegistryError::InvalidRelationship {
         relationship,
-        found: None,
+        found,
     }
     .into()
 }
 
-/// The cause the wake driver parks an executor error of `error`'s kind
-/// under, and whether that park ends the pass, for
-/// tests/message_rel_relationship_row.rs.
+/// The cause the wake driver parks an executor `error` under, and whether
+/// that park ends the pass, for tests/message_rel_relationship_row.rs.
 #[must_use]
 pub fn executor_error_park(error: &Error) -> (crate::dreamer_runner::DreamerParkCause, bool) {
     crate::dreamer_wake::executor_error_park_for_test(error.kind())
