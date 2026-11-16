@@ -185,7 +185,7 @@ impl Vault {
                     ))
                 };
             }
-            declare_embedding_space_in_txn(self, txn, space)?;
+            declare_embedding_space_in_txn(&self.store, txn, space)?;
             self.publish_embedding_setup_in_txn(txn).map(Some)
         })?;
         if let Some(setup) = setup {

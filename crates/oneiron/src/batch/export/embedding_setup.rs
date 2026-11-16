@@ -321,11 +321,10 @@ fn import_setup_outcome<T: PartialEq>(here: Option<T>, incoming: Option<T>) -> S
 /// provider is looked up: a space whose offer this host lacks is declared all the same, under
 /// its own id, with its vectors pending recompute.
 pub(super) fn import_embedding_setup_in_txn<R: Read + Seek>(
-    vault: &crate::Vault,
+    store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
 ) -> Result<EmbeddingSetupImport> {
-    let store = &vault.store;
     let mut report = EmbeddingSetupImport {
         withheld: archive.manifest.embedding_setup_withheld.clone(),
         ..EmbeddingSetupImport::default()
@@ -336,7 +335,7 @@ pub(super) fn import_embedding_setup_in_txn<R: Read + Seek>(
         let here = crate::embed::embedding_space_in_txn(store, txn, &space.id)?;
         match import_setup_outcome(here.as_ref(), Some(&incoming)) {
             SetupOutcome::Write(incoming) => {
-                crate::embed::declare_embedding_space_in_txn(vault, txn, incoming)?;
+                crate::embed::declare_embedding_space_in_txn(store, txn, incoming)?;
                 report.declared_spaces.push(space.id.clone());
             }
             SetupOutcome::Unchanged => report.unchanged_spaces.push(space.id.clone()),

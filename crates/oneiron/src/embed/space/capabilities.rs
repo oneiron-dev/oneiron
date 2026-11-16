@@ -1,31 +1,25 @@
-//! What a redeclared space keeps for the slots and worlds that use it (FIX 9832).
+//! What a redeclared space keeps for the slots that use it (FIX 9832).
 
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
 
 use super::{EmbeddingSpace, InputKind, kind_slot_bindings_in_txn};
-use crate::HostingPrivacyPosture;
 use crate::embed::space_move::moving_kind_in_txn;
-use crate::embed::world_space::WorldTextSpaces;
 use crate::error::Result;
-use crate::store::Store;
+use crate::side_table::SideTableDbs;
 
 /// `declared` as the declaration writer stores it over `existing`, the same space at the same
 /// width (FIX 9832). A slot bound to the space, or carried to it by an open move, keeps the input
 /// kind it fills and the query towers its queries enter by, its own kind's and the text tower,
-/// until an explicit move or rebind releases it. A world whose model order names the space as
-/// its text space keeps text the same way, until the owner changes that order (DEC-0005
-/// #private-world-vectors): a redeclaration without text would otherwise end the world's hold
-/// on its rows, and send them to the vault's index or a rung its order never named. Every other
-/// change applies at once. The setup records publish the space as stored, so they read what it
-/// serves. No declaration is refused for it.
+/// until an explicit move or rebind releases it; every other change applies at once. The
+/// setup records publish the space as stored, so they read what it serves. No declaration is
+/// refused for it.
 ///
 /// # Errors
 /// A store failure.
 pub(crate) fn reconcile_bound_space_capabilities_in_txn(
-    store: &Store,
-    posture: HostingPrivacyPosture,
+    store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
     existing: &EmbeddingSpace,
     declared: &EmbeddingSpace,
@@ -38,9 +32,6 @@ pub(crate) fn reconcile_bound_space_capabilities_in_txn(
         {
             used.insert(kind);
         }
-    }
-    if WorldTextSpaces::read_for_store_in(store, posture, txn)?.names(&existing.id) {
-        used.insert(InputKind::Text);
     }
     let mut effective = declared.clone();
     if used.is_empty() {
