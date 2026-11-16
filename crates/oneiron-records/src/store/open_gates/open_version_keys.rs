@@ -3,6 +3,58 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v34 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
+/// authority fold schema moves 41 -> 42, and a stored checkpoint image
+/// written before it no longer decodes. The fold names a roster with no live
+/// root key (`NoRootKey`), and it counts a root appointment that the pinned
+/// root's anchor signed: the appointment's line folds as its own ancestry's
+/// fold did. Stored authority-log rows keep their bytes. No old-meaning
+/// reader or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
+///
+/// v33 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
+/// authority-log rows keep their bytes and change meaning. A carried machine
+/// answer that makes a machine the owner's stands only with an owner key's
+/// proof cosign, so every such answer a vault already holds (each paired
+/// machine) folds as held, not mine, until the owner confirms it on an owner
+/// device. The authority fold schema moves 40 -> 41 with it. No old-meaning
+/// reader or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
+///
+/// v32 (row REVOKE-FENCE, FIX REVOKED-OWNER-ROOT-SIBLING-ENROL): stored
+/// authority-log rows keep their bytes and change meaning. A `RevokeDevice`
+/// retires its key on every branch, so a row that key signed outside the
+/// revocation's own ancestry (a withheld enrolment, say) stood and is now
+/// refused with every row above it. The authority fold schema moves 39 -> 40
+/// with it, and a stored checkpoint image written before it no longer
+/// decodes. No old-meaning reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud").
+///
+/// v31 (FIX ARRIVAL-FLOOR-SIBLING-DIVERGENCE): stored authority-log rows keep
+/// their bytes and can change meaning. No arrival floor refuses a roster row,
+/// and a roster row vouches for its own signer's rows below it that this
+/// install's arrival floor refused, so an install that already holds a forked
+/// signer's rows can fold more of them than before. No old-meaning reader or
+/// migration is provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v30 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, federation confirmations):
+/// stored authority-log rows keep their bytes and change meaning. Of two
+/// concurrent federation confirmations that share an id or a nonce, the
+/// higher hash and every row above it were refused; now both stand as spent
+/// evidence and no row falls with either. A stored checkpoint image written
+/// before it holds the old losses and no longer decodes (the authority fold
+/// schema moves with it). No old-meaning reader or migration is provided
+/// (the lead's M-1 stored-change rule, path "loud").
+///
+/// v29 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, device revocation): stored
+/// authority-log rows keep their bytes and change meaning. A `RevokeDevice`
+/// proved on its own signed branch now holds as a revoke fact when a
+/// confirmation collision drops the branch it sits on, so the key it revoked
+/// stays revoked. A stored checkpoint image written before it lacks those
+/// facts and no longer decodes (the authority fold schema moves with it). No
+/// old-meaning reader or migration is provided (the lead's M-1 stored-change
+/// rule, path "loud").
+///
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
 /// verb-hook pause from a person's pause and the other engine holds. The
 /// hook invocation is retained on the pause; only that hold can auto-resume.
@@ -131,7 +183,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 28;
+pub const STORAGE_ABI_VERSION: u16 = 34;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
