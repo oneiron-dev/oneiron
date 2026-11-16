@@ -1434,13 +1434,32 @@ fn member_selector_window(
     key: &oneiron::sync::WindowKey,
     alter: impl FnOnce(&loro::LoroDoc),
 ) -> loro::LoroDoc {
+    use oneiron::sync::filtered_window_doc;
+    use oneiron::sync::schema::create_window_doc;
+    use oneiron::sync::window::reverse_rematerialize;
+
+    let (scope, selector) = member_selector(vault);
+    let source = create_window_doc("selector", key);
+    reverse_rematerialize(vault, &source, key).expect("the window pack");
+    alter(&source);
+    filtered_window_doc(vault, &source, key, scope, &selector)
+        .expect("the member's restricted selector window")
+}
+
+/// A fresh Member of `vault` under the read preset: its grant's scope and
+/// its authorized restricted selector.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn member_selector(
+    vault: &Vault,
+) -> (
+    oneiron::federation::FederationGrantScope,
+    oneiron::sync::SyncSelector,
+) {
     use oneiron::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     };
-    use oneiron::sync::schema::create_window_doc;
-    use oneiron::sync::window::reverse_rematerialize;
     use oneiron::sync::{
-        SyncSelector, SyncSelectorWorld, authorize_sync_selector, filtered_window_doc,
+        SyncSelector, SyncSelectorWorld, authorize_sync_selector,
         put_selector_test_federation_grant,
     };
     use oneiron_authority::federation::scope_codec::read_preset;
@@ -1477,11 +1496,7 @@ fn member_selector_window(
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");
-    let source = create_window_doc("selector", key);
-    reverse_rematerialize(vault, &source, key).expect("the window pack");
-    alter(&source);
-    filtered_window_doc(vault, &source, key, scope, &selector)
-        .expect("the member's restricted selector window")
+    (scope, selector)
 }
 
 /// The row bytes the packed window `doc` holds for `id`.
@@ -2847,4 +2862,138 @@ fn a_restricted_selector_does_not_carry_a_stale_notes_proposal_held_in_another_m
             );
         }
     });
+}
+
+/// R1 door test (REACH-READ-DOOR-TESTS = A, Engine 09:28): a brief quoting
+/// another NOTE carries the quoted words in its pin, and its birth
+/// registers no source, so the brief still reads once the quoted NOTE Y
+/// turns stale: the window filter lets the brief ride, and its export to a
+/// Member meets Y only at pin disclosure, where Y's NOTE read admission is
+/// the one gate (REACH-ERASED-SOURCE-EGRESS = A). Y is drawn from an owner
+/// MESSAGE the owner then erases. A brief quoting a live NOTE still
+/// exports.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_export_a_brief_quoting_a_stale_note() {
+    use oneiron::WriteActor;
+    use oneiron::memory::{ClaimInput, SafeDeleteReason};
+    use oneiron::note::NotePin;
+    use oneiron::sync::bridge::Materializer;
+    use oneiron::sync::manager::WindowManager;
+    use oneiron::sync::types::WindowKey;
+
+    const STALE_QUOTE: &str = "the boiler fails before the inspection";
+    const LIVE_QUOTE: &str = "the garden visit moves to Friday";
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault"));
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let (owner, _) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let claim = EntityId::now();
+    memory
+        .claim_upsert(&ClaimInput {
+            id: Some(claim.to_hex()),
+            predicate: "profile.home".to_owned(),
+            subject_ref: owner.to_hex(),
+            value: json!("the house on the hill"),
+            confidence: 0.9,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+            confidence_details: None,
+        })
+        .expect("FIXTURE: the owner's CLAIM each pin cites");
+    memory
+        .bless_brief_kind()
+        .expect("FIXTURE: the owner blesses the brief kind");
+    let source = witness_owner_message(&vault, owner, "The boiler fails before the inspection.");
+    let quoted = |markdown: &str, quote: &str| -> (EntityId, NotePin) {
+        let note = vault
+            .create_note("research", markdown, actor)
+            .expect("FIXTURE: an owner NOTE");
+        let text = vault
+            .note_document(note)
+            .expect("FIXTURE: the NOTE's text")
+            .markdown;
+        let at = text.find(quote).expect("FIXTURE: the NOTE holds its quote");
+        let start = text[..at].chars().count();
+        let pin = vault
+            .pin_note_span(note, claim, start, start + quote.chars().count())
+            .expect("FIXTURE: a pin of the quote");
+        assert_eq!(pin.quote_text, quote, "FIXTURE: the pin quotes the span");
+        (note, pin)
+    };
+    let (stale, stale_pin) = quoted(&format!("Call notes: {STALE_QUOTE}."), STALE_QUOTE);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(&vault, &stale, &source)
+        .expect("FIXTURE: Y registered as drawn from the MESSAGE S");
+    let (live, live_pin) = quoted(&format!("Visit notes: {LIVE_QUOTE}."), LIVE_QUOTE);
+    let brief = |title: &str, pin: &NotePin| {
+        let receipt = memory
+            .author_brief(title, std::slice::from_ref(pin))
+            .expect("FIXTURE: an owner brief citing one pin");
+        EntityId::from_hex(&receipt.id_hex).expect("brief id")
+    };
+    let stale_brief = brief("A brief on the call.", &stale_pin);
+    let live_brief = brief("A brief on the visit.", &live_pin);
+    memory
+        .safe_delete(&source.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases the MESSAGE S");
+    assert!(
+        vault.get_raw(&stale).expect("read Y").is_none(),
+        "FIXTURE: Y reads as absent once S is erased",
+    );
+    for (id, label) in [
+        (live, "the live quoted NOTE"),
+        (stale_brief, "the brief X quoting Y"),
+        (live_brief, "the brief X2 quoting the live NOTE"),
+    ] {
+        assert!(
+            vault.get_raw(&id).expect("read").is_some(),
+            "FIXTURE: {label} still reads",
+        );
+    }
+    let key = WindowKey::from_timestamp(vault.get_learned_at(&stale_brief).expect("learned at"));
+    assert!(
+        WindowKey::from_timestamp(vault.get_learned_at(&live_brief).expect("learned at")) == key,
+        "FIXTURE: both briefs sit in one window",
+    );
+    let window = member_selector_window(&vault, &key, |_| {});
+    let entities = window.get_map("entities");
+    for (id, label) in [(stale_brief, "X"), (live_brief, "X2")] {
+        assert!(
+            entities.get(&id.to_hex()).is_some(),
+            "precondition: the Member's window carries brief {label}, so its pin is the gate",
+        );
+    }
+    let (scope, selector) = member_selector(&vault);
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "pin-disclosure",
+    ));
+    let empty = loro::VersionVector::new().encode();
+    manager
+        .export_document(live_brief, scope, &selector, &empty)
+        .expect("precondition: a Member exports the brief quoting a live NOTE");
+    let exported = manager.export_document(stale_brief, scope, &selector, &empty);
+    assert!(
+        exported.is_err(),
+        "LEAK: a Member exports the brief whose pin quotes the stale NOTE Y",
+    );
+    let refusal = format!("{:?}", exported.err());
+    assert!(
+        refusal.contains("DocumentAdmissionDenied"),
+        "the export is refused at Y's NOTE read admission: {refusal}",
+    );
 }
