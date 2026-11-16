@@ -121,7 +121,10 @@ fn team_receipt(team: &UpkeepTeam<'_>) -> TeamReceipt {
         pattern_skill: None,
         axis: TeamAxis::Converge,
         models: team.models.to_vec(),
-        shape: TeamShape::SOLO,
+        shape: TeamShape {
+            width: 1,
+            roles: BTreeMap::from([("solo".to_owned(), 1)]),
+        },
         decided_by: DecidedBy::Vote {
             tally: BTreeMap::new(),
         },
