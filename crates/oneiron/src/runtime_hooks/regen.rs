@@ -41,9 +41,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{
-    HookSelector, PackHookBinding, PackInstallDisposition, PackSource,
+    HookAuthor, HookSelector, PackHookBinding, PackInstallDisposition, PackSource,
 };
-use crate::{EntityId, Error, Result, Vault, WriteActor};
+use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 use super::body::HookBodyRuntime;
 use super::replay::{self, HookReplayEntry, HookReplayResult};
@@ -470,23 +470,36 @@ impl Vault {
     ///
     /// Storage errors as they occur.
     pub fn hooks_due_for_regen(&self) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        self.hooks_due_for_regen_in_txn(&txn)
+    }
+
+    /// [`Self::hooks_due_for_regen`] in the caller's snapshot, so a check
+    /// the caller made in `txn` holds for the list it reads there.
+    pub(crate) fn hooks_due_for_regen_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EntityId>> {
         let current = HookContractStamp::current();
         let mut due = Vec::new();
-        for (id, binding) in self.pack_hook_bindings()? {
-            if !binding.enabled || !self.own_pack(&binding.pack)? {
+        for (id, binding) in self.pack_hook_bindings_in_txn(txn)? {
+            if !binding.enabled || !self.own_pack_in_txn(txn, &binding.pack)? {
                 continue;
             }
-            if self.hook_regen_record(id)?.is_some_and(|record| {
-                record.stamp != current
-                    && record.declined.as_ref() != Some(&current)
-                    && !matches!(
-                        &record.pending,
-                        Some(
-                            HookRegenOutcome::AutoAdopt { target, .. }
-                                | HookRegenOutcome::NeedsHumanStamp { target, .. }
-                        ) if *target == current
-                    )
-            }) {
+            if self
+                .hook_regen_record_in_txn(txn, id)?
+                .is_some_and(|record| {
+                    record.stamp != current
+                        && record.declined.as_ref() != Some(&current)
+                        && !matches!(
+                            &record.pending,
+                            Some(
+                                HookRegenOutcome::AutoAdopt { target, .. }
+                                    | HookRegenOutcome::NeedsHumanStamp { target, .. }
+                            ) if *target == current
+                        )
+                })
+            {
                 due.push(id);
             }
         }
@@ -500,7 +513,16 @@ impl Vault {
     /// Storage errors as they occur.
     pub fn hook_regen_record(&self, binding: EntityId) -> Result<Option<HookRegenRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        REGEN.get(&self.store, &rtxn, &binding)
+        self.hook_regen_record_in_txn(&rtxn, binding)
+    }
+
+    /// [`Self::hook_regen_record`] in the caller's snapshot.
+    pub(crate) fn hook_regen_record_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: EntityId,
+    ) -> Result<Option<HookRegenRecord>> {
+        REGEN.get(&self.store, txn, &binding)
     }
 
     /// Runs `binding`'s intent again against this engine's contract and
@@ -724,6 +746,60 @@ impl Vault {
             HookPut::Agent {
                 agent: *agent,
                 owner: None,
+                admit: None,
+            },
+            &HookRegenActor::Agent {
+                agent: agent.entity_ref(),
+            },
+            binding,
+            candidate_hash,
+            false,
+        )
+    }
+
+    /// Enacts the regen pending on a hook a resident agent authored, as a
+    /// granted agent that is not necessarily its author (restriction wave 7,
+    /// C41): through the AUTHORING agent's own put of the `local` pack, as
+    /// the engine's own pass puts it, so the hook stays its author's, at its
+    /// ceiling, its grant carried — never through the enactor's put, which
+    /// would rebind the hook as its own. The receipt names the enacting
+    /// agent. The enactor carries no owner's stamp, so only an AutoAdopt
+    /// enacts; a candidate whose golden replay differs waits for the owner.
+    /// A hook of any other author is refused: its put is the owner's, and no
+    /// owner proof is held here. `admit` is the enactor's admission, run
+    /// again in the writer before the put, so a grant, setting or credential
+    /// that lapsed after the caller's own check installs nothing.
+    ///
+    /// # Errors
+    ///
+    /// An unknown binding, a hook no resident agent authored, no AutoAdopt
+    /// pending or not the one named, `admit`'s refusal, and the put's own
+    /// refusals.
+    pub fn adopt_hook_regen_as_granted_agent(
+        &self,
+        agent: &WriteActor,
+        binding: EntityId,
+        candidate_hash: &str,
+        admit: &dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<PackInstallDisposition> {
+        let Some((_, row)) = self
+            .pack_hook_bindings()?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        let HookAuthor::Agent { agent: author } = row.author else {
+            return Err(Error::InvalidConfig(
+                "a granted agent adopts the regen of a hook a resident agent authored; this hook's regen is the owner's adopt"
+                    .to_owned(),
+            ));
+        };
+        self.enact_hook_regen(
+            HookPut::Agent {
+                agent: WriteActor::new(author, EdgeActorClass::Agent),
+                owner: None,
+                admit: Some(admit),
             },
             &HookRegenActor::Agent {
                 agent: agent.entity_ref(),
@@ -736,8 +812,14 @@ impl Vault {
 
     /// Whether `pack` is installed as a vault's own pack.
     fn own_pack(&self, pack: &str) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.own_pack_in_txn(&txn, pack)
+    }
+
+    /// [`Self::own_pack`] in the caller's snapshot.
+    fn own_pack_in_txn(&self, txn: &heed::RoTxn<'_>, pack: &str) -> Result<bool> {
         Ok(self
-            .installed_pack(pack)?
+            .installed_pack_in_txn(txn, pack)?
             .is_some_and(|receipt| receipt.hub_ref == OWN_PACK_REF))
     }
 }
