@@ -369,61 +369,6 @@ pub(crate) enum RepoFileSight {
     Delivered(RepoFileRevealDelivery),
 }
 
-impl Vault {
-    /// How `asker` reads the marked repo file `target` names when it says
-    /// `why`: judged by the one file check over `keys`, its placed keys in
-    /// one group per class and its opaque residue as one sealed group. The
-    /// stored bytes' hash `raw_blake3` is the mark's own. Nothing is read or
-    /// released here: a [`RepoFileSight::Delivered`] is returned only once
-    /// the grouped write holding every Delivered row has committed.
-    ///
-    /// # Errors
-    /// As [`Vault::file_sight`], and a store failure.
-    pub(crate) fn repo_file_sight(
-        &self,
-        asker: &RevealAsker,
-        target: &RepoFileRevealTarget,
-        raw_blake3: &[u8; 32],
-        keys: &RepoFileKeys,
-        why: &str,
-    ) -> Result<RepoFileSight> {
-        let why = checked_text(
-            why,
-            "a read of a repo file with keys in it says why it needs them",
-            "a repo file read's why is one line of at most 512 bytes",
-        )?;
-        let artifact = crate::store::code_snapshot::snapshot_asset_entity_id(raw_blake3)?;
-        let delivered = self.with_write_txn_grouped(|txn| {
-            let Some(groups) = repo_file_groups_in_txn(self, txn, raw_blake3, &artifact, keys)?
-            else {
-                return Ok(None);
-            };
-            let per_class = groups.len() > 1;
-            let read = KeyRead {
-                asker,
-                artifact: &artifact,
-                why: &why,
-                hash: target.read_hash(raw_blake3),
-                groups,
-                per_class,
-                repo: Some(target),
-            };
-            self.read_sight_core_in_txn(txn, &read).map(Some)
-        })?;
-        // The grouped write has committed: only now may a delivery leave.
-        Ok(match delivered {
-            Some((SecretSight::Granted, reveals)) => {
-                RepoFileSight::Delivered(RepoFileRevealDelivery {
-                    target: target.clone(),
-                    raw_blake3: *raw_blake3,
-                    reveals,
-                })
-            }
-            _ => RepoFileSight::Masked,
-        })
-    }
-}
-
 /// The groups a read of the marked repo file whose stored bytes' hash is
 /// `raw_blake3` asks in, in `txn`: its placed `keys` in one group per
 /// custody class, and its opaque residue as one sealed group read as
@@ -504,6 +449,61 @@ impl Vault {
             repo_file_groups_in_txn(self, &txn, raw_blake3, &artifact, &keys)?
                 .map(|groups| groups.len()),
         )
+    }
+}
+
+impl Vault {
+    /// How `asker` reads the marked repo file `target` names when it says
+    /// `why`: judged by the one file check over `keys`, its placed keys in
+    /// one group per class and its opaque residue as one sealed group. The
+    /// stored bytes' hash `raw_blake3` is the mark's own. Nothing is read or
+    /// released here: a [`RepoFileSight::Delivered`] is returned only once
+    /// the grouped write holding every Delivered row has committed.
+    ///
+    /// # Errors
+    /// As [`Vault::file_sight`], and a store failure.
+    pub(crate) fn repo_file_sight(
+        &self,
+        asker: &RevealAsker,
+        target: &RepoFileRevealTarget,
+        raw_blake3: &[u8; 32],
+        keys: &RepoFileKeys,
+        why: &str,
+    ) -> Result<RepoFileSight> {
+        let why = checked_text(
+            why,
+            "a read of a repo file with keys in it says why it needs them",
+            "a repo file read's why is one line of at most 512 bytes",
+        )?;
+        let artifact = crate::store::code_snapshot::snapshot_asset_entity_id(raw_blake3)?;
+        let delivered = self.with_write_txn_grouped(|txn| {
+            let Some(groups) = repo_file_groups_in_txn(self, txn, raw_blake3, &artifact, keys)?
+            else {
+                return Ok(None);
+            };
+            let per_class = groups.len() > 1;
+            let read = KeyRead {
+                asker,
+                artifact: &artifact,
+                why: &why,
+                hash: target.read_hash(raw_blake3),
+                groups,
+                per_class,
+                repo: Some(target),
+            };
+            self.read_sight_core_in_txn(txn, &read).map(Some)
+        })?;
+        // The grouped write has committed: only now may a delivery leave.
+        Ok(match delivered {
+            Some((SecretSight::Granted, reveals)) => {
+                RepoFileSight::Delivered(RepoFileRevealDelivery {
+                    target: target.clone(),
+                    raw_blake3: *raw_blake3,
+                    reveals,
+                })
+            }
+            _ => RepoFileSight::Masked,
+        })
     }
 }
 
