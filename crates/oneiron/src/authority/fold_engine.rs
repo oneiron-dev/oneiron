@@ -421,6 +421,7 @@ pub(super) fn fold_authority_log_once(
             &entry_ancestors,
             context,
             &mut issues,
+            |hash| retirements.fences_signer_of(hash, &by_hash),
         );
         let Some(lines) = owner_key_enrolments.grow(
             &states,
