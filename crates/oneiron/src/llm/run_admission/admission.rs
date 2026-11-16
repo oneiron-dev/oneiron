@@ -812,9 +812,7 @@ impl RunInner {
     pub(super) fn record(&self, revision: u32, event: RunEvent) {
         let receipt = RunReceipt {
             instance: self.instance,
-            occurred_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs()),
+            occurred_at: crate::unix_seconds_now(),
             run: self.run.clone(),
             revision,
             event,

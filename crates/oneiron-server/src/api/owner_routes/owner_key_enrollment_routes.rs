@@ -180,10 +180,6 @@ pub(crate) fn enroll_receipt_schema() -> serde_json::Value {
 /// digits of a proof, one raw Ed25519 signature.
 const PROOF_HEX_DIGITS: usize = 2 * OWNER_KEY_POSSESSION_PROOF_LEN;
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// A proof as the client sent it: [`PROOF_HEX_DIGITS`] lower-case hex.
 fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
     let refused = || {
@@ -300,7 +296,7 @@ async fn challenge(
             .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
             .map_err(refusal)?;
         Ok(ChallengeReply {
-            challenge: hex(&challenge),
+            challenge: oneiron_hex::encode(&challenge),
         })
     })
     .await?;
