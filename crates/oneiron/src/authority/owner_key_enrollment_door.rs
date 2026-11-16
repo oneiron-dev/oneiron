@@ -548,19 +548,16 @@ impl Vault {
                 let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
                     RecordError::OwnerKeyMoveRefused { member: person },
                 ))?;
-                let proof_key = proof.root();
+                let proof_key = proof.key();
                 keys.sort_by_key(|key| *key == proof_key);
                 Some(proof)
             };
             for revoked_key in keys {
                 let op = AuthorityOp::RevokeDevice { revoked_key };
                 match &proof {
-                    Some(proof) => self.append_slip_op_with_owner_proof_in_txn(
-                        txn,
-                        issuer,
-                        op,
-                        proof.as_ref(),
-                    )?,
+                    Some(proof) => {
+                        self.append_slip_op_with_owner_proof_in_txn(txn, issuer, op, proof)?;
+                    }
                     None => self.append_slip_op_in_txn(txn, issuer, op)?,
                 }
             }
