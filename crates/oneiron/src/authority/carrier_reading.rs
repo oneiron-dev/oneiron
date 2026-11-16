@@ -49,17 +49,24 @@ impl CarrierReading {
 
 impl AuthorityFold {
     /// This install's reading of `machine` as the carrier of an act that
-    /// `signer` signed. This first form reads the machine id alone: the
-    /// roster head's role, and whether this install trusts the machine.
+    /// `signer` signed.
     #[must_use]
-    pub fn carrier_reading(&self, machine: EntityId, _signer: &AuthorityKey) -> CarrierReading {
+    pub fn carrier_reading(&self, machine: EntityId, signer: &AuthorityKey) -> CarrierReading {
+        let signed =
+            |profile: &MachineProfile| AuthorityKey::Ed25519(profile.machine_key) == *signer;
+        let trusted = self
+            .trusted_machine(machine)
+            .filter(|trusted| signed(trusted.profile));
+        let roster = self
+            .machine(machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .filter(|head| signed(&head.profile));
         CarrierReading {
             machine,
-            role: self
-                .machine(machine)
-                .and_then(|folded| folded.roster.as_ref())
-                .map(|head| head.profile.role),
-            is_mine: self.trusted_machine(machine).is_some(),
+            role: trusted
+                .map(|trusted| trusted.profile.role)
+                .or_else(|| roster.map(|head| head.profile.role)),
+            is_mine: trusted.is_some(),
         }
     }
 }
