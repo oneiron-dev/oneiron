@@ -20,6 +20,7 @@ import type {
   EngineRequest,
   HostRootProfile,
   NativeLimitQuestion,
+  OwnConversationTraining,
 } from "./types.js"
 import type { CommReach } from "./facade-types.js"
 import type { NativeAgentVerbs } from "./native-verbs.js"
@@ -39,6 +40,8 @@ export interface NativeClient extends NativeAgentVerbs {
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
+  ownConversationTraining(): OwnConversationTraining
+  setOwnConversationTraining(leaveOut: boolean): OwnConversationTraining
   exportTo(path: string, format: string | undefined): unknown
 }
 

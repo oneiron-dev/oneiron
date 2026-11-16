@@ -392,6 +392,8 @@ put the host issuer secret in any request-credential variable.
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
 | `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }`, `{ outcome, readReceipt }`, or a model round trip's `{ queued, callbackId }` |
 | `handle.closeLensFrame(cardId)` | closes that card and frees its frame; answers `{ closed }` |
+| `handle.ownConversationTraining()` | the person's own training opt-out that this handle's credential names: `{ person, leaveOut, allowed, revision, conflicted, act? }`; an embedded handle throws `BAD_REQUEST` |
+| `handle.setOwnConversationTraining(leaveOut)` | leaves the person's own messages out of training, or lets them back in; the client signs an opt back in with the credential's own key where the server names the person's slip, so it lands through a carrier that is not the owner's; answers the same shape |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
