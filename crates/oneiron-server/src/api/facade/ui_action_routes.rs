@@ -490,16 +490,11 @@ fn reprove_held_proof(
     auth: &CoreAuth,
     proof: HeldCardProof,
 ) -> MemoryResult<()> {
-    match proof {
-        HeldCardProof::CallerRead => Ok(()),
-        HeldCardProof::Owner => {
-            super::owner_binding::facade_owner(server, auth, "a held owner lens card").map(drop)
-        }
-        HeldCardProof::WeaveAdmin { membership_grant } => {
-            super::weave_admin_doors::stepped_up_admin_under(server, auth, membership_grant)
-                .map(drop)
-        }
-    }
+    // RED PIN: the reload proves no proof again, as before the fix.
+    let _ = (server, auth, proof);
+    let _ = super::owner_binding::facade_owner;
+    let _ = super::weave_admin_doors::stepped_up_admin_under;
+    Ok(())
 }
 
 /// Closes a held card for the credential that rendered it; a card it did
