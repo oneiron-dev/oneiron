@@ -272,6 +272,8 @@ fn write_carried_in_txn(
             direction: Some(direction),
             surface: None,
             signed: None,
+            with: Vec::new(),
+            standing: None,
         },
     )?;
     let row = StoredRow {

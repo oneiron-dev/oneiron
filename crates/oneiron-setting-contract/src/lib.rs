@@ -172,8 +172,8 @@ pub struct Resolved<T> {
 }
 
 /// How the signed acts on one setting row stand, as this machine folds them (DESIGN 1.6, "Fold
-/// states, and the read's `source`"; stage 7a-2). `Pending` and `Held` come with stages 7b and
-/// 7c.
+/// states, and the read's `source`"; stage 7a-2, `Held` and `Pending` stage 7b-3). The order
+/// runs from settled toward quarantined: a read reports the least settled row it walked.
 #[derive(
     Debug,
     Clone,
@@ -189,15 +189,61 @@ pub struct Resolved<T> {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SettingStanding {
-    /// Every head agrees, or the row has no act: the row is as written. The default.
+    /// Every head counts in full or as a safe move the log alone shows, or the row has no act:
+    /// the row is what the log gives every machine. The default.
     #[default]
     Settled,
-    /// The heads of a key with no order differ: the row keeps the last value every head
-    /// descends from, until an act that saw them all replaces them.
+    /// The log proves a head and this install's own counting keeps it back (its holds or
+    /// sequence floors): the head counts as a safe move on this machine only, so another machine
+    /// with the same log may read the row looser. The next act that saw it and counts in full
+    /// ends it.
+    Held,
+    /// An act on the row waits for something a holder must give: the owner's proof of who
+    /// decided it (he is asked on an owner device). It changes nothing until then.
+    Pending,
+    /// The heads differ and no order picks one: on a key with no order the row keeps the last
+    /// value every head descends from; on a key judged by its own comparator, where no head is
+    /// no wider than every other, the key's strictest value. An act that saw them all ends it.
     Conflict,
-    /// A head's value does not decode or fails its check under this build: the row reads the
-    /// key's strictest value (DEC-0005 rule 4).
+    /// A head's value does not decode or fails its check under this build, or two copies of one
+    /// act disagree: the row reads the key's strictest value (DEC-0005 rule 4).
     Quarantined,
+}
+
+/// How the acts behind one change of a setting row stood on the machine that wrote the change
+/// (DESIGN 1.6, "Receipts"; stage 7b-3): the change row's `standing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeStanding {
+    /// Every act the value came from counts in full here.
+    Full,
+    /// An act the value came from counts as a safe move by the log alone (its carrier raced its
+    /// removal): it gave the stricter of its value and what it replaced.
+    Narrowed,
+    /// An act the value came from counts as a safe move on this machine only
+    /// ([`SettingStanding::Held`]).
+    Held,
+    /// An act on the row waits for the owner's proof and changed nothing
+    /// ([`SettingStanding::Pending`]).
+    Pending,
+    /// The heads differ and no order picks one ([`SettingStanding::Conflict`]).
+    Conflict,
+    /// The row reads the key's strictest value ([`SettingStanding::Quarantined`]).
+    Quarantined,
+}
+
+impl ChangeStanding {
+    /// The standing a read of the row reports.
+    #[must_use]
+    pub const fn read_as(self) -> SettingStanding {
+        match self {
+            Self::Full | Self::Narrowed => SettingStanding::Settled,
+            Self::Held => SettingStanding::Held,
+            Self::Pending => SettingStanding::Pending,
+            Self::Conflict => SettingStanding::Conflict,
+            Self::Quarantined => SettingStanding::Quarantined,
+        }
+    }
 }
 
 /// The cell a learned key's fit is learned in (ARCH-0003 `#learning-settings`): the project its
@@ -249,7 +295,9 @@ mod tests {
     #[test]
     fn a_standing_is_settled_by_default_and_orders_toward_quarantine() {
         assert_eq!(SettingStanding::default(), SettingStanding::Settled);
-        assert!(SettingStanding::Settled < SettingStanding::Conflict);
+        assert!(SettingStanding::Settled < SettingStanding::Held);
+        assert!(SettingStanding::Held < SettingStanding::Pending);
+        assert!(SettingStanding::Pending < SettingStanding::Conflict);
         assert!(SettingStanding::Conflict < SettingStanding::Quarantined);
     }
 

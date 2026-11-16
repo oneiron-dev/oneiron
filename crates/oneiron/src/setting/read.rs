@@ -10,7 +10,7 @@ use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
 use super::pack::{
     LayerDefault, ProposedDefaultView, layer_default_in_txn, proposed_defaults_in_txn,
 };
-use super::project::standing_in_txn;
+use super::project::{pin_reads_as_value_in_txn, standing_in_txn};
 use super::{
     EncodedValue, Kind, LearnedRange, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting,
     SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
@@ -119,7 +119,8 @@ fn source_of(mode: SettingMode, scope: &SettingScope) -> SettingSource {
 /// The rows of `spec` on `chain` for `item`: at each scope its pin and its value row (and its
 /// carried row, [`modes_of`]), the item's and the item-less ones. A row that does not decode is
 /// kept, valueless and counted as the owner's, so it decides as unreadable wherever it would have
-/// decided.
+/// decided. A pin whose projection found an act it comes from that does not count in full here
+/// is loaded as a value row at its scope: it narrows and releases nothing (stage 7b-3).
 pub(super) fn load_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
@@ -144,6 +145,11 @@ pub(super) fn load_in_txn(
                 };
                 let Some(bytes) = table.get_bytes(dbs, txn, &key.encode())? else {
                     continue;
+                };
+                let mode = if pin_reads_as_value_in_txn(dbs, txn, &key)? {
+                    SettingMode::Value
+                } else {
+                    mode
                 };
                 let row = rmp_serde::from_slice::<StoredRow>(&bytes).ok();
                 let value = row

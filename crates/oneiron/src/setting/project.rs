@@ -34,6 +34,27 @@
 //! know, a head whose value is only a digest, and a head the log here does not hold leave the
 //! row as it is.
 //!
+//! The read on proofs (stage 7b-3; DESIGN 1.6, "The read of one slot", "Fold states" and
+//! "Receipts"):
+//! - a key judged by its own comparator ([`super::Order::Custom`]) reads its heads by it: a safe
+//!   move gives its value where the comparator says it is no wider than what it replaced, else
+//!   what it replaced; of several heads the one no wider than every other stands, and where none
+//!   is, the key's strictest value, [`SettingStanding::Conflict`];
+//! - an act two copies of which disagree ([`ChoiceCount::Disputed`]) quarantines the row;
+//! - a pin whose acts do not all count in full is read as a value row at its scope: it narrows
+//!   and releases nothing ([`pin_reads_as_value_in_txn`]);
+//! - the empty slot of a vault value row gives the accepted default, the item's row as the
+//!   item-less one;
+//! - the row reads [`SettingStanding::Held`] where this install's own counting holds a head
+//!   back, and [`SettingStanding::Pending`] while an act on it waits for the owner's proof
+//!   ([`super::proposal`]);
+//! - each change row the projection writes, and the door's own change row it receipts, names the
+//!   other heads the value was met with and how the acts stood ([`ChangeStanding`]).
+//!
+//! The door's own act that would wait for the owner's proof is refused, and nothing of the
+//! change is stored, as the choice doors refuse theirs (ruling CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE
+//! = B): such an act changes nothing on any machine, the acting one included.
+//!
 //! A carried row travels as a move's copy (stage 7a-4; [`crate::setting::carry`]): a copy head
 //! reads as the meet of the acts it names, each read on this install by this install's own
 //! counting (a named act it refused, cannot read or holds no row of reads the key's strictest
@@ -42,7 +63,8 @@
 //! install's own carry wrote (`StoredRow::local`): its value is the meet of the heads and of that
 //! bound, so a copy never loosens what this install carried, and the release clears both.
 
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -51,9 +73,9 @@ use oneiron_authority::authority::{
     setting_slot_target, setting_value_digest,
 };
 use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
-use oneiron_setting_contract::{RowKey, SettingStanding};
+use oneiron_setting_contract::{ChangeStanding, Order, RowKey, SettingStanding};
 
-use super::change::{record_change_in_txn, record_signed_entry_in_txn};
+use super::change::{record_change_in_txn, record_receipt_in_txn, record_signed_entry_in_txn};
 use super::pack::layer_default_in_txn;
 use super::read::{StoredRow, table_of};
 use super::{
@@ -65,7 +87,7 @@ use crate::authority::{
     ChoiceCount, ChoiceCounts, SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 /// One projected row per act target.
@@ -85,10 +107,34 @@ struct Projection {
     /// build writes (a digest-only act, an older setting's act, a free-time policy).
     slot: Vec<u8>,
     /// What the row was projected from ([`basis_of`]): the target's act revision, and how its
-    /// acts counted here when one did not count in full.
+    /// acts counted here when one did not count in full, and its acts that wait for the owner's
+    /// proof.
     basis: [u8; 32],
     /// How the acts stood.
     standing: SettingStanding,
+    /// A pin whose acts do not all count in full here (stage 7b-3): every read takes it as a
+    /// value row at its scope, so it narrows and releases nothing. Absent on every other
+    /// projection, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pin_read_as_value: bool,
+}
+
+/// What projecting one target did ([`project_target_in_txn`]).
+pub(super) struct TargetProjected {
+    /// The key whose row the pass wrote or removed.
+    pub(super) changed: Option<&'static SettingSpec>,
+    /// How the acts the row came from stood, and the other live heads its value was met with:
+    /// the receipt a door's own change row takes where the pass wrote no change of its own
+    /// (stage 7b-3). `None` where the pass left the row as it is.
+    pub(super) receipt: Option<(ChangeStanding, Vec<AuthorityEntryHash>)>,
+}
+
+impl TargetProjected {
+    /// A pass that read nothing new.
+    const UNMOVED: Self = Self {
+        changed: None,
+        receipt: None,
+    };
 }
 
 /// What a projection pass did ([`Vault::project_settings`]).
@@ -171,9 +217,19 @@ pub(super) fn append_act_in_txn(
             }],
         },
     )?;
+    // An act that waits for the owner's proof changes nothing, here as on every other machine:
+    // the door refuses it with the reason, and nothing of the change is stored (module doc).
+    if vault.setting_act_waits_in_txn(txn, signed)? {
+        return Err(Error::Record(RecordError::OwnerKeyRequired));
+    }
     record_signed_entry_in_txn(&vault.store, txn, recorded, signed)?;
     let now = recorded.at;
-    project_target_in_txn(vault, txn, target, now)?;
+    let projected = project_target_in_txn(vault, txn, target, now)?;
+    if projected.changed.is_none()
+        && let Some((standing, with)) = projected.receipt
+    {
+        record_receipt_in_txn(&vault.store, txn, recorded.sequence, standing, with)?;
+    }
     Ok(true)
 }
 
@@ -185,13 +241,20 @@ pub(super) fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec
 }
 
 /// The basis a row's projection records (stage 7b-2): the target's act `revision` while every
-/// act a reader of it meets counts in full here, as stage 7a-2 recorded it; otherwise a
-/// fingerprint of the revision and of each act's count, so a pass reads the row again when a
-/// head's count moves and its revision does not (a removal it raced arrives, a hold ends).
-fn basis_of(revision: [u8; 32], counts: &ChoiceCounts) -> [u8; 32] {
-    if counts
-        .values()
-        .all(|counted| counted.count == ChoiceCount::Full)
+/// act a reader of it meets counts in full here and none waits for the owner's proof, as stage
+/// 7a-2 recorded it; otherwise a fingerprint of the revision, of each act's count and of each
+/// act that waits (stage 7b-3), so a pass reads the row again when a head's count moves and its
+/// revision does not (a removal it raced arrives, a hold ends), and when a proposal arrives or
+/// its ask ends.
+fn basis_of(
+    revision: [u8; 32],
+    counts: &ChoiceCounts,
+    asking: &BTreeSet<AuthorityEntryHash>,
+) -> [u8; 32] {
+    if asking.is_empty()
+        && counts
+            .values()
+            .all(|counted| counted.count == ChoiceCount::Full)
     {
         return revision;
     }
@@ -202,10 +265,35 @@ fn basis_of(revision: [u8; 32], counts: &ChoiceCounts) -> [u8; 32] {
             ChoiceCount::Full => 0,
             ChoiceCount::Safe { held: false } => 1,
             ChoiceCount::Safe { held: true } => 2,
+            ChoiceCount::Disputed => 3,
         };
         basis.part(act).u64(count);
     }
+    if !asking.is_empty() {
+        basis.u64(asking.len() as u64);
+        for act in asking {
+            basis.part(act);
+        }
+    }
     basis.finish().into_bytes()
+}
+
+/// How the acts a reader of one row meets stand by their counts and proposals alone (stage
+/// 7b-3): a proposal that still asks, else a head held back by this install's own counting, else
+/// a safe move the log alone shows, else every act in full. A conflict or a quarantine the
+/// combine finds outranks it.
+fn counted_standing(fold: &SettingSlotFold) -> ChangeStanding {
+    if !fold.asking.is_empty() {
+        return ChangeStanding::Pending;
+    }
+    let counts = || fold.counts.values().map(|counted| counted.count);
+    if counts().any(|count| count == ChoiceCount::Safe { held: true }) {
+        ChangeStanding::Held
+    } else if counts().any(|count| count != ChoiceCount::Full) {
+        ChangeStanding::Narrowed
+    } else {
+        ChangeStanding::Full
+    }
 }
 
 fn target_key(target: EntityId) -> Vec<u8> {
@@ -397,13 +485,27 @@ struct Projected {
     /// The row stays as it is: a quarantined value of a key that names no strictest value, so
     /// no row could read as one (its read would fail).
     keep: bool,
-    standing: SettingStanding,
+    standing: ChangeStanding,
     /// The act the row is credited to.
     deciding: Credit,
+    /// The other live heads the value was met with: the change row's `with` (stage 7b-3).
+    with: Vec<AuthorityEntryHash>,
+}
+
+/// How a walk reads the acts of a row whose key orders its values.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rule {
+    /// The order has a meet: a safe move gives the meet of its value and what it replaced, and
+    /// heads meet.
+    Meet,
+    /// The key's own comparator ([`Order::Custom`], stage 7b-3): a safe move gives its value
+    /// where it is no wider than what it replaced, else what it replaced; of several heads the
+    /// one no wider than every other stands, else the key's strictest value.
+    Comparator,
 }
 
 /// Combines the live heads of one row (module doc), each read by what it counts for here
-/// (stage 7b-2).
+/// (stage 7b-2; the comparator, a disputed act, the standing and `with` stage 7b-3).
 fn combine(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -414,14 +516,36 @@ fn combine(
     let Some(newest) = heads.first() else {
         return Ok(Err(Inert::ForNow));
     };
-    let strictest = spec.kind.strictest_value()?.is_some();
+    let strictest = spec.kind.strictest_value()?;
+    let others = |deciding: &Credit| -> Vec<AuthorityEntryHash> {
+        heads
+            .iter()
+            .map(|head| head.act)
+            .filter(|act| *act != deciding.act)
+            .collect()
+    };
     let quarantined = || Projected {
         value: Some(EncodedValue(vec![UNREADABLE_VALUE])),
-        keep: !strictest,
-        standing: SettingStanding::Quarantined,
+        keep: strictest.is_none(),
+        standing: ChangeStanding::Quarantined,
         deciding: newest.credit(),
+        with: others(&newest.credit()),
     };
-    if spec.kind.order().has_meet() {
+    // Two copies of one act the row's reading meets disagree: what it says cannot be read.
+    if fold
+        .counts
+        .values()
+        .any(|counted| counted.count == ChoiceCount::Disputed)
+    {
+        return Ok(Ok(quarantined()));
+    }
+    let counted = counted_standing(fold);
+    let rule = match spec.kind.order() {
+        order if order.has_meet() => Some(Rule::Meet),
+        Order::Custom => Some(Rule::Comparator),
+        _ => None,
+    };
+    if let Some(rule) = rule {
         let empty = if is_vault_value_row(&newest.slot) {
             Some(layer_default_in_txn(&vault.store, txn, spec)?.value)
         } else {
@@ -434,8 +558,11 @@ fn combine(
             target,
             slot: &newest.slot,
             counts: &fold.counts,
+            rule,
+            strictest: strictest.clone(),
             empty,
             given: BTreeMap::new(),
+            conflict: Cell::new(false),
         };
         let mut given = Vec::with_capacity(heads.len());
         let mut inert = None;
@@ -451,14 +578,21 @@ fn combine(
         if let Some(why) = inert {
             return Ok(Err(why));
         }
-        let Ok(met) = walk.meet_all(given) else {
+        let Ok(joined) = walk.join(given) else {
             return Ok(Ok(quarantined()));
         };
+        let standing = if walk.conflict.get() {
+            ChangeStanding::Conflict
+        } else {
+            counted
+        };
+        let deciding = newest.credit();
         return Ok(Ok(Projected {
-            value: met,
+            value: joined,
             keep: false,
-            standing: SettingStanding::Settled,
-            deciding: newest.credit(),
+            standing,
+            with: others(&deciding),
+            deciding,
         }));
     }
     for head in heads {
@@ -466,20 +600,22 @@ fn combine(
             return Ok(Ok(quarantined()));
         }
     }
-    // No order, a neutral or a custom key: nothing is safer than anything else, so an act that
-    // does not count in full gives what it replaced, and heads that differ conflict: the last
-    // value every head descends from stays (owner_choice.rs `in_force`), or no row.
+    // No order or a neutral key: nothing is safer than anything else, so an act that does not
+    // count in full gives what it replaced, and heads that differ conflict: the last value every
+    // head descends from stays (owner_choice.rs `in_force`), or no row.
     let standing = if fold.conflict {
-        SettingStanding::Conflict
+        ChangeStanding::Conflict
     } else {
-        SettingStanding::Settled
+        counted
     };
     let Some(agreed) = &fold.in_force else {
+        let deciding = newest.credit();
         return Ok(Ok(Projected {
             value: None,
             keep: false,
             standing,
-            deciding: newest.credit(),
+            with: others(&deciding),
+            deciding,
         }));
     };
     let agreed = match head_of(agreed) {
@@ -488,12 +624,16 @@ fn combine(
         Err(Inert::ForNow) => return Ok(Err(Inert::ForNow)),
     };
     Ok(Ok(match value_of(vault, txn, spec, &agreed)? {
-        Ok(value) => Projected {
-            value,
-            keep: false,
-            standing,
-            deciding: agreed.credit(),
-        },
+        Ok(value) => {
+            let deciding = agreed.credit();
+            Projected {
+                value,
+                keep: false,
+                standing,
+                with: others(&deciding),
+                deciding,
+            }
+        }
         Err(()) => quarantined(),
     }))
 }
@@ -507,12 +647,12 @@ enum Short {
     Inert(Inert),
 }
 
-/// The walk of one row's acts on a key whose order has a meet (stage 7b-2; DESIGN 1.6, "The
-/// read of one slot"): what each act gives the row, by what it counts for here
-/// ([`ChoiceCount`]). An act that counts in full gives its own value; a safe move gives the
-/// stricter of its own value and what the acts it replaced give, each read the same way, so it
-/// can narrow and never widens. `None` is no row: a clear's, or the empty slot's, which an act
-/// that replaced nothing replaced.
+/// The walk of one row's acts on a key that orders its values (stage 7b-2; DESIGN 1.6, "The
+/// read of one slot"; the comparator stage 7b-3): what each act gives the row, by what it counts
+/// for here ([`ChoiceCount`]). An act that counts in full gives its own value; a safe move gives
+/// the stricter of its own value and what the acts it replaced give, each read the same way, so
+/// it can narrow and never widens ([`Rule`]). `None` is no row: a clear's, or the empty slot's,
+/// which an act that replaced nothing replaced.
 struct Walk<'v, 't> {
     vault: &'v Vault,
     txn: &'v heed::RoTxn<'t>,
@@ -520,12 +660,18 @@ struct Walk<'v, 't> {
     target: EntityId,
     slot: &'v RowKey,
     counts: &'v ChoiceCounts,
-    /// What no row gives where it meets a value: the accepted default on the vault value row (a
-    /// first row there that counts as a safe move lands only as far as it narrows the default),
-    /// no bound on any other row (a first row there lands whole: adding a row only narrows).
+    rule: Rule,
+    /// The key's strictest value: what heads no comparator orders give.
+    strictest: Option<EncodedValue>,
+    /// What no row gives where it meets a value: the accepted default on a vault value row, the
+    /// item's as the item-less one (a first row there that counts as a safe move lands only as
+    /// far as it narrows the default), no bound on any other row (a first row there lands whole:
+    /// adding a row only narrows).
     empty: Option<EncodedValue>,
     /// What each act read so far gives.
     given: BTreeMap<AuthorityEntryHash, Option<EncodedValue>>,
+    /// Whether the comparator found heads none of which is no wider than every other.
+    conflict: Cell<bool>,
 }
 
 impl Walk<'_, '_> {
@@ -566,10 +712,10 @@ impl Walk<'_, '_> {
                     .replaced
                     .iter()
                     .map(|replaced| self.given.get(replaced).cloned().flatten());
-                let Ok(from) = self.meet_all(from.collect::<Vec<_>>()) else {
+                let Ok(from) = self.join(from.collect::<Vec<_>>()) else {
                     return Ok(Err(Short::Unreadable));
                 };
-                let Ok(gives) = self.meet(own, from) else {
+                let Ok(gives) = self.safe_move(own, from) else {
                     return Ok(Err(Short::Unreadable));
                 };
                 gives
@@ -596,6 +742,83 @@ impl Walk<'_, '_> {
             Err(why) => return Ok(Err(Short::Inert(why))),
         };
         Ok(value_of(self.vault, self.txn, self.spec, &head)?.map_err(|()| Short::Unreadable))
+    }
+
+    /// What the heads or replaced acts `given` give the row together, by the walk's rule: their
+    /// meet ([`Self::meet_all`]), or the one no wider than every other
+    /// ([`Self::no_wider_of_all`]). No row when there is none.
+    fn join(
+        &self,
+        given: Vec<Option<EncodedValue>>,
+    ) -> std::result::Result<Option<EncodedValue>, ()> {
+        match self.rule {
+            Rule::Meet => self.meet_all(given),
+            Rule::Comparator => self.no_wider_of_all(&given),
+        }
+    }
+
+    /// What a safe move of value `own` over `from`, what it replaced, gives, by the walk's rule:
+    /// their meet; or `own` where the comparator says it is no wider than `from`, else `from`.
+    fn safe_move(
+        &self,
+        own: Option<EncodedValue>,
+        from: Option<EncodedValue>,
+    ) -> std::result::Result<Option<EncodedValue>, ()> {
+        match self.rule {
+            Rule::Meet => self.meet(own, from),
+            Rule::Comparator => Ok(if self.no_wider(own.as_ref(), from.as_ref())? {
+                own
+            } else {
+                from
+            }),
+        }
+    }
+
+    /// Whether `left` is no wider than `right` under the key's comparator. No row reads as what
+    /// no row gives here ([`Self::empty`]). Where that is no row too: two of them are equal; a
+    /// value is no wider than no row on a value row (adding a bound only narrows) and not on a
+    /// pin (no pin leaves the value rows to decide, so a pin may widen them); no row is no
+    /// narrower than a value. `Err` where the comparator cannot judge the two values.
+    fn no_wider(
+        &self,
+        left: Option<&EncodedValue>,
+        right: Option<&EncodedValue>,
+    ) -> std::result::Result<bool, ()> {
+        let left = left.or(self.empty.as_ref());
+        let right = right.or(self.empty.as_ref());
+        match (left, right) {
+            (None, None) => Ok(true),
+            (Some(_), None) => Ok(self.slot.mode != SettingMode::Pin),
+            (None, Some(_)) => Ok(false),
+            (Some(left), Some(right)) => self.spec.kind.no_wider(left, right).ok_or(()),
+        }
+    }
+
+    /// The first of `given` that is no wider than every other ([`Self::no_wider`]); where none
+    /// is, the key's strictest value, and the row is in conflict. No row when `given` is empty.
+    /// `Err` where the comparator cannot judge two of them, or the key names no strictest value
+    /// for heads it cannot order.
+    fn no_wider_of_all(
+        &self,
+        given: &[Option<EncodedValue>],
+    ) -> std::result::Result<Option<EncodedValue>, ()> {
+        for (index, candidate) in given.iter().enumerate() {
+            let mut stands = true;
+            for (other_index, other) in given.iter().enumerate() {
+                if index != other_index && !self.no_wider(candidate.as_ref(), other.as_ref())? {
+                    stands = false;
+                    break;
+                }
+            }
+            if stands {
+                return Ok(candidate.clone());
+            }
+        }
+        if given.is_empty() {
+            return Ok(None);
+        }
+        self.conflict.set(true);
+        self.strictest.clone().map(Some).ok_or(())
     }
 
     /// The meet of what each of `given` gives the row ([`Self::meet`], folded from the first):
@@ -635,27 +858,31 @@ impl Walk<'_, '_> {
     }
 }
 
+/// Whether `slot` is a vault value row, the item's or the item-less one: its empty slot gives the
+/// accepted default (DESIGN 1.6, "What the empty slot gives"; the item's row stage 7b-3), since a
+/// read with no item-less vault row starts from the item's row alone.
 fn is_vault_value_row(slot: &RowKey) -> bool {
-    slot.item.is_none() && slot.mode == SettingMode::Value && slot.scope == SettingScope::Vault
+    slot.mode == SettingMode::Value && slot.scope == SettingScope::Vault
 }
 
 /// Projects the row the acts on `target` name, in `txn`, at `now`, when the target's basis
-/// ([`basis_of`]) moved since its last projection. Returns the key whose row changed.
+/// ([`basis_of`]) moved since its last projection. Returns the key whose row changed, and the
+/// receipt of the acts the row came from.
 pub(super) fn project_target_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     target: EntityId,
     now: u64,
-) -> Result<Option<&'static SettingSpec>> {
+) -> Result<TargetProjected> {
     let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
-        return Ok(None);
+        return Ok(TargetProjected::UNMOVED);
     };
-    let basis = basis_of(fold.revision, &fold.counts);
+    let basis = basis_of(fold.revision, &fold.counts, &fold.asking);
     if PROJECTIONS
         .get(&vault.store, txn, &target_key(target))?
         .is_some_and(|projection| projection.basis == basis)
     {
-        return Ok(None);
+        return Ok(TargetProjected::UNMOVED);
     }
     let inert = |why: Inert| (target, basis, why);
     let heads = match fold
@@ -668,7 +895,22 @@ pub(super) fn project_target_in_txn(
         Err(why) => return leave_in_txn(vault, txn, inert(why)),
     };
     let Some(slot) = heads.first().map(|head| head.slot.clone()) else {
-        return Ok(None);
+        // Only proposals name the row: they change nothing, and it reads `Pending` while they
+        // ask (stage 7b-3).
+        if !fold.asking.is_empty() {
+            PROJECTIONS.put(
+                &vault.store,
+                txn,
+                &target_key(target),
+                &Projection {
+                    slot: Vec::new(),
+                    basis,
+                    standing: SettingStanding::Pending,
+                    pin_read_as_value: false,
+                },
+            )?;
+        }
+        return Ok(TargetProjected::UNMOVED);
     };
     if heads.iter().any(|head| head.slot != slot) {
         return leave_in_txn(vault, txn, inert(Inert::ForGood));
@@ -706,6 +948,15 @@ pub(super) fn project_target_in_txn(
     let projected = met_with_local(spec, projected, bound.as_ref());
     let local = kept.and_then(|row| row.local);
     let changed = write_row_in_txn(vault, txn, spec, &slot, &projected, local.as_ref(), now)?;
+    // A pin keeps its release only while every act it comes from counts in full here: one that
+    // counts as a safe move keeps its value and is read as a value row (DESIGN 1.6, "The read
+    // of one slot", step 3). A pin on a key with no meet never takes a safe move's own value.
+    let pin_read_as_value = slot.mode == SettingMode::Pin
+        && spec.kind.order().has_meet()
+        && fold
+            .counts
+            .values()
+            .any(|counted| counted.count != ChoiceCount::Full);
     PROJECTIONS.put(
         &vault.store,
         txn,
@@ -713,10 +964,14 @@ pub(super) fn project_target_in_txn(
         &Projection {
             slot: slot.encode(),
             basis,
-            standing: projected.standing,
+            standing: projected.standing.read_as(),
+            pin_read_as_value,
         },
     )?;
-    Ok(changed.then_some(spec))
+    Ok(TargetProjected {
+        changed: changed.then_some(spec),
+        receipt: Some((projected.standing, projected.with)),
+    })
 }
 
 /// The carried row `slot` as stored here, which bounds its projection (stage 7a-4): by the bound
@@ -749,7 +1004,7 @@ fn met_with_local(
     let Some(local) = local else {
         return projected;
     };
-    if projected.keep || projected.standing == SettingStanding::Quarantined {
+    if projected.keep || projected.standing == ChangeStanding::Quarantined {
         return projected;
     }
     projected.value = Some(match projected.value.take() {
@@ -768,7 +1023,7 @@ fn leave_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     (target, basis, why): (EntityId, [u8; 32], Inert),
-) -> Result<Option<&'static SettingSpec>> {
+) -> Result<TargetProjected> {
     if matches!(why, Inert::ForGood) {
         PROJECTIONS.put(
             &vault.store,
@@ -778,10 +1033,11 @@ fn leave_in_txn(
                 slot: Vec::new(),
                 basis,
                 standing: SettingStanding::Settled,
+                pin_read_as_value: false,
             },
         )?;
     }
-    Ok(None)
+    Ok(TargetProjected::UNMOVED)
 }
 
 /// Writes `projected` as the row `slot` of `spec` when it differs from the stored row, or the
@@ -846,6 +1102,8 @@ fn write_row_in_txn(
             direction: None,
             surface,
             signed: Some(deciding.act),
+            with: projected.with.clone(),
+            standing: Some(projected.standing),
         },
     )?;
     match &projected.value {
@@ -896,6 +1154,26 @@ pub(crate) fn forget_projected_rows_in_txn(
         PROJECTIONS.delete(&vault.store, txn, &target)?;
     }
     Ok(forgotten)
+}
+
+/// Whether the pin row `slot` reads as a value row at its scope (stage 7b-3): its projection
+/// found an act it comes from that does not count in full here, so it narrows and releases
+/// nothing. A pin no projection wrote reads as a pin.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn pin_reads_as_value_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    slot: &RowKey,
+) -> Result<bool> {
+    if slot.mode != SettingMode::Pin {
+        return Ok(false);
+    }
+    Ok(PROJECTIONS
+        .get(dbs, txn, &target_key(setting_slot_target(slot)?))?
+        .is_some_and(|projection| projection.pin_read_as_value))
 }
 
 /// How the acts behind the rows of `spec` a read walks stand: the least settled of the pin, value
@@ -971,11 +1249,11 @@ impl Vault {
                 return Ok(SettingsProjected::default());
             }
             let mut moved = Vec::new();
-            for (target, revision, counts) in self.policy_setting_revisions_in_txn(&txn)? {
-                let basis = basis_of(revision, &counts);
-                let projected = PROJECTIONS.get(&self.store, &txn, &target_key(target))?;
+            for target in self.policy_setting_revisions_in_txn(&txn)? {
+                let basis = basis_of(target.revision, &target.counts, &target.asking);
+                let projected = PROJECTIONS.get(&self.store, &txn, &target_key(target.target))?;
                 if projected.is_none_or(|projection| projection.basis != basis) {
-                    moved.push(target);
+                    moved.push(target.target);
                 }
             }
             moved
@@ -987,7 +1265,7 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut changed = Vec::new();
             for target in &moved {
-                if let Some(spec) = project_target_in_txn(self, txn, *target, now)? {
+                if let Some(spec) = project_target_in_txn(self, txn, *target, now)?.changed {
                     changed.push(spec);
                 }
             }

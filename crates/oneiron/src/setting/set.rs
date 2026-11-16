@@ -521,6 +521,8 @@ fn set_in_txn(
             direction: Some(direction),
             surface,
             signed: None,
+            with: Vec::new(),
+            standing: None,
         },
     )?;
     let revision = match change.value {

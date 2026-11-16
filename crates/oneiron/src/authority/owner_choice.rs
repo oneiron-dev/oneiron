@@ -375,6 +375,22 @@ impl<P> OwnerChoiceState<P> {
             .map(|(hash, _)| *hash)
     }
 
+    /// [`Self::asking`] by target: each target that has a waiting choice that still asks, with
+    /// those choices (the Setting's stage 7b-3 reads a setting row's proposals from it).
+    pub(super) fn asking_by_target(&self) -> BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>> {
+        self.waiting
+            .iter()
+            .filter_map(|(target, waiting)| {
+                let asking: BTreeSet<AuthorityEntryHash> = waiting
+                    .iter()
+                    .filter(|(_, answered)| !**answered)
+                    .map(|(hash, _)| *hash)
+                    .collect();
+                (!asking.is_empty()).then_some((*target, asking))
+            })
+            .collect()
+    }
+
     /// Lands a valid choice: a refused one is kept without effect, a
     /// waiting one is kept for the owner's confirm, and a recorded one
     /// supersedes the live choices of its target; the owner's own also ends
@@ -464,12 +480,15 @@ pub(crate) enum ChoiceCount {
     /// It counts at full strength here ([`counts_here`]): any move.
     Full,
     /// Its decider is proved and the entry is in doubt here (its carrier raced its removal, it
-    /// landed restriction only, this install's holds keep its carrier back, or two copies of it
-    /// disagree): a safe move, which gives no more than what it replaced. `held` when only this
-    /// install's own counting makes the doubt, so a machine with the same log may count it in
-    /// full; not held when the log alone shows it (the removal race fails pin-free, or two copies
-    /// disagree).
+    /// landed restriction only, or this install's holds keep its carrier back): a safe move,
+    /// which gives no more than what it replaced. `held` when only this install's own counting
+    /// makes the doubt, so a machine with the same log may count it in full; not held when the
+    /// log alone shows it (the removal race fails pin-free).
     Safe { held: bool },
+    /// Two copies of it disagree (DESIGN 1.6, "Fold states": quarantined; the Setting's stage
+    /// 7b-3): what it says cannot be read, so the row it bears on reads the key's strictest value
+    /// until an act that saw it replaces it.
+    Disputed,
 }
 
 /// One choice's count, with the choices it replaced.
@@ -491,14 +510,16 @@ fn count_of<P>(
     if counts_here(standing, hash, choice) {
         return ChoiceCount::Full;
     }
-    let logged = choice.disputed
-        || !standing.owner_act_race(
-            choice.machine,
-            hash,
-            &choice.key,
-            &choice.marks,
-            StandingView::Under(MachineAdmitter::Roster),
-        );
+    if choice.disputed {
+        return ChoiceCount::Disputed;
+    }
+    let logged = !standing.owner_act_race(
+        choice.machine,
+        hash,
+        &choice.key,
+        &choice.marks,
+        StandingView::Under(MachineAdmitter::Roster),
+    );
     ChoiceCount::Safe { held: !logged }
 }
 
