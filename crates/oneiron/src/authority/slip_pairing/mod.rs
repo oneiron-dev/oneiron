@@ -124,9 +124,10 @@ pub(crate) struct PendingInvitationLink {
     pub(crate) invitation: String,
 }
 /// The owner's approval a single-use machine link keeps (mesh PR1b C2): his
-/// act's owner, by, surface and kind, and his answer. Redemption fills the
-/// act's target (the redeeming machine) and `seen` (its revision on the
-/// carrier, zero for a new machine), and the carrier signs.
+/// act's owner, by, surface and kind, and his answer of whose the machine
+/// is, or none for a hosted node (L10-16). Redemption fills the act's target
+/// (the redeeming machine) and `seen` (its revision on the carrier, zero for
+/// a new machine), and the carrier signs.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PendingMachine {
@@ -134,14 +135,39 @@ struct PendingMachine {
     by: ActBy,
     surface: ActSurface,
     kind: OwnerActKind,
-    ownership: MachineOwnership,
+    /// His answer, for a machine link. A hosted node's link holds none: a
+    /// hosted node starts not-mine, and no answer names it. A link stored
+    /// before hosted-node links holds his answer under this key and redeems
+    /// as it did (M-1 keep).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ownership: Option<MachineOwnership>,
+}
+
+impl PendingMachine {
+    /// The role the redeemed machine joins in: `Owned(..)` under his answer,
+    /// and a hosted node where the link holds none.
+    fn role(&self) -> MachineRole {
+        self.ownership
+            .map_or(MachineRole::HostedNode, MachineRole::Owned)
+    }
+}
+
+/// The owner's act a machine link keeps: the pairing act for his answer of
+/// whose the machine is, and a machine answer for a hosted node, which no
+/// such answer names, as [`Vault::enroll_machine`] lands one. The roster
+/// takes a pairing act only for an `Owned(..)` first revision.
+fn pairing_act_kind(ownership: Option<MachineOwnership>) -> OwnerActKind {
+    if ownership.is_some() {
+        OwnerActKind::Pairing
+    } else {
+        OwnerActKind::MachineAnswer
+    }
 }
 
 /// Crockford base32: no `I`, `L`, `O` or `U`, so a code survives being read
 /// aloud or typed from a screen.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LEN: usize = 8;
-const CODE_TTL_SECS: u64 = 60 * 60;
 const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
 
 mod code;
