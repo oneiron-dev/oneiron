@@ -1,7 +1,7 @@
-//! Fixture doors for the peer-route and home-election full-copy tests
-//! (L7-47; HOME-ELECTION-NEEDS-FULL-COPY): a machine the owner marks as
-//! their own, another machine's home candidacy and full-copy mark signed
-//! under that machine's own key, and the fold reads the peer order runs on.
+//! Fixture doors for the peer-route full-copy test (L7-47): a machine the
+//! owner marks as their own, another machine's home candidacy and full-copy
+//! mark signed under that machine's own key, and the fold reads the peer
+//! order runs on.
 
 use ed25519_dalek::{Signer, SigningKey};
 
