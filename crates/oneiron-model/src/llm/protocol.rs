@@ -331,6 +331,12 @@ impl LlmUsage {
     /// of the rung that answered. The host's own stamp, not a wire label.
     pub const SERVED_MODEL_ID_KEY: &'static str = "model_id";
 
+    /// Key in a ladder's served receipt naming the cached prefix the
+    /// provider confirmed for this answer: a [`ServedCacheHorizon`]. The
+    /// host's own stamp, written only when the provider reported writing or
+    /// reading the prefix its send noted.
+    pub const SERVED_CACHE_HORIZON_KEY: &'static str = "cache_horizon";
+
     #[must_use]
     pub fn zero() -> Self {
         Self {
@@ -348,11 +354,7 @@ impl LlmUsage {
     /// stamped the answer.
     #[must_use]
     pub fn served_provider(&self) -> Option<&str> {
-        let receipt = self.raw_provider.as_object()?;
-        if !receipt.get("rung").is_some_and(JsonValue::is_u64) || !receipt.contains_key("usage") {
-            return None;
-        }
-        receipt
+        self.served_receipt()?
             .get(Self::SERVED_PROVIDER_KEY)?
             .as_str()
             .map(str::trim)
@@ -366,15 +368,59 @@ impl LlmUsage {
     /// stamped the model id.
     #[must_use]
     pub fn served_model_id(&self) -> Option<&str> {
-        let receipt = self.raw_provider.as_object()?;
-        if !receipt.get("rung").is_some_and(JsonValue::is_u64) || !receipt.contains_key("usage") {
-            return None;
-        }
-        receipt
+        self.served_receipt()?
             .get(Self::SERVED_MODEL_ID_KEY)?
             .as_str()
             .map(str::trim)
             .filter(|model_id| !model_id.is_empty())
+    }
+
+    /// The cached prefix a host's model ladder says the provider confirmed
+    /// for this call: the served receipt's
+    /// [`Self::SERVED_CACHE_HORIZON_KEY`]. `None` when no ladder stamped one:
+    /// a route whose cache the ladder does not know, or an answer that
+    /// reported no write or read of the prefix its send noted.
+    #[must_use]
+    pub fn served_cache_horizon(&self) -> Option<ServedCacheHorizon> {
+        let stamped = self.served_receipt()?.get(Self::SERVED_CACHE_HORIZON_KEY)?;
+        ServedCacheHorizon::deserialize(stamped).ok()
+    }
+
+    /// The served receipt a host's model ladder left on this call. A served
+    /// receipt names its rung and holds the provider's own usage under
+    /// `usage`, so a provider's usage object is never read as one.
+    fn served_receipt(&self) -> Option<&JsonMap<String, JsonValue>> {
+        let receipt = self.raw_provider.as_object()?;
+        if !receipt.get("rung").is_some_and(JsonValue::is_u64) || !receipt.contains_key("usage") {
+            return None;
+        }
+        Some(receipt)
+    }
+}
+
+/// A cached prompt prefix as the provider confirmed it for one answer: the
+/// wall-clock instant its send went out, the lifetime the provider keeps it
+/// for from that send, and its extent. A provider measures the lifetime from
+/// the start of the request that wrote or read the entry, so the prefix
+/// expires at [`Self::expires_unix_ms`] unless a later send reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServedCacheHorizon {
+    /// Milliseconds since the Unix epoch at which the send went out.
+    pub sent_unix_ms: u64,
+    /// Seconds the provider keeps the prefix from that send.
+    pub lifetime_secs: u32,
+    /// The prefix's extent in prompt tokens: what the provider read of it
+    /// plus what it wrote.
+    pub tokens: u64,
+}
+
+impl ServedCacheHorizon {
+    /// Milliseconds since the Unix epoch at which the provider lets the
+    /// prefix go.
+    #[must_use]
+    pub fn expires_unix_ms(&self) -> u64 {
+        self.sent_unix_ms
+            .saturating_add(u64::from(self.lifetime_secs).saturating_mul(1_000))
     }
 }
 

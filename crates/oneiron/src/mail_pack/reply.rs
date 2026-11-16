@@ -830,7 +830,10 @@ impl Memory<'_> {
                 .into_iter()
                 .chain(row.own_addresses.iter().cloned())
                 .collect();
-        let recipients = reply_recipients(&parent, &own, input.reply_all, &input.cc)?;
+        // The owner's ceiling on how many people one reply names.
+        let max_recipients = super::setting_keys::reply_max_recipients(vault)?;
+        let recipients =
+            reply_recipients(&parent, &own, input.reply_all, &input.cc, max_recipients)?;
         // The HTML as it would send, so a redraft of the same words is the
         // same revision (fix list row 17645).
         let html = input
