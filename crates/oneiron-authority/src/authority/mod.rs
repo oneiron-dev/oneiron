@@ -16,6 +16,7 @@
 
 mod act_rule;
 mod agent_grant_act;
+mod carrier_signature;
 mod checkpoint_policy;
 mod comm_reach;
 mod confirm;
@@ -28,6 +29,7 @@ mod device_succession;
 mod export_act;
 mod federation_pact;
 mod frontier_join;
+mod full_copy_mark;
 mod grant_act;
 mod grant_travel;
 mod home_candidacy;
@@ -58,6 +60,7 @@ mod world_privacy;
 
 pub use act_rule::*;
 pub use agent_grant_act::*;
+pub use carrier_signature::*;
 pub use checkpoint_policy::*;
 pub use comm_reach::*;
 pub use confirm::*;
@@ -70,6 +73,7 @@ pub use device_succession::*;
 pub use export_act::*;
 pub use federation_pact::*;
 pub use frontier_join::*;
+pub use full_copy_mark::*;
 pub use grant_act::*;
 pub use grant_travel::*;
 pub use home_candidacy::*;

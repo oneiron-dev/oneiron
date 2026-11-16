@@ -107,10 +107,11 @@ use oneiron_store::extraction_work;
 
 pub mod ports {
     pub use crate::ports::{
-        BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
-        EdgeDirection, EdgeStore, EntityRecord, EntityStore, IdGen, JobQueue, JobScope,
-        ManualClock, PlaceStore, RetrievalIndex, ShortIdStore, SourceSpan, StoreClock,
-        TombstoneStore, Transactions, safe_read_asset_text, safe_read_text,
+        AssetTextRead, AssetTextValidity, BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp,
+        ClaimStore, Clock, DependencyIndex, EdgeDirection, EdgeStore, EntityRecord, EntityStore,
+        IdGen, JobQueue, JobScope, ManualClock, PlaceStore, RetrievalIndex, ShortIdStore,
+        SourceSpan, StoreClock, TombstoneStore, Transactions, safe_read_asset_text,
+        safe_read_asset_text_diagnostic, safe_read_text,
     };
     pub use crate::ports::{
         ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
@@ -220,6 +221,8 @@ pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::pad_object_membership;
 pub mod person_billing_account;
+// L6-22: the PERSON party-key index the do-not-contact scan reads.
+pub(crate) mod person_party_keys;
 pub mod positive_skill_proposals;
 pub(crate) mod project_kind;
 pub mod proposal_spool;
