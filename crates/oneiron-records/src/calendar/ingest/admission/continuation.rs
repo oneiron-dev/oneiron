@@ -23,4 +23,10 @@ pub struct IcsPropertyContinuationPayload {
     pub uid: String,
     /// A detached occurrence's original start; `None` for the event itself.
     pub recurrence_id_utc: Option<u64>,
+    /// Whether the run applies an approved passport revision: one that
+    /// waited for review over an admitted head, so its import moved nothing
+    /// of the EVENT, and the run admits its properties and its status. A
+    /// payload written without it reads as a plain continuation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admitted_revision: bool,
 }

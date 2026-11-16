@@ -334,11 +334,25 @@ pub(in crate::calendar) fn classify_event_passport(
     Ok(PassportDecision::SkipUnchanged { event_ref })
 }
 
+/// What filing a passport revision did to the admitted head of its
+/// `(system × UID)` ([`revise_passport_in_txn`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassportRevision {
+    /// No admitted passport carried the key: the revision replaced only
+    /// waiting or rejected filings, and nothing had authority to keep.
+    NoAdmittedHead,
+    /// The revision landed admitted and closed the admitted head at once.
+    HeadClosed,
+    /// The revision waits for review: the head's closure is staged, and the
+    /// owner's approval of the revision completes it in the approving write.
+    HeadStaged,
+}
+
 /// Files `new_id`, which its caller already admitted through the Gate door,
 /// as the next revision of exactly `(system × UID)` on `event_ref`, never
 /// touching a sibling source's passport on the same EVENT
 /// ([`revise_passport_in_txn`]): the admitted head stays the head until
-/// `new_id` is approved.
+/// `new_id` is approved. Answers what the filing did to that head.
 ///
 /// Admission is the caller's half and runs FIRST, through CAL-09's
 /// `screen_then_claim` hook and the imported-evidence Gate door
@@ -357,13 +371,10 @@ pub fn supersede_calendar_passport(
     uid: &str,
     new_id: &EntityId,
     recorded_at: u64,
-) -> Result<(), CalendarError> {
+) -> Result<PassportRevision, CalendarError> {
     vault.try_with_write_txn_grouped(|txn| {
-        if revise_passport_in_txn(vault, txn, &event_ref, system, uid, new_id, recorded_at)? {
-            Ok(())
-        } else {
-            Err(ingest("no live passport carries this (system, uid) pair"))
-        }
+        revise_passport_in_txn(vault, txn, &event_ref, system, uid, new_id, recorded_at)?
+            .ok_or_else(|| ingest("no live passport carries this (system, uid) pair"))
     })
 }
 
@@ -381,7 +392,8 @@ pub fn supersede_calendar_passport(
 /// `new_id` completes it in the approving write, and a rejection drops it, so
 /// the head keeps its authority while the revision waits and after it is
 /// rejected. A `new_id` that landed admitted closes the head at once. Answers
-/// whether any live passport, rejected ones included, carried the key.
+/// what the filing did to the admitted head, or `None` when no live passport,
+/// rejected ones included, carried the key.
 ///
 /// # Errors
 ///
@@ -395,7 +407,7 @@ pub(in crate::calendar) fn revise_passport_in_txn(
     uid: &str,
     new_id: &EntityId,
     now: u64,
-) -> Result<bool, CalendarError> {
+) -> Result<Option<PassportRevision>, CalendarError> {
     let mut found = false;
     let mut head = None;
     let mut waiting = Vec::new();
@@ -443,17 +455,22 @@ pub(in crate::calendar) fn revise_passport_in_txn(
         )?;
         vault.supersede_claim_in_txn(txn, new_id, &old, now)?;
     }
-    if let Some(head) = head {
-        let landed = vault
-            .get_claim_in_txn(txn, new_id)?
-            .is_some_and(|body| claim_surfaceable(&body));
-        if landed {
-            vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
-        } else {
-            vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
-        }
+    if !found {
+        return Ok(None);
     }
-    Ok(found)
+    let Some(head) = head else {
+        return Ok(Some(PassportRevision::NoAdmittedHead));
+    };
+    let landed = vault
+        .get_claim_in_txn(txn, new_id)?
+        .is_some_and(|body| claim_surfaceable(&body));
+    if landed {
+        vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
+        Ok(Some(PassportRevision::HeadClosed))
+    } else {
+        vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
+        Ok(Some(PassportRevision::HeadStaged))
+    }
 }
 
 /// Points the UID index at `event_ref`. Called when a passport is minted;

@@ -8,8 +8,14 @@
 //! archived version the pass admitted from again (an ICS feed version, or a
 //! connector's pulled resource, FIX 12163) and admits the next pass's worth
 //! the same way, through the same screen and gate, until nothing is owed. A
-//! continuation whose event is gone, or whose passport names other content
-//! now, settles with nothing to do: the pass that moved it on reconciled it.
+//! continuation whose event is gone, or whose governing passport names other
+//! content now, settles with nothing to do: the pass that moved it on
+//! reconciled it.
+//!
+//! The owner's approval of a passport revision that waited over an admitted
+//! head queues one too, in revision mode: its import moved nothing of the
+//! EVENT, so the run admits the revision's properties and its status
+//! (FIX PASSPORT-REVISION-REWRITES-EVENT-BEFORE-APPROVAL).
 
 use sha2::{Digest, Sha256};
 
@@ -17,7 +23,7 @@ use super::*;
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::ingest::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS;
-use crate::calendar::passport::live_passport_for;
+use crate::calendar::passport::{admitted_passport_for_in_txn, live_passport_for_in_txn};
 
 /// Attempt kind for one event's queued property continuation.
 pub const ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND: &str = "calendar.ics.property_continuation";
@@ -103,37 +109,57 @@ impl PollAdmission<'_> {
                 event_ref: event_ref.to_hex(),
                 uid,
                 recurrence_id_utc,
+                admitted_revision: false,
             };
-            let bytes = serde_json::to_vec(&payload)
-                .map_err(|_| ingest("property continuation payload did not encode"))?;
             // One row per event, admitted version and count still owed: the
             // run that queues the next pass's row while its own is leased is
             // not folded into it.
-            let parts: [&[u8]; 4] = [
-                payload.system.as_bytes(),
-                payload.blob_ref.as_bytes(),
-                payload.source_version.as_bytes(),
-                payload.event_ref.as_bytes(),
-            ];
-            let identity = Sha256::digest(parts.join(&0_u8));
-            let dedupe_key =
-                format!("{ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND}:{identity:x}:owed:{owed}");
             self.vault.with_write_txn_grouped(|txn| {
-                crate::ports::JobQueue::port_job_enqueue(
+                enqueue_property_continuation_in_txn(
                     self.vault,
                     txn,
-                    EnqueueAttempt {
-                        kind: ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND.to_owned(),
-                        payload: bytes,
-                        dedupe_key: Some(dedupe_key),
-                        run_id: None,
-                        now: self.now,
-                    },
+                    &payload,
+                    &format!("owed:{owed}"),
+                    self.now,
                 )
             })?;
         }
         Ok(())
     }
+}
+
+/// Queues the continuation `payload` names in `txn`, one row per event,
+/// source, read version and `key` (its count owed, or its revision mode).
+pub(super) fn enqueue_property_continuation_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    payload: &IcsPropertyContinuationPayload,
+    key: &str,
+    now: u64,
+) -> crate::Result<()> {
+    let bytes = serde_json::to_vec(payload).map_err(|_| {
+        crate::Error::InvariantViolation("property continuation payload did not encode")
+    })?;
+    let parts: [&[u8]; 4] = [
+        payload.system.as_bytes(),
+        payload.blob_ref.as_bytes(),
+        payload.source_version.as_bytes(),
+        payload.event_ref.as_bytes(),
+    ];
+    let identity = Sha256::digest(parts.join(&0_u8));
+    crate::ports::JobQueue::port_job_enqueue(
+        vault,
+        txn,
+        EnqueueAttempt {
+            kind: ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND.to_owned(),
+            payload: bytes,
+            dedupe_key: Some(format!(
+                "{ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND}:{identity:x}:{key}"
+            )),
+            run_id: None,
+            now,
+        },
+    )
 }
 
 /// Runs one queued property continuation: the event's next pass of property
@@ -180,9 +206,20 @@ pub(in crate::calendar::ingest) fn run_ics_property_continuation_admitting(
     }) else {
         return Ok(Vec::new());
     };
-    if !live_passport_for(vault, &event_ref, &payload.system, &payload.uid)?
-        .is_some_and(|(_, passport)| passport.content_hash == event.content_hash)
-    {
+    // The governing passport is the admitted head, else the latest filing:
+    // a revision waiting over the head never steers the EVENT.
+    let governing = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        match admitted_passport_for_in_txn(vault, &txn, &event_ref, &payload.system, &payload.uid)?
+        {
+            Some(head) => Some(head),
+            None if payload.admitted_revision => None,
+            None => {
+                live_passport_for_in_txn(vault, &txn, &event_ref, &payload.system, &payload.uid)?
+            }
+        }
+    };
+    if !governing.is_some_and(|(_, passport)| passport.content_hash == event.content_hash) {
         return Ok(Vec::new());
     }
     let mut admission = PollAdmission {
@@ -202,6 +239,9 @@ pub(in crate::calendar::ingest) fn run_ics_property_continuation_admitting(
     };
     admission.preflight_event(event)?;
     admission.admit_properties(event_ref, event)?;
+    if payload.admitted_revision {
+        admission.apply_feed_status(event_ref, event)?;
+    }
     admission.queue_property_continuations_reading(&payload.source_version)?;
     Ok(admission.admitted_claims)
 }

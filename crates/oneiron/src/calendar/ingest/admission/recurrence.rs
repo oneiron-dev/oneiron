@@ -48,12 +48,25 @@ impl PollAdmission<'_> {
             PREDICATE_CALENDAR_SERIES_EXCEPTION,
             &exception_value,
         )?;
-        if exists {
-            self.rewrite_event(event_ref, event)?;
-        } else {
-            self.mint_event_with_id(event, event_ref)?;
+        // An instance's EVENT follows its admitted passport head as the
+        // master's does: a revision waiting for review moves nothing of it
+        // at import, and the owner's approval moves it.
+        let filing = match decision {
+            PassportDecision::UpdateExisting { .. } => {
+                self.file_revision_over_admitted_head(event_ref, event)?
+            }
+            _ => RevisionFiling::Owed,
+        };
+        if filing != RevisionFiling::Waits {
+            if exists {
+                self.rewrite_event(event_ref, event)?;
+            } else {
+                self.mint_event_with_id(event, event_ref)?;
+            }
+            self.admit_properties(event_ref, event)?;
         }
-        self.admit_properties(event_ref, event)?;
+        // The mask names the instance, never a revision's content, so it is
+        // admitted whether or not the revision waits.
         let mut active = false;
         for id in self.vault.claims_for_subject(&event_ref)? {
             if self.vault.get_claim(&id)?.is_some_and(|body| {
@@ -73,18 +86,16 @@ impl PollAdmission<'_> {
                 exception_value,
             )?;
         }
-        match decision {
-            PassportDecision::UpdateExisting { .. } => {
+        match (filing, decision) {
+            (RevisionFiling::Waits, _) => return Ok(()),
+            (RevisionFiling::Filed, _) => {}
+            (RevisionFiling::Owed, PassportDecision::UpdateExisting { .. }) => {
                 let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
                 self.admit_superseding_passport(event_ref, &next, &screen_body(event))?;
             }
-            _ => self.admit_fresh_passport(event_ref, event)?,
+            (RevisionFiling::Owed, _) => self.admit_fresh_passport(event_ref, event)?,
         }
-        if !event.cancelled {
-            self.clear_absence_cancellation(event_ref)?;
-        }
-        self.apply_imported_cancel(event_ref, event)?;
-        Ok(())
+        self.apply_feed_status(event_ref, event)
     }
     pub(super) fn clear_absence_cancellation(&self, event: EntityId) -> Result<(), CalendarError> {
         for id in self.vault.claims_for_subject(&event)? {

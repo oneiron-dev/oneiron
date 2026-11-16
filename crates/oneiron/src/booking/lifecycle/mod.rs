@@ -87,7 +87,7 @@ pub use self::feed_move::{
     BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, BookingRevisionInvitePayload,
     run_booking_revision_invites,
 };
-pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
+pub(crate) use self::feed_move::{FeedMoveOutcome, carries_live_booking_in, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
