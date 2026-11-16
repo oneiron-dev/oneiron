@@ -11,12 +11,16 @@
 //! names the owner, clears the program's own park and marks the try's own
 //! Pending sends Abandoned (FIX 7188, `stop_sends`), a ledger that refuses
 //! that never refusing the Stop; the run, its checkpoint and its steps stay
-//! as they are, and a settled try is never reopened. Resume queues the same
-//! try again, only once its checkpoint lines up with its run's record, its
-//! authority and pin bind again and nothing it did is unsettled, with the
-//! owner's intervention on its queue row. It repairs nothing: a head behind
-//! its record stays held until its repair (FIX 5881) lands. Nothing here runs
-//! on its own, and no other park is touched.
+//! as they are, and a settled try is never reopened. The try the Stop ends
+//! gets the settlement any ended try gets, in the same write, as a parked
+//! try's stop gives it (`DreamerRunnerStore::settle_stopped_in_txn`): the
+//! budget it still holds settles, with any charge still owed on it, and its
+//! paid-step receipts, pinned listing and narrowed hold go. Resume queues
+//! the same try again, only once its checkpoint lines up with its run's
+//! record, its authority and pin bind again and nothing it did is unsettled,
+//! with the owner's intervention on its queue row. It repairs nothing: a head
+//! behind its record stays held until its repair (FIX 5881) lands. Nothing
+//! here runs on its own, and no other park is touched.
 
 use crate::Vault;
 use crate::attempt_queue::{
@@ -158,10 +162,11 @@ fn release_in_txn(
     })
 }
 
-/// Ends `attempt` on the owner's grounds, unless it already settled, clears
-/// the program's own park and abandons the try's Pending sends, an abandon
-/// the ledger refuses being owed rather than refusing the Stop (FIX 7188).
-/// `true` when this stop ended it.
+/// Ends `attempt` on the owner's grounds, unless it already settled, gives
+/// the try it ends the settlement of an ended try, clears the program's own
+/// park and abandons the try's Pending sends, an abandon the ledger refuses
+/// being owed rather than refusing the Stop (FIX 7188). `true` when this
+/// stop ended it.
 fn stop_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -185,6 +190,12 @@ fn stop_in_txn(
         ForceCancelOutcome::AlreadyCancelled(record)
         | ForceCancelOutcome::AlreadySettled(record) => (record, false),
     };
+    if stopped {
+        // The try ended in this write, so its settlement is this write's
+        // too. A try that settled before was settled by the door that ended
+        // it.
+        DreamerRunnerStore::new(vault).settle_stopped_in_txn(wtxn, &record, now)?;
+    }
     if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
         super::super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
         super::hold_index::unindex_program_hold_in_txn(vault, wtxn, &park)?;
