@@ -157,3 +157,22 @@ pub fn retained_copy_admits(vault: &Vault, record: EntityId) -> Result<bool> {
         &row.body,
     )
 }
+
+/// Holds `statements` for `actor`'s open `task` from `inquiry` until
+/// `valid_until`, as an answered `task` send holds them, with no member
+/// host: `tests/inquiry_answer_hook_copies.rs` stands the answer a drained
+/// call's retry reads back. Returns whether the holder holds them.
+///
+/// # Errors
+///
+/// As `Vault::hold_inquiry_answer`.
+pub fn hold_answer(
+    vault: &Vault,
+    actor: EntityId,
+    task: EntityId,
+    inquiry: EntityId,
+    statements: &[crate::inquiry::InquiryStatement],
+    valid_until: u64,
+) -> Result<bool> {
+    vault.hold_inquiry_answer(actor, task, inquiry, statements, valid_until)
+}

@@ -113,7 +113,7 @@ impl Vault {
     /// Holds `statements` for `actor`'s `task` from `inquiry` until
     /// `valid_until`. Returns whether it holds them: never for a task that
     /// is not open, nor past `valid_until`.
-    pub(super) fn hold_inquiry_answer(
+    pub(crate) fn hold_inquiry_answer(
         &self,
         actor: EntityId,
         task: EntityId,
