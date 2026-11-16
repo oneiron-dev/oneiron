@@ -589,3 +589,81 @@ fn extraction_native_pack_matches_bound_verdict() -> ExtractionVerdictTestResult
     assert_eq!(reasoner.call_count(), 1);
     Ok(())
 }
+
+/// A lent pack whose ceiling is below the held first rung (`big` under the shipped
+/// decisions) is refused as a bad request naming both rungs, before any generation is
+/// asked, charged or tallied; the same pack at the first rung is then answered through the
+/// same binding and fixture, at that rung.
+#[test]
+fn a_lent_ceiling_below_the_first_rung_is_refused() -> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "owen likes coffee"])?;
+    let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let page_binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&page_binding, &extraction_attempt_hex(id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 2);
+    let pack = json!({
+        "read": "resolution",
+        "part": {"kind": "whole"},
+        "candidates": [
+            extraction_candidate(&subject.to_hex(), "profile.hobby", json!("tea"), &turns[0].0, turns[0].1.clone()),
+            extraction_candidate(&subject.to_hex(), "profile.hobby", json!("coffee"), &turns[1].0, turns[1].1.clone()),
+        ],
+        "listed": [],
+        "priors": [],
+        "questions": [
+            {"key": ["resolution"], "options": native_resolution_options()},
+            {"key": ["identity", "0"], "options": ["none", "candidate:0", "candidate:1"]},
+        ],
+        "earlier": [],
+    });
+    let reasoner = Arc::new(ParityReasoner::new(parity_pack_reply(), 100, 50));
+    let fixture = ExtractionVerdictFixture::new(reasoner.clone())?;
+    let binding = attach_extraction_verdict_lender(bind_extraction(&vault, &admitted)?, &fixture);
+    for lowered in ["rule", "local", "system_one", "escalation"] {
+        let mut request =
+            extraction_verdict_request("resolution", native_resolution_options(), pack.clone());
+        request["ceiling"] = json!(lowered);
+        let Err(refused) = invoke_bound_verdict(&binding, request) else {
+            panic!("a ceiling of {lowered} below the first rung is refused");
+        };
+        assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+        assert!(
+            refused.message.contains(&format!("\"{lowered}\"")),
+            "the refusal names the ceiling: {}",
+            refused.message
+        );
+        assert!(
+            refused.message.contains("\"big\""),
+            "the refusal names the first rung: {}",
+            refused.message
+        );
+    }
+    assert_eq!(reasoner.call_count(), 0);
+    assert!(fixture_spent_observations(&fixture).is_empty());
+    assert_eq!(fixture_charge_units(&fixture), 0);
+    assert_eq!(fixture_charge_binding_count(&fixture), 0);
+    // The control takes the parity test's order: the native leg generates, the bound leg replays.
+    let native = run_extraction_verdict_native_pack(&vault, &admitted, &pack, &fixture)
+        .expect("the native leg reads its pack");
+    assert_eq!(native.resolution.as_deref(), Some("accumulate"));
+    let answered = invoke_bound_verdict(
+        &binding,
+        extraction_verdict_request("resolution", native_resolution_options(), pack),
+    )?;
+    let entries = answered["pack"]
+        .as_array()
+        .expect("a pack at the first rung is answered");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["key"], json!(["resolution"]));
+    assert_eq!(answered["rung"], json!("big"));
+    assert_eq!(reasoner.call_count(), 1);
+    assert_eq!(fixture_spent_observations(&fixture).len(), 2);
+    Ok(())
+}
