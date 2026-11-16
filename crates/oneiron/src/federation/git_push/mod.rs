@@ -128,10 +128,11 @@ impl Vault {
     }
 
     /// The live GitPush grant row `id`, read in `txn`, with whether the
-    /// owner's counted mint gives it under `fold`: the line is given in the
-    /// owner's agent Grant family, no counted act ended it, the mint states
-    /// the row term for term, and no withdrawal of it is held here while its
-    /// end is owed. `None` for any other row.
+    /// owner's counted mint gives it under `fold`: the row holds this vault's
+    /// own residence, the line is given in the owner's agent Grant family, no
+    /// counted act ended it, the mint states the row term for term, and no
+    /// withdrawal of it is held here while its end is owed. `None` for any
+    /// other row.
     fn git_push_grant_row_in_txn(
         &self,
         fold: &crate::authority::AuthorityFold,
@@ -155,8 +156,10 @@ impl Vault {
         ) else {
             return Ok(None);
         };
+        let residence = self.git_push_grant_scope_in_txn(txn)?;
         let stands = !crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, id)
-            && super::owner_agent_mint_in_fold(fold, id, &grant, terms_key.as_ref()).is_some();
+            && super::owner_agent_mint_in_fold(fold, id, &grant, terms_key.as_ref(), &residence)
+                .is_some();
         let created_at = self
             .store
             .port_entity_record(txn, &id)?
