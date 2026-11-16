@@ -11,10 +11,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `examples/user_presence_probe.rs` | src | s | — | — | Probe of the presence layer on a real device (row OWNER-CONFIRM-SHEET) |
 | `src/apple.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | AppleKeychain | Apple: the data-protection keychain, one generic-password item per slot |
 | `src/apple_enclave.rs` | src | m | 1 struct · 1 fn | SecureEnclaveKeychain | Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES… |
+| `src/apple_names.rs` | src | s | 3 crate-vis | — | The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under |
+| `src/auth_bound.rs` | src | s | 1 enum · 1 trait · 1 const · 2 crate-vis | AuthBoundError, AuthBoundSecretStore | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) |
+| `src/dpapi_names.rs` | src | s | 4 crate-vis | — | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… |
 | `src/file.rs` | src | m | 1 struct · 1 fn · 2 crate-vis | LocalFileKeystore | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
-| `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 8 fn · 1 type · 1 const · 6 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
-| `src/linux_tpm.rs` | src | m | 1 struct · 1 fn | LinuxTpmKeystore | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
-| `src/memory.rs` | src | s | 1 struct · 1 fn | MemoryKeystore | Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here |
-| `src/windows.rs` | src | s | 1 struct · 1 fn | WindowsDpapiKeystore | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
+| `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 8 fn · 1 type · 1 const · 12 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
+| `src/linux_tpm.rs` | src | L | 1 struct · 2 fn | LinuxTpmKeystore | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
+| `src/macos_presence.rs` | src | s | 1 struct · 1 fn | MacosUserPresence | macOS: the device's own unlock sheet, and the window server's word on the screen lock (row… |
+| `src/memory.rs` | src | s | 1 struct · 3 fn | MemoryKeystore | Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its… |
+| `src/sealed_bytes.rs` | src | s | 1 enum · 1 trait · 1 fn · 1 const · 1 crate-vis | SealedBytesName, SealedBytesStore | A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN) |
+| `src/user_presence.rs` | src | L | 8 struct · 4 enum · 2 trait · 37 fn · 5 const · 1 re-export | ManualPresenceClock, NoPromptPresence, PendingPresenceConfirm, PresenceCapability, PresenceClock, PresenceConfirmation, PresenceError, PresenceGate +6 | Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov… |
+| `src/windows.rs` | src | m | 1 struct · 1 fn | WindowsDpapiKeystore | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
+| `src/windows_presence.rs` | src | s | 1 struct · 1 fn | WindowsUserPresence | Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row… |
+| `tests/linux_tpm_auth_bound.rs` | test | L | — | — | Row OCS-OWNER-PIN, the TPM tier: the device PIN key rests in the chip under an auth value |
+| `tests/sealed_bytes.rs` | test | m | — | — | Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each name keeps its own value, a put… |
+| `tests/user_presence.rs` | test | L | — | — | Row OWNER-CONFIRM-SHEET, the keystore's presence layer: one confirm opens a 15-minute window that either… |
