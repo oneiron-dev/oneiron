@@ -453,6 +453,7 @@ fn paid_booking(
                     server_issued_lease: lease.lease.clone(),
                 },
                 idempotency_key: None,
+                cap_override: None,
             }),
             NOW,
         )

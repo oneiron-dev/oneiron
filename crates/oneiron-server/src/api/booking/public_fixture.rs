@@ -362,6 +362,7 @@ pub(super) fn hold(
         checkout_lease_token: lease,
         deposit_terms: None,
         idempotency_key: format!("hold-{session}"),
+        cap_override_reason: None,
     }))
 }
 

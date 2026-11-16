@@ -134,6 +134,19 @@ fn booking_hold_input_schema() -> Value {
                 "oneOf": [{ "type": "null" }, booking_deposit_terms_schema()]
             },
             "idempotency_key": nonblank_string_schema(),
+            // The vault owner's own hold past a meeting cap, and why; any
+            // other caller that sends it is refused.
+            "cap_override_reason": {
+                "oneOf": [
+                    { "type": "null" },
+                    {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                    }
+                ]
+            },
         }),
     )
 }

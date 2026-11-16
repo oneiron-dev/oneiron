@@ -887,11 +887,14 @@ impl VerdictFold {
     }
 }
 
+/// The verdict token a flagged screen records on each claim it admits.
+pub(super) const FLAGGED_VERDICT: &str = "flagged";
+
 fn verdict_token(verdict: &super::safeguard::CalendarScreenVerdict) -> &'static str {
     match verdict {
         super::safeguard::CalendarScreenVerdict::Skipped => "skipped",
         super::safeguard::CalendarScreenVerdict::Clear => "clear",
-        super::safeguard::CalendarScreenVerdict::Flagged { .. } => "flagged",
+        super::safeguard::CalendarScreenVerdict::Flagged { .. } => FLAGGED_VERDICT,
         super::safeguard::CalendarScreenVerdict::Indeterminate { .. } => "indeterminate",
     }
 }

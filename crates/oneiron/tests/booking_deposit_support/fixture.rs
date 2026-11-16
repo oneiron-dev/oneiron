@@ -239,6 +239,7 @@ impl Fixture {
                 constraint: None,
                 lease,
                 idempotency_key: None,
+                cap_override: None,
             }),
             now,
         )? {
