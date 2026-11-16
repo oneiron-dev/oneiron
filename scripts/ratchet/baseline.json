@@ -6,7 +6,7 @@
   "metrics": {
     "giant_files": {
       "description": "Non-test .rs files with >= 800 lines. Non-test = path has no 'tests/' directory component, filename is not 'tests.rs', does not end '_tests.rs' and does not start 'tests_'. vendor/ and target/ excluded.",
-      "count": 387,
+      "count": 369,
       "_attribution": {
         "summary": "Historical 188 -> 2; ONE-1992 T36 -> 1. 106 over-bar production modules split into directory modules across eleven move-only batches, plus three single-function files streamlined semantically under the bar (api/openapi/descriptions.rs, sync/window/forward.rs, pipeline/execution/channels.rs), plus error.rs, which left the list when ONE-2001 decomposed `Error` into twelve per-domain enums under crates/oneiron/src/error/.",
         "verification": "Every split checked move-only by scripts/refactor/tools/split_check.py against its base revision: no item added, removed, duplicated or altered in body. Zero exceptions across all eleven batches. Root surface held at 702 names throughout and the codemap was regenerated at every batch boundary.",
