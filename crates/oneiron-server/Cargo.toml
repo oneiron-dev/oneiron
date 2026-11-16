@@ -452,6 +452,12 @@ name = "oauth_named_client_acceptance"
 path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval policy and outcome door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_policy_doors"
+path = "tests/vault_retrieval_policy_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The fan-out doors (spawn, launch, slots, resume, resume_as, ack) root on a `MemoryKeystore`.
 [[test]]
 name = "vault_fanout_doors"
