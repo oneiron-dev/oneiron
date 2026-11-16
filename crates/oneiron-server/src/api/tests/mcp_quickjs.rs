@@ -836,6 +836,9 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The upsert's writer reads the PERSON it is about (FIX 1218): else the
+    // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
+    put_actor_read_grant(&mode.vault, actor, None);
     let args = mcp_merge_args(
         mcp_endpoint_envelope(actor, "write_memory"),
         json!({"run_ref": "quickjs-claim", "task": "state a favorite drink"}),

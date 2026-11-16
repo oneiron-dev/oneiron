@@ -7,7 +7,9 @@ use super::*;
 /// calls it through this trait, and OPUS-WAYBACK-BOX builds the HTTP
 /// implementation on the server. Target kit-only calls `hold_kit_only(true)`
 /// after the no-write checks pass and before the write txn opens; its error
-/// refuses the switch with nothing written. Target `Standard` calls
+/// refuses the switch with nothing written but the marker, after one
+/// best-effort `hold_kit_only(false)` while the vault still reads `Standard`,
+/// since an error can follow a hold that reached the box. Target `Standard` calls
 /// `hold_kit_only(false)` after the commit; its failure answers
 /// [`RecoveryPresetChange::box_release_pending`], never an error. A switch
 /// refused before the hold makes no hold call; one that fails after it sends
@@ -74,6 +76,21 @@ impl Vault {
                 BOX_HOLD_PENDING.delete(&self.store, txn, &())
             }
             _ => Ok(false),
+        }
+    }
+
+    /// Holds the recovery box at kit-only before a switch's write. A hold
+    /// that answers `Err` may still have reached the box (a lost answer, a
+    /// timeout), so the refusal first releases the box as
+    /// [`Self::release_box_hold_on_failure`] does: once, best-effort, while
+    /// the vault still reads `Standard`. The caller's box-hold-pending
+    /// marker stays in every case, since a late hold can land after that
+    /// release, and a managed boot resends the hold the preset needs
+    /// (REVIEW2 #8799 P3-1). The answer is the hold's error.
+    pub(super) fn hold_recovery_box_kit_only(&self, box_hold: &dyn RecoveryBoxHold) -> Result<()> {
+        match box_hold.hold_kit_only(true) {
+            Ok(()) => Ok(()),
+            Err(error) => self.release_box_hold_on_failure(Err(error), true, None, box_hold),
         }
     }
 
