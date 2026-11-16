@@ -202,6 +202,23 @@ fn owner_claim(fixture: &Fixture) -> EntityId {
     id
 }
 
+/// The owner's ordinary TASK, made through the task door. The access gate
+/// passes a TASK by its kind, so the owner's floor admits it.
+fn owner_task(fixture: &Fixture) -> EntityId {
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+            rmpv::Value::Nil,
+            Some("water the spring garden".into()),
+            Some(fixture.owner),
+            Some(fixture.vault.now_recorded_at()),
+        ))
+        .expect("the owner's task door")
+        .task_ref
+        .expect("precondition: the owner's TASK creation took effect")
+}
+
 /// The owner mints the house a live agent Grant to read every row. The
 /// owner's act needs a carrier: this install rooted, then profiled in the
 /// vault's roster under its own keys, as `oneiron init` leaves it.
@@ -469,6 +486,33 @@ fn an_owner_key_under_the_access_gate_saves_a_question_that_reads_no_unscoped_me
     assert!(
         !read,
         "actor=the owner's floor under the access gate, no proof; expected its saved question's reader to refuse the unscoped MESSAGE its live lane refused; seen {seen}"
+    );
+}
+
+/// The owner's floor under the access gate read the owner's TASK, so its
+/// saved question's reader reads it too: the lane's owner alternative
+/// stands beside a key rebuilt under a floor's basis, held to the saved
+/// access gate (blind review round 1 P1 on #8065).
+#[test]
+fn an_owner_key_under_the_access_gate_saves_a_question_that_reads_the_owners_task() {
+    let fixture = fixture();
+    let task = owner_task(&fixture);
+    let key = gated_owner_key(&fixture);
+    let (live, seen) = reads(&fixture.vault.scoped_read(key.clone()), task);
+    assert!(
+        live,
+        "precondition: the owner's live lane under the access gate reads the owner's TASK; seen {seen}"
+    );
+    let frozen = saved_lane(&fixture, key);
+    let (read, seen) = saved_reads(&fixture, fixture.owner, &frozen, task);
+    assert!(
+        read,
+        "actor=the owner's floor under the access gate, no proof; expected its saved question's reader to read the TASK its live lane read; seen {seen}"
+    );
+    let (message, seen) = saved_reads(&fixture, fixture.owner, &frozen, fixture.message);
+    assert!(
+        !message,
+        "actor=the owner's floor under the access gate, no proof; expected its saved question's reader to keep refusing the unscoped MESSAGE its live lane refused; seen {seen}"
     );
 }
 
