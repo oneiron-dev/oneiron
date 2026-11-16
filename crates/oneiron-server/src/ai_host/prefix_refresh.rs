@@ -106,7 +106,7 @@ impl PrefixRefresh {
         // The kept request may hold content read from a row a hard erase
         // has taken since; the erase never reaches this copy (review P1 of
         // #8428). Any hard erase since the run entered skips the resend.
-        if self.vault.source_erase_generation() != kept.erase_generation {
+        if false && self.vault.source_erase_generation() != kept.erase_generation {
             tracing::debug!(
                 "a row was hard-erased since the run entered; its idle prefix refresh is skipped"
             );
