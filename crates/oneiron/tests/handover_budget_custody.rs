@@ -14,7 +14,10 @@
 //! whose tree funded the launch, keeps the run's scope open while B runs
 //! it: the root goes on holding the whole carve, the other machine's share
 //! folds into the scope when the run ends or comes back, and the root is
-//! charged once.
+//! charged once. A hold is no spend (REVIEW-7890): a child that outlives the
+//! run on B keeps A's scope open until it settles, and the root is charged
+//! what the child spent, not its carve; a take that keeps a queued try
+//! counts the scope it folded into at once.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test handover_budget_custody`.
@@ -30,7 +33,7 @@ use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext,
     DEFAULT_BASE_LOGICAL_ID, DispatchAgent, SpawnSpend, SpendScopeId, SpendState,
 };
-use oneiron::attempt_queue::AttemptQueue;
+use oneiron::attempt_queue::{AttemptQueue, RetryAttempt, RetryOutcome};
 use oneiron::dreamer_runner::{
     CompleteDreamerAttempt, DreamerHomeNodeCandidate, DreamerRunnerStore,
 };
@@ -39,7 +42,7 @@ use oneiron::store::ports::{IdGen, ManualClock};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
-use oneiron::test_doors::spend::reserve_child_scope;
+use oneiron::test_doors::spend::{agent_run_committed_units, reserve_child_scope};
 use oneiron::test_doors::turn_programs as doors;
 use oneiron::{AttemptId, ErrorKind, HnswConfig, Vault, VaultConfig};
 
@@ -744,4 +747,154 @@ fn queued_take_back_folds_the_other_share() {
     // B's 30 folds into X, so 10 of the 60 is left. On a5195622 the take of a
     // queued try judged nothing: X stays at spent 20 with 40 left, 90 of 60.
     assert_eq!(x_scope.spent_units, 50);
+}
+
+#[test]
+fn child_that_outlives_the_run_is_charged_what_it_spent() {
+    let (a, b) = machines();
+    let x = dispatched_run(&a, &b, 20);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    // B's take reaches B's doc before the exchange carries it to A.
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    a.vault.resume_executor_leases();
+    let claimed = AgentDispatcher::new(&a.vault)
+        .claim_agent_run(x, "pump-a", T0)
+        .unwrap();
+    assert!(claimed.is_none(), "A stands down: B holds the run");
+    let claimed = AgentDispatcher::new(&b.vault)
+        .claim_agent_run(x, "pump-b", T0 + 2)
+        .unwrap()
+        .expect("B claims the run it took");
+    let scope_id = SpendScopeId::for_attempt(&x);
+    let on_b = AgentDispatcher::new(&b.vault);
+    on_b.charge(&scope_id, 10).unwrap();
+    // B's run spawns a child that outlives it: a hard carve of 30 under B's
+    // scope, still open when the run completes.
+    let child = AttemptId::from_bytes(&[0xc7; 16]).unwrap();
+    reserve_child_scope(&b.vault, &scope_id, &child, 30, T0 + 2).unwrap();
+    let leased = claimed.status.attempt;
+    DreamerRunnerStore::new(&b.vault)
+        .complete(CompleteDreamerAttempt {
+            id: x,
+            lease_owner: "pump-b".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: leased.updated_at,
+        })
+        .unwrap();
+    // B's settlement reaches B's doc before the exchange carries it to A.
+    drop(doc_a);
+    drop(doc_b);
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // B's share is 40, of which the child holds 30: A's scope waits. On
+    // 1cc56903 A settles X at 60 (its 20, B's 10 and the child's whole 30)
+    // and R is charged 60.
+    assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 0);
+    let root = SpendScopeId::launch(ROOT).unwrap();
+    let on_a = AgentDispatcher::new(&a.vault);
+    let x_scope = on_a.read_spend_scope(&scope_id).unwrap().unwrap();
+    assert_eq!(x_scope.state, SpendState::Open);
+    assert_eq!(x_scope.spent_units, 20);
+    let r = on_a.read_spend_scope(&root).unwrap().unwrap();
+    assert_eq!(r.held_units, RUN_BUDGET, "R goes on holding X's carve");
+    // The child spends 5 of its carve and settles on B; B, the run's last
+    // executor, stamps its share again (spent 15, nothing held), once.
+    on_b.charge(&SpendScopeId::for_attempt(&child), 5).unwrap();
+    on_b.settle_child(&child, T0 + 3).unwrap();
+    assert_eq!(b.vault.reconcile_handed_over_spend().unwrap(), 1);
+    assert_eq!(b.vault.reconcile_handed_over_spend().unwrap(), 0);
+    // B's stamp reaches B's doc before the exchange carries it to A.
+    drop(doc_a);
+    drop(doc_b);
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 1);
+    assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 0);
+    let x_scope = on_a.read_spend_scope(&scope_id).unwrap().unwrap();
+    assert_eq!(x_scope.state, SpendState::Closed);
+    assert_eq!(x_scope.spent_units, 35);
+    let r = on_a.read_spend_scope(&root).unwrap().unwrap();
+    // A's 20, B's 10 and the child's 5; the child's unspent 25 is free again.
+    assert_eq!(r.spent_units, 35);
+    assert_eq!(r.cap_units - r.spent_units - r.held_units, 65);
+}
+
+#[test]
+fn queued_take_back_stamps_the_kept_scope() {
+    let (a, b) = machines();
+    let x = dispatched_run(&a, &b, 20);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    let claimed = AgentDispatcher::new(&b.vault)
+        .claim_agent_run(x, "pump-b", T0 + 2)
+        .unwrap()
+        .expect("B claims the run it took");
+    let leased = claimed.status.attempt;
+    // B's try retries as a new try, which B claims: the TASK's live try is
+    // one A's queue never holds.
+    let RetryOutcome::Retried(retry) = AttemptQueue::new(&b.vault)
+        .retry(RetryAttempt {
+            id: x,
+            lease_owner: "pump-b".to_owned(),
+            attempt_count: leased.attempt_count,
+            backoff_until: T0 + 2,
+            last_error: Some("again".to_owned()),
+            now: T0 + 2,
+        })
+        .unwrap()
+    else {
+        panic!("the retry schedules a new try");
+    };
+    assert_ne!(retry.id, x);
+    assert!(
+        AgentDispatcher::new(&b.vault)
+            .claim_agent_run(retry.id, "pump-b", T0 + 2)
+            .unwrap()
+            .is_some(),
+        "B claims its retry"
+    );
+    // The retry spends under the scope of the try it retries.
+    AgentDispatcher::new(&b.vault)
+        .charge(&SpendScopeId::for_attempt(&x), 30)
+        .unwrap();
+    assert_eq!(b.vault.release_agent_run_leases().unwrap(), 1);
+    // B's take, claims and release reach B's doc before the exchange carries
+    // them to A.
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // A's try never ran, so it is still queued here and A's take keeps it.
+    // B is the elected home, so A takes after the non-home grace.
+    a.vault.resume_executor_leases();
+    a.clock.set(T0 + 400);
+    let reap = a
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "A takes the run back with its queued try");
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&SpendScopeId::for_attempt(&x))
+        .unwrap()
+        .unwrap();
+    assert_eq!(x_scope.spent_units, 50, "B's 30 folds into X");
+    // A spent 20 and B 30, so 50 of the 60 is committed and a fresh take
+    // reserves 10. On 1cc56903 the take stamps no share for X, as the live
+    // try is B's retry: A's share stays at 20 while the fold of 30 counts
+    // against the shares, so 20 reads committed and a fresh take reserves 40.
+    assert_eq!(agent_run_committed_units(&a.vault, x).unwrap(), Some(50));
 }
