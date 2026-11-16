@@ -57,6 +57,13 @@ pub struct ScopedReadActorKey {
     /// keeps the owner standing that key held. See
     /// [`Self::within_native_basis`].
     owner_authority_withheld: bool,
+    /// Set only on a key rebuilt under a saved lane's floor basis (blind
+    /// review round 1 P1 on #8065): the saved key held the owner's floor,
+    /// so the lane's owner alternative, which judges a row under the
+    /// owner's floor and this key's own gate, stands beside it while its
+    /// reader is a live owner. The reader's ungated owner authority stays
+    /// withheld ([`Self::owner_authority_withheld`]).
+    rebuilt_under_floor_basis: bool,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -418,6 +425,7 @@ impl ScopedReadActorKey {
             agent_grant_holder: None,
             saved_credentials: Vec::new(),
             owner_authority_withheld: false,
+            rebuilt_under_floor_basis: false,
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -464,6 +472,7 @@ impl ScopedReadActorKey {
             agent_grant_holder: None,
             saved_credentials: Vec::new(),
             owner_authority_withheld: false,
+            rebuilt_under_floor_basis: false,
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -506,6 +515,13 @@ impl ScopedReadActorKey {
     /// ([`Self::within_native_basis`]).
     pub(crate) fn owner_authority_withheld(&self) -> bool {
         self.owner_authority_withheld
+    }
+
+    /// Whether this key was rebuilt under a saved lane's floor basis, so the
+    /// lane's owner alternative stands beside it
+    /// ([`Self::within_native_basis`]).
+    pub(crate) fn rebuilt_under_floor_basis(&self) -> bool {
+        self.rebuilt_under_floor_basis
     }
 
     /// This key, held to the host action it was built for (FIX 2222): every
@@ -919,7 +935,11 @@ impl ScopedReadActorKey {
     ///   principal alone, and on none where the two keys' principals differ
     ///   or the saved gate was bound to none (Sol F5 on #8065).
     /// - Its reader's own owner authority never stands beside it
-    ///   ([`Self::owner_authority_withheld`], Sol F3 on #8065).
+    ///   ([`Self::owner_authority_withheld`], Sol F3 on #8065). Under a
+    ///   floor's basis the lane's owner alternative still does, as the
+    ///   saved key held the floor: it judges a row under the owner's floor
+    ///   and this key's gate ([`Self::rebuilt_under_floor_basis`], blind
+    ///   review round 1 P1 on #8065).
     ///
     /// A key no gate bound held no exemption to keep: its lane, rebuilt over
     /// a key a gate binds, reads only the relationship rows its principal's
@@ -956,6 +976,7 @@ impl ScopedReadActorKey {
             self.principal_ref = None;
         }
         self.owner_authority_withheld = true;
+        self.rebuilt_under_floor_basis = basis.owner_standing == NativeOwnerStanding::Floor;
         if neither_gated {
             self.owner_exemption = exemption_owner;
             return self;
