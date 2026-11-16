@@ -21,6 +21,7 @@ use super::state::{MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::MailProviderWire;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Vault};
 
 /// The hits one search page lands when the caller names no limit.
@@ -118,7 +119,8 @@ impl Vault {
             row
         };
         let snapshot = super::wire::MailSyncSource::of(source_ref, &row);
-        let hits = wire.search_page(&snapshot, query, limit.clamp(1, MAX_SEARCH_HITS), page)?;
+        let limit = page_limit_zero_as_one(Some(limit), DEFAULT_SEARCH_HITS, MAX_SEARCH_HITS).rows;
+        let hits = wire.search_page(&snapshot, query, limit, page)?;
         let at = crate::unix_seconds_now();
         let landing = Landing::new(self, owner, source_ref, at)?;
         let mut report = MailSearchReport {
