@@ -66,12 +66,10 @@ impl Vault {
     /// Starts the `add_owner` act that seats `workspace_ref`'s house mind,
     /// `house`, at the Owner role in shared vault `vault_id`
     /// (HOUSE-UNBIND-AUTHORITY = A; FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER): the
-    /// act a person's Owner add starts, under the same policy row, the same
-    /// owner-change wait and the same objection window, judged by the same
-    /// check-in. Its executor writes the house's link and bind receipt, as
-    /// the house link door would; until then the house holds the role it
-    /// holds now. The starter must be a live Owner, and the house
-    /// no Owner yet. [`Vault::set_house_role`] is the door that starts it.
+    /// act a person's Owner add starts, under the same policy row,
+    /// owner-change wait and objection window, judged by the same check-in.
+    /// The starter must be a live Owner; [`Vault::propose_house_owner_role`]
+    /// checks the house and the role table first.
     pub(crate) fn propose_house_owner_seat(
         &self,
         starter: &AuthenticatedOwner,
@@ -85,8 +83,7 @@ impl Vault {
             check_vault(self, &txn, vault_id)?;
             let holders =
                 self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
-            let owners = live_owners(&holders, None);
-            if !owners.contains(&starter) || owners.contains(&house) {
+            if !live_owners(&holders, None).contains(&starter) {
                 return Err(invalid());
             }
         }
@@ -106,6 +103,52 @@ impl Vault {
                 applies: None,
             },
         )
+    }
+
+    /// The effect of a completed `add_owner` act whose plan names a
+    /// workspace, in its executor's writer: that workspace's house seated at
+    /// the Owner role by its link, with no person's owner keys or own-device
+    /// grant and no signed Owner handover, as a link written at once writes
+    /// none. Its receipt reads as the membership change it is.
+    pub(super) fn house_owner_seat_effect_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: &PendingAuthorityAct,
+        now: u64,
+    ) -> Result<Effect> {
+        let plan: AddOwnerPlan = decode(&act.payload)?;
+        let workspace_ref = plan.house_workspace.as_deref().ok_or_else(invalid)?;
+        if plan.v != PLAN_VERSION {
+            return Err(invalid());
+        }
+        let (before, grants) = crate::workspace_roster::seat_house_owner_by_act_in_txn(
+            self,
+            txn,
+            act.vault_id,
+            workspace_ref,
+            hex_id(&plan.owner)?,
+            hex_id(&act.starter)?,
+            now,
+        )?;
+        let member = plan.owner.clone();
+        let change = match before {
+            Some(from) => SharedVaultChange::MemberRoleChanged {
+                member,
+                from,
+                to: Role::Owner,
+            },
+            None => SharedVaultChange::MemberAdded {
+                member,
+                role: Role::Owner,
+            },
+        };
+        Ok(Effect {
+            change,
+            grants,
+            revoked_slips: Vec::new(),
+            detach: None,
+            notify: BTreeSet::new(),
+        })
     }
 
     pub(super) fn check_add_owner_in_txn(

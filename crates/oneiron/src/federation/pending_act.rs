@@ -410,39 +410,6 @@ impl Vault {
             common_wait_secs: resolution.owner_change_wait_secs,
         })
     }
-    /// The wait in seconds an `act` started now on shared vault `vault_id`
-    /// under its stored row would open, as
-    /// [`Self::start_authority_act`] reckons it: the row's wait, the
-    /// common owner-change wait for a membership act, and no wait on a stored
-    /// row for a sole Owner. A guard reads it to tell whether a write that
-    /// skips the act would skip a wait the Owners set
-    /// (FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER). A vault never shared, or
-    /// deleted, refuses as a start does.
-    pub(crate) fn stored_act_wait_secs_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        vault_id: u64,
-        act: &str,
-        now: u64,
-    ) -> Result<u64> {
-        let creation = check_vault(self, txn, vault_id)?;
-        let policies = self.act_policies_in_txn(txn, &creation)?;
-        let base = policies.effective(act)?;
-        let owners = self
-            .live_act_holders(txn, vault_id, now)?
-            .iter()
-            .filter(|holder| holder.role == Role::Owner)
-            .map(|holder| holder.member)
-            .collect::<BTreeSet<_>>();
-        Ok(owner_change_wait::resolve_start_wait_secs(
-            policies.common_wait_secs,
-            is_owner_change_act(act),
-            true,
-            owners.len() < 2,
-            false,
-            base.wait_secs,
-        ))
-    }
     /// The row stored in the vault's manifest; `None` when the act has none.
     pub fn shared_act_policy(&self, act: &str) -> Result<Option<SharedActPolicy>> {
         if !valid_name(act) {
@@ -624,7 +591,14 @@ impl Vault {
         // The common owner-change wait applies only to membership acts; the
         // parse runs once, before the chosen setting is consumed below.
         let holder_selected = matches!(selection, SettingChoice::Holder(_));
-        let owner_change_act = is_owner_change_act(act);
+        let owner_change_act = matches!(
+            super::shared_act::SharedActKind::parse(act),
+            Some(
+                super::shared_act::SharedActKind::AddOwner
+                    | super::shared_act::SharedActKind::TransferOwnership
+                    | super::shared_act::SharedActKind::RemoveOwner
+            )
+        );
         let policy = match selection {
             SettingChoice::Stored => base,
             SettingChoice::Host(Some(setting)) => setting,
@@ -1015,18 +989,6 @@ impl Vault {
         txn.commit()?;
         Ok(record)
     }
-}
-/// Whether `act` is a membership act, which the common owner-change wait
-/// governs: adding, transferring or removing an Owner.
-fn is_owner_change_act(act: &str) -> bool {
-    matches!(
-        super::shared_act::SharedActKind::parse(act),
-        Some(
-            super::shared_act::SharedActKind::AddOwner
-                | super::shared_act::SharedActKind::TransferOwnership
-                | super::shared_act::SharedActKind::RemoveOwner
-        )
-    )
 }
 fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u64) {
     record.objections.retain(|id| {
