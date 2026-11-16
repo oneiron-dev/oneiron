@@ -241,6 +241,9 @@ pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
 use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::booking_anti_abuse::BookingHttpDisposition;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::draft_checked_span;
@@ -249,6 +252,9 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
+// The signing session door's read of what a signing router holds (L3-22).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};
 #[cfg(test)]
 pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
