@@ -303,26 +303,120 @@ pub(crate) fn promotion_basis_in_txn(
     Ok(basis)
 }
 
+fn update_basis_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    candidate: AttemptId,
+    change: impl FnOnce(&mut PromotionBasis, &heed::RwTxn<'_>) -> Result<()>,
+) -> Result<PromotionBasis> {
+    let key = (*root.as_bytes(), *candidate.as_bytes());
+    let mut basis = BASIS
+        .get(&vault.store, txn, &key)?
+        .ok_or(invalid("the candidate has no held-out basis"))?;
+    change(&mut basis, txn)?;
+    BASIS.put(&vault.store, txn, &key, &basis)?;
+    Ok(basis)
+}
+
 fn update_basis(
     vault: &Vault,
     root: AttemptId,
     candidate: AttemptId,
     change: impl FnOnce(&mut PromotionBasis, &heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<PromotionBasis> {
-    vault.with_write_txn_grouped(|txn| {
-        let key = (*root.as_bytes(), *candidate.as_bytes());
-        let mut basis = BASIS
-            .get(&vault.store, txn, &key)?
-            .ok_or(invalid("the candidate has no held-out basis"))?;
-        change(&mut basis, txn)?;
-        BASIS.put(&vault.store, txn, &key, &basis)?;
-        Ok(basis)
+    vault.with_write_txn_grouped(|txn| update_basis_in_txn(vault, txn, root, candidate, change))
+}
+
+/// The candidate's held-out basis, as `txn` reads it.
+pub(super) fn basis_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+    candidate: AttemptId,
+) -> Result<Option<PromotionBasis>> {
+    BASIS.get(
+        &vault.store,
+        txn,
+        &(*root.as_bytes(), *candidate.as_bytes()),
+    )
+}
+
+/// Consume the candidate's one sealed confirmation shot on `cohort`, inside
+/// the caller's write: its basis must read Promote with the shot unspent.
+/// Nothing is served yet.
+pub(super) fn spend_confirmation_shot_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    candidate: AttemptId,
+    cohort: EntityId,
+    at: u64,
+) -> Result<PromotionBasis> {
+    update_basis_in_txn(vault, txn, root, candidate, |basis, _| {
+        if basis.call != HeldOutCall::Promote {
+            return Err(invalid(
+                "only a held-out Promote goes to sealed confirmation",
+            ));
+        }
+        if basis.confirmation.is_some() {
+            return Err(invalid(
+                "the candidate's sealed confirmation is already spent",
+            ));
+        }
+        basis.confirmation = Some(ConfirmationReceipt {
+            cohort,
+            consumed_at: at,
+            exposure: None,
+        });
+        Ok(())
     })
 }
 
+/// Release `cohort` for the candidate's spent shot, counted as a candidate
+/// serving, and mark the serving on its basis, inside the caller's write:
+/// the serving and its marker are one write. A shot not yet spent, or one
+/// already served, refuses.
+pub(super) fn serve_confirmation_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    candidate: AttemptId,
+    cohort: EntityId,
+    at: u64,
+) -> Result<EvalRelease> {
+    let basis = basis_in_txn(vault, txn, root, candidate)?
+        .ok_or(invalid("the candidate has no held-out basis"))?;
+    if !basis
+        .confirmation
+        .as_ref()
+        .is_some_and(|confirmation| confirmation.exposure.is_none())
+    {
+        return Err(invalid(
+            "only a spent, unserved sealed confirmation is served",
+        ));
+    }
+    let release = vault.open_eval_cohort_in_txn(
+        txn,
+        &cohort,
+        EvalExposureKind::Candidate,
+        &consumer(root),
+        Some(&basis.candidate_pin.config_sha256),
+        at,
+    )?;
+    update_basis_in_txn(vault, txn, root, candidate, |basis, _| {
+        if let Some(confirmation) = &mut basis.confirmation {
+            confirmation.exposure = Some(release.exposure.id);
+        }
+        Ok(())
+    })?;
+    Ok(release)
+}
+
 /// Spend the candidate's one sealed confirmation: consume the shot, then
-/// release the campaign's sealed cohort, counted as a candidate serving.
-/// The release goes to the workflow's referee; nothing is scored here.
+/// release the campaign's sealed cohort, counted as a candidate serving,
+/// with its marker in the same write. The release goes to the workflow's
+/// referee; nothing is scored here.
 /// # Errors
 /// An unbound campaign, no confirmation cohort, no Promote basis, a shot
 /// already spent, a retired cohort, or storage errors. A failed release
@@ -337,38 +431,12 @@ pub fn reserve_confirmation(
     let seat = binding
         .confirmation
         .ok_or(invalid("this campaign names no sealed confirmation cohort"))?;
-    let basis = update_basis(vault, root, candidate, |basis, _| {
-        if basis.call != HeldOutCall::Promote {
-            return Err(invalid(
-                "only a held-out Promote goes to sealed confirmation",
-            ));
-        }
-        if basis.confirmation.is_some() {
-            return Err(invalid(
-                "the candidate's sealed confirmation is already spent",
-            ));
-        }
-        basis.confirmation = Some(ConfirmationReceipt {
-            cohort: seat.cohort,
-            consumed_at: at,
-            exposure: None,
-        });
-        Ok(())
+    vault.with_write_txn_grouped(|txn| {
+        spend_confirmation_shot_in_txn(vault, txn, root, candidate, seat.cohort, at)
     })?;
-    let release = vault.open_eval_cohort(
-        &seat.cohort,
-        EvalExposureKind::Candidate,
-        &consumer(root),
-        Some(&basis.candidate_pin.config_sha256),
-        at,
-    )?;
-    update_basis(vault, root, candidate, |basis, _| {
-        if let Some(confirmation) = &mut basis.confirmation {
-            confirmation.exposure = Some(release.exposure.id);
-        }
-        Ok(())
-    })?;
-    Ok(release)
+    vault.with_write_txn_grouped(|txn| {
+        serve_confirmation_in_txn(vault, txn, root, candidate, seat.cohort, at)
+    })
 }
 
 /// Settle the candidate on its sealed confirmation. A strict sealed win, a

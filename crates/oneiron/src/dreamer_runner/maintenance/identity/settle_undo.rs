@@ -43,8 +43,8 @@ use crate::{ClaimLifecycleStatus, EntityId, Result, Vault, WriteActor};
 
 mod erase;
 
-/// The hint row's name in a revert's settings list.
-const HINT_ROW: &str = "identity_hint";
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::identity::settle_undo::HINT_ROW;
 
 /// One saved span a settle changed, or the settled mention itself: its link
 /// before and after.

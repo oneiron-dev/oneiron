@@ -130,17 +130,28 @@ fn a_deputys_erase_ask_is_a_proposal_as_an_admins_is() {
         erase_ask_kind(FederationGrantRole::Admin),
         Some(EraseAskKind::Proposal)
     );
+    // Any role may ask for an erase (ARCH-0082 #role-defaults; P24-SHAPE Q8
+    // = A): a Steward proposes, and a Viewer, a Delegate or a Guest
+    // requests, as a Member does. Only an Owner, who erases, makes no ask.
     assert_eq!(
-        erase_ask_kind(FederationGrantRole::Member),
-        Some(EraseAskKind::Request)
+        erase_ask_kind(FederationGrantRole::Steward),
+        Some(EraseAskKind::Proposal)
     );
     for role in [
-        FederationGrantRole::Owner,
-        FederationGrantRole::Steward,
+        FederationGrantRole::Member,
         FederationGrantRole::Viewer,
         FederationGrantRole::Delegate,
         FederationGrantRole::Guest,
     ] {
-        assert_eq!(erase_ask_kind(role), None, "a {role:?} makes no erase ask");
+        assert_eq!(
+            erase_ask_kind(role),
+            Some(EraseAskKind::Request),
+            "a {role:?} requests an erase"
+        );
     }
+    assert_eq!(
+        erase_ask_kind(FederationGrantRole::Owner),
+        None,
+        "an Owner erases instead of asking"
+    );
 }

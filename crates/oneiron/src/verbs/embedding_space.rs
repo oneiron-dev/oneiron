@@ -53,62 +53,12 @@ pub struct EmbeddingSpaceDeclareRequest(
     #[schemars(with = "serde_json::Map<String, serde_json::Value>")] pub EmbeddingSpace,
 );
 
-/// `vault.embedding_spaces.bind`'s input: one kind slot and its space.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceBindRequest {
-    /// `text`, `image` or `audio`.
-    #[schemars(with = "String")]
-    pub kind: InputKind,
-    /// The declared space; absent returns the slot to its default.
-    #[serde(default)]
-    pub space: Option<String>,
-}
-
-/// One declared space, by id: `vault.embedding_spaces.one_space` and
-/// `.retire`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceRequest {
-    pub space: String,
-}
-
-/// `vault.embedding_spaces.move`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceMoveRequest {
-    pub candidate: String,
-    /// A declared space id, or absent for the vault's text index.
-    #[serde(default)]
-    pub incumbent: Option<String>,
-    /// A tolerance stricter than the measured retest noise.
-    #[serde(default)]
-    pub margin: Option<f32>,
-}
-
-/// One move, by its candidate: `vault.embedding_spaces.move_check`,
-/// `.move_approve`, `.move_undo` and `.move_abandon`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceCandidateRequest {
-    pub candidate: String,
-}
-
-/// What a move's check did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EmbeddingSpaceMoveOutcome {
-    /// The candidate still lacks a vector of some moving document; no probe
-    /// ran.
-    Filling,
-    /// Every kind read not worse: the candidate serves now.
-    SwappedIn,
-    /// A kind read worse: the incumbent keeps serving and the move is closed.
-    Kept,
-    /// A kind read unknown: the incumbent keeps serving and the move stays
-    /// open.
-    Undecided,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::embedding_space::{
+    EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceMoveOutcome,
+    EmbeddingSpaceMoveRequest, EmbeddingSpaceProbeDeleteRequest, EmbeddingSpaceProbeDeleted,
+    EmbeddingSpaceProbePutRequest, EmbeddingSpaceRequest,
+};
 
 /// `vault.embedding_spaces.move_check`'s answer, as
 /// `POST /v1/owner/embedding-spaces/move/check` gives it.
@@ -149,47 +99,6 @@ pub struct EmbeddingSpaceProbe {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbes {
     pub probes: Vec<EmbeddingSpaceProbe>,
-}
-
-/// `vault.embedding_spaces.probes.put`'s input: one probe the owner, or
-/// another model, wrote.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceProbePutRequest {
-    /// `text`, `image` or `audio`: the kind of the documents it finds.
-    #[schemars(with = "String")]
-    pub kind: InputKind,
-    /// A text query; beside `query_media`, what it asks in words, which may be empty.
-    pub query: String,
-    /// A stored image or audio ASSET whose bytes are the query, as 32 hex; absent for a text
-    /// query. Never one of its targets.
-    #[serde(default)]
-    pub query_media: Option<EntityId>,
-    /// The document the query was written from, as 32 hex.
-    pub family: EntityId,
-    /// Every document that answers it, as 32 hex; the family's when absent.
-    #[serde(default)]
-    pub targets: Vec<EntityId>,
-    /// Every other stored row the query was written from, as 32 hex (FIX 9829): erasing any
-    /// of them, the family or the media query erases the probe. Empty when absent.
-    #[serde(default)]
-    pub source_refs: Vec<EntityId>,
-    /// Who wrote the query.
-    pub author: String,
-}
-
-/// `vault.embedding_spaces.probes.delete`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceProbeDeleteRequest {
-    /// The probe's id, 32 hex.
-    pub id: String,
-}
-
-/// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EmbeddingSpaceProbeDeleted {
-    pub ok: bool,
 }
 
 /// An engine refusal of a space change, a bad request as the route answers
@@ -415,15 +324,39 @@ pub fn put_embedding_space_probe_as(
     })
 }
 
-/// `vault.embedding_spaces.probes.delete`.
+/// `vault.embedding_spaces.probes.delete`: the Owner's delete on their own
+/// proof, applying with `check_in_ref` another asker's approved check-in for
+/// deleting this probe (2k5; P25-SHAPE Q1 = A). The answer records the
+/// decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed id or `check_in_ref`; the Owner's proof no
+/// longer holds; a check-in that is not an approved ask for this delete;
+/// storage errors.
 pub fn delete_embedding_space_probe_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: EmbeddingSpaceProbeDeleteRequest,
 ) -> MemoryResult<EmbeddingSpaceProbeDeleted> {
     let id = probe_id(&input.id)?;
+    let applied = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex)
+                .map(|check_in| crate::check_in::AppliedCheckIn {
+                    id: check_in,
+                    verb: "vault.embedding_spaces.probes.delete",
+                    effect_digest: crate::check_in::embedding_space_probe_delete_effect_digest(&id),
+                })
+                .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+        })
+        .transpose()?;
+    let (ok, decision) = vault.delete_space_probe(owner, &id, applied.as_ref())?;
     Ok(EmbeddingSpaceProbeDeleted {
-        ok: vault.delete_space_probe(owner, &id)?,
+        ok,
+        check_in: Some(decision),
     })
 }
 

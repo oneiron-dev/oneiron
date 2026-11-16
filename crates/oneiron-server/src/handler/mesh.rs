@@ -107,7 +107,24 @@ pub(crate) async fn start(
 
 #[cfg(not(feature = "mesh"))]
 mod host {
+    use oneiron_organ_host::OrganRouter;
+
     use super::{Arc, ConnectionLimits, Router, SocketAddr};
+
+    /// The router a call the host itself makes takes: this machine's organ
+    /// host alone, since a build without the `mesh` feature reaches no other
+    /// node of the owner's.
+    #[cfg(unix)]
+    pub(crate) fn organ_router(server: &Arc<crate::server::SyncServer>) -> OrganRouter {
+        OrganRouter::new().with_local(Arc::clone(&server.organs))
+    }
+
+    /// The router a call the host itself makes takes: none here, since this
+    /// device starts no organ process and reaches no other node.
+    #[cfg(not(unix))]
+    pub(crate) fn organ_router(_server: &Arc<crate::server::SyncServer>) -> OrganRouter {
+        OrganRouter::new()
+    }
 
     /// The listener a build without the `mesh` feature never runs.
     pub(crate) struct MeshHost;
@@ -149,7 +166,8 @@ mod host {
     use hyper::body::Incoming;
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::service::TowerToHyperService;
-    use oneiron_llm_own_server::{LLM_ALPN, LlmMeshService};
+    use oneiron_llm::oneiron_rpc::{LLM_ALPN, LlmMeshService};
+    use oneiron_mesh_transport::files_search::{FILES_SEARCH_ALPN, FilesSearchService};
     use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{
@@ -258,19 +276,9 @@ mod host {
         let vault = &server.vault;
         // This machine's organ host (the server's one, which the seal worker
         // shares) serves the owner's other nodes, and its calls that wait for
-        // a node are re-driven on the tick (OF-575): here first, else on one
-        // of the owner's other nodes granted organ calls, over this
-        // install's one endpoint (FIX 14544).
+        // a node are re-driven on the tick (OF-575).
         let organs = Arc::clone(&server.organs);
-        let mut router = OrganRouter::new().with_local(Arc::clone(&organs));
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            router = router.with_mesh(
-                Arc::new(BoundEndpoint(Arc::downgrade(server))),
-                Arc::new(VaultOrganNodes(Arc::clone(vault))),
-                runtime,
-            );
-        }
-        let router = Arc::new(router);
+        let router = Arc::new(organ_router(server));
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
         MeshRoutes::default()
@@ -305,12 +313,35 @@ mod host {
                     .with_stop(work.deadline.subscribe()),
                 ),
             )
+            // This install's Files world answers the owner's other devices'
+            // searches, each machine the owner granted Files search
+            // (ARCH-0027 #files-world).
+            .route(
+                FILES_SEARCH_ALPN,
+                Arc::new(FilesSearchService::new(Arc::clone(vault))),
+            )
             .tick(organ_redrive(
                 router,
                 Arc::clone(vault),
                 work.organs.clone(),
             ))
             .tick(server.pack_organ_tick(work.organs.clone()))
+    }
+
+    /// The router a call the host itself makes takes (OF-575): this
+    /// machine's organ host first, else one of the owner's other nodes
+    /// granted organ calls, over this install's one endpoint (FIX 14544).
+    /// Built off a runtime, it is this host alone.
+    pub(crate) fn organ_router(server: &Arc<crate::server::SyncServer>) -> OrganRouter {
+        let router = OrganRouter::new().with_local(Arc::clone(&server.organs));
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => router.with_mesh(
+                Arc::new(BoundEndpoint(Arc::downgrade(server))),
+                Arc::new(VaultOrganNodes(Arc::clone(&server.vault))),
+                runtime,
+            ),
+            Err(_) => router,
+        }
     }
 
     /// This install's one mesh endpoint as the organ router dials it (FIX
@@ -647,4 +678,4 @@ mod host {
     }
 }
 
-pub(crate) use host::MeshHost;
+pub(crate) use host::{MeshHost, organ_router};
