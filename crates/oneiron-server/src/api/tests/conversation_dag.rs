@@ -1223,8 +1223,10 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
         ),
     )
     .await;
-    assert!(dag["head"].is_null());
-    assert_eq!(dag["main_line"], json!([]));
+    // The whole page is printed: what the head names decides whether a
+    // deleted shell is read as the head (round-4 R11, still red).
+    assert!(dag["head"].is_null(), "{dag}");
+    assert_eq!(dag["main_line"], json!([]), "{dag}");
     let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(

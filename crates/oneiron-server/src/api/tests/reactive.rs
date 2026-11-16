@@ -1135,16 +1135,25 @@ async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
                     )
                     .unwrap();
             }
-            for (read, count) in [(&mut out, &output_reads), (&mut inn, &input_reads)] {
+            // Which delete and which endpoint is named in each message, so a
+            // red run says which of the four (remote, hard) cases failed.
+            for (endpoint, read, count) in [
+                ("out", &mut out, &output_reads),
+                ("in", &mut inn, &input_reads),
+            ] {
+                let case = format!("remote={remote} hard={hard} endpoint={endpoint}");
                 let current = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     read.refresh_on_change(),
                 )
                 .await
-                .expect("subject edge endpoint notice")
-                .expect("read");
-                assert!(current.iter().all(|(_, flags)| flags.is_none()));
-                assert_eq!(reactive_reads(count), 2);
+                .unwrap_or_else(|_| panic!("subject edge endpoint notice: {case}"))
+                .unwrap_or_else(|error| panic!("read: {case}: {error:?}"));
+                assert!(
+                    current.iter().all(|(_, flags)| flags.is_none()),
+                    "{case}: {current:?}"
+                );
+                assert_eq!(reactive_reads(count), 2, "{case}");
             }
             assert!(
                 tokio::time::timeout(
