@@ -16,10 +16,14 @@ impl Memory<'_> {
         // What the lane admits from is what the item is projected from: a
         // room's view, or base.
         let content = lane.store_read();
+        let bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = self.lane_snapshot()?;
+        let known = snapshot.known();
+        let reads = [PointRead::id(*id).at(mode)];
         let ScopedReadResult {
             value: admitted,
             receipt: read,
-        } = lane.read_projected(&[PointRead::id(*id).at(mode)], None, |txn, rows| {
+        } = lane.read_projected_in_txn(snapshot.txn(), &reads, None, |txn, rows| {
             let Some(row) = rows.into_iter().next().flatten() else {
                 return Ok::<_, MemoryError>(None);
             };
@@ -101,9 +105,25 @@ impl Memory<'_> {
             } else {
                 None
             };
-            let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
+            // A CLAIM serves its value and predicate from its own body, beside
+            // the view: every reader but the owner reads them from the body
+            // the typed Nulled rule releases (ruling EXPORTDOORS Q4 = A), and
+            // a CLAIM whose body is withheld serves no item.
+            let body = match body {
+                Some(stored) if entity_type == ENTITY_TYPE_CLAIM => lane
+                    .released_body_in(txn, entity_type, &stored)?
+                    .map(std::borrow::Cow::into_owned),
+                body => body,
+            };
+            let view = self.entity_view_of_in_txn(lane, txn, known, row, mode)?;
             Ok(Some((entity_type, body, view, turn, stale, handle)))
         })?;
+        // The snapshot and its body pins close with the projection: the
+        // item's edges, a TURN's masked words, its conversation and each
+        // message it quotes are read after, each in its own snapshot, and
+        // a thread holds one read transaction.
+        drop(snapshot);
+        drop(bodies);
         receipt.restrict_with(&read);
         let Some((entity_type, Some(body), Some(view), turn, stale, handle)) = admitted else {
             return Ok(None);

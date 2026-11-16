@@ -2,29 +2,12 @@
 
 use std::num::NonZeroU16;
 
-use serde::{Deserialize, Serialize};
-
 use crate::failure_ladder::healer_dispatch::HealerSlot;
 
 use super::classify::DEFAULT_MAX_CONSECUTIVE_TRANSIENTS;
 
-/// What the Nth consecutive transient failure selects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FailureEscalationMode {
-    /// Route to the healer slot; the default slot wakes the Coach.
-    Auto,
-    Human,
-}
-
-/// The agent-side scope a policy binds to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FailureScope {
-    /// Lowercase-hex EntityId spelling.
-    pub agent_ref: String,
-    #[serde(default)]
-    pub skill_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::failure_ladder::scope::{FailureEscalationMode, FailureScope};
 
 /// Caller-supplied policy. Persistence and lookup are not in this ticket.
 #[derive(Debug, Clone, PartialEq, Eq)]

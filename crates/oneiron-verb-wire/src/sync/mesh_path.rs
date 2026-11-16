@@ -96,3 +96,6 @@ impl MeshPathReceipt {
         }
     }
 }
+
+/// The most receipts one read returns.
+pub const MESH_PATH_RECEIPTS_READ_MAX: usize = 1024;

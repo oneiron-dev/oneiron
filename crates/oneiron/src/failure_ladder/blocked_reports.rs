@@ -7,16 +7,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_MESSAGE;
 
-/// Reference-only projection of ONE-1686's durable `report_blocked` receipt.
-///
-/// The category/detail stay owned by and decoded through ONE-1686. This lane
-/// deliberately does not duplicate that four-category enum or its receipt
-/// codec, so the ref stays opaque here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockedReportRef {
-    /// Lowercase-hex EntityId spelling.
-    pub receipt_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::failure_ladder::blocked_reports::BlockedReportRef;
 
 /// Internal verification result. Dropped reports remain unit-testable without
 /// becoming case/card data.
