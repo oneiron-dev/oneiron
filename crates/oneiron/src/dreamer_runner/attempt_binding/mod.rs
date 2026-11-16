@@ -210,10 +210,11 @@ impl DreamerAttemptBinding {
     /// Archive items for strength, Settle items for conflict settlement and
     /// Candidate, ConflictResolution, Conflict or Person items for extraction.
     /// One writer proves the binding before the batch stages. A refused
-    /// binding writes no batch, receipt or item. A claim an extraction item
-    /// lands is recorded as an output of the attempt in the same write (a
-    /// Person item lands a PERSON and no claim), and the deferred-grant
-    /// receipts are counted once the write has committed.
+    /// binding writes no batch, receipt or item. An extraction commit marks
+    /// its claim rows as this attempt's and records a landed claim as an
+    /// output of the attempt in the same write (a Person item lands a PERSON
+    /// and no claim), and the deferred-grant receipts are counted once the
+    /// write has committed.
     ///
     /// The stagers judge every grant at the commit's own recorded time: the
     /// batch observes the clock and persists it as the floor inside this
@@ -231,7 +232,7 @@ impl DreamerAttemptBinding {
                 return Ok(Err(refused));
             }
             self.vault
-                .derive_commit_in_txn_with_output_recording(
+                .derive_commit_in_txn_with_binding_mark(
                     txn,
                     &stamp,
                     &batch,

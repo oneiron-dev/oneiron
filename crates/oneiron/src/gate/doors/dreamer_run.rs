@@ -21,6 +21,10 @@ use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteEnvelope};
 
+/// The review group a Proposed write waits in, if any: a Dreamer run's own
+/// proposals wait with that run (an imported one in its import's review),
+/// and an extraction binding's derive rows wait with the binding's run the
+/// same way. Decision context and replay coordinates do not read this.
 pub(super) fn pending_consent_dreamer_run_id(
     envelope: Option<&WriteEnvelope>,
     body: &ClaimBody,
@@ -31,15 +35,18 @@ pub(super) fn pending_consent_dreamer_run_id(
     let envelope = envelope?;
     match body.source {
         // An observed claim a run derived waits with that run's proposals
-        // (FIX 3083).
+        // (FIX 3083). An extraction binding's derive row waits with its
+        // batch's run the same way.
         Some(ClaimSource::Generated | ClaimSource::Observed) => {
             dreamer_run_id_from_write_envelope(envelope)
+                .or_else(|| extraction_binding_run_id_from_write_envelope(envelope))
         }
         // A claim from imported evidence waits in its import's review
         // (ARCH-0027): one group per import, whichever runs extracted it. One
         // with no imported TURN behind it waits with its run.
         Some(ClaimSource::Imported) => {
-            let run = dreamer_run_id_from_write_envelope(envelope)?;
+            let run = dreamer_run_id_from_write_envelope(envelope)
+                .or_else(|| extraction_binding_run_id_from_write_envelope(envelope))?;
             Some(import_review_from_provenance(envelope.provenance().value()).unwrap_or(run))
         }
         _ => None,
@@ -85,8 +92,9 @@ pub(in crate::gate) fn dreamer_run_id_from_write_envelope(
 /// C-3): a Dreamer run's, or one a `vault.derive` commit stamped
 /// (`surface = vault.derive`). GATE-12, GATE-13 and the optional checker
 /// hold every such claim to the same floors, whichever agent derived it.
-/// Pending-review grouping, decision context and replay coordinates still
-/// read [`dreamer_run_id_from_write_envelope`] alone.
+/// Pending-review grouping also reads the extraction binding's mark beside
+/// it; decision context and replay coordinates still read
+/// [`dreamer_run_id_from_write_envelope`] alone.
 pub(in crate::gate) fn derivation_class_write(envelope: &WriteEnvelope) -> bool {
     if dreamer_run_id_from_write_envelope(envelope).is_some() {
         return true;
@@ -163,6 +171,42 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
                 (!run_id.is_empty()).then(|| run_id.to_owned())
             })
         })
+}
+
+/// The run an extraction binding's derive row waits under, if any: an Agent-
+/// or System-authored write whose provenance the binding's commit marked
+/// (`surface = vault.derive` with the attempt key) groups under its `run`.
+/// An agent's own derive batch carries no mark and stays ungrouped. Read
+/// only by [`pending_consent_dreamer_run_id`].
+fn extraction_binding_run_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<String> {
+    if !matches!(
+        envelope.actor().actor_class(),
+        EdgeActorClass::Agent | EdgeActorClass::System
+    ) {
+        return None;
+    }
+    let Value::Map(entries) = envelope.provenance().value() else {
+        return None;
+    };
+    let marked = entries.iter().any(|(key, value)| {
+        key.as_str() == Some(DREAMER_PROVENANCE_SURFACE_KEY)
+            && value.as_str() == Some(crate::derive::DERIVE_SURFACE)
+    }) && entries.iter().any(|(key, value)| {
+        key.as_str() == Some(crate::derive::DERIVE_EXTRACTION_ATTEMPT_KEY)
+            && value
+                .as_str()
+                .is_some_and(|attempt| !attempt.trim().is_empty())
+    });
+    if !marked {
+        return None;
+    }
+    entries.iter().find_map(|(key, value)| {
+        if key.as_str() != Some(DREAMER_PROVENANCE_RUN_KEY) {
+            return None;
+        }
+        let run = value.as_str()?.trim();
+        (!run.is_empty()).then(|| run.to_owned())
+    })
 }
 
 /// Runs the GATE-12 pre-commit checks for one Dreamer-authored candidate,
