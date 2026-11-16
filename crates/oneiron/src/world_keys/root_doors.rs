@@ -35,6 +35,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, KitRecord, Result, SecretError};
 use crate::{EntityId, Vault};
 
+mod kit_restore;
+
 /// What the owner confirmed for a kit seed this install cannot authenticate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KitConfirmation {
@@ -494,11 +496,10 @@ impl Vault {
             Some(_) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
             None => true,
         };
-        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
-        // A): the owner's earlier R keys go first, so R's enrolment binds
-        // the owner on a self-hosted vault when a revoked R held their
-        // binding, as the root door's lost keys go before its successor.
-        self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        // R enrols before the earlier R keys go: the enrolment's carrier,
+        // this install, may stand on an approval only an earlier R gave,
+        // which goes stale at that R's revocation once older than the
+        // stale-roster window (Sol carry F1).
         if enrol {
             self.enrol_recovery_authority_key_in_txn(
                 txn,
@@ -507,6 +508,18 @@ impl Vault {
                 seed,
                 predecessor,
             )?;
+        }
+        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
+        // A), and R carries what the revoked ones approved, chosen before
+        // their revocation, so a kit change unpairs no machine
+        // (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A). Then R binds the
+        // owner on a self-hosted vault when a revoked R held their binding,
+        // as its enrolment would after the revocation.
+        let carry =
+            self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        self.carry_recovery_authority_approvals_in_txn(txn, carry, &authority_signer)?;
+        if enrol {
+            self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
         }
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
@@ -689,99 +702,6 @@ impl Vault {
                 .ok_or_else(invalid_authority)?,
             repin: Some(finish.report),
         })
-    }
-
-    /// Kit restore: finds the stored root that matches the seed's id and both
-    /// its keys, or publishes it when the kit-restored seed rule allows;
-    /// anchors this install's own request under it unless this machine is
-    /// already mine there with its own keys; pins it; and opens each key
-    /// wrapped to it whose world is live here. Every root-wrapped key lands in
-    /// exactly one list. The caller's origin does not narrow it: the owner's
-    /// say-so counts from any surface the owner is authenticated on (owner,
-    /// 10-19), so a peer's request restores as this machine's does. The
-    /// revalidated owner proof and the kit's seed gate are what stand.
-    pub fn restore_world_keys(
-        &self,
-        owner: &AuthenticatedOwner,
-        seed: &RecoveryRootSeed,
-        confirm: Option<KitConfirmation>,
-    ) -> Result<RootRestore> {
-        let (secret, request) = self.seed_door_prep(owner, seed, confirm)?;
-        let (restore, usable) = self.with_write_txn(|txn| {
-            self.restore_world_keys_in_txn(txn, owner, &secret, &request, seed, confirm)
-        })?;
-        for key in usable {
-            self.ring_world_key(key);
-        }
-        Ok(restore)
-    }
-
-    /// [`Self::restore_world_keys`]'s transaction, with `secret` and
-    /// `request` from [`Self::seed_door_prep`]: the restore, and the keys
-    /// this machine may read, for the session ring once it commits.
-    pub(super) fn restore_world_keys_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
-        secret: &MachineSecret,
-        request: &MachineEnrolmentRequest,
-        seed: &RecoveryRootSeed,
-        confirm: Option<KitConfirmation>,
-    ) -> Result<(RootRestore, Vec<WorldKey>)> {
-        let anchor = seed.anchor();
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let (root, publish) = self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
-        let pin = PinnedRoot {
-            id: root.id,
-            anchor_key: root.anchor_key,
-        };
-        let door = RepinDoor {
-            secret,
-            signing: &signing,
-            new_root: root.id,
-            seed: Some(seed),
-            restore: true,
-        };
-        let start = self.repin_start_in_txn(txn, &door)?;
-        self.pin_first_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-        if publish {
-            self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, actor))?;
-        }
-        let now = self.authority_view_readonly_in_txn(txn)?;
-        let already = now
-            .machine(request.machine)
-            .and_then(|folded| {
-                folded.trusted_under(&crate::authority::MachineAdmitter::Anchor(root.anchor_key))
-            })
-            .is_some_and(|trusted| {
-                trusted.profile.machine_key == request.machine_key
-                    && trusted.profile.encryption_key == request.encryption_key
-            });
-        let mark = if already {
-            None
-        } else {
-            Some(self.append_anchor_mark_in_txn(txn, &anchor, actor, request)?)
-        };
-        self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-        self.end_wait_in_txn(txn, root.id, None, None)?;
-        let mid = self.authority_view_readonly_in_txn(txn)?;
-        let stands =
-            mark.is_none_or(|mark| anchor_mark_stands(&mid, root.anchor_key, mark, request));
-        if !stands || mid.pinned_root != Some(pin) {
-            return Err(refused("the kit's root does not stand on this install"));
-        }
-        let finish = self.repin_finish_in_txn(txn, &door, start)?;
-        Ok((
-            RootRestore {
-                usable: finish.usable.iter().map(|key| *key.id()).collect(),
-                needs_rehome: finish.needs_rehome,
-                withheld: finish.report.withheld,
-                narrowed: finish.report.narrowed,
-            },
-            finish.usable,
-        ))
     }
 
     /// Pins `root` on this install from a fingerprint the owner carried out
