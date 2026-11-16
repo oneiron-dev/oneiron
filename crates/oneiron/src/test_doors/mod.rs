@@ -57,6 +57,7 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod fingerprint_keep_hook_digests;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
@@ -146,6 +147,8 @@ pub mod split_phrase_carrier;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
+#[cfg(feature = "sync")]
+pub mod sync_parted_row_binding;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod turn_words;
