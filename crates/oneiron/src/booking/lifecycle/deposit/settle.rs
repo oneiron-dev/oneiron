@@ -425,7 +425,7 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
 fn settle_payload_key(record: &AttemptRecord) -> Result<[u8; 32], BookingError> {
     let payload: DepositSettlePayload = serde_json::from_slice(&record.payload)
         .map_err(|_| refused("booking deposit settle payload did not decode"))?;
-    super::super::digest_from_hex(&payload.deposit_key)
+    oneiron_hex::decode::<32>(&payload.deposit_key)
         .ok_or_else(|| refused("booking deposit settle payload names no deposit"))
 }
 
