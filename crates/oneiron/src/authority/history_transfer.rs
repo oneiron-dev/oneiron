@@ -1,6 +1,6 @@
 //! Signed-history migration and independently authorized per-vault re-root doors.
 use super::*;
-use crate::batch::{BatchOp, apply_ops};
+use crate::batch::{BatchOp, apply_ops_beside_authority_rows};
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::{EntityId, TimeRange, Vault};
@@ -285,6 +285,10 @@ impl Vault {
     /// attested prefix plus the signed incoming tail, not an independent
     /// replay of the whole prefix ([`AdoptedPrefix`]); a covered row the
     /// blobs carry lands as hydration.
+    /// A row the source's own fold never applied, which the door here would
+    /// hold, is left out with each row standing on it (H72), so the history
+    /// of a vault that stored a stranger's row before #1449 imports without
+    /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
@@ -293,6 +297,12 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        let carried: BTreeMap<_, _> = decoded
+            .iter()
+            .map(|(hash, _, entry)| (*hash, entry.clone()))
+            .collect();
+        let never_applied = carried_rows_never_applied_in_txn(&self.store, &txn, &carried)?;
+        decoded.retain(|(hash, _, _)| !never_applied.contains(hash));
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
@@ -306,6 +316,13 @@ impl Vault {
             .iter()
             .map(|(hash, _, _)| *hash)
             .filter(|hash| !resident.contains(hash))
+            .collect();
+        // Each row's store door reads the fold beside every row this import
+        // stages, as the fold after staging judges them (owner-reserve delta
+        // review F2).
+        let staged_rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = decoded
+            .iter()
+            .map(|(hash, _, entry)| (*hash, entry.clone()))
             .collect();
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
@@ -350,7 +367,7 @@ impl Vault {
                 hub_sync_imported: false,
             });
         }
-        apply_ops(
+        apply_ops_beside_authority_rows(
             &self.store,
             &self.config,
             &self.analyzer,
@@ -360,6 +377,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
+            &|| Ok(staged_rows.clone()),
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;

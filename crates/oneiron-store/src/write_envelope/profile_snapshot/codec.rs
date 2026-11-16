@@ -1,7 +1,5 @@
 //! Canonical MessagePack encode/decode and field validation helpers.
 
-use std::io::Cursor;
-
 use rmpv::{Value, ValueRef};
 
 use super::record::{
@@ -13,6 +11,7 @@ use super::record::{
 use crate::write_envelope::claim_body::unit_interval_f32;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, RecordError, Result};
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 
 mod source_pages;
 pub use self::source_pages::PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE;
@@ -97,19 +96,15 @@ pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
         ),
     ]);
 
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value)
-        .map_err(|_| Error::InvariantViolation("psych profile body MessagePack encode failed"))?;
-    Ok(out)
+    Ok(msgpack::encode(&value))
 }
 
 /// Decodes and validates a PsychProfile body.
 pub fn decode_psych_profile_body(bytes: &[u8]) -> Result<PsychProfile> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_profile("body"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_profile("trailing bytes after body map"));
-    }
+    let value = msgpack::decode(bytes).map_err(|error| match error {
+        MsgpackError::Trailing => invalid_profile("trailing bytes after body map"),
+        _ => invalid_profile("body"),
+    })?;
     decode_psych_profile_value(&value)
 }
 
@@ -260,33 +255,28 @@ pub fn validate_confidence(value: f32, context: &'static str) -> Result<()> {
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key
-            .as_str()
-            .ok_or_else(|| invalid_profile("body keys must be strings"))?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_profile(
-                "body key is not in the pinned PSYCH_PROFILE_BODY_KEYS set",
-            ));
-        };
-        if seen[index] {
-            return Err(invalid_profile("duplicate body key"));
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_profile("missing required profile field"))
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|error| {
+            invalid_profile(match error {
+                MsgpackError::NonTextKey => "body keys must be strings",
+                MsgpackError::UnknownKey(_) => {
+                    "body key is not in the pinned PSYCH_PROFILE_BODY_KEYS set"
+                }
+                MsgpackError::DuplicateKey(_) => "duplicate body key",
+                _ => "missing required profile field",
+            })
+        })
 }
 
 pub fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(entry_key, value)| (entry_key.as_str() == Some(key)).then_some(value))
-        .ok_or_else(|| invalid_profile("missing required profile field"))
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_profile(match error {
+            MsgpackError::DuplicateKey(_) => "duplicate body key",
+            _ => "missing required profile field",
+        })
+    })
 }
 
 pub fn invalid_profile(reason: &'static str) -> Error {

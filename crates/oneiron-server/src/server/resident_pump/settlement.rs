@@ -14,7 +14,7 @@ use super::{
     SetAttemptResult, SpentKind, TypeRef, TypedFailureEvidence, TypedFailureVerdict, Vault,
     WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
     park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession, register_wait,
-    restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_now,
+    restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_seconds_now,
 };
 
 /// Settles the run's attempt: complete, parked on its wait or on a provider
@@ -37,7 +37,7 @@ pub(super) fn settle(
     healer_slot: HealerSlot,
 ) -> oneiron::Result<()> {
     let attempt = &claimed.status.attempt;
-    let now = unix_now();
+    let now = unix_seconds_now();
     // A media trap already parked the try; its wake's claim judges the run
     // TASK again.
     if !matches!(ran, Ok(BoundRun::Trapped))
@@ -496,13 +496,14 @@ fn park_on_wait(
             "a waiting run parked on no wait",
         ))?;
     let now_ms = now.saturating_mul(1000);
+    let actor = agent_dispatch_run_actor(&status.input, attempt.id)?;
     let trap = open_trap(
         vault,
         &DurableStepContext {
             vault,
             attempt_id: attempt.id,
             run_id: attempt.run_id.clone(),
-            envelope_actor: agent_dispatch_run_actor(&status.input, attempt.id)?,
+            envelope_actor: actor,
             subject: parked.wait.wait_id,
             deadline: None,
             now_ms,
@@ -530,6 +531,20 @@ fn park_on_wait(
         &trap,
         now_ms,
     )?;
+    // L2-37: the prompt prefix the run's last answer left cached gets its
+    // idle call, in its own write. A miss never fails the park: with no due
+    // row the prefix simply expires.
+    if let Some(prefix) = &outcome.cache_horizon
+        && let Err(error) = oneiron::idle_fold::record_cache_horizon(
+            vault,
+            &parked.key,
+            attempt.id,
+            actor.entity_ref(),
+            prefix,
+        )
+    {
+        tracing::warn!(%error, attempt = ?attempt.id, "a parked run's idle call was not recorded");
+    }
     // A signal that landed before register_wait leaves the trap Sent: the
     // delivering commit cannot wake that head again. Now that the park and
     // binding exist, the shared sweep consumes it and queues this same try.

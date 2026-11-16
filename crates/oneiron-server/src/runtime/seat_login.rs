@@ -225,11 +225,7 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
 }
 
 fn attempt_hex(bytes: &[u8; 16]) -> String {
-    let mut out = String::with_capacity(32);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    oneiron_hex::encode(bytes)
 }
 
 /// The core error a seat-id read becomes: the store error it carries. Every

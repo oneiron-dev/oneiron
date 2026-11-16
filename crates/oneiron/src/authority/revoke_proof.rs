@@ -1,6 +1,6 @@
-//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals,
-//! a Grant's slip withdrawals, slip burns and machine removals), independent
-//! of roster survivors.
+//! Log-derived, typed restrictive facts (actor and device revocations, slip
+//! withdrawals, a Grant's slip withdrawals, slip burns and machine removals),
+//! independent of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +46,13 @@ enum Restriction {
         admitter: MachineAdmitter,
         chain: Box<MachineChain>,
     },
+    /// A verified `RevokeDevice`: the revoked key (FIX
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). The fold can refuse a
+    /// revocation whose ancestry holds a permissive row it refused
+    /// (InvalidAncestry); the proof crosses that row (`skippable_permissive`),
+    /// so the key stays revoked. A confirmation collision refuses no row
+    /// (RULING COLLISION-SETTLEMENT-SHAPE = A).
+    DeviceRevoke(AuthorityKey),
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -92,26 +99,34 @@ impl RevokeFacts {
                 } => {
                     super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
+                Restriction::DeviceRevoke(key) => super::op_apply::revoke_key(state, key),
             }
         }
     }
-}
 
-/// A signed withdrawal that may cross rejected permissive ancestry.
-pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::SlipGrantRevoke { .. }
-        | AuthorityOp::RemovalArchiveConsume { .. } => true,
-        op => removes_machine(op),
+    /// The rows of the verified device revocations scoped to `vault_id`. A
+    /// fact stands where its row may not (a revocation above a refused
+    /// permissive row), so the stale-roster window times a revoked key's
+    /// approvals from these rows as from a valid revocation (Sol review F1
+    /// on #8608).
+    pub(super) fn device_revocations(
+        &self,
+        vault_id: AuthorityVaultId,
+    ) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash
+            .values()
+            .filter(|fact| {
+                fact.vault_id == vault_id && matches!(fact.kind, Restriction::DeviceRevoke(_))
+            })
+            .map(|fact| fact.entry_hash)
+            .collect()
     }
 }
 
-pub(super) fn removes_machine(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::revoke_proof::{
+    removes_machine, restrictive_withdrawal,
+};
 
 /// Every candidate comes from the already signature-filtered entry graph.
 /// The proof uses the same `fold_entry_state` and shared stalled-ancestor
@@ -125,7 +140,7 @@ pub(super) fn derive_revoke_facts(
     let mut facts = RevokeFacts::default();
     for (hash, entry) in entries {
         let removal = match &entry.op {
-            AuthorityOp::RevokeActor { .. } => false,
+            AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. } => false,
             op if removes_machine(op) => true,
             _ => continue,
         };
@@ -159,7 +174,12 @@ pub(super) fn derive_revoke_facts(
         } else {
             context
         };
-        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
+        // Every revocation's proof follows the fold on two entries of one
+        // signer at one sequence: the fold admits such siblings, so the
+        // revoked key could otherwise sign two of them under the owner's
+        // revocation and leave it with no fact once a floor refuses them
+        // (Astra T1 on #8608; [REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]).
+        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) else {
             continue;
         };
         let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
@@ -171,6 +191,9 @@ pub(super) fn derive_revoke_facts(
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
             },
+            AuthorityOp::RevokeDevice { revoked_key } => {
+                Restriction::DeviceRevoke(revoked_key.clone())
+            }
             AuthorityOp::MachineProfile(profile) => {
                 let Some((admitter, chain)) = state
                     .machines
@@ -221,8 +244,8 @@ pub(super) fn derive_revoke_facts(
 }
 
 impl RevokeFacts {
-    /// Adds the slip withdrawals and burns the projection dropped. Selecting
-    /// one of two colliding confirmations removes the loser and every entry
+    /// Adds the slip withdrawals and burns the projection dropped. Settling a
+    /// handoff removes a fenced row or an unsettled handoff and every entry
     /// after it, a `SlipRevoke`, `SlipConsume` or membership execution
     /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
@@ -258,8 +281,7 @@ impl RevokeFacts {
                 }
                 _ => continue,
             };
-            let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, false)
-            else {
+            let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) else {
                 continue;
             };
             let kind = match restriction {
@@ -282,34 +304,19 @@ impl RevokeFacts {
 impl RevokeFacts {
     /// These facts with each actor revocation a whole fold proves in `tail`,
     /// an adopted image's tail that folded past it serially (FIX 11760):
-    /// every tail row has its ordinary state in `states`, and every covered
-    /// row (`covered`, by hash, primary signer and sequence) is in the causal
-    /// past of each tail withdrawal. On a branch whose every row folds, the
-    /// whole fold's proof of a `RevokeActor` ([`verify_signed_branch`])
-    /// differs from the ordinary fold only in refusing a branch that holds
-    /// two rows of one signer at one sequence: such a revocation still binds
-    /// through its ordinary state and adds no fact here, as there. Each other
+    /// every tail row has its ordinary state in `states`. On a branch whose
+    /// every row folds, the whole fold's proof of a `RevokeActor`
+    /// ([`verify_signed_branch`]) is its ordinary state, siblings at one
+    /// sequence included ([REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]), so each
     /// takes its fact on its ordinary state's vault and owner-anchor rows. A
     /// slip or Grant withdrawal adds none: the ordinary fold applied it, and
     /// only a dropped one is proved on its own.
-    pub(super) fn with_serial_actor_revokes<'a>(
+    pub(super) fn with_serial_actor_revokes(
         &self,
-        covered: impl IntoIterator<Item = (&'a AuthorityEntryHash, &'a AuthorityKey, u64)>,
         tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         states: &BTreeMap<AuthorityEntryHash, FoldState>,
     ) -> Self {
         let mut facts = self.clone();
-        let mut covered_seqs = BTreeMap::new();
-        let mut covered_twice = false;
-        for (hash, signer, seq) in covered {
-            covered_twice |= covered_seqs
-                .insert((signer.clone(), seq), *hash)
-                .is_some_and(|other| other != *hash);
-        }
-        // Every covered row is in each candidate's branch.
-        if covered_twice {
-            return facts;
-        }
         for (hash, entry) in tail {
             let AuthorityOp::RevokeActor {
                 authority_key,
@@ -321,27 +328,6 @@ impl RevokeFacts {
             let Some(state) = states.get(hash) else {
                 continue;
             };
-            // The branch's tail rows: the candidate and every tail row it
-            // descends from; its covered rows are counted already.
-            let mut seqs = covered_seqs.clone();
-            let mut seen = BTreeSet::new();
-            let mut stack = vec![*hash];
-            let mut twice = false;
-            while let Some(at) = stack.pop() {
-                let Some(row) = tail.get(&at) else {
-                    continue;
-                };
-                if !seen.insert(at) {
-                    continue;
-                }
-                twice |= seqs
-                    .insert((row.signer_key().clone(), row.seq), at)
-                    .is_some_and(|other| other != at);
-                stack.extend(row.parent_hashes.iter().copied());
-            }
-            if twice {
-                continue;
-            }
             facts.by_hash.insert(
                 *hash,
                 VerifiedRestriction {
@@ -398,33 +384,21 @@ impl RevokeFacts {
     }
 }
 
-/// The target's own folded state, proved over its signed ancestry alone.
-/// `refuse_equal_sequences` refuses a branch holding two entries of one signer
-/// at one sequence, as an actor revocation's proof always has. A slip
-/// restriction's or machine removal's proof follows the fold instead, which
-/// admits concurrent siblings at one sequence and refuses only a sequence
-/// that does not rise along the ancestry.
+/// The target's own folded state, proved over its signed ancestry alone. The
+/// proof follows the fold: it admits concurrent siblings at one sequence and
+/// refuses only a sequence that does not rise along the ancestry. External
+/// siblings cannot erase a verified restrictive fact on this branch.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
-    refuse_equal_sequences: bool,
 ) -> Option<FoldState> {
     let mut pending = ancestors.get(&target)?.clone();
     pending.insert(target);
-    let mut signer_seqs = BTreeMap::new();
+    // Every row of the branch is at hand, and none is its own ancestor.
     for hash in &pending {
-        let entry = entries.get(hash)?;
-        // A branch with internal signer equivocation cannot invent a merged
-        // authority roster. External siblings may win the global projection,
-        // but cannot erase a verified restrictive fact on this branch.
-        if ancestors.get(hash)?.contains(hash)
-            || (refuse_equal_sequences
-                && signer_seqs
-                    .insert((entry.signer_key().clone(), entry.seq), *hash)
-                    .is_some_and(|other| other != *hash))
-        {
+        if !entries.contains_key(hash) || ancestors.get(hash)?.contains(hash) {
             return None;
         }
     }
