@@ -244,7 +244,9 @@ impl Vault {
     /// `input.policy` this runtime may run, the spent seat included. A work
     /// that moved on, is running, or ended without a spend is answered as
     /// it stands, with no write. The owner's proof is rechecked in the
-    /// writer before the work is read.
+    /// writer before the work is read. An embedded memory serves no node,
+    /// so its `vault.runners.seats.resume` row passes the plain CLI runners
+    /// ([`ProviderAdapterRegistry::standard`]).
     ///
     /// # Errors
     /// A binding or attempt id that is not an id; a proof that no longer
