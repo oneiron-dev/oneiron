@@ -339,7 +339,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_decision/slides_policy.rs` | src | m | 3 struct · 2 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPolicyRow, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
 | `src/model_decision/state.rs` | src | s | 4 fn | — | Caller-prepared decision state fitting |
 | `src/model_decision/types.rs` | src | m | 13 struct · 8 enum · 17 fn · 1 const | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung +13 | Typed decision questions, answer contracts, and measurement values |
-| `src/model_description_rows.rs` | src | s | 2 struct · 1 enum | MeasuredDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
+| `src/model_description_rows.rs` | src | s | 2 struct · 1 enum | MeasuredDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (the setting key… |
 | `src/model_score_diff.rs` | src | s | 1 struct | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/model_step_record.rs` | src | s | 4 struct · 4 enum · 7 fn · 9 const | CallerSettledStep, DreamerTrapKind, DreamerTrapState, ModelStepCheckpoint, SettledStepRequest, SettledStepView, StepProgression, TrapRef | Durable model-step claim vocabulary and progression values |
 | `src/model_step_response_carriage.rs` | src | s | 1 fn · 1 const | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
