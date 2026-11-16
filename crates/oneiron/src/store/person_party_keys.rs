@@ -10,8 +10,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -22,7 +22,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::write_envelope::communication::KEY_PARTY_KEY;
 
-/// Key `(sha256(party_key), person)`; the value is an empty presence marker.
+/// Key `(content hash of party_key, person)`; the value is an empty
+/// presence marker.
 const PERSON_PARTY_KEY: SideTable<([u8; 32], EntityId), (), Raw> =
     SideTable::new(&side_table::PERSON_PARTY_KEY_INDEX);
 
@@ -30,10 +31,13 @@ const PERSON_PARTY_KEY: SideTable<([u8; 32], EntityId), (), Raw> =
 const PERSON_PARTY_KEY_STATE: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::PERSON_PARTY_KEY_INDEX_STATE);
 
-const INDEX_VERSION: u64 = 1;
+/// Version 2 keys each row by the BLAKE3 content hash of the party key.
+/// Version 1 keyed it by SHA-256: a vault that holds a version 1 index reads
+/// every PERSON until its next rebuild drops those rows.
+const INDEX_VERSION: u64 = 2;
 
 fn party_key_digest(party_key: &str) -> [u8; 32] {
-    Sha256::digest(party_key.as_bytes()).into()
+    ContentHash::of(party_key.as_bytes()).into_bytes()
 }
 
 /// The party keys a PERSON body carries: the value of each `party_key`
@@ -160,6 +164,25 @@ pub(crate) fn forget_person_party_key_index(vault: &Vault) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     PERSON_PARTY_KEY.delete_from(&vault.store, &mut wtxn, &[])?;
     PERSON_PARTY_KEY_STATE.delete(&vault.store, &mut wtxn, &())?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Test door (`test_doors::do_not_contact_subject_reads`): replaces the
+/// whole index with `rows` and stamps it `version`, as a vault file that an
+/// earlier index recipe wrote holds them.
+#[cfg(oneiron_test_support)]
+pub(crate) fn replace_person_party_key_index(
+    vault: &Vault,
+    rows: &[([u8; 32], EntityId)],
+    version: u64,
+) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    PERSON_PARTY_KEY.delete_from(&vault.store, &mut wtxn, &[])?;
+    for key in rows {
+        PERSON_PARTY_KEY.put(&vault.store, &mut wtxn, key, &())?;
+    }
+    PERSON_PARTY_KEY_STATE.put(&vault.store, &mut wtxn, &(), &version)?;
     wtxn.commit()?;
     Ok(())
 }
