@@ -57,15 +57,16 @@ pub(crate) fn person_role_in(
     }
     if (fold.vault_id.is_none()
         && (creator.as_deref() == Some(id.as_bytes().as_slice())
-            || (human && id == crate::vault::embedded_owner_actor_id()?)))
+            || (human
+                && id == crate::vault::embedded_owner_actor_id()?
+                && crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn)?)))
         || (fold.vault_id.is_some()
             && human
             && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, id).is_ok())
     {
         return Ok(RoomRole::Owner);
     }
-    let rows = membership::rows_in(&vault.store, txn, room)?;
-    if !membership::members_at_rows(&rows, u64::MAX).contains(&id) {
+    if !membership::is_member_in(&vault.store, txn, room, id)? {
         return Err(denied());
     }
     let Some(role) = ROLE_GRANTS.get(&vault.store, txn, &(room, id))? else {
@@ -149,9 +150,7 @@ impl Vault {
             }
             require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
             let mut body = body::body_in(self, txn, room)?;
-            if !membership::members_at_rows(&membership::rows_in(&self.store, txn, room)?, u64::MAX)
-                .contains(&person)
-            {
+            if !membership::is_member_in(&self.store, txn, room, person)? {
                 return Err(denied());
             }
             body.roles.insert(person.to_hex(), role);

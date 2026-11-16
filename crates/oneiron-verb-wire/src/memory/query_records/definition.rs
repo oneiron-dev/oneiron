@@ -4,6 +4,7 @@
 use crate::memory::query_records::filter::FilterAst;
 use crate::memory::query_records::filter::MatcherSpec;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -100,8 +101,11 @@ pub struct EvalPolicy {
 /// ([`super::saved_query_changes_after`]), and still sweeps it in bounded
 /// wakes for what that feed cannot see; OF-241's live-query tee may replace
 /// the feed when it exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("eval.mode")]
 pub enum EvalMode {
     /// Re-evaluate when relevant evidence moves.
     Reactive,
@@ -112,25 +116,10 @@ pub enum EvalMode {
 }
 
 impl EvalMode {
-    /// Wire token for this mode.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Reactive => "reactive",
-            Self::Wake => "wake",
-            Self::Manual => "manual",
-        }
-    }
-
     /// Parses a wire token, rejecting anything outside the closed set.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "reactive" => Some(Self::Reactive),
-            "wake" => Some(Self::Wake),
-            "manual" => Some(Self::Manual),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

@@ -112,6 +112,7 @@ impl SlotOracle for SixSlotOracle {
             ],
             flex_used: false,
             host_bindings: Vec::new(),
+            full_days: Vec::new(),
         })
     }
 }
@@ -378,6 +379,7 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
             slots: eight_slots(),
             flex_used: false,
             host_bindings: Vec::new(),
+            full_days: Vec::new(),
         },
     );
     BookingPageModel::new(
@@ -450,6 +452,7 @@ fn b08_first_view_shows_five_by_default_and_the_policys_count_when_narrower() {
         visible: off_prefix,
         recommended_start_utc: broken.preview.recommended_start_utc,
         remaining_count: broken.preview.remaining_count,
+        full_days: broken.preview.full_days.clone(),
     };
     assert!(
         matches!(
@@ -693,6 +696,7 @@ impl SlotOracle for EightSlotOracle {
             ],
             flex_used: false,
             host_bindings: Vec::new(),
+            full_days: Vec::new(),
         })
     }
 }
