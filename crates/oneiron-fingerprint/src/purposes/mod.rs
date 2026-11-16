@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { outbound_intent_ledger, retrieval, testing }
+areas! { broker, outbound_intent_ledger, restore, retrieval, setting, skill, testing, vault_import, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
