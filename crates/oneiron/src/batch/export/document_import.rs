@@ -481,6 +481,15 @@ impl Vault {
                 }
                 return Err(invalid("import ID collides with different entity data"));
             }
+            // A deleted agent stays deleted (RULING AGENT-DEF-ARCHIVE-IMPORT-DELETED-ID = A):
+            // an agent id this vault pinned that holds no row is one it deleted, its bytes
+            // purged by a hard delete, and every door refuses it as it refuses a deleted row
+            // whose bytes remain, whoever runs the import.
+            if row.entity_type == ENTITY_TYPE_AGENT_DEF
+                && crate::agent_def::is_pinned_agent_id_in_txn(&self.store, &wtxn, &id)?
+            {
+                return Err(invalid("import ID collides with a deleted entity"));
+            }
             if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
                 let state =
                     crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &wtxn, &id)?;
