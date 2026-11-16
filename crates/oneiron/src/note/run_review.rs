@@ -55,6 +55,26 @@ fn landing_receipt_in_txn(
         .find(|receipt| receipt.fork == fork))
 }
 
+/// Whether `note` still stands for a run's compensating edit: its row is
+/// present, and it was neither erased nor archived since. A landed fork of a
+/// NOTE that no longer stands has no undo, so a revert reports it as
+/// dependent and goes on with the run's other changes (review round 2 of
+/// #8214).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn note_stands_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> MemoryResult<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &note)?.is_some()
+            && !vault.local_hard_delete_marker_exists_in_txn(txn, &note)?
+            && vault.archive_tombstone_in_txn(txn, &note)?.is_none(),
+    )
+}
+
 /// Where `fork` of `note` stands now, for a run journal's NOTE row.
 ///
 /// # Errors
@@ -153,8 +173,8 @@ pub(crate) fn settle_run_note_in_txn(
 }
 
 /// Currency and the inverse's content gate are checked in the same writer.
-/// A later edit that changed the text is not overwritten: it returns no
-/// compensation.
+/// A later edit that changed the text is not overwritten, and a NOTE erased
+/// or archived since is not read: either returns no compensation.
 pub(crate) fn revert_run_note_in_txn(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -162,6 +182,9 @@ pub(crate) fn revert_run_note_in_txn(
 ) -> MemoryResult<Option<String>> {
     let vault = memory.vault();
     let note = EntityId::from_hex(&undo.note)?;
+    if !note_stands_in_txn(vault, txn, note)? {
+        return Ok(None);
+    }
     let current = live_doc(vault, txn, note)?;
     if current.version() != undo.after {
         // Composition across the run's own compensations (FIX 9964): undoing

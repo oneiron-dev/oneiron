@@ -529,8 +529,9 @@ fn claim_member_in_txn(
 /// A): a fork that landed, whoever landed it, takes the undo its landing
 /// kept on this row, which restores the revision from before it; a pending
 /// fork waits, and a rejected fork, or one an erase of its opener took,
-/// never landed. A landed fork whose row kept no undo has none, so the
-/// revert reports it as dependent.
+/// never landed. A landed fork whose row kept no undo has none, and neither
+/// has one whose NOTE was erased or archived since, so the revert reports it
+/// as dependent.
 fn note_member_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -540,9 +541,10 @@ fn note_member_in_txn(
 ) -> MemoryResult<(RunChangeVerdict, Option<RunInverse>)> {
     use crate::note::{NoteForkState, NoteVerdict};
     if let Some(undo) = &row.note_undo {
+        let stands = crate::note::note_stands_in_txn(vault, txn, EntityId::from_hex(note_ref)?)?;
         return Ok((
             RunChangeVerdict::Landed,
-            Some(RunInverse::Note(undo.clone())),
+            stands.then(|| RunInverse::Note(undo.clone())),
         ));
     }
     Ok(
