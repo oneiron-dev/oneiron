@@ -46,8 +46,12 @@ These rules outrank every other process line in this repo.
   head. Nothing else blocks a merge. Add `--locked`, so a stale manifest fails instead of
   rewriting `Cargo.lock`.
 - **No tests.** Do not write, compile or run tests. The existing tests stay in the repo, untouched.
-- **No backward compatibility.** No vault exists yet. Write no migrations, legacy paths, upgrade
-  code or old-format readers. Formats change freely.
+- **Stored data.** A row a vault already holds never changes meaning, and never stops decoding,
+  under an unchanged ABI stamp (`STORAGE_ABI_VERSION`). A change takes one of three paths: keep
+  (old rows read as before), loud (bump the ABI stamp, at most one bump per train, announced by
+  the Engine; development vaults are rebuilt, never auto-upgraded on bel or kel), or reset (it
+  joins the launch-reset stack). Additive changes are free. There is no migration runner and no
+  legacy decoder (storage-abi.md: rebuilt, not migrated).
 - **No review rounds.** No Sol, Astra, CodeRabbit or Greptile review blocks a merge, and bot
   comments need no answer.
 - No security sweeps, perf work, A/B tests, build-speed work or test work.
@@ -132,12 +136,24 @@ unchanged.
 
 ## Ratchets
 
-`scripts/ratchet/check.sh` counts six metrics over non-test code against
+`scripts/ratchet/check.sh` counts eight metrics over non-test code against
 `scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
-process-global mutable statics, the keyspace census and raw core writes. It skips `tests/`
-directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. `scripts/ratchet/root-surface-check.sh`
-pins the `oneiron` crate root to the names in `scripts/ratchet/root-surface.txt`. Both run in
-`ratchet.yml` after a push to `main`; neither blocks a merge.
+process-global mutable statics, the keyspace census, raw core writes, hand-started hashes
+(`raw_hasher_starts`) and lists of names spelled by hand (`hand_name_tables`; a new list of names
+is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). It skips
+`tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
+`scripts/ratchet/root-surface-check.sh` pins the `oneiron` crate root to the names in
+`scripts/ratchet/root-surface.txt`. Both run in `ratchet.yml` after a push to `main`; neither
+blocks a merge. The merge pipeline also counts both for each change before it lands. When a
+change raises a metric to a count over its baseline, or turns the root-surface pin from passing to
+failing, the pipeline reports it to the change's author with the metric, the counts and the
+files, and holds nothing: the author lowers the count in a follow-up PR, or, for a reviewed change
+of the root surface, runs `scripts/ratchet/root-surface-check.sh --regen` there and says why.
+`raw_hasher_starts` counts the `blake3::` and `Sha256` starts outside
+`scripts/ratchet/raw_hasher_allowlist.txt`. A new hash goes through
+`oneiron_contracts::fingerprint`: a purpose from the registry in
+`crates/oneiron-fingerprint/src/purposes/`, or `ContentHash` for the bytes of a body. A path joins
+the allowlist only with its reason on the same line.
 
 ## Vendored and forked code
 
@@ -162,7 +178,7 @@ writer.
 - Workflows target `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host
   name. `uniffi-stub` targets the capability label `xcode`; add that label to a runner only
   after a full Xcode (not Command Line Tools alone) is installed there.
-- Host contract: rustup resolving `rust-toolchain.toml` (1.99.1 with rustfmt and clippy),
+- Host contract: rustup resolving `rust-toolchain.toml` (1.100 with rustfmt and clippy),
   `cargo-nextest`, `rg`, git and `python3` ≥ 3.11; macOS runners also need poppler's `pdfsig`
   (`seal-oracle.yml`). Pinned CI-only tools (cargo-deny, typos-cli, nextest where a host lacks
   it) go under `~/ci/tools`; the job installs them on first use.

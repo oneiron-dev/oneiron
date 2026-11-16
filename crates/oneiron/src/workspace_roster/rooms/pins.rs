@@ -19,43 +19,11 @@ use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::workspace_roster::join_consent::person_of_actor_in_txn;
 use crate::write_envelope::WriteActor;
-use serde::{Deserialize, Serialize};
 
-/// `vault.rooms.pins.pin` and `vault.rooms.pins.unpin`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinRequest {
-    /// The room whose shared pins change.
-    pub room: EntityId,
-    /// The record the pin names.
-    pub target: EntityId,
-}
-
-/// `vault.rooms.pins.pin`'s reply: the room's record for the target. A
-/// target pinned already keeps its first record, which this returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinReply {
-    pub room: EntityId,
-    pub pin: RoomPin,
-}
-
-/// `vault.rooms.pins.unpin`'s reply. It says nothing about whether the
-/// target was pinned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomUnpinReply {
-    pub room: EntityId,
-}
-
-/// `vault.rooms.pins.policy.set`'s input, and its reply with the stored
-/// policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinPolicySet {
-    pub room: EntityId,
-    pub policy: RoomPinPolicy,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::pins::{
+    RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
+};
 
 fn lacks(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
@@ -137,30 +105,43 @@ impl PinnedBody {
                 crate::store::conversation_body::encode(body)?
             }
         };
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
-            .ok_or(Error::EntityNotFound)?;
-        if raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return Err(Error::CorruptedIndex("conversation header"));
-        }
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("conversation header"))?;
         PIN_UPDATES.put(&vault.store, txn, &room, &[1])?;
-        vault
-            .batch_in()
-            .put(
-                &room,
-                ENTITY_TYPE_CONVERSATION,
-                crate::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                &bytes,
-            )
-            .apply(txn)?;
+        put_room_body_in(vault, txn, room, &bytes)?;
         PIN_UPDATES.delete(&vault.store, txn, &room)?;
         Ok(())
     }
+}
+
+/// Writes `bytes` as `room`'s body, keeping the room's header times, in the
+/// caller's write transaction. The door that calls it sets its own marker
+/// around the write, as the all-writer guard asks.
+pub(super) fn put_room_body_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.len() < ENTITY_METADATA_HEADER_LEN {
+        return Err(Error::CorruptedIndex("conversation header"));
+    }
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("conversation header"))?;
+    vault
+        .batch_in()
+        .put(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            bytes,
+        )
+        .apply(txn)?;
+    Ok(())
 }
 
 /// The pins `room`'s stored body holds, in their stored order, as `txn`

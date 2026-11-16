@@ -84,6 +84,9 @@ mod booking;
 #[allow(dead_code)]
 mod booking_anti_abuse;
 mod campaign;
+// The integration tests' door to the campaign surface's refusal statuses (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::campaign::surface_error;
 mod client_metadata;
 // FIX 4902 slice B: the vault as its own `/mcp`'s OAuth 2.1 authorization server.
 mod companion;
@@ -95,12 +98,17 @@ mod conversation_transcript;
 mod conversations;
 mod core;
 mod courtesy_delete;
+// INQUIRE-1 PR 5: the member host's inquiry route.
 mod discover;
 mod entity;
 mod error_map;
 mod esign;
 mod esign_qr;
+mod first_party_html;
+mod inquiry_peer;
 mod oauth_server;
+// The vault's own sign-in routes, which `oneiron hosted login` calls as a
+// native app (L1-14).
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
@@ -110,7 +118,12 @@ pub(crate) use self::esign::page_inspector::EsignOrganPageInspector;
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
+pub(crate) use self::oauth_server::{
+    AUTHORIZE_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+};
 pub(crate) mod off_record_rooms;
+mod one_click_unsubscribe;
+pub(crate) use self::one_click_unsubscribe::install_one_click_unsubscribe_origin;
 mod org_admin;
 mod pairing;
 // FIX 12477: the redeem door's per-address failure backoff, held by the server.
@@ -181,6 +194,11 @@ mod operator_routes;
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
 mod owner_routes;
+// The integration tests' door to three owner routes' refusal statuses (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::owner_routes::engine_refusal_statuses_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::owner_routes::owner_route_refusals_for_test;
 pub(crate) use owner_routes::owner;
 // FIX 5911: an owner's own program proves its waking person the live
 // recorded owner, and takes the owner's media and hook-replay doors; its
@@ -236,15 +254,39 @@ pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
 use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::booking_anti_abuse::BookingHttpDisposition;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::draft_checked_span;
+// The integration tests' door to the carrier release check (census L2-38).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::carrier_releases_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
+// The integration tests' door to the gateway's facade refusal vocabulary (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::mcp_refusal_for_test;
+// The signing session door's read of what a signing router holds (L3-22).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};
+// The integration tests' doors to the e-sign refusal and MCP envelope-error
+// counts (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::esign_qr::count_capability_refusal_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::count_parse_error_for_test;
 #[cfg(test)]
 pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
 };
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::{McpCodeModeVerbs, mcp_admit_host_verb, mcp_host_verb_gate};
+// The `#[cfg(test)]` list above names it too; one import per build.
+#[cfg(all(oneiron_test_support, not(test)))]
+pub(crate) use self::mcp_gateway::resolve_mcp_gateway_actor;
 pub(crate) use self::mcp_gateway::{
     McpCallContext, McpCodeRunContinuations, ReaderChildDoor, RunGuests, VerdictAsker,
     WorkflowPreflight, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
@@ -296,9 +338,10 @@ fn artifact_routes() -> Router<Arc<SyncServer>> {
 
 /// The artifact-only listener's router: this vault's `/a/`, and under each
 /// configured artifact domain, this vault at its own subdomain
-/// (`<vault>.<domain>/<artifact>/…`). A managed vault answers on its internal
-/// authority instead (`<vault_id>.artifact.invalid/<artifact>/…`, FIX 6716)
-/// and reads no artifact domain. No API route is reachable on it.
+/// (`<vault>.<domain>/<artifact>/…`). A vault served by name answers on
+/// `*.localhost` in the same shape (APP-HOST = A). A managed vault answers on
+/// its internal authority instead (`<vault_id>.artifact.invalid/<artifact>/…`,
+/// FIX 6716) and reads no artifact domain. No API route is reachable on it.
 pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     let local = vault_artifact_app(server.clone());
     let hosts = if let Some(vault_id) = server.config.artifact_internal_vault_id.as_deref() {
@@ -306,7 +349,9 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     } else {
         let mut hosts = ArtifactHosts::new(&server.config.artifact_domains);
         if let Some(name) = server.config.artifact_vault_name.as_deref() {
-            hosts = hosts.with_vault_app(name, local.clone());
+            hosts = hosts
+                .with_vault_app(name, local.clone())
+                .with_local_domain();
         }
         hosts
     };
@@ -371,7 +416,8 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                     "dreamer_reason": "no_model_configured",
                     "compaction": "off",
                     "compaction_reason": "no_model_configured"
-                }
+                },
+                "process_readiness": "ready"
             })
         )
     )
@@ -386,6 +432,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
         ai: server.ai.status().health(),
+        process_readiness: server.process_readiness().state(),
         artifact_port: server.artifact_port(),
     })
 }
@@ -416,6 +463,13 @@ struct HealthResponse {
     runtime: RuntimeHealthStatus,
     /// Background AI state, redacted: states and reasons, never model names.
     ai: crate::ai_host::AiHealth,
+    /// How this process stands now (L8-11): `ready`; `degraded`, its event
+    /// loop lags; `draining`, its event loop is hung; or `recovering`, the
+    /// hang ended and a stabilization window runs. A managed vault takes no
+    /// new work while draining or recovering (`PROCESS_NOT_READY`); this
+    /// route always answers. States only, never figures.
+    #[schema(value_type = String, example = "ready")]
+    process_readiness: oneiron_vault_contract::ProcessState,
     /// The port on this host whose origin serves `/a/` with nothing else
     /// beside it. Open artifacts there: on the API's origin a code bundle is
     /// sandboxed, and its module scripts and fonts do not load. Absent where

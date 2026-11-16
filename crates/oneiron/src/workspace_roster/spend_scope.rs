@@ -45,22 +45,8 @@ impl std::fmt::Display for SpendScopeId {
     }
 }
 
-/// Whether a scope still takes spend and reservations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SpendState {
-    Open,
-    /// Settled into its parent. Late spend lands on the nearest open ancestor.
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::spend_scope::SpendState;
 
-/// What a child launch asks of its parent's scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ChildSpend {
-    /// The spawn set `budget`: a hard cap the child can never pass.
-    Carve { cap_units: u64 },
-    /// No `budget`: hold the calibrated expected spend; top up later, up to the
-    /// nearest hard ancestor's cap. A hold is never refused for its estimate.
-    Hold { expected_units: u64 },
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::spend_scope::ChildSpend;

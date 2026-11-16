@@ -4,14 +4,8 @@
 
 use super::*;
 
-/// Whether this vault has a data key, and whether this handle holds it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum VaultKeyStatus {
-    NoKey,
-    Locked,
-    Unlocked,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::world_keys::vault_key::vocabulary::VaultKeyStatus;
 
 /// The WebAuthn PRF input (`prf.eval.first`) a passkey wrap's KEK is the output
 /// at: `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input/v1", vault id ‖
@@ -34,6 +28,23 @@ pub fn passkey_prf_input(vault_id: &[u8; 32], credential: &str) -> Result<[u8; 3
 pub fn escrow_recipient(seed: &[u8; 32]) -> Result<HybridSecretKey> {
     HybridSecretKey::from_seed(seed, ESCROW_SEED_LABEL)
         .map_err(|_| refused("an escrow seed is 32 bytes, not all zero"))
+}
+
+/// A synced passkey as one data-key kit piece (census L10-18): its credential
+/// name and its PRF output at [`passkey_prf_input`], borrowed from the guard
+/// that wipes it. The same output a passkey wrap of that name opens with.
+#[derive(Clone, Copy)]
+pub struct KitPasskey<'a> {
+    pub credential: &'a str,
+    pub prf: &'a Zeroizing<[u8; 32]>,
+}
+
+impl std::fmt::Debug for KitPasskey<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KitPasskey")
+            .field("credential", &self.credential)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One wrap to add to the held vault data key, with the secret it seals to.
@@ -87,6 +98,8 @@ pub enum VaultKeyUnlock<'a> {
         capsule: &'a [u8],
         secret: &'a HybridSecretKey,
     },
+    /// The printed recovery sheet, which opens the carried `sheet` wrap.
+    Sheet(&'a RecoverySheet),
     /// The data-key kit's pieces, two or one and the kit passphrase (FIX
     /// 5614): they rebuild the vault data key itself, bound to `vault_id`,
     /// the id the owner names, which must be the artifact's or the vault's.
@@ -96,6 +109,10 @@ pub enum VaultKeyUnlock<'a> {
         vault_id: [u8; 32],
         pieces: &'a [crate::store::recovery_kit::KitPiece],
         passphrase: Option<&'a crate::store::recovery_kit::KitPassphrase>,
+        /// The owner's synced passkey: the kit piece a carried `kit_point`
+        /// wrap of its name seals joins `pieces` (census L10-18). `None`
+        /// joins none.
+        passkey: Option<KitPasskey<'a>>,
         /// This host's keystore, as a sealed vault's pages unlock on it: the
         /// piece of the kit it keeps for an install a carried device wrap
         /// names joins `pieces`, so the owner gives one piece fewer here (FIX
@@ -136,11 +153,13 @@ impl<'a> VaultKeyUnlock<'a> {
                 vault_id,
                 pieces,
                 passphrase,
+                passkey,
                 ..
             } => Self::Kit {
                 vault_id,
                 pieces,
                 passphrase,
+                passkey,
                 keystore,
             },
             Self::WorldKit {

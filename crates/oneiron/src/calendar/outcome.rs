@@ -1,6 +1,6 @@
 //! CAL-07 event outcome: evidence ladder, outcome head, post-end check-in.
 //!
-//! Four laws hold this layer together, and every function below is one of them
+//! Five laws hold this layer together, and every function below is one of them
 //! made mechanical:
 //!
 //! * **Silence is never `held`.** The absence of a live
@@ -21,31 +21,32 @@
 //! * **The card has two independent doors.** An answer records an
 //!   owner-attested outcome; a recording drop stores a blob and infers nothing.
 //!   CAL-08 may later turn that blob into machine evidence.
+//! * **The owner's answer stands** (CAL-07-OUTCOME-CONFLICT = A). An
+//!   owner-attested outcome other than `unknown` is the top rung of the ladder:
+//!   machine evidence never replaces it. Evidence that arrives after the answer
+//!   is kept as history the answer supersedes, and
+//!   [`read_disputing_machine_outcomes`] shows each machine outcome that
+//!   disagrees. The owner corrects a wrong machine outcome, or changes their own
+//!   answer, by answering again ([`check_in_accepts_answer`]). A reschedule's
+//!   owner-attested `unknown` answers no outcome, so evidence still settles it.
 //!
 //! The engine owns no timer: [`plan_outcome_check_in`] returns an exact wake for
 //! the host to deliver, and [`check_in_is_still_due`] rechecks meeting class,
 //! current evidence, and current status when the host says it fired — a card is
 //! never surfaced from the plan alone.
 //!
-//! Inherited hole, not owned here: `gate::default_policy_manifest()` carries no
-//! `calendar.` rule, so on a default-seeded vault every calendar claim write —
-//! including this one — is gate-pending. CAL-09's surface oracle pins that state
-//! (`calendar_claims_are_gate_pending_under_the_default_policy_manifest`), and
-//! the fix is one manifest rule in `gate.rs`, a lane-wide CAL non-claim. This
-//! layer deliberately routes through the ordinary claim door rather than around
-//! the gate.
-
-use serde::{Deserialize, Serialize};
+//! Every outcome write goes through the ordinary claim door, never around the
+//! gate. The default policy manifest's `calendar.` rule reads the family as
+//! normal on both axes, so an owner-attested or observed outcome lands live on a
+//! stock vault; a source that needs an explicit Auto permit is refused loudly
+//! ([`record_event_outcome`]).
 
 use super::claims::{
     CalendarStatus, CalendarStatusValue, PREDICATE_CALENDAR_STATUS, decode_event_outcome_value,
     decode_status_value, encode_event_outcome_value, require_event_subject,
 };
 use crate::blob_artifact::BlobArtifactBody;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    claim_surfaceable,
-};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, claim_surfaceable};
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -56,6 +57,7 @@ use crate::lens::{
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use oneiron_vault_contract::{Schedule, WakeEntry};
 
 /// One recorded outcome per EVENT, superseded in place.
 ///
@@ -70,84 +72,10 @@ pub const OUTCOME_CHECK_IN_REASON_TAG: &str = "calendar.event_outcome.check_in";
 /// Domain separator for the per-EVENT recording artifact id.
 const CHECK_IN_RECORDING_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:calendar-outcome-recording:v1";
 
-/// What actually happened at one EVENT.
-///
-/// A closed four-value set. `Unknown` is a real recorded value, not a missing
-/// one: it says "the question was asked and nothing established an outcome",
-/// which reads the same as silence and is never transition evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EventOutcome {
-    Held,
-    NoShow,
-    CancelledPreStart,
-    Unknown,
-}
-
-impl EventOutcome {
-    /// Wire token for this outcome.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Held => "held",
-            Self::NoShow => "no_show",
-            Self::CancelledPreStart => "cancelled_pre_start",
-            Self::Unknown => "unknown",
-        }
-    }
-
-    /// Parses a wire token, rejecting anything outside the closed set.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "held" => Some(Self::Held),
-            "no_show" => Some(Self::NoShow),
-            "cancelled_pre_start" => Some(Self::CancelledPreStart),
-            "unknown" => Some(Self::Unknown),
-            _ => None,
-        }
-    }
-}
-
-/// What established an [`EventOutcome`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EventOutcomeBasis {
-    /// Explicit machine evidence: a transcript, join telemetry, a cancellation.
-    Machine,
-    /// The owner answered the check-in.
-    OwnerAttested,
-}
-
-impl EventOutcomeBasis {
-    /// Wire token for this basis.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Machine => "machine",
-            Self::OwnerAttested => "owner_attested",
-        }
-    }
-
-    /// Parses a wire token, rejecting anything outside the closed set.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "machine" => Some(Self::Machine),
-            "owner_attested" => Some(Self::OwnerAttested),
-            _ => None,
-        }
-    }
-}
-
-/// Value of a `calendar.event_outcome` claim, subject = EVENT.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EventOutcomeClaimValue {
-    pub outcome: EventOutcome,
-    pub basis: EventOutcomeBasis,
-    pub recorded_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::outcome::{
+    EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
+};
 
 /// One piece of explicit machine evidence about an EVENT.
 ///
@@ -260,6 +188,10 @@ pub fn project_event_outcome(claim: Option<EventOutcomeClaimValue>) -> EventOutc
 /// Writes one live `calendar.event_outcome` claim by superseding the prior
 /// live claim for the EVENT. The caller supplies the evidence-appropriate source.
 ///
+/// One exception: a machine outcome never replaces a live owner answer (the
+/// module's fifth law). It is written, and the answer supersedes it in the same
+/// transaction, so it is history from birth and the answer stays current.
+///
 /// The replacement head and every supersession share ONE write transaction, so
 /// a rejected supersession rolls the new head back with it and the EVENT can
 /// never be left with two live outcomes. Superseded claims stay fully readable:
@@ -299,6 +231,10 @@ use conditional::record_event_outcome_in_txn;
 pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
 
+mod dispute;
+pub use dispute::read_disputing_machine_outcomes;
+pub(in crate::calendar) use dispute::readable_disputing_machine_outcomes_in;
+
 /// Reads the EVENT's live outcome claim.
 ///
 /// Absence of a live claim returns `None`; projection maps `None` to `Unknown`
@@ -316,27 +252,39 @@ pub fn read_event_outcome(
     current_outcome_in(vault, &rtxn, &event_ref)
 }
 
-/// The EVENT's current readable outcome: the latest evidence among the heads a
-/// reader may see.
+/// The EVENT's current readable outcome: the owner's answer when one is live,
+/// else the latest evidence among the heads a reader may see.
 ///
 /// One EVENT normally has one live head — [`record_event_outcome`] closes the
 /// previous one in the same transaction. Two coexist only across a sync fork,
 /// where two replicas each recorded an outcome and neither supersession crossed
-/// the wire. That contest resolves on `(recorded_at, claim id)`, never on claim
-/// id alone: ids are time-ordered UUIDv7 *per writer*, so across a fork the
-/// lower id is not the earlier evidence, and picking it would invert this
-/// layer's own rule that later evidence supersedes earlier. The id is the
-/// tie-break, so the contest stays total and both replicas pick the same head.
+/// the wire. That contest resolves first on whether a head is an owner answer,
+/// so the answer stands over machine evidence across a fork as it does on one
+/// replica, then on `(recorded_at, claim id)`, never on claim id alone: ids are
+/// time-ordered UUIDv7 *per writer*, so across a fork the lower id is not the
+/// earlier evidence, and picking it would invert this layer's own rule that
+/// later evidence supersedes earlier. The id is the tie-break, so the contest
+/// stays total and both replicas pick the same head.
 pub(in crate::calendar) fn current_outcome_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<Option<EventOutcomeClaimValue>> {
-    Ok(live_outcome_heads_in(vault, rtxn, event_ref)?
-        .into_iter()
+    Ok(current_head(&live_outcome_heads_in(vault, rtxn, event_ref)?).map(|head| head.value))
+}
+
+/// The head [`current_outcome_in`] reads among `heads`.
+fn current_head(heads: &[OutcomeHead]) -> Option<&OutcomeHead> {
+    heads
+        .iter()
         .filter(|head| head.surfaceable)
-        .max_by_key(|head| (head.value.recorded_at, head.claim_id))
-        .map(|head| head.value))
+        .max_by_key(|head| {
+            (
+                head.is_owner_answer(),
+                head.value.recorded_at,
+                head.claim_id,
+            )
+        })
 }
 
 /// One live `calendar.event_outcome` claim on an EVENT.
@@ -352,10 +300,8 @@ struct OutcomeHead {
 /// Live means lifecycle-active, deliberately wider than [`claim_surfaceable`]:
 /// a gate-pending `Proposed` head is invisible to readers but is still a head,
 /// and only the writer that supersedes it stops a later approval resurrecting it
-/// beside its own replacement. On a default-seeded vault that is the ORDINARY
-/// state of a calendar claim write, not an exotic one — see the module note on
-/// the missing `calendar.` policy rule. `surfaceable` carries the read path's
-/// consent gate forward unchanged.
+/// beside its own replacement. `surfaceable` carries the read path's consent
+/// gate forward unchanged.
 fn live_outcome_heads_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -378,6 +324,15 @@ fn live_outcome_heads_in(
         });
     }
     Ok(heads)
+}
+
+impl OutcomeHead {
+    /// Whether this head is an owner's answer, which machine evidence never
+    /// replaces: owner-attested, and not the `unknown` a reschedule records.
+    fn is_owner_answer(&self) -> bool {
+        self.value.basis == EventOutcomeBasis::OwnerAttested
+            && self.value.outcome != EventOutcome::Unknown
+    }
 }
 
 /// The EVENT's current `calendar.status`, under the same latest-evidence rule
@@ -410,43 +365,27 @@ pub(in crate::calendar) fn current_status_in(
         .map(|(_, value)| value))
 }
 
-/// One exact host wake: the three fields of the supervisor wake contract.
-///
-/// This is the engine-side image of `oneiron_vault_contract::WakeEntry` with
-/// `Schedule::Exact` — exact by construction, since CAL never plans a window.
-/// `crates/oneiron` does not depend on the contract crate at this commit (the
-/// path dep is ONE-1783's reserved `Cargo.toml` append), so the fields ride this
-/// struct and map one-to-one when that dep lands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutcomeCheckInWake {
-    /// Stable, caller-assigned wake id.
-    pub id: String,
-    /// Exact fire instant, unix seconds UTC.
-    pub at_utc: u64,
-    /// Opaque tag echoed back when the wake fires.
-    pub reason_tag: String,
-}
-
 /// Plans the post-end check-in wake for one EVENT, or `None` when the EVENT is
 /// not meeting-class.
 ///
-/// The engine owns no timer: this only describes the wake the host is asked to
-/// deliver, `grace_secs` after the EVENT's end; the host passes the vault's
-/// grace ([`outcome_grace_secs`]). `_event_ref` is unused at this layer — the
-/// wake carries id, instant, and tag only, and the recheck at due time takes the
-/// EVENT explicitly — but it stays in the signature so the host call sites do
-/// not move when the contract `WakeEntry` becomes available.
+/// The wake is the supervisor contract's own [`WakeEntry`] on the
+/// [`Schedule::Exact`] arm, `grace_secs` after the EVENT's end; the host passes
+/// the vault's grace ([`outcome_grace_secs`]). It carries id, instant, and tag
+/// only: the recheck at due time ([`check_in_is_still_due`]) takes the EVENT
+/// explicitly. The engine owns no timer: this only describes the wake the host
+/// is asked to deliver.
 #[must_use]
 pub fn plan_outcome_check_in(
     wake_id: String,
-    _event_ref: EntityId,
     event_end_utc: u64,
     signals: MeetingClassSignals,
     grace_secs: u64,
-) -> Option<OutcomeCheckInWake> {
-    is_meeting_class(signals).then(|| OutcomeCheckInWake {
+) -> Option<WakeEntry> {
+    is_meeting_class(signals).then(|| WakeEntry {
         id: wake_id,
-        at_utc: event_end_utc.saturating_add(grace_secs),
+        at: Schedule::Exact {
+            at: event_end_utc.saturating_add(grace_secs),
+        },
         reason_tag: OUTCOME_CHECK_IN_REASON_TAG.to_owned(),
     })
 }
@@ -514,10 +453,32 @@ pub(in crate::calendar) fn check_in_is_still_due_in_txn(
     txn: &heed::RoTxn<'_>,
     due: &DueOutcomeCheckIn,
 ) -> Result<bool> {
+    Ok(check_in_accepts_answer_in_txn(vault, txn, due)?
+        && current_outcome_in(vault, txn, &due.event_ref)?.is_none())
+}
+
+/// Whether the owner may answer a due check-in now, or answer it again: the
+/// EVENT is still meeting-class and not cancelled.
+///
+/// A recorded outcome does not close the answer door, unlike the card
+/// ([`check_in_is_still_due`]): an owner answer replaces any head, so this is
+/// where the owner corrects a wrong machine outcome or changes their own answer
+/// (CAL-07-OUTCOME-CONFLICT = A).
+///
+/// # Errors
+///
+/// Storage errors, and claim-body errors from reading the status head.
+pub fn check_in_accepts_answer(vault: &Vault, due: &DueOutcomeCheckIn) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    check_in_accepts_answer_in_txn(vault, &rtxn, due)
+}
+
+pub(in crate::calendar) fn check_in_accepts_answer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    due: &DueOutcomeCheckIn,
+) -> Result<bool> {
     if !is_meeting_class(due.signals) {
-        return Ok(false);
-    }
-    if current_outcome_in(vault, txn, &due.event_ref)?.is_some() {
         return Ok(false);
     }
     Ok(current_status_in(vault, txn, &due.event_ref)?

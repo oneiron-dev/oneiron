@@ -12,6 +12,7 @@
 //! the connector route or the run's host names it. The holder is the
 //! caller's own verified actor and the run its host attached to this
 //! credential ([`SecretGrantCaller::of`]); nothing is synthesized for it.
+//! A grant never outlives the credential that asked for it (`grant_bound`).
 //!
 //! Every answer here is metadata. It never holds the value, a digest of it
 //! (a T2 registration's content hash is left out) or a buffer: a T1 value
@@ -45,8 +46,9 @@ pub struct SecretGrantMintRequest {
     /// Where the value may go. It fixes the rung.
     pub purpose: SecretGrantPurpose,
     /// How long the grant lives, in seconds. Absent takes the engine's
-    /// default; a longer ask is cut to the engine's longest, and the
-    /// answer's `expires_at` says so.
+    /// default; a longer ask is cut to the engine's longest, a grant ends no
+    /// later than the credential that asks for it, and the answer's
+    /// `expires_at` says so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u64>,
 }
@@ -112,45 +114,12 @@ impl SecretGrantPurpose {
     }
 }
 
-/// `self.secrets.renew`'s spec: a fresh grant at the secret's current
-/// generation, in the named grant's place.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretGrantRenewRequest {
-    /// The grant, as `self.secrets.materialize` answered it.
-    pub grant: String,
-    /// As [`SecretGrantMintRequest::ttl_secs`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ttl_secs: Option<u64>,
-}
-
-/// `self.secrets.teardown`'s spec.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretGrantTeardownRequest {
-    /// The grant, as `self.secrets.materialize` answered it.
-    pub grant: String,
-}
-
-/// `self.secrets.use`'s spec: `self.use`'s envelope with a grant in place of
-/// the handle.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretGrantUseRequest {
-    /// The grant, as `self.secrets.materialize` answered it. A door grant
-    /// for this operation, or for the connector `connector.call` names.
-    pub grant: String,
-    /// The operation, such as `slack.auth_test`, or `connector.call`.
-    pub operation: String,
-    /// The operation's arguments, a JSON object; `{}` for one that takes
-    /// none. `connector.call` takes one connector call, as it takes it.
-    #[serde(default = "no_arguments")]
-    pub arguments: serde_json::Value,
-}
-
-fn no_arguments() -> serde_json::Value {
-    serde_json::Value::Object(serde_json::Map::new())
-}
+#[doc(hidden)]
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::secret_grant::{
+    SecretGrantRegistration, SecretGrantRenewRequest, SecretGrantTeardownRequest,
+    SecretGrantUseRequest,
+};
 
 /// A grant's lifecycle, as the engine reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -201,14 +170,6 @@ impl SecretGrantCleanup {
             SecretCleanup::Kept => Self::Kept,
         }
     }
-}
-
-/// A T2 grant's file: where it is and which project it belongs to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SecretGrantRegistration {
-    pub path: String,
-    pub project_id: String,
 }
 
 /// A grant, value-free: what `self.secrets.materialize`, `.renew` and
@@ -263,10 +224,22 @@ pub fn secret_grant_id(text: &str) -> MemoryResult<EntityId> {
     })
 }
 
+/// The latest instant a grant asked for through `memory` may live to: the
+/// end of the credential the handle is bound to, on the vault's clock, so a
+/// grant never outlives the credential, or the run it attached, that asked
+/// for it (FIX SELF-SECRETS-GRANT-NO-ABSOLUTE-BOUND). The attempt queue
+/// keeps no lease deadline, so this end is the run's one absolute bound, as
+/// a seat helper's grant takes its slip's and a snapshot handle its
+/// reader's. `None` for a handle bound to no credential.
+fn grant_bound(memory: &Memory<'_>) -> Option<u64> {
+    memory.read_proof_expires_at()
+}
+
 /// `self.secrets.materialize` for the caller `memory` is bound to, acting in
 /// `run`, the run its host attached to this credential: one grant on the
-/// secret `spec.handle` names, for `spec.purpose`. A T1 grant's bytes go to
-/// the run host's destination through `delivery`, and only there.
+/// secret `spec.handle` names, for `spec.purpose`, ending no later than that
+/// credential (`grant_bound`). A T1 grant's bytes go to the run host's
+/// destination through `delivery`, and only there.
 ///
 /// # Errors
 /// The caller's refusal ([`SecretGrantCaller::of`]), then the engine's:
@@ -287,7 +260,7 @@ pub fn mint_secret_grant_as_caller(
             &spec.handle,
             spec.purpose.target(),
             spec.ttl_secs,
-            None,
+            grant_bound(memory),
             delivery,
         )
         .map_err(|error| lifecycle_refusal(error, MATERIALIZE))?;
@@ -301,8 +274,9 @@ pub fn mint_secret_grant_as_caller(
 }
 
 /// `self.secrets.renew`: a fresh grant at the secret's current generation in
-/// the place of `spec.grant`, which the caller holds in `run`. The answer is
-/// the new grant; the old one reads `replaced`.
+/// the place of `spec.grant`, which the caller holds in `run`, ending no
+/// later than the credential that asks (`grant_bound`). The answer is the
+/// new grant; the old one reads `replaced`.
 ///
 /// # Errors
 /// As [`mint_secret_grant_as_caller`], and NOT_FOUND for a grant the caller
@@ -318,7 +292,13 @@ pub fn renew_secret_grant_as_caller(
     let caller = SecretGrantCaller::of(memory, run)?;
     let vault = memory.vault();
     let minted = vault
-        .renew_secret_grant(&caller, &grant, spec.ttl_secs, None, delivery)
+        .renew_secret_grant(
+            &caller,
+            &grant,
+            spec.ttl_secs,
+            grant_bound(memory),
+            delivery,
+        )
         .map_err(|error| lifecycle_refusal(error, RENEW))?;
     view(
         vault,

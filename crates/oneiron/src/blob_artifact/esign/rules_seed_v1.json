@@ -1,0 +1,85 @@
+{
+  "pack_id": "esign.rules",
+  "pack_version": 1,
+  "lifecycle": {
+    "expiry_after_seconds": 7776000,
+    "first_reminder_after_seconds": 432000,
+    "repeat_reminder_every_seconds": 172800,
+    "reminder_cap_seconds": 2592000,
+    "notices": {
+      "invite": true,
+      "pending": true,
+      "completed": true,
+      "rejection": true,
+      "void": true,
+      "expiry": true
+    }
+  },
+  "rows": [
+    {
+      "id": "us.ueta.s10.review_before_complete",
+      "regime": "US UETA/ESIGN",
+      "kind": "requirement",
+      "waivable": false,
+      "rule": "UETA section 10 error-correction affordance: before Complete the signer reviews the frozen pages and the values they filled in, and can still correct them. The ceremony's review-before-complete step is this row.",
+      "source": {
+        "citation": "Uniform Electronic Transactions Act (1999) section 10, Effect of change or error; ARCH-0064 section 8",
+        "url": "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=CIV&sectionNum=1633.10"
+      },
+      "verified_at": 1794581616,
+      "version": 1
+    },
+    {
+      "id": "us.ueta.s14.electronic_agents",
+      "regime": "US UETA/ESIGN",
+      "kind": "informational",
+      "waivable": true,
+      "rule": "UETA section 14 and ESIGN 15 U.S.C. 7001(h): a contract formed by an electronic agent is valid, so an agent that prepares and sends while a human signs is settled law.",
+      "source": {
+        "citation": "Uniform Electronic Transactions Act (1999) section 14; 15 U.S.C. 7001(h); ARCH-0064 section 8",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7001"
+      },
+      "verified_at": 1794581616,
+      "version": 1
+    },
+    {
+      "id": "eu.eidas.disclosure",
+      "regime": "EU eIDAS",
+      "kind": "accommodation",
+      "waivable": true,
+      "rule": "eIDAS regulates how a signature is created, not who dispatches the request, so an agent sending is untouched. A deployment may add disclosure rows here; the SES, AES or QES tier is a document setting, not an engine wall.",
+      "source": {
+        "citation": "Regulation (EU) No 910/2014 (eIDAS); ARCH-0064 section 8",
+        "url": "https://eur-lex.europa.eu/eli/reg/2014/910/oj"
+      },
+      "verified_at": 1794581616,
+      "version": 1
+    },
+    {
+      "id": "jp.esign_act.art3.presumption",
+      "regime": "JP Electronic Signatures Act",
+      "kind": "informational",
+      "waivable": true,
+      "rule": "Under the 2020 witness-type Q&A each signer's own click is the signer's own intent, so the Art. 3 presumption holds. An agent that performs the sign act forfeits it, which is why the sign-action dial stays closed by default (D6).",
+      "source": {
+        "citation": "Act on Electronic Signatures and Certification Business (Act No. 102 of 2000) Art. 3; 2020 ministry Q&A on witness-type e-contract services; ARCH-0064 section 8",
+        "url": "https://laws.e-gov.go.jp/law/412AC0000000102"
+      },
+      "verified_at": 1794581616,
+      "version": 1
+    },
+    {
+      "id": "jp.attorney_act.art72.note",
+      "regime": "JP Attorney Act",
+      "kind": "conditional",
+      "waivable": true,
+      "rule": "Art. 72 (non-lawyer legal services) matters only if signing is offered to others as a service. A note, not a v1 constraint.",
+      "source": {
+        "citation": "Attorney Act (Act No. 205 of 1949) Art. 72; ARCH-0064 section 8",
+        "url": "https://laws.e-gov.go.jp/law/324AC1000000205"
+      },
+      "verified_at": 1794581616,
+      "version": 1
+    }
+  ]
+}

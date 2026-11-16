@@ -1,17 +1,18 @@
 //! Snapshot-time secret custody filtering (ARCH-0069 S4/S5).
 
 use crate::ports::EntityStoreRead;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
-use crate::error::{CodeError, Error, GateError, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_lease::decode_local_registration_body;
-use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
+use crate::store::repo_environment::{RepoEnvFileKind, repo_env_file};
 use crate::vault::Vault;
 
 /// SECRET-03 (ONE-1921): the T2 local-registration rows this snapshot filter
@@ -86,10 +87,17 @@ impl SnapshotExclusionSet {
     /// absolute declarations; pass `None` when the snapshot has no local root.
     #[must_use]
     pub fn excludes(&self, path: &str, content_hash: &[u8; 32], root: Option<&str>) -> bool {
+        self.declares(path, root) || self.registered_hashes.contains(content_hash)
+    }
+
+    /// Whether a custody record or a T2 registration declares `path`: a
+    /// vault-resident path, whose bytes only the vault writes (ARCH-0069
+    /// S4). `root` anchors absolute declarations, as in [`Self::excludes`].
+    #[must_use]
+    pub(crate) fn declares(&self, path: &str, root: Option<&str>) -> bool {
         self.declared_paths
             .iter()
             .any(|declared| path_matches_declared(path, declared, root))
-            || self.registered_hashes.contains(content_hash)
     }
 
     /// Why [`Vault::apply_custody_to_snapshot`]'s policy keeps one file it
@@ -123,6 +131,15 @@ pub(crate) enum SnapshotWithhold {
 /// a file the snapshot it would change already withholds.
 pub(crate) const REASON_WITHHELD_PATH: &str = "gate.secret_scan.withheld_path";
 
+/// The route the refusal of a write to a withheld live dotenv file names
+/// (FIX 2229; Engine RULINGS FIX-2229-WITHHELD-WRITE = A and
+/// FIX-2229-ROUTE-SCOPE = A): the owner's `vault.code.secrets.propose`
+/// remediation, the one reviewed write that removes such a file (owner
+/// ruling SECRETS-IN-REPOS = A). It keeps only the BLAKE3 of the bytes it
+/// replaces (FIX 10974); an ordinary review would read those bytes from a
+/// snapshot that does not hold them.
+pub(crate) const REASON_REMEDIATION_ROUTE: &str = "gate.secret_scan.remediation_route";
+
 impl SnapshotWithhold {
     /// The refusal of a proposed write the policy would withhold: a review
     /// holds the bytes it approves, so none may hold these.
@@ -136,6 +153,24 @@ impl SnapshotWithhold {
             reason_codes: vec!["gate.secret_scan.detected", reason],
         })
     }
+}
+
+/// The refusal of an ordinary write to `path`, a file the snapshot it would
+/// change withholds: [`SnapshotWithhold::Excluded`]'s refusal. It names the
+/// remediation route ([`REASON_REMEDIATION_ROUTE`]) only for a live dotenv
+/// file, which the remediation removes by its name alone. It plans any other
+/// file only by receive marks on the bytes the snapshot does not hold, or not
+/// at all (a symlink, a gitlink), so a route named there could answer Clean
+/// and leave the file as it is (Engine RULING FIX-2229-ROUTE-SCOPE = A).
+pub(crate) fn withheld_base_refusal(path: &str) -> Error {
+    let mut reason_codes = vec!["gate.secret_scan.detected", REASON_WITHHELD_PATH];
+    if repo_env_file(path) == Some(RepoEnvFileKind::Live) {
+        reason_codes.push(REASON_REMEDIATION_ROUTE);
+    }
+    Error::Gate(GateError::GateWriteRejected {
+        outcome: "deny",
+        reason_codes,
+    })
 }
 
 /// The repository root that anchors absolute custody declarations. Only local
@@ -156,8 +191,14 @@ pub(crate) fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
 /// (no suffix matching), absolute directory declarations do exclude children,
 /// and a snapshot without a local root falls back to hash-only exclusion so an
 /// unanchored absolute declaration can never over-match. Reclaiming blobs
-/// persisted by earlier, looser ingests is follow-up ONE-1946.
+/// persisted by earlier, looser ingests is follow-up ONE-1946. A declaration
+/// and the root match by their components ([`lexical_path`]), as the T2
+/// writer walks a declared path.
 fn path_matches_declared(path: &str, declared: &str, root: Option<&str>) -> bool {
+    let declared = lexical_path(declared);
+    let declared = declared.as_ref();
+    let root = root.map(lexical_path);
+    let root = root.as_deref();
     if relative_declaration_matches(path, declared) {
         return true;
     }
@@ -185,41 +226,39 @@ fn relative_declaration_matches(path: &str, declared: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// A value-free proposal to move a detected file secret into the vault.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SnapshotSecretLiftProposal {
-    pub path: String,
-    pub detector_reason: String,
-    pub suggested_secret_name: String,
-    pub project_id: String,
-}
-
-/// The durable, value-free outcome of snapshot custody filtering.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnapshotCustodyReport {
-    pub excluded_secret_paths: Vec<String>,
-    pub quarantined_paths: Vec<String>,
-    pub proposals: Vec<SnapshotSecretLiftProposal>,
-}
-
-/// The side table's declared codec is `Raw`, not `Named`: the put/get/delete call sites in
-/// `codebase/store.rs` have always written this report through `rmp_serde::to_vec_named` and read
-/// it back through a plain (non-strict) `rmp_serde::from_slice`, so this impl keeps exactly that
-/// pair rather than switching to the door's strict whole-row `Named` decode.
-impl RawValue for SnapshotCustodyReport {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_report(self)?)
+/// `path` spelled by its `/`-separated components alone: a repeated `/`, a
+/// `.` component and a trailing `/` name nothing a component walk does not,
+/// and the T2 writer admits a declared path spelled with them, so the file it
+/// writes there is declared however the record spells it (FIX 2230, review
+/// 8290 round 2). A `..` stays as spelled: the T2 writer refuses one, and
+/// resolving it by text could name another file. A path already in that form
+/// is borrowed.
+fn lexical_path(path: &str) -> Cow<'_, str> {
+    let relative = path.strip_prefix('/').unwrap_or(path);
+    if relative.is_empty()
+        || relative
+            .split('/')
+            .all(|part| !part.is_empty() && part != ".")
+    {
+        return Cow::Borrowed(path);
     }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        rmp_serde::from_slice(bytes).map_err(|_| {
-            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "decode custody report",
-            ))
-            .into()
-        })
-    }
+    let components = path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    Cow::Owned(if path.starts_with('/') {
+        format!("/{components}")
+    } else {
+        components
+    })
 }
+
+#[doc(hidden)]
+pub use oneiron_verb_wire::secret_snapshot::SnapshotSecretLiftProposal;
+
+#[doc(hidden)]
+pub use oneiron_records::secret_snapshot::SnapshotCustodyReport;
 
 impl Vault {
     /// Filters declared files, quarantines unreadable or detected files, and
@@ -263,14 +302,6 @@ impl Vault {
         }
         Ok((files, report))
     }
-}
-
-pub(crate) fn encode_report(report: &SnapshotCustodyReport) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(report).map_err(|_| {
-        Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "encode custody report",
-        ))
-    })
 }
 
 pub(crate) fn suggested_secret_name(path: &str) -> String {

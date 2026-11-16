@@ -6,26 +6,11 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const BLOCKED_REPORT_MESSAGE_TYPE: &str = "executor.report_blocked";
 
-const PREFIX: &str = "oneiron:report_blocked:v1:";
+#[doc(hidden)]
+use oneiron_records::code_run::blocked::PREFIX;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BlockedCategory {
-    Tool,
-    Permission,
-    Context,
-    Environment,
-}
-impl BlockedCategory {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Tool => "tool",
-            Self::Permission => "permission",
-            Self::Context => "context",
-            Self::Environment => "environment",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::blocked::BlockedCategory;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

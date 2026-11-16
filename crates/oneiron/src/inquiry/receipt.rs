@@ -3,11 +3,18 @@
 //! the time and the outcome, and never answer text. Kept whatever
 //! `inquiry_keep` says: a member who uses the company's inquiry power to
 //! probe a colleague leaves this trace. The receipt family reads it.
+//!
+//! The same store keeps, on the member's vault, a Share receipt for each
+//! change of an inquiry edge's terms (FIX INQUIRY-STANDING-PER-KEEP): who
+//! changed them, when, and the modes for each keep and the keep allowed,
+//! before and after.
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
-use super::record::{Inquiry, InquiryOutcome};
+use super::edge::{InquiryEdge, InquiryTermsChangeOutcome};
+use super::record::{Inquiry, InquiryKeep, InquiryOutcome};
+use super::terms::InquiryTerms;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -28,6 +35,17 @@ const FIELD_QUESTION: &str = "question";
 const FIELD_PURPOSE: &str = "purpose";
 const FIELD_KEEP: &str = "keep";
 const FIELD_EXPIRES_AT: &str = "expires_at";
+/// The asker's one-line role, as the inquiry carried it. A receipt written
+/// before this field holds none.
+const FIELD_ASKER_ROLE: &str = "asker_role";
+/// A terms change's fields: the modes for each keep and the keep allowed,
+/// after the change, then before it.
+const FIELD_TASK_MODE: &str = "task_mode";
+const FIELD_COPY_MODE: &str = "copy_mode";
+const FIELD_KEEP_ALLOWED: &str = "keep_allowed";
+const FIELD_PREVIOUS_TASK_MODE: &str = "previous_task_mode";
+const FIELD_PREVIOUS_COPY_MODE: &str = "previous_copy_mode";
+const FIELD_PREVIOUS_KEEP_ALLOWED: &str = "previous_keep_allowed";
 
 /// Writes the receipt of one send of `inquiry` about `member` that came to
 /// `outcome` at `now`, in the send's transaction. Its id is the inquiry's
@@ -47,16 +65,17 @@ pub(crate) fn write_inquiry_receipt_in_txn(
 ) -> Result<ReceiptRecord> {
     inquiry.validate()?;
     let inquiry_hex = inquiry.id.to_hex();
-    let sequence = next_send_sequence(store, wtxn, &inquiry_hex)?;
+    let sequence = next_sequence(store, wtxn, &inquiry_receipt_head(&inquiry.id))?;
     let fields = BTreeMap::from([
         (FIELD_MEMBER.to_owned(), member.to_hex()),
         (FIELD_QUESTION.to_owned(), inquiry.question.clone()),
         (FIELD_PURPOSE.to_owned(), inquiry.task.purpose.clone()),
         (FIELD_KEEP.to_owned(), inquiry.keep.as_str().to_owned()),
         (FIELD_EXPIRES_AT.to_owned(), inquiry.expires_at.to_string()),
+        (FIELD_ASKER_ROLE.to_owned(), inquiry.from.role.clone()),
     ]);
     let receipt = ReceiptRecord {
-        receipt_id: format!("inquiry:{inquiry_hex}:{sequence:06}"),
+        receipt_id: inquiry_receipt_id(&inquiry.id, sequence),
         receipt_kind: ReceiptKind::Inquiry,
         occurred_at: now,
         actor: Some(inquiry.from.actor.to_hex()),
@@ -67,6 +86,141 @@ pub(crate) fn write_inquiry_receipt_in_txn(
         policy_trace: Vec::new(),
         fields,
     };
+    put_receipt_in_txn(store, wtxn, receipt)
+}
+
+/// The head every `inquiry` receipt id of inquiry `id` starts with.
+fn inquiry_receipt_head(id: &EntityId) -> String {
+    format!("inquiry:{}", id.to_hex())
+}
+
+/// The id of the `sequence`th `inquiry` receipt of inquiry `id`, from zero.
+fn inquiry_receipt_id(id: &EntityId, sequence: u32) -> String {
+    format!("{}:{sequence:06}", inquiry_receipt_head(id))
+}
+
+/// The first send of an inquiry from this vault, as its first `inquiry`
+/// receipt records it: what a re-send of the inquiry is bound to (Engine
+/// ruling INQUIRE-RESEND = A). An actor's erase scrubs the member and the
+/// asker (with the asker's role) from the receipt, which leaves them `None`.
+pub(crate) struct InquiryFirstSend {
+    /// The member asked about: the asking vault's row for the member.
+    pub(crate) member: Option<EntityId>,
+    pub(crate) asker: Option<EntityId>,
+    /// The asker's role; also `None` on a receipt written before the
+    /// receipt kept it.
+    pub(crate) asker_role: Option<String>,
+    pub(crate) task: EntityId,
+    pub(crate) question: String,
+    pub(crate) purpose: String,
+    pub(crate) keep: InquiryKeep,
+    pub(crate) expires_at: u64,
+}
+
+/// The first send of inquiry `id` from this store's vault, or `None` when
+/// the vault never sent it.
+///
+/// # Errors
+///
+/// A first receipt whose fields do not read back; storage errors.
+pub(crate) fn first_inquiry_send_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<InquiryFirstSend>> {
+    let Some(receipt) = RECEIPTS.get(store, txn, &inquiry_receipt_id(id, 0))? else {
+        return Ok(None);
+    };
+    let field = |name: &str| receipt.fields.get(name).map(String::as_str);
+    let entity = |hex: Option<&str>| {
+        hex.map(EntityId::from_hex)
+            .transpose()
+            .map_err(|_| Error::CorruptedIndex("inquiry receipt entity id"))
+    };
+    let corrupted = || Error::CorruptedIndex("inquiry receipt field");
+    Ok(Some(InquiryFirstSend {
+        member: entity(field(FIELD_MEMBER))?,
+        asker: entity(receipt.actor.as_deref())?,
+        asker_role: field(FIELD_ASKER_ROLE).map(str::to_owned),
+        task: entity(receipt.trigger_ref.as_deref())?.ok_or_else(corrupted)?,
+        question: field(FIELD_QUESTION).ok_or_else(corrupted)?.to_owned(),
+        purpose: field(FIELD_PURPOSE).ok_or_else(corrupted)?.to_owned(),
+        keep: field(FIELD_KEEP)
+            .and_then(InquiryKeep::from_token)
+            .ok_or_else(corrupted)?,
+        expires_at: field(FIELD_EXPIRES_AT)
+            .and_then(|at| at.parse().ok())
+            .ok_or_else(corrupted)?,
+    }))
+}
+
+/// Writes the receipt of `member`'s change of `edge`'s terms from
+/// `previous` to the terms it now carries, at `now`, in the change's
+/// transaction: a Share receipt, since the terms ride the edge's federation
+/// grant. Its id is the grant's with the change's sequence; `trigger_ref`
+/// names the grant row, as the grant's own share receipt does.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn write_inquiry_terms_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &InquiryEdge,
+    previous: &InquiryTerms,
+    member: &EntityId,
+    outcome: InquiryTermsChangeOutcome,
+    now: u64,
+) -> Result<ReceiptRecord> {
+    let grant_hex = edge.grant.to_hex();
+    let sequence = next_sequence(store, wtxn, &format!("share:inquiry_terms:{grant_hex}"))?;
+    let terms = &edge.terms;
+    let fields = BTreeMap::from([
+        (
+            FIELD_TASK_MODE.to_owned(),
+            terms.check_in_modes.task.as_str().to_owned(),
+        ),
+        (
+            FIELD_COPY_MODE.to_owned(),
+            terms.check_in_modes.copy.as_str().to_owned(),
+        ),
+        (
+            FIELD_KEEP_ALLOWED.to_owned(),
+            terms.keep_allowed.as_str().to_owned(),
+        ),
+        (
+            FIELD_PREVIOUS_TASK_MODE.to_owned(),
+            previous.check_in_modes.task.as_str().to_owned(),
+        ),
+        (
+            FIELD_PREVIOUS_COPY_MODE.to_owned(),
+            previous.check_in_modes.copy.as_str().to_owned(),
+        ),
+        (
+            FIELD_PREVIOUS_KEEP_ALLOWED.to_owned(),
+            previous.keep_allowed.as_str().to_owned(),
+        ),
+    ]);
+    let receipt = ReceiptRecord {
+        receipt_id: format!("share:inquiry_terms:{grant_hex}:{sequence:06}"),
+        receipt_kind: ReceiptKind::Share,
+        occurred_at: now,
+        actor: Some(member.to_hex()),
+        on_behalf_of: None,
+        outcome: outcome.as_str().to_owned(),
+        job_ref: None,
+        trigger_ref: Some(format!("federation_grant:{grant_hex}")),
+        policy_trace: Vec::new(),
+        fields,
+    };
+    put_receipt_in_txn(store, wtxn, receipt)
+}
+
+fn put_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: ReceiptRecord,
+) -> Result<ReceiptRecord> {
     BY_TIME.put(
         store,
         wtxn,
@@ -77,12 +231,12 @@ pub(crate) fn write_inquiry_receipt_in_txn(
     Ok(receipt)
 }
 
-/// The sequence of the next send of the inquiry `inquiry_hex`: one past the
-/// last receipt's, from zero.
-fn next_send_sequence(store: &Store, txn: &heed::RoTxn<'_>, inquiry_hex: &str) -> Result<u32> {
-    // `;` is the byte after `:`, so the range is every `inquiry:<hex>:` id.
-    let start = format!("inquiry:{inquiry_hex}:");
-    let end = format!("inquiry:{inquiry_hex};");
+/// The sequence of the next receipt whose id starts `<head>:`: one past the
+/// last such receipt's, from zero.
+fn next_sequence(store: &Store, txn: &heed::RoTxn<'_>, head: &str) -> Result<u32> {
+    // `;` is the byte after `:`, so the range is every `<head>:` id.
+    let start = format!("{head}:");
+    let end = format!("{head};");
     let last = RECEIPTS
         .iter_rev_range(store, txn, Bound::Included(&start), Bound::Excluded(&end))?
         .next()
@@ -97,7 +251,9 @@ fn next_send_sequence(store: &Store, txn: &heed::RoTxn<'_>, inquiry_hex: &str) -
         .ok_or(Error::ArithmeticOverflow("inquiry receipt sequence"))
 }
 
-/// The inquiry receipts `query` names, newest first, for the receipt family.
+/// The receipts of this store `query` names, newest first, for the receipt
+/// family: each send of an inquiry (kind `inquiry`) and each change of an
+/// inquiry edge's terms (kind `share`).
 ///
 /// # Errors
 ///
@@ -151,8 +307,9 @@ pub(crate) fn inquiry_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Ve
 }
 
 /// The table's actor scrub (an actor's erase, and a restore's rerun of it):
-/// no inquiry receipt names `actor` any more, neither as the asker nor as
-/// the member asked about. The receipt and the send it records stand.
+/// no inquiry receipt names `actor` any more, neither as the asker (nor the
+/// asker's role) nor as the member asked about. The receipt and the send it
+/// records stand.
 ///
 /// # Errors
 ///
@@ -168,6 +325,7 @@ pub(crate) fn erase_inquiry_receipt_actor_in_txn(
         let mut changed = false;
         if row.actor.as_deref() == Some(hex.as_str()) {
             row.actor = None;
+            row.fields.remove(FIELD_ASKER_ROLE);
             changed = true;
         }
         if row.fields.get(FIELD_MEMBER) == Some(&hex) {
