@@ -20,10 +20,10 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::sync::transport::{PROTOCOL_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC, TAG_VERSION_VECTOR};
 use oneiron::{Vault, VaultConfig};
-use oneiron_server::test_doors::one_click_wire_counter::while_wire_counter_held;
-use oneiron_server::test_doors::wire_count_sites::{
+use oneiron_server::test_doors::off_router_wire_counts::{
     count_esign_capability_refusal, count_mcp_parse_error,
 };
+use oneiron_server::test_doors::one_click_wire_counter::while_wire_counter_held;
 use oneiron_server::wire_telemetry::{
     MAX_PENDING_COUNTS, WireTelemetry, WireThresholds, WireWindowReceipt,
 };
