@@ -576,6 +576,32 @@ pub fn policy_row_change_effect_digest(change: &PolicyRowChange) -> Result<[u8; 
     Ok(*hasher.finalize().as_bytes())
 }
 
+/// The reason code of an agent's act refused at a person's door, naming the
+/// route it takes instead: it asks through `vault.check_in.open`, and the
+/// vault's Owner applies the approved ask (Engine ruling PEN-COMPLIANCE-SET
+/// = A; P25-SHAPE Q1: no agent path into an Owner's door before PR 4).
+pub const CHECK_IN_OPEN_ROUTE_REASON: &str = "check_in.route:vault.check_in.open";
+
+/// The digest of turning org compliance search on or off (`enabled`) for
+/// `purpose`: the effect `vault.mail.compliance.set` judges, and the one an
+/// approved check-in for it spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
+/// derived from `oneiron check_in mail compliance set v1`, over one byte, 1
+/// to turn it on, the purpose's length as eight big-endian bytes and its
+/// bytes.
+#[must_use]
+pub fn mail_compliance_set_effect_digest(enabled: bool, purpose: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in mail compliance set v1");
+    hasher
+        .update(&[u8::from(enabled)])
+        .update(
+            &u64::try_from(purpose.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        )
+        .update(purpose.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
 /// `text`'s length as one byte (at most 255; custody ids are at most 128)
 /// and its bytes.
 fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
