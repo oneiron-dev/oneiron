@@ -902,13 +902,15 @@ pub(super) fn reap_agent_run_leases(server: &SyncServer) {
 
 /// One handed-over spend reconcile pass (FIX 4889), on the housekeeping tick
 /// before the agent run reaper: each run this machine holds custody of and
-/// that ended elsewhere settles its scope here
+/// that ended elsewhere settles its scope here, and each settled run this
+/// machine ran last for another machine's custody gets its shares stamped
+/// again once they moved (REVIEW-7890)
 /// ([`Vault::reconcile_handed_over_spend`]).
 pub(super) fn reconcile_handed_over_spend(server: &SyncServer) {
     match server.vault().reconcile_handed_over_spend() {
         Ok(0) => {}
-        Ok(settled) => {
-            tracing::info!(settled, "spend custody reconcile settled runs");
+        Ok(runs) => {
+            tracing::info!(runs, "spend custody reconcile settled or stamped runs");
         }
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "spend custody reconcile failed");

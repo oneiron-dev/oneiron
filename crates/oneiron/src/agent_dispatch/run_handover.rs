@@ -735,15 +735,22 @@ fn take_expired_agent_run_in_txn(
         generation: run.lease.generation.saturating_add(1),
         held_until: agent_run_lease_held_until(now),
     };
+    // The take stamps the share of the scope its try spends under here
+    // (REVIEW-7890): a kept queued try becomes the TASK's live one only at
+    // its claim, so the executor's stamp of the live try alone would miss
+    // the scope this take just folded into, while the fold counts against
+    // the shares at once.
+    let taken_scope = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(&*wtxn, try_id)?;
     update_agent_run_task_body_in_txn(vault, wtxn, run.task_ref, now, |body| {
         body.executor = lease;
         if resume != AgentRunResume::QueuedHere {
             body.live_attempt_ref = bytes_to_hex_lower(try_id.as_bytes());
         }
-        if folded != 0
-            && let Some(carry) = body.spend.as_mut()
-        {
+        if let Some(carry) = body.spend.as_mut() {
             carry.custody_folded_units = carry.custody_folded_units.saturating_add(folded);
+            if let Some(scope) = &taken_scope {
+                carry.stamp(node_id, scope);
+            }
         }
         Ok(())
     })?;

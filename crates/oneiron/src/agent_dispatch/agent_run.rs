@@ -19,6 +19,7 @@ use super::run_task::{
     agent_run_moved_in, agent_run_task_body_in, agent_run_task_ref_in, agent_run_unrun_cause_in,
     outlived_root_in, take_agent_run_lease_in_txn,
 };
+use super::spend_custody::CustodySettle;
 use super::workflow_record::is_wrapper;
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget,
@@ -284,7 +285,10 @@ impl AgentDispatcher<'_> {
     /// in the caller's write: its step receipts go and its spend lease
     /// settles. The TASK it realizes is not reported: its run is another
     /// machine's. On the custody machine (FIX 4889) a moved run keeps its
-    /// scope open, and a run settled elsewhere folds the other shares first.
+    /// scope open, and a run settled elsewhere folds what the other machines
+    /// spent first; while its last executor still holds units for children
+    /// that outlived it, the scope stays open for the reconcile pass
+    /// (REVIEW-7890).
     fn end_leased_unrun_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -306,13 +310,17 @@ impl AgentDispatcher<'_> {
         )?;
         crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
             .cleanup_step_receipts_in_txn(txn, attempt.id)?;
-        match self.custody_fold_for_unrun_in(&*txn, attempt)? {
+        match self.custody_settle_for_unrun_in(&*txn, attempt)? {
             // The run goes on on another machine: its scope here stays open,
             // so its parent keeps holding the whole carve (FIX 4889).
             Some(_) if cause == AGENT_RUN_EXECUTOR_MOVED => {}
-            Some((task_ref, fold)) if cause == AGENT_RUN_SETTLED_ELSEWHERE => {
-                self.settle_custody_scope_in_txn(txn, attempt.id, task_ref, fold, now)?;
+            Some(CustodySettle::Now { fold }) if cause == AGENT_RUN_SETTLED_ELSEWHERE => {
+                self.settle_custody_scope_in_txn(txn, attempt.id, fold, now)?;
             }
+            // Children that outlived the run still hold units on its last
+            // executor: the reconcile pass settles the scope once their
+            // settlements reach the TASK (REVIEW-7890).
+            Some(CustodySettle::Waits) if cause == AGENT_RUN_SETTLED_ELSEWHERE => {}
             _ => {
                 self.settle_child_in_txn(txn, &attempt.id, now)?;
             }
@@ -320,16 +328,16 @@ impl AgentDispatcher<'_> {
         Ok(())
     }
 
-    /// The fold the custody machine owes the run `attempt` ends unrun with
-    /// (FIX 4889): its TASK and what the other machines committed less what
-    /// this machine folded already. `None` for a try with no run TASK, a
-    /// child try, an unreadable TASK, an unmetered run, or a run in another
-    /// machine's custody.
-    fn custody_fold_for_unrun_in(
+    /// How the custody machine settles its scope of the run `attempt` ends
+    /// unrun under (FIX 4889), from the run TASK's carry and last executor:
+    /// [`super::run_task::AgentRunSpendCarry::custody_settle`]. `None` for a
+    /// try with no run TASK, a child try, an unreadable TASK, an unmetered
+    /// run, or a run in another machine's custody.
+    fn custody_settle_for_unrun_in(
         &self,
         txn: &heed::RoTxn<'_>,
         attempt: &AttemptRecord,
-    ) -> Result<Option<(EntityId, u64)>> {
+    ) -> Result<Option<CustodySettle>> {
         let Some(link) = agent_run_task_ref_in(self.vault, txn, attempt)? else {
             return Ok(None);
         };
@@ -350,10 +358,7 @@ impl AgentDispatcher<'_> {
         if carry.custody_node != node {
             return Ok(None);
         }
-        let fold = carry
-            .committed_elsewhere(node)
-            .saturating_sub(carry.custody_folded_units);
-        Ok(Some((link.task_ref, fold)))
+        Ok(Some(carry.custody_settle(node, body.executor.node_id)))
     }
 
     /// Tells the attempt observers and the TASK board a try ended.
