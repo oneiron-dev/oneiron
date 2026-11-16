@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::declaration::LeaseUnit;
 use super::host::{Allocation, AllocationRef, AllocationRefusal};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -16,43 +15,10 @@ mod store;
 
 const ACCOUNT: SideTable<(), AccountRow, Named> = SideTable::new(&side_table::BUDGET_HOST_ACCOUNT);
 
-/// An observation of the actual writer-lease acquisition, never a bearer grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AllocationServingFence(pub [u8; 16]);
-
-/// Original run/lease identity. Reusing it never reserves a second hold.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AllocationCallKey {
-    pub instance: EntityId,
-    pub lease: String,
-}
-
-/// A durable reservation on one original allocation, retained after replacement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DurableAllocationHold {
-    pub key: AllocationCallKey,
-    pub allocation: AllocationRef,
-    pub unit: LeaseUnit,
-    pub reserved_units: u64,
-    pub serving_fence: AllocationServingFence,
-    pub resident: Option<EntityId>,
-    pub resident_share_units: u64,
-    pub resident_committed_units: u64,
-    pub overdraft_units: u64,
-    /// Set only by the physical dispatch adapter's durable start transition.
-    pub dispatched: bool,
-    pub terminal: Option<AllocationTerminal>,
-}
-
-/// Original terminal identity and charge. The receipt digest covers the actual
-/// receipt; its clock and payload must not be reconstructed during redelivery.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AllocationTerminal {
-    pub occurred_at: u64,
-    pub receipt_digest: [u8; 32],
-    pub dispatched: bool,
-    pub units: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::run_admission::allocation::{
+    AllocationCallKey, AllocationServingFence, AllocationTerminal, DurableAllocationHold,
+};
 
 /// One allocation's current durable observation, in its original opaque unit.
 /// Pending deletion or a newer observation is not Cloud acceptance or backing.

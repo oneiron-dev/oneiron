@@ -405,7 +405,7 @@ impl Rung2Send<'_> {
         };
         let oracle = PublicSlotOracle(booking_oracle(self.server, page_ref, None, self.now)?);
         let mask = slot_mask(&request, oracle.solve(&request).map_err(booking_error)?);
-        let offered = top_ranked_slots(&mask.slots);
+        let offered = top_ranked_slots(&mask.slots, self.front.max_offered_slots);
         let token = PublicBookingPageToken::for_page(page_ref);
         let page_url = self
             .server
