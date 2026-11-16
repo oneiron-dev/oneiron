@@ -10,6 +10,15 @@
 //!   past the affected window a plan searches. Default: no free slots in seven
 //!   days refuses. Owner sets 864000 (ten days): the days 9-10 slots plan.
 //!
+//! - The commit follows the owner's values too (review round 1 of #8956, P1): a
+//!   plan under the owner's count of 4, and one under a floor and count of 1,
+//!   executes with one pick action per time; a floor the owner raises to 4
+//!   after a three-time plan refuses its commit. Before the fix the commit took
+//!   two or three proposals only, whatever the owner set: the first two refuse
+//!   there with "two or three genuine proposals", and the third executes.
+//!   These three use a test door (`--cfg oneiron_test_support`, as the run
+//!   line sets) and live in `mod execution`.
+//!
 //! On the base (the Setting primitive branch without this head) the owner's set
 //! fails with `no setting key is named ...`: that is its red. The defaults
 //! still plan (the head only replaces the literals 3, 2 and 7 * 86_400), so the
@@ -205,6 +214,10 @@ impl Fixture {
     fn open(config: EventTypeConfig) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        // Signing doors load this install's keys from a keystore (P6c).
+        vault.install_device_keystore(std::sync::Arc::new(
+            oneiron_keystore::MemoryKeystore::default(),
+        ));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         let owner = test_id(OWNER_SEED);
         let page = test_id(PAGE_SEED);
@@ -216,7 +229,7 @@ impl Fixture {
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
             .expect("put booking page");
         vault
-            .put_entity(&booker, ENTITY_TYPE_PERSON, at(1), 1, b"yuki")
+            .put_entity(&booker, ENTITY_TYPE_PERSON, at(1), 1, b"yuki@example.test")
             .expect("put booker");
         oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("bind owner");
         let owner_proof = vault
@@ -346,6 +359,16 @@ impl Fixture {
         reason: &str,
         recorded_at: u64,
     ) -> EmergencyRescheduleRequest {
+        self.instruct_as(window, reason, EmergencyActionPolicy::Cancel, recorded_at)
+    }
+
+    fn instruct_as(
+        &self,
+        window: TimeRange,
+        reason: &str,
+        action_policy: EmergencyActionPolicy,
+        recorded_at: u64,
+    ) -> EmergencyRescheduleRequest {
         let authority = self
             .vault
             .memory(self.owner, EdgeActorClass::Human)
@@ -355,7 +378,7 @@ impl Fixture {
                     end: window.end,
                 },
                 reason: reason.to_owned(),
-                action_policy: EmergencyActionPolicy::Cancel,
+                action_policy,
                 recorded_at,
             })
             .expect("log owner instruction");
@@ -363,7 +386,7 @@ impl Fixture {
             owner_ref: self.owner,
             affected_window: window,
             reason: reason.to_owned(),
-            action_policy: EmergencyActionPolicy::Cancel,
+            action_policy,
             authority,
         }
     }
@@ -622,4 +645,194 @@ fn emergency_plan_searches_seven_days_by_default_and_the_owners_span_when_set() 
         "days 9-10 offer at least two: {}",
         batch.plans[0].proposals().len()
     );
+}
+
+/// The owner's count and floor reach the commit on the lifecycle home node, not only the plan.
+/// The delivery fixture is `tests/booking_feed_move_held.rs`'s: an owner-logged RequestUpdate
+/// instruction (it keeps the booking confirmed and sends no calendar revision), the owner's
+/// delivery policy and page grant, and no built-in pack seed marker, since the apology goes out
+/// on `email`. The marker's door needs `--cfg oneiron_test_support`.
+#[cfg(oneiron_test_support)]
+mod execution {
+    use super::*;
+    use oneiron::booking::emergency_reschedule::{EmergencyItem, EmergencyPlan};
+    use oneiron::booking::{
+        BookingError, PublishBookingPageGrantRequest, execute_emergency_plan,
+        mint_publish_page_invite_grant,
+    };
+    use oneiron::outbound::{
+        OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+    };
+
+    const POLICY_SEED: u8 = 0x7a;
+
+    /// A sink that lands every delivery.
+    struct Delivered;
+
+    impl OutboundExecutionSink for Delivered {
+        fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            OutboundExecutionOutcome::delivered_to_channel("provider:message:fixture")
+        }
+    }
+
+    impl Fixture {
+        /// The owner's delivery policy and page grant, and no built-in pack seed marker.
+        fn install_delivery(&self) {
+            let effect_scope = oneiron::test_support::effect_preset();
+            let policy = rmp_serde::to_vec_named(&serde_json::json!({
+                "schema_version": "1.2", "pack_id": "pack-keys-emergency-tests", "pack_version": "v1",
+                "min_engine_version": env!("CARGO_PKG_VERSION"),
+                "defaults": { "criticality": "normal", "sensitivity": "normal" }, "rules": [],
+                "actor_ceilings": [
+                    { "actor_class": "agent", "actor_ref": self.owner.to_hex(), "ceiling": "auto" },
+                    { "actor_class": "first_party", "ceiling": "auto" },
+                    { "actor_class": "human", "ceiling": "auto" }
+                ],
+                "scoped_grants": [
+                    { "actor_ref": self.owner.to_hex(), "effector": "external:calendar.invite",
+                      "scope": effect_scope, "selectors": { "channel": "calendar" } },
+                    { "actor_ref": self.owner.to_hex(), "effector": "external:send",
+                      "scope": effect_scope, "selectors": { "channel": "email" } }
+                ]
+            }))
+            .expect("encode the policy manifest");
+            oneiron::test_support::put_policy_manifest_bytes(
+                &self.vault,
+                test_id(POLICY_SEED),
+                &policy,
+            )
+            .expect("put the policy manifest");
+            mint_publish_page_invite_grant(
+                &self.vault,
+                &PublishBookingPageGrantRequest {
+                    page_ref: self.page,
+                    publisher_principal: self.owner,
+                    issued_at: NOW,
+                },
+            )
+            .expect("the page's invite grant");
+            oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&self.vault)
+                .expect("remove the built-in pack seed marker");
+        }
+
+        /// One RequestUpdate plan for the one booking.
+        fn plan_update(&self, reason: &str) -> (EmergencyRescheduleRequest, EmergencyPlan) {
+            let request = self.instruct_as(
+                affected_window(),
+                reason,
+                EmergencyActionPolicy::RequestUpdate,
+                NOW,
+            );
+            let batch = self.plan(&request, NOW);
+            assert!(
+                batch.refusals.is_empty(),
+                "the plan lands: {:?}",
+                batch.refusals
+            );
+            let [plan] =
+                <[EmergencyPlan; 1]>::try_from(batch.plans).expect("one plan, for the booking");
+            (request, plan)
+        }
+
+        fn execute(
+            &self,
+            request: &EmergencyRescheduleRequest,
+            plan: &EmergencyPlan,
+        ) -> Result<EmergencyItem, BookingError> {
+            let calendars = vec![(self.owner, vec![CalendarSel { system: None }])];
+            execute_emergency_plan(
+                &self.vault,
+                request,
+                plan,
+                &calendars,
+                &BookingLifecycleConsumerInput {
+                    local_node_id: self.home_node_id,
+                    lease_owner: "emergency-test".to_owned(),
+                    now_utc: NOW,
+                },
+                &mut Delivered,
+            )
+        }
+    }
+
+    #[test]
+    fn a_plan_under_the_owners_count_of_four_executes_with_four_pick_actions() {
+        let owner = test_id(OWNER_SEED);
+        let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
+        fixture.book(booked_slot(), b"emergency-execute-four");
+        fixture.install_delivery();
+        let applied = fixture
+            .set_owner(MAX_KEY, serde_json::json!(4))
+            .expect("the owner sets the count");
+        assert_applied(&applied, &serde_json::json!(4));
+        let (request, plan) = fixture.plan_update("unavailable (owner count four)");
+        assert_eq!(
+            plan.proposals().len(),
+            4,
+            "the owner's count rules the plan"
+        );
+        let item = fixture
+            .execute(&request, &plan)
+            .expect("a plan under the owner's count executes");
+        assert_eq!(item.actions.len(), 4, "one pick action per time");
+        assert!(
+            item.calendar_delivered && item.apology_delivered,
+            "the apology goes out"
+        );
+    }
+
+    #[test]
+    fn a_plan_under_the_owners_floor_and_count_of_one_executes_with_one_pick_action() {
+        let owner = test_id(OWNER_SEED);
+        let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
+        fixture.book(booked_slot(), b"emergency-execute-one");
+        fixture.install_delivery();
+        let applied = fixture
+            .set_owner(MIN_KEY, serde_json::json!(1))
+            .expect("the owner sets the floor");
+        assert_applied(&applied, &serde_json::json!(1));
+        let applied = fixture
+            .set_owner(MAX_KEY, serde_json::json!(1))
+            .expect("the owner sets the count");
+        assert_applied(&applied, &serde_json::json!(1));
+        let (request, plan) = fixture.plan_update("unavailable (owner count one)");
+        assert_eq!(
+            plan.proposals().len(),
+            1,
+            "the owner's count rules the plan"
+        );
+        let item = fixture
+            .execute(&request, &plan)
+            .expect("a plan under the owner's floor executes");
+        assert_eq!(item.actions.len(), 1, "one pick action");
+        assert!(
+            item.calendar_delivered && item.apology_delivered,
+            "the apology goes out"
+        );
+    }
+
+    #[test]
+    fn a_floor_the_owner_raises_after_planning_refuses_the_commit() {
+        let owner = test_id(OWNER_SEED);
+        let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
+        fixture.book(booked_slot(), b"emergency-execute-raised");
+        fixture.install_delivery();
+        let (request, plan) = fixture.plan_update("unavailable (floor raised later)");
+        assert_eq!(plan.proposals().len(), 3, "today's count is three");
+        let applied = fixture
+            .set_owner(MAX_KEY, serde_json::json!(5))
+            .expect("the owner sets the count");
+        assert_applied(&applied, &serde_json::json!(5));
+        let applied = fixture
+            .set_owner(MIN_KEY, serde_json::json!(4))
+            .expect("the owner raises the floor");
+        assert_applied(&applied, &serde_json::json!(4));
+        let refused = fixture
+            .execute(&request, &plan)
+            .expect_err("three times are under the floor in force at the commit");
+        assert!(
+            refused.to_string().contains("fewer than 4"),
+            "the floor names itself: {refused}"
+        );
+    }
 }
