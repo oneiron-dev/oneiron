@@ -228,6 +228,30 @@ pub(crate) fn judge_door_act_in_txn(
     })
 }
 
+/// The live owner Grant listing `verb` that gives `memory`'s agent caller the
+/// power, read in `txn`, or `None`: the grant an agent's ask records when
+/// its act asks whatever its mode, as a closed room's add does (ARCH-0082
+/// #closed-room).
+///
+/// # Errors
+///
+/// As [`judge_door_act_in_txn`].
+pub(crate) fn agent_door_grant_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    verb: &str,
+    scope: &CheckInScope,
+) -> MemoryResult<Option<EntityId>> {
+    Ok(match asker_in_txn(memory, txn, verb, scope)? {
+        Asker::Agent {
+            grant,
+            holds_power: true,
+            ..
+        } => Some(grant),
+        Asker::Owner | Asker::Agent { .. } | Asker::Unpowered { .. } => None,
+    })
+}
+
 /// An agent's act with no Grant that gives it the power: a proposal where
 /// a role it reads may propose the act (an erase always may), else absent.
 fn unpowered_act(roles: &[RolePreset], why: &'static str, act: ActClass) -> AskVerdict {

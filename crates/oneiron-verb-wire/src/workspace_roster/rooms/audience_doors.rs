@@ -50,8 +50,9 @@ pub struct ThreadAudienceReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<ThreadAudienceHistory>,
     /// The check-in decision an add of someone else ran on (ROLES-CHECKIN
-    /// P2.6a); absent on a remove, a walk-in, a self re-add and an add no
-    /// role judges.
+    /// P2.6a), and a walk-in into a closed room (P26B-WALKIN = A); absent on
+    /// a remove, an open room's walk-in, a self re-add and an add no role
+    /// judges.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<CheckInDecision>,
 }

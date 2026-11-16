@@ -345,6 +345,7 @@ impl Memory<'_> {
                         self,
                         txn,
                         THREAD_JOIN_APPROVE_VERB,
+                        binding.room,
                         digest,
                         check_in_ref.as_ref(),
                     )? {
