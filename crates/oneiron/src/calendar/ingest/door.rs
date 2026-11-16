@@ -268,5 +268,6 @@ fn apply_upload(
         source_version: version,
         events,
         screen_verdict: admission.verdict_fold.token().to_owned(),
+        owed_booking_moves: admission.owed_booking_moves,
     })
 }

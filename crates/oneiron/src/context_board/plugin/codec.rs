@@ -3,9 +3,6 @@ use super::errors::{PluginResult, PluginSectionError};
 use super::manifest::SectionManifestEnvelope;
 use sha2::{Digest, Sha256};
 
-/// Length of a canonical lowercase hex digest at a serialized boundary.
-const DIGEST_HEX_LEN: usize = 64;
-
 // ---------------------------------------------------------------------------
 // §2 — codec
 // ---------------------------------------------------------------------------
@@ -33,43 +30,11 @@ pub fn section_manifest_digest(bytes: &[u8]) -> [u8; 32] {
 /// Lowercase hex of a 32-byte digest — the one canonical boundary form.
 #[must_use]
 pub fn digest_to_hex(digest: &[u8; 32]) -> String {
-    let mut out = String::with_capacity(DIGEST_HEX_LEN);
-    for byte in digest {
-        out.push(hex_nibble(byte >> 4));
-        out.push(hex_nibble(byte & 0x0f));
-    }
-    out
-}
-
-const fn hex_nibble(value: u8) -> char {
-    match value {
-        0..=9 => (b'0' + value) as char,
-        _ => (b'a' + value - 10) as char,
-    }
+    oneiron_hex::encode(digest)
 }
 
 pub(super) fn digest_from_hex(value: &str) -> PluginResult<[u8; 32]> {
-    if value.len() != DIGEST_HEX_LEN {
-        return Err(PluginSectionError::MalformedSuggestionKey);
-    }
-    let bytes = value.as_bytes();
-    let mut out = [0_u8; 32];
-    for (index, slot) in out.iter_mut().enumerate() {
-        let high = hex_value(bytes[index * 2])?;
-        let low = hex_value(bytes[index * 2 + 1])?;
-        *slot = (high << 4) | low;
-    }
-    Ok(out)
-}
-
-/// Lowercase-only on purpose: a canonical boundary form with two spellings is
-/// not canonical, and a mixed-case twin would hash to a different key.
-fn hex_value(byte: u8) -> PluginResult<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        _ => Err(PluginSectionError::MalformedSuggestionKey),
-    }
+    oneiron_hex::decode::<32>(value).ok_or(PluginSectionError::MalformedSuggestionKey)
 }
 
 // ---------------------------------------------------------------------------

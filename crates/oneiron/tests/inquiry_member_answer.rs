@@ -30,6 +30,20 @@
 //!   and leaves no join to a removed check-in, whichever of the two
 //!   tables' scrubs runs first.
 //!
+//! The member's saved decisions per keep (FIX INQUIRY-STANDING-PER-KEEP;
+//! Engine ruling INQUIRE-STANDING = A):
+//! - one edge answers a `task` inquiry from the scope without asking while
+//!   a `copy` inquiry always asks the member;
+//! - `never` settles `no_answer` at once, reaching neither the companion
+//!   nor the member, and the edge stays;
+//! - the member's terms change rewrites the edge in place, with a Share
+//!   receipt, and takes effect on the next inquiry: a narrowing to `never`,
+//!   then a widening to `full-access`;
+//! - a live person who does not own the member's vault changes no terms,
+//!   neither narrowing nor widening;
+//! - the member's own person credential narrows the terms but never
+//!   widens them: a widening takes the owner proof the mint takes.
+//!
 //! The erase test reaches the tables' actor scrubs through a door, so the
 //! file builds only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_member_answer`.
@@ -49,9 +63,12 @@ use oneiron::federation::{FederationDirectionScope, ScopeAxis};
 use oneiron::inquiry::{
     INQUIRY_ANSWER_VERB, INQUIRY_STATEMENT_PREDICATE, Inquiry, InquiryAnswer, InquiryAsker,
     InquiryCheckInMode, InquiryDecider, InquiryEdge, InquiryEdgeRequest, InquiryJudgment,
-    InquiryJudgmentOutcome, InquiryKeep, InquiryLogEntry, InquiryMemberAnswer, InquiryOutcome,
-    InquiryTask, StatementSource, UnsureInquiryJudgment,
+    InquiryJudgmentOutcome, InquiryKeep, InquiryKeepModes, InquiryLogEntry, InquiryMemberAnswer,
+    InquiryOutcome, InquiryTask, InquiryTermsChange, InquiryTermsChangeOutcome, StatementSource,
+    UnsureInquiryJudgment,
 };
+use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::inquiry as door;
 use oneiron::{
@@ -186,8 +203,13 @@ struct Thursday {
 }
 
 impl Thursday {
-    /// The edge on the member defaults, but in `mode`.
+    /// The edge on the member defaults, but in `mode` for every keep.
     fn open(mode: InquiryCheckInMode) -> Self {
+        Self::open_with(InquiryKeepModes::uniform(mode), InquiryKeep::Task)
+    }
+
+    /// The edge on the member defaults, but with `modes` and `keep_allowed`.
+    fn open_with(modes: InquiryKeepModes, keep_allowed: InquiryKeep) -> Self {
         let clock = ManualClock::new(T0);
         let member = side(0x11, &clock);
         let company = side(0x22, &clock);
@@ -196,7 +218,8 @@ impl Thursday {
             .mint_inquiry_edge(
                 &member.proof,
                 &InquiryEdgeRequest {
-                    check_in_mode: mode,
+                    check_in_modes: modes,
+                    keep_allowed,
                     ..InquiryEdgeRequest::member_defaults(company.vault_id, COMPANY)
                 },
             )
@@ -394,6 +417,49 @@ impl Thursday {
         self.member
             .vault
             .answer_inquiry(&self.member.proof, self.edge.grant, inquiry.id, answer)
+    }
+
+    /// The member changes the edge's terms under `proof`.
+    fn change_terms(
+        &self,
+        proof: &AuthenticatedOwner,
+        change: InquiryTermsChange,
+    ) -> oneiron::Result<InquiryTermsChangeOutcome> {
+        self.member
+            .vault
+            .change_inquiry_edge_terms(proof, self.edge.grant, change)
+            .map(|changed| {
+                assert_eq!(changed.edge.grant, self.edge.grant, "no re-mint");
+                changed.outcome
+            })
+    }
+
+    /// The edge's terms as the member's vault reads them now.
+    fn modes_now(&self) -> (InquiryKeepModes, InquiryKeep) {
+        let edge = self
+            .member
+            .vault
+            .inquiry_edge(&self.edge.grant)
+            .expect("edge read")
+            .expect("the edge stands");
+        (edge.terms.check_in_modes, edge.terms.keep_allowed)
+    }
+
+    /// The Share receipts of this edge's terms changes, oldest first.
+    fn terms_receipts(&self) -> Vec<ReceiptRecord> {
+        let mut query = ReceiptQuery::new(100);
+        query.kinds = [ReceiptKind::Share].into();
+        let head = format!("share:inquiry_terms:{}:", self.edge.grant.to_hex());
+        let mut receipts: Vec<ReceiptRecord> = self
+            .member
+            .vault
+            .receipts(query)
+            .expect("receipts")
+            .into_iter()
+            .filter(|receipt| receipt.receipt_id.starts_with(&head))
+            .collect();
+        receipts.sort_by_key(|receipt| receipt.receipt_id.clone());
+        receipts
     }
 
     fn logged(&self, inquiry: &Inquiry) -> InquiryLogEntry {
@@ -831,4 +897,347 @@ fn erasing_the_companys_guest_actor_settles_its_pending_inquiries_no_answer() {
             "nothing is left for the member to answer",
         );
     }
+}
+
+/// The change of one keep's mode.
+fn set_task(mode: InquiryCheckInMode) -> InquiryTermsChange {
+    InquiryTermsChange {
+        task: Some(mode),
+        ..InquiryTermsChange::default()
+    }
+}
+
+/// A live person of the member's vault who does not own it, and their
+/// proof.
+fn stranger_proof(vault: &Vault) -> AuthenticatedOwner {
+    let stranger = EntityId::now();
+    vault
+        .put_entity(
+            &stranger,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            b"a person who does not own this vault",
+        )
+        .expect("a live person");
+    vault
+        .authenticate_owner(stranger, &stranger.to_hex(), true, GateDecisionId::now())
+        .expect("the person's proof")
+}
+
+/// The member's proof carrying their own human slip as a person credential
+/// (tests/gate_pins_authority_custody_grants.rs, G184): no owner authority.
+fn person_credential_proof(side: &Side) -> AuthenticatedOwner {
+    let root = side
+        .vault
+        .ensure_host_root_slip(&side.issuer)
+        .expect("host root");
+    let mut claims = root.claims;
+    let first = EntityId::now();
+    let second = EntityId::now();
+    claims.slip_id[..16].copy_from_slice(first.as_bytes());
+    claims.slip_id[16..].copy_from_slice(second.as_bytes());
+    claims.holder_ref = side.owner.to_hex();
+    claims.actor_class = Some("human".to_owned());
+    let slip = side
+        .vault
+        .mint_capability_slip(&side.issuer, claims)
+        .expect("the member's own slip");
+    let challenge = b"inquiry-terms-person-credential";
+    let binding = side
+        .issuer
+        .binding_proof(&slip, challenge)
+        .expect("binding proof");
+    let verified = side
+        .vault
+        .verify_capability_slip(&side.issuer.public_key(), &slip, challenge, &binding)
+        .expect("the slip verifies");
+    let proof = side
+        .vault
+        .authenticate_owner(
+            side.owner,
+            &side.owner.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("the member's proof");
+    let proof = side
+        .vault
+        .bind_request_credential(proof, verified.clone())
+        .expect("bind the request slip");
+    side.vault
+        .bind_person_credential(proof, verified)
+        .expect("bind the person credential")
+}
+
+#[test]
+fn one_edge_answers_a_task_inquiry_from_the_scope_while_a_copy_inquiry_asks_the_member() {
+    let thursday = Thursday::open_with(
+        InquiryKeepModes {
+            task: InquiryCheckInMode::NeverAsk,
+            copy: InquiryCheckInMode::AlwaysAsk,
+        },
+        InquiryKeep::Copy,
+    );
+    thursday.open_statement(OUT_THURSDAY);
+    let companion = ScriptedCompanion::sure_of(&[OUT_THURSDAY]);
+
+    let task = thursday.inquiry(QUESTION, InquiryKeep::Task, T0);
+    let answer = thursday
+        .admit(&task, &companion)
+        .expect("the member's vault admits the task inquiry");
+    assert_eq!(
+        answer.outcome(),
+        InquiryOutcome::Answered,
+        "full-access for task answers from the scope",
+    );
+    assert_eq!(answer.statements()[0].text(), OUT_THURSDAY);
+    assert!(thursday.pending(&task).is_none(), "the member is not asked");
+
+    let copy = thursday.inquiry(QUESTION, InquiryKeep::Copy, T0);
+    let answer = thursday
+        .admit(&copy, &companion)
+        .expect("the member's vault admits the copy inquiry");
+    assert_eq!(
+        answer.outcome(),
+        InquiryOutcome::Pending,
+        "manual for copy always asks the member, though the edge allows copy",
+    );
+    let pending = thursday.pending(&copy).expect("check-in");
+    assert_eq!(pending.mode, CheckInMode::AlwaysAsk);
+    assert_eq!(pending.reason, WaitReason::AlwaysAsk);
+}
+
+#[test]
+fn never_declines_without_reaching_the_companion_or_the_member_and_the_edge_stays() {
+    let thursday = Thursday::open_with(
+        InquiryKeepModes {
+            task: InquiryCheckInMode::NeverAnswer,
+            copy: InquiryCheckInMode::AlwaysAsk,
+        },
+        InquiryKeep::Task,
+    );
+    thursday.open_statement(OUT_THURSDAY);
+    let companion = ScriptedCompanion::sure_of(&[OUT_THURSDAY]);
+
+    let declined = thursday.inquiry(QUESTION, InquiryKeep::Task, T0);
+    let answer = thursday
+        .admit(&declined, &companion)
+        .expect("the member's vault admits the inquiry");
+    assert_no_answer(&answer, &declined);
+    assert!(
+        companion.shown().is_empty(),
+        "the companion is not shown it"
+    );
+    assert!(
+        thursday.pending(&declined).is_none(),
+        "the member is not asked"
+    );
+    let logged = thursday.logged(&declined);
+    assert_eq!(logged.inquiry, declined, "\"Asked about you\" keeps it");
+    assert_eq!(
+        logged.decided_by,
+        Some(InquiryDecider::StandingRow {
+            row_ref: format!("inquiry_terms:{}:task", thursday.edge.grant.to_hex()),
+        }),
+        "the member's saved decision for task declined it",
+    );
+    let repeat = thursday
+        .admit(&declined, &companion)
+        .expect("the company sends it again");
+    assert_eq!(repeat, answer, "a repeat returns the same decline");
+
+    let copy = thursday.inquiry(QUESTION, InquiryKeep::Copy, T0);
+    let answer = thursday
+        .admit(&copy, &companion)
+        .expect("the edge still admits an inquiry");
+    assert_eq!(
+        answer.outcome(),
+        InquiryOutcome::Pending,
+        "the relation stays: a copy inquiry still goes to the member",
+    );
+}
+
+#[test]
+fn a_terms_change_rewrites_the_edge_with_a_receipt_and_takes_effect_on_the_next_inquiry() {
+    let thursday = Thursday::open(InquiryCheckInMode::AskWhenUnsure);
+    let unsure = ScriptedCompanion::unsure();
+    let before = thursday.inquiry(QUESTION, InquiryKeep::Task, T0);
+    let answer = thursday
+        .admit(&before, &unsure)
+        .expect("the member's vault admits the inquiry");
+    assert_eq!(
+        answer.outcome(),
+        InquiryOutcome::Pending,
+        "auto asks when unsure"
+    );
+
+    assert_eq!(
+        thursday
+            .change_terms(
+                &thursday.member.proof,
+                set_task(InquiryCheckInMode::NeverAnswer)
+            )
+            .expect("the member narrows task to never"),
+        InquiryTermsChangeOutcome::Narrowed,
+    );
+    assert_eq!(
+        thursday.modes_now().0.task,
+        InquiryCheckInMode::NeverAnswer,
+        "the edge reads the new terms",
+    );
+    let after = thursday.inquiry("Is owen free on Friday?", InquiryKeep::Task, T0);
+    let answer = thursday
+        .admit(&after, &unsure)
+        .expect("the company's credential still admits an inquiry");
+    assert_no_answer(&answer, &after);
+    assert!(
+        thursday.pending(&after).is_none(),
+        "the member is not asked"
+    );
+    assert_eq!(
+        unsure.shown().len(),
+        1,
+        "the companion saw only the inquiry before the change",
+    );
+    assert_eq!(
+        thursday
+            .admit(&before, &unsure)
+            .expect("a repeat of the earlier inquiry")
+            .outcome(),
+        InquiryOutcome::Pending,
+        "the inquiry already with the member stays with the member",
+    );
+
+    assert_eq!(
+        thursday
+            .change_terms(
+                &thursday.member.proof,
+                set_task(InquiryCheckInMode::NeverAnswer)
+            )
+            .expect("the same terms again"),
+        InquiryTermsChangeOutcome::Unchanged,
+    );
+    assert_eq!(
+        thursday
+            .change_terms(
+                &thursday.member.proof,
+                set_task(InquiryCheckInMode::NeverAsk)
+            )
+            .expect("the member widens task to full-access with the owner proof"),
+        InquiryTermsChangeOutcome::Widened,
+    );
+    thursday.open_statement(OUT_THURSDAY);
+    let widened = thursday.inquiry("Is owen in on Thursday?", InquiryKeep::Task, T0);
+    let answer = thursday
+        .admit(&widened, &ScriptedCompanion::sure_of(&[OUT_THURSDAY]))
+        .expect("the member's vault admits the inquiry");
+    assert_eq!(answer.outcome(), InquiryOutcome::Answered);
+
+    let receipts = thursday.terms_receipts();
+    let outcomes: Vec<&str> = receipts.iter().map(|r| r.outcome.as_str()).collect();
+    assert_eq!(
+        outcomes,
+        vec!["narrowed", "widened"],
+        "one Share receipt per change, none for an unchanged one: {receipts:?}",
+    );
+    let narrowed = &receipts[0];
+    assert_eq!(narrowed.actor, Some(thursday.member.owner.to_hex()));
+    assert_eq!(
+        narrowed.trigger_ref,
+        Some(format!("federation_grant:{}", thursday.edge.grant.to_hex())),
+    );
+    assert_eq!(
+        narrowed
+            .fields
+            .get("previous_task_mode")
+            .map(String::as_str),
+        Some("auto")
+    );
+    assert_eq!(
+        narrowed.fields.get("task_mode").map(String::as_str),
+        Some("never")
+    );
+    assert_eq!(
+        narrowed.fields.get("copy_mode").map(String::as_str),
+        Some("auto")
+    );
+    assert_eq!(
+        receipts[1].fields.get("task_mode").map(String::as_str),
+        Some("full-access")
+    );
+}
+
+#[test]
+fn a_person_who_does_not_own_the_members_vault_changes_no_terms() {
+    let thursday = Thursday::open(InquiryCheckInMode::AskWhenUnsure);
+    let stranger = stranger_proof(&thursday.member.vault);
+    let terms = thursday.modes_now();
+
+    assert!(
+        thursday
+            .change_terms(&stranger, set_task(InquiryCheckInMode::NeverAnswer))
+            .is_err(),
+        "a narrowing by a non-member refuses",
+    );
+    assert!(
+        thursday
+            .change_terms(&stranger, set_task(InquiryCheckInMode::NeverAsk))
+            .is_err(),
+        "a widening by a non-member refuses",
+    );
+    assert!(
+        thursday
+            .change_terms(
+                &stranger,
+                InquiryTermsChange {
+                    keep_allowed: Some(InquiryKeep::Copy),
+                    ..InquiryTermsChange::default()
+                },
+            )
+            .is_err(),
+        "a wider keep by a non-member refuses",
+    );
+    assert_eq!(thursday.modes_now(), terms, "the terms stand");
+    assert!(
+        thursday.terms_receipts().is_empty(),
+        "no change is receipted"
+    );
+}
+
+#[test]
+fn the_members_person_credential_narrows_the_terms_but_never_widens_them() {
+    let thursday = Thursday::open(InquiryCheckInMode::AskWhenUnsure);
+    let person = person_credential_proof(&thursday.member);
+
+    assert_eq!(
+        thursday
+            .change_terms(
+                &person,
+                InquiryTermsChange {
+                    copy: Some(InquiryCheckInMode::NeverAnswer),
+                    ..InquiryTermsChange::default()
+                },
+            )
+            .expect("the member's own person credential narrows"),
+        InquiryTermsChangeOutcome::Narrowed,
+    );
+    assert!(
+        thursday
+            .change_terms(&person, set_task(InquiryCheckInMode::NeverAsk))
+            .is_err(),
+        "a widening takes the owner proof the mint takes",
+    );
+    assert_eq!(
+        thursday.modes_now(),
+        (
+            InquiryKeepModes {
+                task: InquiryCheckInMode::AskWhenUnsure,
+                copy: InquiryCheckInMode::NeverAnswer,
+            },
+            InquiryKeep::Task,
+        ),
+        "only the narrowing stands",
+    );
+    assert_eq!(thursday.terms_receipts().len(), 1);
 }

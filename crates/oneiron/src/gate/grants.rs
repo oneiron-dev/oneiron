@@ -690,7 +690,14 @@ pub(crate) fn companion_profile_access_grant(
     facet_ref: Option<&EntityId>,
     now: u64,
 ) -> Result<Option<EntityId>> {
-    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)? {
+    // The grants the companion grant index names for this pair, else every
+    // ACCESS_GRANT row, in grant id order either way (census L3-28E).
+    for index_entry in crate::access_grant::companion_grant_candidates_in_txn(
+        store,
+        txn,
+        principal_ref,
+        person_ref,
+    )? {
         let id = index_entry?;
         let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("access grant entity row"));
