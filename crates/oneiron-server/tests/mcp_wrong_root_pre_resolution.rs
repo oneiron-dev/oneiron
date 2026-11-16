@@ -23,9 +23,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::on_engine_stack;
-use oneiron::authority::{
-    CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
-};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -191,7 +189,10 @@ async fn wrong_root_has_no_scope() -> TestResult {
     // scope; the code, the sentence and the correction are unchanged.
     let reader = fixture.mint_reader(0x61)?;
     let (status, reply) = fixture.call_as(&reader, 1, WRONG_ROOT_NAME).await?;
-    assert_eq!(status, 200, "a refusal is still a 200 JSON-RPC error: {reply}");
+    assert_eq!(
+        status, 200,
+        "a refusal is still a 200 JSON-RPC error: {reply}"
+    );
     assert!(
         reply.get("result").is_none(),
         "the wrong root is refused: {reply}"
@@ -212,7 +213,11 @@ async fn wrong_root_has_no_scope() -> TestResult {
         json!("oneiron.ask"),
         "{reply}"
     );
-    assert_eq!(reply["error"]["data"]["replacement"], json!("ask"), "{reply}");
+    assert_eq!(
+        reply["error"]["data"]["replacement"],
+        json!("ask"),
+        "{reply}"
+    );
     assert_eq!(
         reply["error"]["data"]["schemaRef"],
         json!("oneiron:sdk/agent-verbs#ask"),
@@ -234,8 +239,13 @@ async fn wrong_root_answers_before_auth() -> TestResult {
     let fixture = Fixture::new()?;
     // The check is static: even a Bearer token no caller could resolve gets
     // the wrong-root refusal, not an auth error.
-    let (status, reply) = fixture.call_bearer("not-a-credential", 2, WRONG_ROOT_NAME).await?;
-    assert_eq!(status, 200, "a refusal is still a 200 JSON-RPC error: {reply}");
+    let (status, reply) = fixture
+        .call_bearer("not-a-credential", 2, WRONG_ROOT_NAME)
+        .await?;
+    assert_eq!(
+        status, 200,
+        "a refusal is still a 200 JSON-RPC error: {reply}"
+    );
     assert!(
         reply.get("result").is_none(),
         "the wrong root is refused: {reply}"
@@ -264,7 +274,10 @@ async fn unknown_tool_stays_scoped() -> TestResult {
     // states the scope it was refused under.
     let reader = fixture.mint_reader(0x62)?;
     let (status, reply) = fixture.call_as(&reader, 3, UNKNOWN_NAME).await?;
-    assert_eq!(status, 200, "a refusal is still a 200 JSON-RPC error: {reply}");
+    assert_eq!(
+        status, 200,
+        "a refusal is still a 200 JSON-RPC error: {reply}"
+    );
     assert!(
         reply.get("result").is_none(),
         "the retired name is refused: {reply}"
