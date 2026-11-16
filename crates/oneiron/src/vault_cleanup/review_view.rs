@@ -36,6 +36,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::Memory;
+use crate::memory::repo_secret_reads::LaneSnapshot;
 use crate::note::PreparedNoteRead;
 use crate::ports::{EdgeDirection, EntityStoreRead, JobQueueRead};
 use crate::store::attempt_id::AttemptId;
@@ -250,8 +251,17 @@ fn snapshot(
         _ => None,
     };
     let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
-    let rtxn = vault.store.env.read_txn()?;
-    owner.revalidate_in_txn(vault, &rtxn)?;
+    // A handle that reads repo bytes masked (an owner bound to an MCP tool,
+    // FIX 8961) reads in the known-value pass's own snapshot, so a record
+    // view takes its pass there (FIX REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT);
+    // a failed check takes the pass too.
+    let snapshot = if memory.repo_reads_masked().unwrap_or(true) {
+        LaneSnapshot::Known(Box::new(vault.known_snapshot()?))
+    } else {
+        LaneSnapshot::Plain(vault.store.env.read_txn()?)
+    };
+    let rtxn = snapshot.txn();
+    owner.revalidate_in_txn(vault, rtxn)?;
     let Some(raw) = PROPOSAL.get(&vault.store, &rtxn, proposal)? else {
         return Ok(None);
     };
@@ -305,10 +315,12 @@ fn snapshot(
                 .content
                 .get_or_insert_with(CleanupReviewContent::default);
             match &lane {
-                Ok(lane) => match memory.get_entity_in_txn(lane, &rtxn, read.entity) {
-                    Ok(record) => content.record = Some(record),
-                    Err(error) => content.refused.push(refusal(&error)),
-                },
+                Ok(lane) => {
+                    match memory.get_entity_in_txn(lane, rtxn, snapshot.known(), read.entity) {
+                        Ok(record) => content.record = Some(record),
+                        Err(error) => content.refused.push(refusal(&error)),
+                    }
+                }
                 Err(error) => content.refused.push(refusal(error)),
             }
             if read.note {
