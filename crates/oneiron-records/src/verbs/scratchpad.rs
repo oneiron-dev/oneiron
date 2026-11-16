@@ -32,18 +32,3 @@ pub struct ScratchpadRecallReplyLine {
     pub pin: bool,
     pub text: String,
 }
-
-/// What the recall found in the session's pad.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScratchpadRecallReply {
-    /// The pad searched; absent when the session has no pad.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pad: Option<EntityId>,
-    /// Whether the pad is sealed.
-    pub sealed: bool,
-    /// How many lines matched; `lines` holds the newest
-    /// `SCRATCHPAD_RECALL_LINES` of them.
-    pub matched: usize,
-    /// The newest matching lines in full, newest first.
-    pub lines: Vec<ScratchpadRecallReplyLine>,
-}
