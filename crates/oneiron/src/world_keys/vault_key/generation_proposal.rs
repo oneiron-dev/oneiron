@@ -153,7 +153,8 @@ impl Vault {
     /// Settles the agents' asks for `replaced`, the generation the owner's
     /// act just replaced: each live ask for it is seen and acked for the
     /// owner it was raised for. An absent, deleted or already acked row stays
-    /// as it is.
+    /// as it is, and so does a row that does not decode: an inbox row never
+    /// stops the owner's act.
     pub(crate) fn settle_data_key_generation_proposals_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -174,7 +175,9 @@ impl Vault {
             if entity_type != crate::registry::ENTITY_TYPE_NOTIFICATION {
                 continue;
             }
-            let mut body = decode_notification_body(&body)?;
+            let Ok(mut body) = decode_notification_body(&body) else {
+                continue;
+            };
             let Some(recipient) = body.recipient.clone() else {
                 continue;
             };

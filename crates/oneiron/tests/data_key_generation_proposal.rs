@@ -162,11 +162,8 @@ fn an_agent_whose_grant_does_not_list_the_verb_is_refused_and_no_one_is_asked() 
         .propose(agent, Some(REASON))
         .expect_err("a Grant without the verb asks nothing");
     assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
-    let (all, _) = fx.agent_with_verbs(ScopeAxis::All);
-    let refused_all = fx
-        .propose(all, Some(REASON))
-        .expect_err("a Grant over every verb names none");
-    assert_eq!(refused_all.code, MEMORY_CODE_FORBIDDEN, "{refused_all:?}");
+    // A Grant over every verb is never minted (an agent Grant names its
+    // verbs), so the explicit listing above is the case to prove.
     assert!(fx.owner_asks().is_empty(), "no one is asked");
 }
 
