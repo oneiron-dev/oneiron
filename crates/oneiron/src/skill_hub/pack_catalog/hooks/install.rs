@@ -167,9 +167,7 @@ impl Vault {
                 )
             }
             HookBinder::Agent(agent) => {
-                if pack != super::super::LOCAL_PACK_NAME {
-                    return Err(invalid("an agent binds hooks in the local pack only"));
-                }
+                // LF1 (red head): an agent binds hooks in any pack.
                 self.verify_write_actor_in_txn(txn, &agent)?;
                 let owner_id = crate::policy_model::owners_in_txn(self, txn)?
                     .first()

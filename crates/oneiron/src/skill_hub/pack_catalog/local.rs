@@ -77,9 +77,7 @@ impl Vault {
             return Err(invalid("an agent's put takes an agent writer"));
         }
         let tree = PackSource::from_tree(files)?;
-        if tree.source.manifest.name != LOCAL_PACK_NAME {
-            return Err(invalid("an agent puts the local pack only"));
-        }
+        // LF1 (red head): an agent's put takes any pack name.
         self.put_pack_source(HookBinder::Agent(*agent), tree, None)
     }
 
