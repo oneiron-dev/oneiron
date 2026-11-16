@@ -72,6 +72,8 @@ pub mod home_handoff_retire;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
+#[cfg(feature = "sync")]
+pub mod host_taint_replica;
 pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
