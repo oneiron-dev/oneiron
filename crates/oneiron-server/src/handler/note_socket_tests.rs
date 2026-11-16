@@ -587,7 +587,7 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
             .is_empty()
     );
     let before = vault.note_document(note).unwrap();
-    crate::test_credentials::revoke(&server, &recipe(author));
+    crate::test_credentials::revoke(&server, &recipe(owner));
     let (notice, receipt_frame) = last_delivery.unwrap();
     // A revoked credential fails closed: delivery refuses, it never exports.
     assert!(super::documents::document_delivery(&server, &state, &notice).is_err());
