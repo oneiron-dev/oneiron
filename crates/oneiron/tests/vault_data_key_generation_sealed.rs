@@ -71,7 +71,7 @@ fn reopen_sealed(path: &Path, keystore: &Arc<oneiron_keystore::MemoryKeystore>) 
     let mut config = VaultConfig::device();
     config.page_seal = Some(seal);
     let vault = Vault::open(path, config).expect("reopen the sealed vault");
-    vault.install_device_keystore(Arc::clone(keystore));
+    vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(keystore));
     vault
 }
 
