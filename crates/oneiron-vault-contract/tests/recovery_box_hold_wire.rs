@@ -6,9 +6,27 @@
 use oneiron_vault_contract::{
     RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_REFUSAL_MAX,
     RECOVERY_BOX_WAIT_MAX_SECS, RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck,
-    RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, RecoveryBoxWait, TOKEN_LEN, TokenHex,
-    valid_recovery_box_refusal_code,
+    RecoveryBoxCancelledBy, RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, RecoveryBoxWait, TOKEN_LEN,
+    TokenHex, valid_recovery_box_refusal_code,
 };
+
+/// The owner and device key the cancels in these tests name.
+fn canceller() -> RecoveryBoxCancelledBy {
+    RecoveryBoxCancelledBy {
+        person: "12".repeat(16),
+        device_key: "cd".repeat(32),
+    }
+}
+
+fn cancel(release_receipt: Option<u64>) -> RecoveryBoxCancel {
+    RecoveryBoxCancel {
+        op: RECOVERY_BOX_CANCEL_OP.to_owned(),
+        vault: "vault-7".to_owned(),
+        token: TokenHex::new("ab".repeat(TOKEN_LEN)),
+        cancelled_by: canceller(),
+        release_receipt,
+    }
+}
 
 fn request(kit_only: bool) -> RecoveryBoxKitOnly {
     RecoveryBoxKitOnly {
@@ -107,21 +125,19 @@ fn recovery_box_wait_and_cancel_wires_are_exact() {
     wrong_op.op = RECOVERY_BOX_KIT_ONLY_OP.to_owned();
     assert!(wrong_op.validate().is_err());
 
-    let cancel = RecoveryBoxCancel {
-        op: RECOVERY_BOX_CANCEL_OP.to_owned(),
-        vault: "vault-7".to_owned(),
-        token: TokenHex::new("ab".repeat(TOKEN_LEN)),
-    };
+    let cancel = cancel(None);
     cancel.validate().unwrap();
     let line = serde_json::to_string(&cancel).unwrap();
     assert_eq!(
         line,
         format!(
-            r#"{{"op":"recovery_box_cancel","vault":"vault-7","token":"{}"}}"#,
-            "ab".repeat(TOKEN_LEN)
+            r#"{{"op":"recovery_box_cancel","vault":"vault-7","token":"{}","cancelled_by":{{"person":"{}","device_key":"{}"}}}}"#,
+            "ab".repeat(TOKEN_LEN),
+            "12".repeat(16),
+            "cd".repeat(32)
         )
     );
-    let with_wait = line.replace("\"}", "\",\"wait_secs\":0}");
+    let with_wait = line.replacen("\"op\"", "\"wait_secs\":0,\"op\"", 1);
     assert!(serde_json::from_str::<RecoveryBoxCancel>(&with_wait).is_err());
     let mut bad_vault = cancel.clone();
     bad_vault.vault = "Vault_7".to_owned();
@@ -157,4 +173,47 @@ fn recovery_box_cancel_ack_shapes() {
         serde_json::from_str::<RecoveryBoxCancelAck>(r#"{"held":true,"cancelled":true,"x":1}"#)
             .is_err()
     );
+}
+
+#[test]
+fn recovery_box_cancel_names_its_canceller_and_may_name_the_release() {
+    let named = cancel(Some(41));
+    named.validate().unwrap();
+    let line = serde_json::to_string(&named).unwrap();
+    assert!(line.ends_with(r#"},"release_receipt":41}"#), "{line}");
+    let back: RecoveryBoxCancel = serde_json::from_str(&line).unwrap();
+    assert_eq!(back.cancelled_by, canceller());
+    assert_eq!(back.release_receipt, Some(41));
+    let unnamed: RecoveryBoxCancel =
+        serde_json::from_str(&serde_json::to_string(&cancel(None)).unwrap()).unwrap();
+    assert_eq!(unnamed.release_receipt, None);
+
+    // the canceller is required, and takes no other field
+    let token = "ab".repeat(TOKEN_LEN);
+    let without = format!(r#"{{"op":"recovery_box_cancel","vault":"vault-7","token":"{token}"}}"#);
+    assert!(serde_json::from_str::<RecoveryBoxCancel>(&without).is_err());
+    let smuggled = line.replace(r#""device_key""#, r#""role":"owner","device_key""#);
+    assert!(serde_json::from_str::<RecoveryBoxCancel>(&smuggled).is_err());
+
+    // reject, never truncate: the exact length, lowercase hex only
+    for person in [
+        "12".repeat(15),
+        "12".repeat(17),
+        "AB".repeat(16),
+        "zz".repeat(16),
+    ] {
+        let mut bad = cancel(None);
+        bad.cancelled_by.person = person;
+        assert!(bad.validate().is_err(), "{:?}", bad.cancelled_by);
+    }
+    for device_key in [
+        "cd".repeat(31),
+        "cd".repeat(33),
+        "CD".repeat(32),
+        "g0".repeat(32),
+    ] {
+        let mut bad = cancel(None);
+        bad.cancelled_by.device_key = device_key;
+        assert!(bad.validate().is_err(), "{:?}", bad.cancelled_by);
+    }
 }

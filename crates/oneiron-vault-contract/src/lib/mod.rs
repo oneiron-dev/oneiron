@@ -139,8 +139,9 @@ pub use self::preview::{
     PREVIEW_ROUTE_OPEN_OP, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest,
 };
 pub use self::recovery_box_hold::{
-    RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_REFUSAL_MAX,
-    RECOVERY_BOX_WAIT_MAX_SECS, RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck,
+    RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_DEVICE_KEY_HEX_LEN, RECOVERY_BOX_KIT_ONLY_OP,
+    RECOVERY_BOX_PERSON_HEX_LEN, RECOVERY_BOX_REFUSAL_MAX, RECOVERY_BOX_WAIT_MAX_SECS,
+    RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck, RecoveryBoxCancelledBy,
     RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, RecoveryBoxWait, valid_recovery_box_refusal_code,
 };
 pub use self::secrets::{
