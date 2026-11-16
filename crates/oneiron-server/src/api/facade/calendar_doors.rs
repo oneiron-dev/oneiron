@@ -237,8 +237,9 @@ pub(crate) async fn calendar_connector_write(
 
 use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
-    CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
+    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedConsent,
+    CalendarIcsFeedRegistration, CalendarIcsFeedRequest, CalendarIcsFeedReviewRequest,
+    CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
 
 pub(crate) async fn calendar_ics_configure(
@@ -265,6 +266,20 @@ pub(crate) async fn calendar_ics_status(
         auth,
         "calendar.ics.status",
         move |_, memory, owner| feed::status(&memory, &owner, &input),
+    )
+    .await
+}
+
+pub(crate) async fn calendar_ics_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarIcsFeedReviewRequest,
+) -> Listed<CalendarIcsFeedConsent> {
+    as_owner(
+        server,
+        auth,
+        "calendar.ics.review",
+        move |_, memory, owner| feed::review(&memory, &owner, &input),
     )
     .await
 }
