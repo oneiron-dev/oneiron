@@ -295,7 +295,7 @@ impl DreamerAttemptBinding {
                     .into_iter()
                     .find(|conflict| conflict.marker == offered[0])
                     .ok_or_else(forbidden)?;
-                if !conflict_served_in_txn(vault, txn, &read, &reader, self.actor(), &conflict)? {
+                if !conflict_served_in_txn(vault, txn, &read, &reader, &conflict)? {
                     return Err(forbidden());
                 }
                 let rows = settle_rows_in_txn(vault, txn, &conflict)?;

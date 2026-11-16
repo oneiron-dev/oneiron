@@ -9,7 +9,6 @@ use crate::{EntityId, Vault};
 use frontier::{FrontierEntry, decode_frontier};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
-use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
 mod frontier;
 mod native;
@@ -41,13 +40,8 @@ const FRONTIER: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
 pub(super) const IDENTITY: SideTable<[u8; 16], EntityId, Raw> =
     SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
 
-#[derive(Serialize, Deserialize)]
-pub(super) struct RevisionState {
-    pub live: RevisionRef,
-    pub indexed: RevisionRef,
-    pub changed_at_ms: u64,
-    pub has_doc: bool,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::vault::entity_revision::storage::{RevisionState, reference};
 
 pub(super) fn state(
     store: &impl ManifestDbs,
@@ -57,22 +51,16 @@ pub(super) fn state(
     STATE.get(store, txn, id)
 }
 
+/// Every move of a row's live revision passes here, so this is where the
+/// memory timeline records it (L3-39).
 pub(super) fn put_state(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     value: &RevisionState,
 ) -> Result<()> {
-    STATE.put(store, txn, id, value)
-}
-
-pub(super) fn reference(id: &EntityId, raw: &[u8]) -> RevisionRef {
-    let mut hash = blake3::Hasher::new();
-    hash.update(id.as_bytes());
-    hash.update(raw);
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    RevisionRef(bytes)
+    STATE.put(store, txn, id, value)?;
+    super::timeline::record_live_revision_in_txn(store, txn, id, value.live)
 }
 
 /// All top-level string leaves are independent text containers. The raw
@@ -835,7 +823,7 @@ pub(crate) fn remove_entity_revisions(
         IDENTITY.delete(store, txn, revision)?;
     }
     FRONTIER.delete_from(store, txn, id.as_bytes())?;
-    Ok(())
+    super::timeline::remove_timeline_in_txn(store, txn, id)
 }
 
 impl Vault {
