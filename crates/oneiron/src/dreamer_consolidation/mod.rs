@@ -82,6 +82,7 @@ pub mod routing;
 mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
+pub(crate) mod setting_keys;
 pub(crate) mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
@@ -94,7 +95,7 @@ mod task_realize;
 mod thing_agent;
 mod turn_text;
 mod wake_plan;
-mod watermark;
+pub(crate) mod watermark;
 mod weave_lens;
 
 // FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (160 errors: E0063 x82, E0308 x28, E0061 x27, E0027 x12, E0277 x4, E0599 x3, E0609 x3, E0716 x1); port it, then drop this gate
@@ -193,6 +194,8 @@ pub use thing_agent::{
     ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingPortCall, ThingPortReply,
     ThingPortRequest, ThingProposalRef,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use turn_text::MessageSpan;
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
     scoped_turn_body_text_in, scoped_turn_text_in,

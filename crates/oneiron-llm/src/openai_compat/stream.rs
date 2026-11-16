@@ -201,7 +201,8 @@ impl<'a> OpenAiCompatLlmStream<'a> {
 
     /// The stream of a call admitted for `model`: its inference receipts
     /// name that model (FIX 8314).
-    pub(crate) fn bound_to(mut self, model: ModelId) -> Self {
+    #[must_use]
+    pub fn bound_to(mut self, model: ModelId) -> Self {
         self.accumulator.model = Some(model);
         self
     }
