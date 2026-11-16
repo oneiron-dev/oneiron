@@ -81,6 +81,10 @@ pub enum HousekeepingSweep {
     /// held a token (FIX 22142).
     #[serde(rename = "oauth_expiry")]
     OAuthExpiry,
+    /// Removes the verifiers of signing links past their hard expiry (ARCH-0064
+    /// SGN-09: "a separate token-expiry job"). A lapsed link is refused at
+    /// use whether or not this has run; it never touches a signing window.
+    EsignTokenExpiry,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -157,6 +161,7 @@ impl HousekeepingSweep {
         Self::DrafterCorpusSweep,
         Self::ModelPackRetirement,
         Self::OAuthExpiry,
+        Self::EsignTokenExpiry,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -188,6 +193,7 @@ impl HousekeepingSweep {
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
             Self::ModelPackRetirement => "model_pack_retirement",
             Self::OAuthExpiry => "oauth_expiry",
+            Self::EsignTokenExpiry => "esign_token_expiry",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -224,7 +230,8 @@ impl HousekeepingSweep {
     /// within a minute of the day's start. The OAuth server's lapsed rows go
     /// hourly, as the lease, confirm and print expiries go besides their
     /// noted deadlines; a read drops each it finds lapsed, so nothing waits
-    /// on them and they note no deadline.
+    /// on them and they note no deadline. Lapsed signing links go hourly too:
+    /// each use refuses one past its expiry, so none waits on the job.
     pub const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -236,7 +243,8 @@ impl HousekeepingSweep {
             Self::SecretLeaseExpiry
             | Self::CriticalConfirmExpiry
             | Self::VoicePrintRetention
-            | Self::OAuthExpiry => engine(HOUR),
+            | Self::OAuthExpiry
+            | Self::EsignTokenExpiry => engine(HOUR),
             Self::SymbolLeaseExpiry => engine(5 * MINUTE),
             Self::EsignExpiry
             | Self::EsignSealBackstop

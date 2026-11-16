@@ -275,28 +275,6 @@ pub struct AiVideoCancelled {
     pub job: String,
 }
 
-/// What a wrong `ai.verdict` would cost: a read that can be redone, or an
-/// effect that leaves the vault. The bands escalate an outbound effect
-/// sooner.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum AiVerdictReversibility {
-    #[default]
-    ReversibleRead,
-    OutboundEffect,
-}
-
-impl From<AiVerdictReversibility> for crate::llm::decision::Reversibility {
-    fn from(value: AiVerdictReversibility) -> Self {
-        match value {
-            AiVerdictReversibility::ReversibleRead => Self::ReversibleRead,
-            AiVerdictReversibility::OutboundEffect => Self::OutboundEffect,
-        }
-    }
-}
-
 pub use crate::receipt::AI_VERDICT_DEADLINE_MS;
 
 /// `ai.verdict`'s input: one typed question through the host's decision
@@ -329,8 +307,11 @@ pub struct AiVerdictRequest {
     /// queues an owner ask, so `human` is refused.
     #[serde(default)]
     pub ceiling: Option<crate::llm::decision::DecisionRung>,
-    #[serde(default)]
-    pub reversibility: AiVerdictReversibility,
+    /// What a wrong answer would cost: a read that can be redone, or an
+    /// effect that leaves the vault; `reversible_read` when absent. The
+    /// bands escalate an outbound effect sooner.
+    #[serde(default = "reversible_read")]
+    pub reversibility: crate::llm::decision::Reversibility,
     /// The call's clock, 1 to 60000 milliseconds;
     /// [`AI_VERDICT_DEADLINE_MS`] when absent.
     #[serde(default)]
@@ -365,6 +346,10 @@ pub struct AiVerdictRequest {
 
 fn yes_no() -> crate::llm::decision::AnswerContract {
     crate::llm::decision::AnswerContract::Noul
+}
+
+fn reversible_read() -> crate::llm::decision::Reversibility {
+    crate::llm::decision::Reversibility::ReversibleRead
 }
 
 /// `ai.verdict`'s answer: the ladder's answer on the request's contract, its

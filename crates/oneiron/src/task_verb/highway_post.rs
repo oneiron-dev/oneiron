@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use rmpv::Value;
 
 use crate::Vault;
-use crate::authority::TaskActorVerb;
+use crate::authority::{TaskActorProof, TaskActorVerb};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -300,8 +300,11 @@ fn create_spec_of(
 /// An agent's take of one proposal, inside the take's transaction: the
 /// agent approves it as the owner's inbox door does, settlement lands its
 /// TASK, and L02's rule proves the agent may accept work addressed to it.
-/// That rule reads the landed TASK's facts, so it runs last. Answers the
-/// landed TASK.
+/// The agent is proven as one of this vault's own agents
+/// ([`TaskActorProof::OwnAgent`]): pairing binds no such agent, so an
+/// unbound one takes while its definition stands, and a bound one is held to
+/// its binding. That rule reads the landed TASK's facts, so it runs last.
+/// Answers the landed TASK.
 fn take_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -332,7 +335,12 @@ fn take_in_txn(
     vault.complete_deferred_claim_in_txn(wtxn, &proposal_ref, None, now, Some(agent))?;
     settle_task_proposal_in_txn(vault, wtxn, proposal_ref, Some(agent), now)?;
     let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[proposal_ref.as_bytes()])?;
-    vault.prove_task_actor_in_txn(wtxn, task_ref, &agent, TaskActorVerb::Accept)?;
+    vault.prove_task_actor_by_in_txn(
+        wtxn,
+        task_ref,
+        TaskActorProof::OwnAgent(&agent),
+        TaskActorVerb::Accept,
+    )?;
     Ok(task_ref)
 }
 

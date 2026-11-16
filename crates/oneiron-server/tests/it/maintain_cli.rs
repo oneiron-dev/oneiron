@@ -25,6 +25,7 @@ const ENGINE_SWEEPS: [&str; 20] = [
     "drafter_corpus_sweep",
     "model_pack_retirement",
     "oauth_expiry",
+    "esign_token_expiry",
 ];
 
 fn outcomes(report: &Value) -> Vec<(String, String)> {

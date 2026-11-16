@@ -117,12 +117,12 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
             json!({"post": {
                 "tags": ["signing"],
                 "operationId": "signing_action",
-                "summary": "One recipient ceremony act: load, save a field, complete with consent, or reject.",
-                "description": "The link capability the signing session stands for is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
+                "summary": "One recipient ceremony act: load, save a field, review, complete with consent after a review that still stands, or reject.",
+                "description": "The link capability the signing session stands for is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers review_required, naming the e-sign rule pack's UETA section 10 row, until the signer's Review stands; a field saved after it voids it. Complete then answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
                 "security": capability_security(),
                 "requestBody": {"required": true, "content": {"application/json": {"schema": headerless(request)}}},
                 "responses": ceremony_responses(json!({
-                    "description": "The ceremony outcome: the page, not_your_turn, terminal, awaiting_seal, held_for_owner, or consent_required.",
+                    "description": "The ceremony outcome: the page, not_your_turn, terminal, awaiting_seal, held_for_owner, consent_required, or review_required.",
                     "content": {"application/json": {"schema": answer}}
                 }))
             }}),
