@@ -13,6 +13,7 @@ pub(crate) use document_mutation::{
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
+pub(crate) use idle::drop_index_vector_in_txn;
 pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;
@@ -24,7 +25,16 @@ pub(crate) use pending_index::{
 pub(crate) use phonetic::{defer_phonetic, index_name_phonetic};
 pub(crate) use repo_projection::refresh_repo_revision_projection_in_txn;
 mod storage;
+mod timeline;
 pub(crate) use storage::checkpoint;
+#[cfg_attr(
+    not(oneiron_test_support),
+    allow(
+        unused_imports,
+        reason = "the graph-FS memory fork (L3-39 PR 2) reads the timeline; today only its test door does"
+    )
+)]
+pub(crate) use timeline::{memory_frontier_in_txn, revision_at_frontier_in_txn};
 mod turn_text;
 #[cfg(test)]
 pub(crate) use turn_text::HISTORY_SEARCHES;
@@ -34,6 +44,7 @@ pub(crate) use turn_text::{
 };
 mod types;
 mod vector_refill;
+pub(crate) use vector_refill::mark_vector_refill_in_txn;
 pub(crate) use vector_refill::schedule_vector_refills;
 
 pub(crate) use storage::capture_entity_document;
@@ -46,14 +57,14 @@ pub(crate) use storage::{
     indexed_revision_is_document_state_in_txn, publish_room_revision,
     read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
     refresh_live_short_id_in_txn, remove_entity_revisions, revision_for_body_hash_in_txn,
-    revision_for_mode_in_txn, storage_manages_text, vectors_embed_body,
+    revision_for_mode_in_txn, room_restage_text_fields, storage_manages_text, vectors_embed_body,
 };
 pub(crate) use storage::{
     capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,
 };
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,
-    IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef,
+    IndexedRevisionInput, MemoryFrontier, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef,
 };
 
 #[cfg(test)]

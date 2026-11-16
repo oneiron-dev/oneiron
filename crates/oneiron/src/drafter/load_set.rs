@@ -49,7 +49,7 @@ fn corrupt() -> Error {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// Whether `name` is one plain file name a load set may hold: ASCII letters,

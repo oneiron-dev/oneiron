@@ -364,38 +364,45 @@ pub(super) async fn handle_window_sync(
             // Admission runs on an isolated document before Observer B or
             // persistence can see the input. Rejected diagnostics must never
             // be relayed as raw history, even if a later export would scrub.
-            if let Err(error) = oneiron::sync::window::validate_window_update_residence_with_vault(
+            // It returns the entity ids the update's history inserts, which
+            // owe a compaction when one names a row hard-deleted here (census
+            // L6-05).
+            let admitted = oneiron::sync::window::admit_window_update_residence_with_vault(
                 server.vault.as_ref(),
                 &doc,
                 update,
                 &key,
-            ) {
-                // The home's own shallow root cut away what the device's update builds on. The
-                // home never installs a device's window: the device takes the home's and writes
-                // its own state on top, and an old device that cannot is refused.
-                if oneiron::sync::window::update_reaches_below_root(&doc, update) {
-                    // The window goes out whole only as a version request's answer would.
-                    if protocol::is_residence_version(conn_state.protocol_version) {
-                        let selector = conn_state
-                            .promoted_windows
-                            .get(&key)
-                            .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
-                        authorize_promoted_window(
-                            server,
-                            require_bound_app_auth(server, conn_state)?,
-                            conn_state.peer_machine(server.vault()),
-                            &key,
-                            selector,
-                            &doc,
-                        )?;
+            );
+            let inserts = match admitted {
+                Ok(inserts) => inserts,
+                Err(error) => {
+                    // The home's own shallow root cut away what the device's update builds on. The
+                    // home never installs a device's window: the device takes the home's and writes
+                    // its own state on top, and an old device that cannot is refused.
+                    if oneiron::sync::window::update_reaches_below_root(&doc, update) {
+                        // The window goes out whole only as a version request's answer would.
+                        if protocol::is_residence_version(conn_state.protocol_version) {
+                            let selector = conn_state
+                                .promoted_windows
+                                .get(&key)
+                                .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
+                            authorize_promoted_window(
+                                server,
+                                require_bound_app_auth(server, conn_state)?,
+                                conn_state.peer_machine(server.vault()),
+                                &key,
+                                selector,
+                                &doc,
+                            )?;
+                        }
+                        if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
+                            let _ = direct_tx.send(frame);
+                        }
+                        return Ok(ControlFlow::Continue(()));
                     }
-                    if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
-                        let _ = direct_tx.send(frame);
-                    }
-                    return Ok(ControlFlow::Continue(()));
+                    return Err(map_update_admission_err(error));
                 }
-                return Err(map_update_admission_err(error));
-            }
+            };
             let mut write_auth = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
@@ -457,15 +464,19 @@ pub(super) async fn handle_window_sync(
                     direct_tx,
                 );
             };
-            if let std::borrow::Cow::Owned(translated) = &update {
-                oneiron::sync::window::validate_window_update_residence_with_vault(
+            // The bytes that persist are the translated copy's, when there is
+            // one: its admission reads the inserts they carry.
+            let inserts = if let std::borrow::Cow::Owned(translated) = &update {
+                oneiron::sync::window::admit_window_update_residence_with_vault(
                     server.vault.as_ref(),
                     &doc,
                     translated,
                     &key,
                 )
-                .map_err(map_update_admission_err)?;
-            }
+                .map_err(map_update_admission_err)?
+            } else {
+                inserts
+            };
             let update = update.as_ref();
             // Durability BEFORE the observed import and fan-out (ARCH-0023b
             // Observer A duty: "MUST persist synchronously"; FIX 5999).
@@ -501,10 +512,12 @@ pub(super) async fn handle_window_sync(
                     let stored = if protocol::is_residence_version(conn_state.protocol_version) {
                         let peer = conn_state.peer_machine(server.vault());
                         server.persist_promoted_imported_update(
-                            &key, &persisted, &landings, write_auth, peer, &doc,
+                            &key, &persisted, &inserts, &landings, write_auth, peer, &doc,
                         )
                     } else {
-                        server.persist_imported_update(&key, &persisted, &landings, write_auth)
+                        server.persist_imported_update(
+                            &key, &persisted, &inserts, &landings, write_auth,
+                        )
                     };
                     stored.map_err(|e| {
                         ProtocolError::Persistence(format!("update persist failed: {e}"))
