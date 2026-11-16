@@ -322,9 +322,10 @@ pub(crate) fn shared_grant_row_in_fold(
 /// confers at `now` under `fold`. A row over this shared vault (its scope is `shared_scope`,
 /// [`Vault::shared_vault_scope_in_txn`]) reads as [`shared_grant_row_in_fold`] reads it. Of
 /// every other row (an own-device residence row, a guest's Grant), an owner's signed mint
-/// row (an `owner_agent` row, a git push Grant, an `engine.controls` Grant) stands only on
-/// its counted mint and over this vault's residence (the own-device one: over a shared vault
-/// it holds the shared scope), a guest's Grant as [`guest_grant_in_fold`] reads it, and the
+/// row (an `owner_agent` row, a git push Grant, an `engine.controls` Grant, or any row whose
+/// counted line an owner's mint gives, a Steward mint among them) stands only on its counted
+/// mint and over this vault's residence (the own-device one: over a shared vault it holds
+/// the shared scope), a guest's Grant as [`guest_grant_in_fold`] reads it, and the
 /// rest (an own-device or engine-default Grant, read as derived in R4) read from themselves.
 /// `None` for a row that does not stand. The caller has read the row live.
 #[must_use]
@@ -355,8 +356,12 @@ fn grant_row_at(
     }
     // No mint carries its row's residence, and every writer puts this vault's own: the shared
     // scope above, else the own-device residence ([`owner_agent_mint_in_fold`]). A mint's row
-    // put back over another scope stands for nothing (review #8943 P1-1).
-    if owner_mint && (shared_scope.is_some() || grant.scope != own_device_residence_scope()) {
+    // put back over another scope stands for nothing (review #8943 P1-1), whether its shape
+    // names the mint or only its counted line does: a Steward mint holding `read` is neither
+    // an `owner_agent` row nor an `engine.controls` one (review #8943, Astra P1).
+    if (owner_mint || given_by_owner_mint(fold, id))
+        && (shared_scope.is_some() || grant.scope != own_device_residence_scope())
+    {
         return None;
     }
     if owner_mint || grant.role == FederationGrantRole::Guest {
@@ -383,6 +388,14 @@ fn is_own_device_row_at(body: &[u8], scope: &FederationGrantScope) -> bool {
 /// Grant or an `engine.controls` Grant ([`GrantFamily::OwnerAgent`]).
 fn is_owner_mint_row(grant: &FederationGrant) -> bool {
     grant.owner_agent || grant.is_git_push() || super::is_engine_controls_grant(grant)
+}
+
+/// Whether the fold's line of the Grant row `id` was given by an owner's signed mint
+/// ([`GrantFamily::OwnerAgent`]), whatever the row's shape says now: a Steward mint of any
+/// verbs among them.
+fn given_by_owner_mint(fold: &AuthorityFold, id: EntityId) -> bool {
+    fold.grant_line(id)
+        .is_some_and(|line| line.family == Some(GrantFamily::OwnerAgent))
 }
 
 /// A row no pass 28 step reads through an act yet (an own-device or engine-default Grant,
