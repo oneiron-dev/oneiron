@@ -162,10 +162,15 @@ impl Vault {
             }
             // A slip cut from it still names the host but may be held by
             // anyone (`attenuate_to`): it reads what its Scope grants, and a
-            // relationship's rows only on a grant, which none can name.
+            // relationship's rows only on a grant, which none can name. Its
+            // holder is no owner and no agent of the vault, so its read is
+            // homed in no conversation of this vault (RULING
+            // SECREAD-HOME-READ-DOORS = B).
             return Ok(base(proof).map(|key| {
                 if proof.is_full_vault_owner_grade() {
                     key
+                } else if key_use == KeyUse::Read {
+                    key.require_relationship_grants(None).homed_unnamed()
                 } else {
                     key.require_relationship_grants(None)
                 }
@@ -266,7 +271,23 @@ impl Vault {
                         Some(bound) => key.within_agent_grants(bound.envelope, &bound.alternatives),
                         None => key,
                     };
-                    key.bound_by_live_agent_grants(holder)
+                    let key = key.bound_by_live_agent_grants(holder);
+                    // The conversation home binds the reader on every read
+                    // door (DEC-0006 `#home-clearance`; RULING
+                    // SECREAD-HOME-READ-DOORS = B): a reader that is neither
+                    // the owner nor one of the vault's own agents reading on
+                    // its own reads no stamped claim outside a room of this
+                    // vault. A write target's key judges reach, not a read.
+                    if self.own_agent_credential_in(
+                        txn,
+                        &holder,
+                        proof.claims().actor_class.as_deref(),
+                        proof.is_transferred(),
+                    )? {
+                        key
+                    } else {
+                        key.homed_unnamed()
+                    }
                 }
                 KeyUse::WriteTarget => key,
             };
