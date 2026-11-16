@@ -199,3 +199,41 @@ fn an_invitee_still_declines_an_invitation_whose_inviter_was_erased() {
         "nothing stays pending"
     );
 }
+
+/// Review of #9159: an invitation whose inviter was erased can no longer be
+/// accepted, so it no longer blocks a live `add_member` holder from inviting
+/// the same person again. On main the stale invitation stood until it
+/// expired, and the new invitation was refused.
+#[test]
+fn a_live_owner_invites_again_a_person_whose_inviter_was_erased() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, owner) = vault_and_owner(dir.path());
+    let admin = person(&vault);
+    let invitee = person(&vault);
+    share(&vault, owner, Some((admin, Role::Admin)));
+    vault
+        .add_shared_member(&proof(&vault, admin), SHARED, invitee, Some(Role::Member))
+        .expect("the Admin invites a Member");
+    let stale = pending_invitation(&vault, invitee);
+
+    hard_erase(&vault, admin);
+
+    vault
+        .add_shared_member(&proof(&vault, owner), SHARED, invitee, Some(Role::Member))
+        .expect("the Owner invites the same person again");
+    let open = vault
+        .shared_invitations(&proof(&vault, invitee), SHARED)
+        .expect("the invitee's invitations");
+    let fresh = open
+        .iter()
+        .find(|invitation| invitation.id != stale.id)
+        .expect("the Owner's new invitation is listed");
+    assert_eq!(
+        fresh.inviter,
+        owner.to_hex(),
+        "the new invitation names its inviter"
+    );
+    vault
+        .accept_shared_invitation(&proof(&vault, invitee), SHARED, &fresh.id)
+        .expect("the invitee accepts the live Owner's invitation");
+}
