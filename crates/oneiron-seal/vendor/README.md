@@ -185,3 +185,13 @@
   `crates/oneiron-organ-host` calls it through `pkix_chain::pkix_path_builder`.
 - Formatting: these files keep upstream formatting; the local patch is
   written in it. Never run the workspace formatter over this directory.
+- Local changes (the first vendor commit is the unmodified archive, so
+  `git log -p` on this directory shows each change):
+  - `tests/anchor_dn_shared_with_intermediate.rs` (new) and its
+    `[[test]]` table in `Cargo.toml`: an anchor that shares its DN with a
+    pool intermediate under another key must not end the search. Its three
+    public NIST PKITS certificates (`GoodCACert`,
+    `TrustAnchorRootCertificate`, `ValidCertificatePathTest1EE`) are copied
+    byte for byte from the pkix-path 0.3.2 archive
+    (sha256 `325809ccf6e48c67f1e1e7a91187566372346797737ee00d1381a5881f76aecf`)
+    into `tests/fixtures/pkits`.

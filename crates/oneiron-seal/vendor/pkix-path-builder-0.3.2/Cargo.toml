@@ -57,6 +57,10 @@ name = "pkix_path_builder"
 path = "src/lib.rs"
 
 [[test]]
+name = "anchor_dn_shared_with_intermediate"
+path = "tests/anchor_dn_shared_with_intermediate.rs"
+
+[[test]]
 name = "bettertls"
 path = "tests/bettertls.rs"
 
