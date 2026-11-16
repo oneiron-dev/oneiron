@@ -10,19 +10,19 @@ use oneiron_organ_protocol::ByteBuf;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct EvidenceFixture {
+pub(crate) struct EvidenceFixture {
     /// The trusted timestamp authority: its P-256 secret scalar, and its
     /// certificate, issued under the test's anchor with a critical, sole
     /// id-kp-timeStamping EKU.
-    pub tsa_key: ByteBuf,
-    pub tsa_certificate: ByteBuf,
+    pub(crate) tsa_key: ByteBuf,
+    pub(crate) tsa_certificate: ByteBuf,
     /// A timestamp authority of the same shape that no anchor reaches.
-    pub untrusted_tsa_key: ByteBuf,
-    pub untrusted_tsa_certificate: ByteBuf,
+    pub(crate) untrusted_tsa_key: ByteBuf,
+    pub(crate) untrusted_tsa_certificate: ByteBuf,
     /// The fetcher's answer to every CRL request: the anchor's own CRL.
-    pub crl: ByteBuf,
+    pub(crate) crl: ByteBuf,
     /// What a mode that appends its own DSS revision writes in it.
-    pub dss_certificates: Vec<ByteBuf>,
-    pub dss_crls: Vec<ByteBuf>,
-    pub dss_ocsps: Vec<ByteBuf>,
+    pub(crate) dss_certificates: Vec<ByteBuf>,
+    pub(crate) dss_crls: Vec<ByteBuf>,
+    pub(crate) dss_ocsps: Vec<ByteBuf>,
 }
