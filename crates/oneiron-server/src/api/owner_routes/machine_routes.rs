@@ -528,13 +528,20 @@ struct ListedHeldAnswer {
     revision: String,
     /// The machine whose install key carried the answer, as hex.
     carrier: Option<String>,
-    /// The role the carrier stands in; none when no revision names it.
+    /// The role this install's records give the key that signed the answer
+    /// on that machine; none when they tie the two to no profile, and the
+    /// machine id is then the answer's word alone.
     carrier_role: Option<&'static str>,
-    /// Whether this install trusts the carrier as one of the owner's
-    /// machines.
+    /// Whether this install trusts the key that signed the answer as one of
+    /// the owner's machines.
     carrier_is_yours: bool,
     /// Whether the owner dismissed this ask on this install.
     dismissed: bool,
+    /// The question a surface asks about this answer before the owner
+    /// confirms or dismisses it, composed by the engine: what the answer
+    /// asks for, then who carried it by this install's reading of the key
+    /// that signed it ([`oneiron::authority::held_answer_prompt`]).
+    prompt: String,
 }
 
 /// The list as the wire spells it.
@@ -556,6 +563,7 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 carrier_role: listed.carrier_role.map(role_name),
                 carrier_is_yours: listed.carrier_is_mine,
                 dismissed: listed.dismissed,
+                prompt: listed.prompt(),
             })
             .collect(),
         waiting_choices: listing.waiting_choices.iter().map(revision_hex).collect(),

@@ -174,6 +174,16 @@ pub struct PendingRootRequestView {
     pub carrier_role: Option<String>,
     /// Whether this install trusts that key as one of the owner's machines.
     pub carrier_is_yours: bool,
+    /// For a pin: the question a surface asks before the owner confirms it,
+    /// composed here from the root's code and this install's reading of the
+    /// carrier, never from the request's own words. `None` for every other
+    /// change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// For a pin: the code of the root it names, 26 symbols, as the owner's
+    /// kit shows it. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_code: Option<String>,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change
@@ -227,6 +237,8 @@ pub fn list_root_requests_as(
         .pending_root_request_listing(owner)?
         .into_iter()
         .map(|listed| PendingRootRequestView {
+            prompt: listed.prompt(),
+            root_code: listed.root_code(),
             change: listed.change.into(),
             receipt: listed.receipt.into(),
             carrier: listed.carrier.machine,
