@@ -8,6 +8,8 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 use crate::entity_id::EntityId;
 
 use super::*;
@@ -308,55 +310,55 @@ impl AuthorityFold {
 pub(super) struct FoldState {
     pub(super) slips: SlipAuthorityState,
     pub(super) vault_id: AuthorityVaultId,
-    pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
+    pub(super) roster: PersistentMap<AuthorityKey, FoldedDevice>,
     pub(super) genesis_recovery_dismissed: bool,
     pub(super) recovery_redundancy_established: bool,
-    pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
-    pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
-    pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
-    pub(super) consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
+    pub(super) federation_pacts: PersistentMap<[u8; 32], FederationPactState>,
+    pub(super) federation_confirms: PersistentMap<AuthorityEntryHash, AuthorityConfirmAction>,
+    pub(super) critical_write_confirms: PersistentMap<[u8; 32], CriticalWriteConfirmState>,
+    pub(super) consumed_critical_write_confirm_nonces: PersistentSet<[u8; 16]>,
     /// Every confirmation id ever observed for each consumed nonce.
     ///
     /// This is kept apart from `critical_write_confirms`, whose deterministic
     /// winner selection can discard a sibling needed to poison nonce reuse.
-    pub(super) critical_write_confirm_nonce_provenance: BTreeMap<[u8; 16], BTreeSet<[u8; 32]>>,
-    pub(super) conflicted_critical_write_confirms: BTreeSet<[u8; 32]>,
-    pub(super) federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    pub(super) critical_write_confirm_nonce_provenance: PersistentMap<[u8; 16], BTreeSet<[u8; 32]>>,
+    pub(super) conflicted_critical_write_confirms: PersistentSet<[u8; 32]>,
+    pub(super) federation_grant_bindings: PersistentMap<EntityId, BTreeSet<[u8; 32]>>,
     /// Live binding content per authority key (`RevokeActor` never edits this).
     ///
     /// Kept SEPARATE from the revocation watermarks so a `RevokeActor` folding
     /// on a branch that never saw the bind needs no placeholder content.
-    pub(super) actor_bindings: BTreeMap<AuthorityKey, ActorBindingState>,
+    pub(super) actor_bindings: PersistentMap<AuthorityKey, ActorBindingState>,
     /// Inclusive revocation watermark per authority key, merged by max.
-    pub(super) actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
-    pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
-    pub(super) seqs: BTreeMap<AuthorityKey, u64>,
-    pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
+    pub(super) actor_binding_revocations: PersistentMap<AuthorityKey, u64>,
+    pub(super) actor_revocation_hashes: PersistentMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
+    pub(super) seqs: PersistentMap<AuthorityKey, u64>,
+    pub(super) machines: PersistentMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
     /// Every claim of each install key (the machine, its admitter, and an
     /// owner-held roster signer), merged by union.
-    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    pub(super) machine_keys: PersistentMap<[u8; 32], BTreeSet<KeyClaim>>,
     /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
     /// carried answers that needed an owner key's proof and carried none.
     /// They stand for nothing (no head, no removal, no key claim). Merged by
     /// union; a held answer the owner answered on either side stays answered.
     pub(super) held_machine_answers:
-        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
+        PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
-    pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    pub(super) root_anchors: PersistentMap<[u8; 32], BTreeSet<RecoveryRootId>>,
     /// The entries that folded through an owner anchor's branch (its roots
     /// and its marks), merged by union. They rest on no roster key, even when
     /// a roster also names the anchor's public key.
-    pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
+    pub(super) anchor_entries: PersistentSet<AuthorityEntryHash>,
     /// Roster keys marked as the host's, merged by union: each key a host
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
-    pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
-    pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
-    pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    pub(super) host_custody_keys: PersistentSet<AuthorityKey>,
+    pub(super) worlds: PersistentMap<EntityId, WorldFrontier>,
+    pub(super) refused_world_edits: PersistentSet<AuthorityEntryHash>,
     /// Each grant's signed travel choices, merged as the worlds' edits are.
-    pub(super) grant_travel: BTreeMap<EntityId, super::grant_travel::GrantFrontier>,
-    pub(super) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    pub(super) grant_travel: PersistentMap<EntityId, super::grant_travel::GrantFrontier>,
+    pub(super) refused_grant_travel: PersistentSet<AuthorityEntryHash>,
     /// The vault's checkpoint policy choices, merged as the worlds' edits
     /// are (mesh PR2c).
     pub(super) checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState,
@@ -395,14 +397,14 @@ pub(super) struct FoldState {
     /// Well-signed export acts without effect, merged by union: their
     /// carrier was not admitted, or their owner not live, at their parents
     /// (FIX 4624).
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub(super) refused_export_acts: BTreeSet<AuthorityEntryHash>,
+    #[serde(default, skip_serializing_if = "PersistentSet::is_empty")]
+    pub(super) refused_export_acts: PersistentSet<AuthorityEntryHash>,
     /// Each agent-carried setting or export act the fold admitted, with its
     /// agent, Grant, kind and advisory time, merged by union: the fold holds
     /// no Grant row, so a view judges each one's Grant (contract §4).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "PersistentMap::is_empty")]
     pub(super) agent_carried_acts:
-        BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
+        PersistentMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
@@ -417,24 +419,24 @@ pub(super) struct FoldState {
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
     pub(super) world_keys:
-        BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
+        PersistentMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
     /// Well-signed key records that count for nothing here, merged by union.
-    pub(super) refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    pub(super) refused_world_keys: PersistentSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
     /// whatever labels it carries and whichever branch carried the mark.
-    pub(super) key_admitters: BTreeMap<AuthorityKey, BTreeSet<AuthorityKey>>,
+    pub(super) key_admitters: PersistentMap<AuthorityKey, BTreeSet<AuthorityKey>>,
     /// The fold judges a hosted vault (`FoldContext::hosted`), fixed at genesis.
     pub(super) hosted: bool,
     /// Every row an accepted bind or rebind named, merged by union: the
     /// actor merge keeps one winner, and a row bound on a losing branch is
     /// still no physical machine.
-    pub(super) actor_rows: BTreeSet<EntityId>,
+    pub(super) actor_rows: PersistentSet<EntityId>,
     /// Each valid residence directive's id and named machine, by its row,
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
-    pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    pub(super) residence_directives: PersistentMap<AuthorityEntryHash, (EntityId, EntityId)>,
 }
 
 impl FoldState {

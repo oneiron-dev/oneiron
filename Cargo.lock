@@ -8027,6 +8027,7 @@ dependencies = [
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-persistent-collections",
  "oneiron-policy-vocabulary",
  "oneiron-records",
  "oneiron-retrieval",

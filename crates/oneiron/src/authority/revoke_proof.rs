@@ -182,7 +182,7 @@ pub(super) fn derive_revoke_facts(
         else {
             continue;
         };
-        let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
+        let (vault_id, routed) = (state.vault_id, state.anchor_entries.to_btree_set());
         let kind = match &entry.op {
             AuthorityOp::RevokeActor {
                 authority_key,
@@ -295,7 +295,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
-                    routed: state.anchor_entries,
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
@@ -374,7 +374,7 @@ impl RevokeFacts {
                         authority_key: authority_key.clone(),
                         epoch: *epoch,
                     },
-                    routed: state.anchor_entries.clone(),
+                    routed: state.anchor_entries.to_btree_set(),
                 },
             );
         }
