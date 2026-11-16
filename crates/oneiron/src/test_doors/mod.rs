@@ -156,6 +156,7 @@ pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
 pub mod question_teardown;
 pub mod re_root_stale_sweep;
+pub mod read_exposure;
 pub mod replay_rows;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
