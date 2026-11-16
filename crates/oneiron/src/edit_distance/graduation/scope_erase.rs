@@ -9,10 +9,11 @@
 //! row id, as the escalation rows are (FIX 4700). An answer the erased actor
 //! gave as an owner of the vault keeps its scope and key, and its `answerer`
 //! reads [`ERASED_CALL_IDENTITY`] (review of #7834). A threshold override
-//! whose pattern names the actor is that scope's policy, and it goes.
+//! whose pattern names the actor is that scope's policy, and it goes: the
+//! `edit_distance.graduation.thresholds` setting's erase takes it out of the
+//! value (`setting_keys.rs`).
 
-use super::pattern::pattern_axes;
-use super::{ANSWER, THRESHOLD};
+use super::ANSWER;
 use crate::consent_graduation::RampScope;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -20,8 +21,7 @@ use crate::store::Store;
 
 /// Rewrites the scope actor of every answer whose scope names `actor_hex` to
 /// [`ERASED_CALL_IDENTITY`], re-keyed under the erased scope's digest, and the
-/// `answerer` of every answer `actor_hex` gave to it in place; deletes every
-/// threshold override whose pattern's actor axis is `actor_hex`. Returns the
+/// `answerer` of every answer `actor_hex` gave to it in place. Returns the
 /// scopes whose answers it re-keyed, still naming `actor_hex`, so the ramp's
 /// erase drops their floor rows too.
 ///
@@ -60,15 +60,6 @@ pub(crate) fn erase_scope_actor_in_txn(
         });
         ANSWER.delete(store, wtxn, &(scope_key, id))?;
         ANSWER.put(store, wtxn, &(erased.key(), id), &row)?;
-    }
-    let mut thresholds = Vec::new();
-    for (key, row) in THRESHOLD.scan(store, wtxn)? {
-        if pattern_axes(&row.scope_pattern).is_some_and(|[_, _, actor]| actor == actor_hex) {
-            thresholds.push(key);
-        }
-    }
-    for key in thresholds {
-        THRESHOLD.delete(store, wtxn, &key)?;
     }
     Ok(scopes)
 }

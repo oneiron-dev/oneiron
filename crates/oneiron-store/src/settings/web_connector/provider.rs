@@ -1,5 +1,6 @@
 //! The provider registry: which providers may serve a web call, on whose key,
 //! at what declared price, and how long their results may be kept.
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// One provider of web search and page reading.
@@ -15,8 +16,10 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("web.provider")]
 pub enum WebProvider {
     Tavily,
     Exa,
@@ -131,19 +134,6 @@ impl WebProvider {
         Self::ContextDev,
         Self::Octen,
     ];
-
-    /// The provider's name in replies and usage rows.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Tavily => "tavily",
-            Self::Exa => "exa",
-            Self::Brave => "brave",
-            Self::Tinyfish => "tinyfish",
-            Self::ContextDev => "context_dev",
-            Self::Octen => "octen",
-        }
-    }
 
     #[must_use]
     pub fn profile(self) -> &'static WebProviderProfile {
