@@ -19,7 +19,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 pub use self::contract::{AuditContract, CheckerProtocol, audit_contract, flaw_free};
-pub(crate) use self::contract::{SealedAudit, bound_random_audit_in_txn, pack_receipt_attempt};
+pub(crate) use self::contract::{SealedAudit, bound_random_audit_in_txn};
 use self::contract::{StoredSeal, freeze_audit_in_txn};
 use self::scope::{attempt_project, audit_rate_in_txn};
 
