@@ -177,15 +177,21 @@ fn correct_parted_rows_place_as_before() {
     }
 }
 
-/// D5: a turn program arming row filed under another registration's key is
-/// placed under the actor its body names, never one its key chose.
+/// D5 (FIX SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED): a turn program arming
+/// row filed under its own registration's key is placed under the actor its
+/// body names; filed under another registration's key, which admit refuses
+/// and no writer files, it is placed under no one.
 #[test]
-fn turn_program_arming_places_by_its_body() {
+fn turn_program_arming_places_only_under_its_own_key() {
     let (keyed, registration) = two_rows();
     let actor = EntityId::now();
     assert_eq!(
-        turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
+        turn_program_arming_holder(registration, registration, actor).expect("the row writes"),
         Some(actor)
+    );
+    assert_eq!(
+        turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
+        None
     );
 }
 
