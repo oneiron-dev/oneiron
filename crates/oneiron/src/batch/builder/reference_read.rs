@@ -52,7 +52,7 @@ fn put_targets_admitted(
     txn: &RoTxn<'_>,
     ops: &[BatchOp],
 ) -> Result<bool> {
-    head_targets_admitted(
+    targets_admitted(
         vault,
         reader,
         txn,
@@ -60,22 +60,43 @@ fn put_targets_admitted(
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
             _ => None,
         }),
+        crate::batch::put_target_admitted_in,
     )
 }
 
-/// The same target judgment for the actual heads a projector will mutate.
+/// The same target judgment for the actual heads the comm projector will
+/// mutate, but for the restriction rule: the projector is its classes' typed
+/// door (`batch::projected_head_target_admitted_in`).
 pub(in crate::batch) fn head_targets_admitted(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     txn: &RoTxn<'_>,
     ids: impl IntoIterator<Item = EntityId>,
 ) -> Result<bool> {
+    targets_admitted(
+        vault,
+        reader,
+        txn,
+        ids,
+        crate::batch::projected_head_target_admitted_in,
+    )
+}
+
+/// Whether `admitted` takes each of `ids` for `reader`, each judged once;
+/// the TURN doors' owner takes every one.
+fn targets_admitted(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &RoTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+    admitted: fn(&ScopedRead<'_>, &RoTxn<'_>, &EntityId) -> Result<bool>,
+) -> Result<bool> {
     if vault.turn_doors_owner_in(reader, txn)? {
         return Ok(true);
     }
     let mut judged = BTreeSet::new();
     for id in ids {
-        if judged.insert(id) && !crate::batch::put_target_admitted_in(reader, txn, &id)? {
+        if judged.insert(id) && !admitted(reader, txn, &id)? {
             return Ok(false);
         }
     }
