@@ -3,6 +3,7 @@
 //! The code_mode_verbs root defines `LadderDecider`; `oneiron::llm::decision` owns the rungs.
 
 use super::*;
+use oneiron::llm::decision::Reversibility;
 
 /// A strict run's step no rung answered, with no model asked (CUA E2
 /// strict denial, CALLS row): it goes up at zero tokens, its decision a

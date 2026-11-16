@@ -109,9 +109,7 @@ use oneiron::code_run::{
     SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
-use oneiron::llm::decision::{
-    AnswerContract, DecisionRung, HumanAskReason, Reversibility, RoutineOutcome,
-};
+use oneiron::llm::decision::{AnswerContract, DecisionRung, HumanAskReason, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
