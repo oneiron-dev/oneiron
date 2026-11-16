@@ -167,26 +167,8 @@ impl ScopedRead<'_> {
                 | crate::registry::ENTITY_TYPE_SESSION
         ) {
             let threads = self.phone_threads_of_row_in(txn, id)?;
-            if !threads.is_empty() {
-                for ceiling in &self.actor_key.phone_lines {
-                    let caller = match ceiling.caller_in(self.vault, txn) {
-                        Ok(caller) => caller,
-                        Err(_) => return Ok(false),
-                    };
-                    let Some(number) = crate::voice_call::caller_number(caller.as_deref()) else {
-                        return Ok(false);
-                    };
-                    let Ok(current) = crate::voice_call::voice_phone_conversation_id(
-                        ceiling.agent_ref(),
-                        Some(&number),
-                        "",
-                    ) else {
-                        return Ok(false);
-                    };
-                    if threads.iter().any(|thread| *thread != current) {
-                        return Ok(false);
-                    }
-                }
+            if !threads.is_empty() && !self.current_callers_threads_in(txn, &threads)? {
+                return Ok(false);
             }
         }
         let record = match self.session_view {
@@ -229,6 +211,50 @@ impl ScopedRead<'_> {
                 )?,
             };
             if !facets {
+                return Ok(false);
+            }
+        }
+        // A row whose words came from a phone thread reads only in that
+        // thread's caller's call, as a marked row does (Astra review of
+        // R1+R2, finding 1): a CLAIM learned from caller A's TURNs carries
+        // A's words with no mark of its own. Its lineage is the restricted
+        // selector's, to its end (`voice_call::phone_lineage_threads_in`);
+        // a lineage that does not read here refuses.
+        let Some(threads) = crate::voice_call::phone_lineage_threads_in(self.vault, txn, id, raw)?
+        else {
+            return Ok(false);
+        };
+        if !threads.is_empty() && !self.current_callers_threads_in(txn, &threads)? {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// Whether every one of `threads` is the current caller's thread of
+    /// every phone ceiling: the line agent's thread with the call's caller
+    /// number. A withheld or unreadable caller names no stored thread, so
+    /// it answers false.
+    fn current_callers_threads_in<'a>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        threads: impl IntoIterator<Item = &'a EntityId> + Copy,
+    ) -> Result<bool> {
+        for ceiling in &self.actor_key.phone_lines {
+            let caller = match ceiling.caller_in(self.vault, txn) {
+                Ok(caller) => caller,
+                Err(_) => return Ok(false),
+            };
+            let Some(number) = crate::voice_call::caller_number(caller.as_deref()) else {
+                return Ok(false);
+            };
+            let Ok(current) = crate::voice_call::voice_phone_conversation_id(
+                ceiling.agent_ref(),
+                Some(&number),
+                "",
+            ) else {
+                return Ok(false);
+            };
+            if threads.into_iter().any(|thread| *thread != current) {
                 return Ok(false);
             }
         }

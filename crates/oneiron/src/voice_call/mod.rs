@@ -244,7 +244,6 @@ pub(crate) fn refuse_written_phone_mark(entity_type: u8, body: &[u8]) -> Result<
 /// Whether the entity row `raw` (header and body) is a phone thread's row by
 /// its own bytes: a CONVERSATION, TURN, MESSAGE or SESSION whose body names a
 /// phone mark in any shape. A row with no readable header is none.
-#[cfg(feature = "sync")]
 pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
     let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
         return false;
@@ -358,8 +357,79 @@ impl PhoneLineagePass {
     }
 }
 
-/// The state of one [`PhoneLineagePass::phone_words`] ask.
-#[cfg(feature = "sync")]
+/// The phone threads the words of the row `id` came from, its revision `raw`
+/// (the bytes a read judges) and the rows stored along its lineage, to the
+/// end of that lineage as [`phone_words_in`] walks it (Astra review of
+/// VOICE-PHONE-AGENT-REACH R1+R2, finding 1): a CLAIM learned from a
+/// caller's TURNs, which the scoped upsert names only as its birth's
+/// inputs, carries that caller's words with no mark of its own. `Some` of
+/// the thread of every phone row found, the row itself included (empty when
+/// none is); a phone row's own lineage stays in its thread, so the walk
+/// stops at it. `None` in the cases [`phone_words_in`] counts as phone
+/// words (a lineage that does not read here, a named word source not held
+/// here) and for a phone row whose mark names no thread.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn phone_lineage_threads_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
+    let mut threads = std::collections::BTreeSet::new();
+    let mut walk = LineageWalk::default();
+    walk.seen.insert(*id);
+    let mut next = Some((*id, raw.to_vec()));
+    while let Some((row, bytes)) = next.take() {
+        if row_phone_marked(&bytes) {
+            let Some(thread) = marked_row_thread(&row, &bytes) else {
+                return Ok(None);
+            };
+            threads.insert(thread);
+        } else {
+            let Some(lineage) = row_lineage(vault, txn, &row, &bytes)? else {
+                return Ok(None);
+            };
+            if walk.push_all(lineage) {
+                return Ok(None);
+            }
+        }
+        while let Some(source) = walk.pending.pop() {
+            if let Some(stored) = vault.get_raw_in(txn, &source)? {
+                next = Some((source, stored));
+                break;
+            }
+            if walk.required.contains(&source) {
+                return Ok(None);
+            }
+            walk.missing.insert(source);
+        }
+    }
+    Ok(Some(threads))
+}
+
+/// The phone thread a marked row (by [`row_phone_marked`]) sits in: a
+/// CONVERSATION is its own thread when it names its line agent; a TURN,
+/// MESSAGE or SESSION names its thread in its stamp. `None` when the mark
+/// does not decode as its kind's mark.
+fn marked_row_thread(id: &EntityId, raw: &[u8]) -> Option<EntityId> {
+    let header = crate::batch::EntityMetadataHeader::parse(raw)?;
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .unwrap_or_default();
+    match header.entity_type {
+        crate::registry::ENTITY_TYPE_CONVERSATION => phone_thread_agent(body).map(|_| *id),
+        crate::registry::ENTITY_TYPE_TURN
+        | crate::registry::ENTITY_TYPE_MESSAGE
+        | crate::registry::ENTITY_TYPE_SESSION => phone_thread_stamp(body),
+        _ => None,
+    }
+}
+
+/// The state of one lineage walk: a [`PhoneLineagePass::phone_words`] ask
+/// or a [`phone_lineage_threads_in`] read.
 #[derive(Default)]
 struct LineageWalk {
     seen: std::collections::BTreeSet<EntityId>,
@@ -370,7 +440,6 @@ struct LineageWalk {
     missing: std::collections::BTreeSet<EntityId>,
 }
 
-#[cfg(feature = "sync")]
 impl LineageWalk {
     /// Queues `row` once; true when it must be held here and is not.
     fn push(&mut self, row: EntityId, required: bool) -> bool {
@@ -400,7 +469,6 @@ impl LineageWalk {
 }
 
 /// What the words of one row came from, as [`phone_words_in`] reads them.
-#[cfg(feature = "sync")]
 struct RowLineage {
     /// The rows `scope_summary::word_sources_in` names: each must be held.
     named: Vec<EntityId>,
@@ -411,7 +479,6 @@ struct RowLineage {
 
 /// The lineage of the row `raw` of `id`; `None` when the row is a phone row
 /// by its own bytes, or its lineage does not read (fail closed).
-#[cfg(feature = "sync")]
 fn row_lineage(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

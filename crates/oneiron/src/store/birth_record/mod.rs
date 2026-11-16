@@ -47,7 +47,6 @@ pub(crate) fn trigger_is_live_in_txn(
 /// Every row `row`'s birth names as an input, of any role: the rows its
 /// words were made from, a prompt's or a door's evidence. Empty for a row
 /// born with none, or with no birth.
-#[cfg(feature = "sync")]
 pub(crate) fn input_rows_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
