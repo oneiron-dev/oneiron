@@ -100,11 +100,12 @@ where
     }
 }
 
-/// A loopback UDP address free when picked, for a mesh listener to bind:
-/// each vault's roster row names it before the listener starts.
-fn free_loopback_udp() -> TestResult<SocketAddr> {
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
-    Ok(socket.local_addr()?)
+/// A loopback UDP port for a mesh listener, held bound until the listener
+/// binds it: each vault's roster row names the address before the listener
+/// starts, and a port released at once could go to another test's bind in
+/// the meantime (the tests of this binary run in parallel).
+fn reserve_loopback_udp() -> TestResult<std::net::UdpSocket> {
+    Ok(std::net::UdpSocket::bind("127.0.0.1:0")?)
 }
 
 /// A loopback sync URL nobody listens on: the home that is down.
@@ -163,6 +164,8 @@ struct Device {
     credential: SyncTransportCredential,
     /// Where its mesh listener binds.
     address: SocketAddr,
+    /// Holds `address` bound until [`Device::serve`] starts the listener.
+    reservation: Mutex<Option<std::net::UdpSocket>>,
 }
 
 impl Home {
@@ -253,6 +256,8 @@ impl Home {
             .slip
             .to_token()
             .map_err(at("the credential's slip"))?;
+        let reservation = reserve_loopback_udp()?;
+        let address = reservation.local_addr()?;
         Ok(Device {
             _dir: dir,
             vault: Arc::new(vault),
@@ -260,7 +265,8 @@ impl Home {
             identity,
             mesh_pairing: pairing_slip_id,
             credential: SyncTransportCredential::new(token, holder),
-            address: free_loopback_udp()?,
+            address,
+            reservation: Mutex::new(Some(reservation)),
         })
     }
 
@@ -324,6 +330,13 @@ impl Device {
         let (server, host) = AiHost::attach_device(server, None, true).await;
         let server = Arc::new(server);
         let app = oneiron_server::build_app(Arc::clone(&server));
+        // The held port goes free only now, as the listener binds it.
+        let released = self
+            .reservation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(released);
         let listener = start_mesh_listener(Arc::clone(&server), self.address, &app)
             .await
             .map_err(at("the device's mesh listener"))?;
@@ -569,14 +582,17 @@ async fn peer_marked_mine_serves() -> TestResult {
          receipts {served:?}, asker errors {:?}",
         asking.errors()
     );
+    // The earliest session the asker asked, whatever its outcome: a refused
+    // or failed ask before the window breaks the promise as much as an
+    // admitted one.
     let first = asked
         .iter()
-        .find(|ask| ask.asked && ask.outcome == MeshPathOutcome::Admitted)
-        .ok_or("the asker's admitted receipt went")?;
+        .find(|ask| ask.asked)
+        .ok_or("the asker's peer receipts went")?;
     assert!(
         first.opened_at_ms >= asking.started_ms + HOME_DOWN_AFTER_SECS * 1000,
         "the asker asks a peer only once its home has served it nothing for \
-         {HOME_DOWN_AFTER_SECS} s: first peer session {} ms after the link started",
+         {HOME_DOWN_AFTER_SECS} s: first peer session {} ms after the link started: {asked:?}",
         first.opened_at_ms.saturating_sub(asking.started_ms)
     );
     assert!(
@@ -693,7 +709,7 @@ async fn full_copy_holder_first() -> TestResult {
         .vault
         .declare_full_copy(true)
         .map_err(at("the second peer declares a full copy"))?
-        .ok_or("FIXTURE: the full-copy mark was written")?;
+        .ok_or("FIXTURE: the second peer wrote no full-copy mark")?;
     asker
         .vault
         .import_signed_authority_history(
