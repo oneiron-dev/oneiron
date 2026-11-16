@@ -8,6 +8,7 @@
 //! case (cards dedupe per EVENT start).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test pack_keys_calendar`.
+#![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -61,6 +62,19 @@ fn open_fixture(pinned_at: u64) -> Fixture {
             .is_none(),
         "a fresh vault sets no reminder route, so the re-ask clock is UTC"
     );
+    Fixture { _dir: dir, vault }
+}
+
+/// An unseeded vault on a clock pinned at `pinned_at`, for the prep test. Its meeting writes
+/// Approved claims (`calendar.attendee`, `prep.commitment`) through the plain claim door, which
+/// carries no owner proof: a seeded vault's policy manifest holds such a write at the criticality
+/// floor (`gate.pending.criticality_floor`, tests/owner_approval_criticality_floor.rs). The prep
+/// oracle opens unseeded for the same reason (tests/it/calendar_prep.rs `temp_vault`). The owner
+/// still sets keys: `ensure_embedded_owner_actor` makes the owner on any vault.
+fn open_unseeded_fixture(pinned_at: u64) -> Fixture {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = common::on_pinned_clock(VaultConfig::device(), pinned_at);
+    let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open unseeded vault");
     Fixture { _dir: dir, vault }
 }
 
@@ -367,7 +381,7 @@ fn prep_is_delivered_45_minutes_before_by_default_and_at_the_owners_lead() {
         DEFAULT_PREP_LEAD_SECS, 2_700,
         "the shipped prep lead is T-45"
     );
-    let fixture = open_fixture(PREP_START_3);
+    let fixture = open_unseeded_fixture(PREP_START_3);
     let vault = &fixture.vault;
     let copy = card_copy();
 
