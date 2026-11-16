@@ -81,6 +81,11 @@ pub struct AuthenticatedOwner {
     /// ([`Vault::authenticate_host_action_owner`], FIX 2222). Every
     /// revalidation then also requires that action to still hold.
     host_action: Option<Box<crate::authority::HostActionGuard>>,
+    /// The owner key this install holds that proved this owner for one ask
+    /// word ([`Vault::authenticate_owner_device`], UC-05 PR 2b). Every
+    /// revalidation then also requires the authority fold to still trust it
+    /// as the owner's.
+    owner_key: Option<crate::authority::AuthorityKey>,
 }
 
 impl AuthenticatedOwner {
@@ -279,6 +284,20 @@ impl AuthenticatedOwner {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "person credential is no longer live",
             )));
+        }
+        if let Some(key) = &self.owner_key {
+            // Rechecked in the caller's transaction (UC-05 PR 2b): an owner
+            // key revoked, or taken into the host's custody, while the word
+            // waited for the writer commits nothing.
+            let hosted = vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+            if !vault
+                .authority_view_readonly_in_txn(txn)?
+                .proves_owner_acts(key, hosted)
+            {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "the owner key this owner proved with no longer proves the owner's acts",
+                )));
+            }
         }
         self.request_credential_holds_in_txn(vault, txn)?;
         Ok(self.actor)
