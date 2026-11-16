@@ -225,7 +225,8 @@ pub(crate) fn stage_unadmitted_vault_import_for_test(
         update: remote.to_vec(),
         born_with: Vec::new(),
     }])?;
-    let stamps = encode_staged_window_parts(&[])?;
+    // One record per part, as a stage writes: this part staged no stamps.
+    let stamps = encode_staged_window_parts(&[(key.clone(), Vec::new())])?;
     let discarded = {
         let txn = vault.store.env.read_txn()?;
         crate::sync::residence::discarded_rows_in(&vault.store, &txn)?
