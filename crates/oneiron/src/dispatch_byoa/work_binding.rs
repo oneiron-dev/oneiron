@@ -31,6 +31,7 @@ use crate::error::Error;
 use crate::llm::LlmUsage;
 
 use super::connector::{BYOA_ATTEMPT_KIND, ByoaConnectorSpec};
+use super::continue_work::CONTINUE_STEP_KEY;
 use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher, ByoaEnqueue};
 use super::error::ByoaResult;
 use super::exhaust::{
@@ -139,6 +140,11 @@ pub struct RunnerWorkBinding {
     /// fresh checkout from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_binding: Option<ByoaRepoBinding>,
+    /// The runner a continued outside session's work keeps to on every hop
+    /// (census L10-17), set at its bind under the continue's step key: only
+    /// a CLI seat naming it takes the work on. `None` for every other work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_runner: Option<String>,
 }
 
 /// Which seat a bound work starts on.
@@ -671,6 +677,8 @@ where
                             checkout: *request.checkout_id.as_bytes(),
                             staged_input: request.staged_input,
                             repo_binding: None,
+                            cli_runner: (request.step_key == CONTINUE_STEP_KEY)
+                                .then(|| seat.runner.clone()),
                         }),
                     },
                 )?;

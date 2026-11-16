@@ -51,8 +51,9 @@ use super::{
     SeatPassedOver, SkippedRunnerSeat, SkippedRunnerSeatView, StagedJob,
 };
 
-/// The step key the hand-over binds its runner work under.
-const CONTINUE_STEP_KEY: &str = "byoa.runner.continue";
+/// The step key the hand-over binds its runner work under: the bind keeps
+/// a work bound under it to its first seat's runner on every later hop.
+pub(super) const CONTINUE_STEP_KEY: &str = "byoa.runner.continue";
 
 /// The domain a hand-over id is derived under.
 const HAND_OVER_DOMAIN: &[u8] = b"oneiron.byoa.runner-continue.v1";
@@ -617,8 +618,10 @@ impl Vault {
     /// The work runs only on a seat of `policy` that names `input.runner`:
     /// the first such seat in the owner's order that this runtime may run,
     /// whose quota is not spent and whose connector is a CLI one, the only
-    /// shape a host runner claims. `registry` is the one the node's own
-    /// seat settings build, so an official seat's adapter and its login
+    /// shape a host runner claims. Every later hop keeps to it: a spent
+    /// seat's work is handed on, or resumed, only on a CLI seat naming the
+    /// runner, and parks when none is left. `registry` is the one the node's
+    /// own seat settings build, so an official seat's adapter and its login
     /// machine ride the work.
     ///
     /// # Errors

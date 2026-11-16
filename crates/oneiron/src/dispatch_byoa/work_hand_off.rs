@@ -8,7 +8,9 @@
 //! or none was kept, the CLI seat is passed over and named and the work
 //! goes on to the next seat. A seat the quota view shows spent and not yet
 //! back is passed over and named too (FIX 7453), and so is a CLI seat whose
-//! argv cannot carry the task (FIX 7505).
+//! argv cannot carry the task (FIX 7505). A continued outside session's
+//! work keeps to the CLI seats of the runner it asked for (census L10-17):
+//! any other seat is passed over and named, and with none left it parks.
 //!
 //! The same search serves an explicit resume of a work a spend parked
 //! (`work_resume`, FIX 7450): it starts where the caller says, the spent
@@ -118,6 +120,12 @@ impl HandOff {
             work: Some(work),
         }))
     }
+
+    /// The runner a continued outside session's work keeps to (census
+    /// L10-17); `None` for every other work.
+    fn cli_runner(&self) -> Option<&str> {
+        self.work.as_ref()?.cli_runner.as_deref()
+    }
 }
 
 /// A bound work's task, re-read from its original request record: the first
@@ -208,8 +216,10 @@ where
     /// unbound CLI attempt's own argv, never copied. Passed over and named
     /// in the receipt's `skipped_seats`: a seat the quota view shows spent
     /// and not yet back, a CLI seat when that record is erased or
-    /// unreadable or none was kept, and a seat a hosted-only bound keeps off
-    /// this runtime. The work parks when no seat is left, and when the
+    /// unreadable or none was kept, a seat a hosted-only bound keeps off
+    /// this runtime, and, for a continued outside session's work, a seat of
+    /// another runner or with a connector that is not a CLI one (census
+    /// L10-17). The work parks when no seat is left, and when the
     /// spent attempt is unbound with no CLI runner attempt to read a task
     /// from (an endpoint or MCP seat's). An unbound CLI attempt whose argv
     /// names no task searches with `task: None`, as a bound erased work's:
@@ -260,7 +270,10 @@ where
     /// the seat, so a replay finds the child it dispatched. Passed over and
     /// named: a seat the quota view shows spent and not yet back, a CLI seat
     /// whose argv cannot carry the task (FIX 7505) or that has no readable
-    /// task, and a seat a hosted-only bound keeps off this runtime. An
+    /// task, and a seat a hosted-only bound keeps off this runtime. A
+    /// continued outside session's work (census L10-17) passes over, first,
+    /// every seat naming another runner than the one it asked for, and every
+    /// seat whose connector is not a CLI one, an explicit seat included. An
     /// explicit seat (`search.only`) is tried whatever its quota, and its
     /// connector keeps its refusal.
     ///
@@ -290,7 +303,16 @@ where
             spent_seen: false,
             back_at: None,
         };
+        let kept_to = hand.cli_runner();
         for (index, next) in policy.seats.iter().enumerate().skip(from).take(tried) {
+            // A continued session's work keeps to the runner it asked for,
+            // passed over before the quota read, so another runner's spent
+            // seat never counts as one the work waits for.
+            if kept_to.is_some_and(|runner| next.runner != runner) {
+                let reason = SeatPassedOver::OtherRunner;
+                found.skipped.push(passed_over(index, next, reason));
+                continue;
+            }
             if let Some(quota) = quotas.get(index).filter(|quota| !quota.available) {
                 found.spent_seen = true;
                 found.back_at = match (found.back_at, quota.back_at) {
@@ -314,6 +336,13 @@ where
                 found.skipped.push(passed_over(index, next, reason));
                 continue;
             };
+            // Its hand-over job rides only a CLI connector, and a host claims
+            // only CLI work: no runner would read it on any other seat.
+            if kept_to.is_some() && !matches!(connector, ByoaConnectorSpec::CliSandbox(_)) {
+                let reason = SeatPassedOver::NonCliConnector;
+                found.skipped.push(passed_over(index, next, reason));
+                continue;
+            }
             if hand.task.is_none() && matches!(connector, ByoaConnectorSpec::CliSandbox(_)) {
                 let reason = SeatPassedOver::TaskUnreadable;
                 found.skipped.push(passed_over(index, next, reason));
