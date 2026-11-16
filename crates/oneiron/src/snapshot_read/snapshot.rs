@@ -502,6 +502,8 @@ pub fn snapshot_page(
         None => reader.read_views_in_txn(&lane, txn, known, &[])?.receipt,
     };
     drop(snapshot);
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::snapshot_page_accounting::run_before_page_accounting(vault);
     let count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
     // The rows are counted against the handle in one write, judged again
     // there: a page read at the same time may have used them (review of
