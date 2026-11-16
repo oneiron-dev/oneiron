@@ -83,6 +83,30 @@ impl std::fmt::Display for ErasedHoldTarget {
 /// route's refusal state, and a facade or MCP refusal's reason code.
 pub const OWNER_KEY_REQUIRED: &str = "owner_key_required";
 
+/// The prefix of the reason code that names what a client offers next after
+/// an owner-key refusal of a membership move
+/// ([`RecordError::OwnerKeyMoveRefused`]), followed by the step itself.
+pub const OWNER_KEY_NEXT_STEP_REASON_PREFIX: &str = "next_step:";
+
+/// The next step [`RecordError::OwnerKeyMoveRefused`] names (row
+/// HOSTED-ROOT-REVOKES-OWNER-KEY): no install of this vault can prove the
+/// move yet, so a client offers no retry. A hosted server holds no owner key,
+/// and a device holds no host issuer to make the move with.
+pub const OWNER_KEY_MOVE_NEXT_STEP: &str = "owner_device_proof_unavailable";
+
+/// The prefix of the reason code that names the member whose owner keys a
+/// refused membership move would end ([`RecordError::OwnerKeyMoveRefused`]),
+/// followed by their id in hex.
+pub const OWNER_KEY_MEMBER_REASON_PREFIX: &str = "member:";
+
+/// The engine's words for [`RecordError::OwnerKeyMoveRefused`], kept in this
+/// one place with [`OWNER_KEY_MOVE_SUGGESTION`] (the lead, 15 Nov 21:42: the
+/// text stays easy to change).
+pub const OWNER_KEY_MOVE_REFUSAL_TEXT: &str = "This move ends a member's owner keys, which needs an owner key's proof, and this install holds no owner key the vault trusts: nothing was changed.";
+
+/// What [`RecordError::OwnerKeyMoveRefused`] suggests.
+pub const OWNER_KEY_MOVE_SUGGESTION: &str = "No install of this vault can prove this move yet: the member keeps their owner standing until one can.";
+
 fn revision_hex(revision: &[u8; 32]) -> String {
     oneiron_hex::encode(revision)
 }
@@ -257,6 +281,17 @@ pub enum RecordError {
         "This machine is not the owner's and holds no owner key: decide it on an owner device."
     )]
     OwnerKeyRequired,
+    /// A membership move that would end `member`'s owner keys, refused on an
+    /// install that holds no owner key the vault trusts (row
+    /// HOSTED-ROOT-REVOKES-OWNER-KEY): a revoke of an owner key counts only
+    /// with an owner key's proof, never with the custodial root's alone. Its
+    /// kind is [`ErrorKind::OwnerKeyRequired`]; beside that reason code a
+    /// surface names the next step and the member as reason codes
+    /// ([`OWNER_KEY_NEXT_STEP_REASON_PREFIX`],
+    /// [`OWNER_KEY_MEMBER_REASON_PREFIX`]). Nothing was written and nothing
+    /// waits: the move's own call is what a client sends again.
+    #[error("{}", OWNER_KEY_MOVE_REFUSAL_TEXT)]
+    OwnerKeyMoveRefused { member: EntityId },
     /// The owner's world recipient choice keeps a world's rows from this
     /// destination (mesh PR2b, L11-B (B)): the reason names his choice (one
     /// named machine, or machines marked mine) and why this destination is
@@ -520,7 +555,9 @@ impl RecordError {
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
-            Self::OwnerKeyRequired => ErrorKind::OwnerKeyRequired,
+            Self::OwnerKeyRequired | Self::OwnerKeyMoveRefused { .. } => {
+                ErrorKind::OwnerKeyRequired
+            }
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
             Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
