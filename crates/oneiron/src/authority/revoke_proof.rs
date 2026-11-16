@@ -285,13 +285,14 @@ pub(super) fn derive_revoke_facts(
 }
 
 impl RevokeFacts {
-    /// Adds the slip withdrawals and burns the projection dropped. Selecting
-    /// one of two colliding confirmations removes the loser and every entry
+    /// Adds the slip withdrawals and burns the projection dropped. Settling a
+    /// handoff removes a fenced row or an unsettled handoff and every entry
     /// after it, a `SlipRevoke`, `SlipConsume`, membership execution
     /// record's Grant withdrawals (FIX 12335) or a Grant's end (pass 28) among
-    /// them, and a revoked or spent slip, or an ended Grant, would live again. An entry in `survivors` already applied
-    /// its restriction through the ordinary fold; each dropped one is proved
-    /// on its own signed branch, as an actor revocation is.
+    /// them, and a revoked or spent slip, or an ended Grant, would live again.
+    /// An entry in `survivors` already applied its restriction through the
+    /// ordinary fold; each dropped one is proved on its own signed branch, as
+    /// an actor revocation is.
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,

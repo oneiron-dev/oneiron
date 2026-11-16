@@ -166,6 +166,7 @@ impl Vault {
                     hex_id(&act.starter)?,
                     owner,
                     actor,
+                    slips,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
