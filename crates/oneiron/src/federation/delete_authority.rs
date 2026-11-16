@@ -12,7 +12,10 @@
 //! person delete is a role default, never a Grant it must hold; a Viewer, a
 //! Delegate or a guest has none. An agent deletes only
 //! under ONE live Grant that names the `delete` class and holds the record,
-//! given by a live Owner or by an Admin still holding it. No second
+//! given by a live Owner or by an Admin still holding it. A record that is
+//! authority rather than an item, whose removal widens someone's access or
+//! authority, is the live Owner's alone to delete, whatever role or Grant
+//! another caller holds ([`removal_widens`]). No second
 //! permission ledger is kept, and nothing a request carries asserts a role,
 //! an owner or a Grant: the answer is a sealed [`DeleteAuthority`],
 //! read again in each write that deletes.
@@ -106,6 +109,30 @@ impl DeleteTarget {
         *self.live.borrow_mut() = record.clone();
         Ok(record)
     }
+
+    /// The record's id.
+    pub(crate) const fn id(&self) -> EntityId {
+        self.id
+    }
+
+    /// Whether `person` provably owns the record, as [`Self::record_in`]
+    /// reads it: a TASK by its Owner fact, a NOTE by the author its put was
+    /// checked against. A person's own item never waits on a check-in
+    /// (ROLES-CHECKIN 2k5; Engine ruling STEWARD-DELETE-WAIT = B).
+    ///
+    /// # Errors
+    /// A store failure, or a NOTE body that does not decode.
+    pub(crate) fn owned_by_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        match self.record_in(vault, txn)? {
+            Some(record) => owned_by(vault, txn, person, &record),
+            None => Ok(false),
+        }
+    }
 }
 
 /// Why one record may not be deleted by this caller. Each refuses that
@@ -127,6 +154,10 @@ pub(crate) enum DeleteRefusal {
     /// The agent holds no one live Grant that names `delete`, holds this
     /// record and was given by a live Owner or an Admin still holding it.
     NoDeleteGrant,
+    /// The record is authority, not an item: removing it widens someone's
+    /// access or authority, so only a live Owner deletes it, whatever role
+    /// or Grant this caller holds ([`removal_widens`]).
+    AuthorityRow,
     /// The bound credential does not reach this record.
     CredentialBounds,
     /// A row this check reads could not be read.
@@ -142,6 +173,7 @@ impl DeleteRefusal {
             Self::NotOwnerOfItem => "not_owner_of_item",
             Self::OutOfAdminScope => "out_of_admin_scope",
             Self::NoDeleteGrant => "no_delete_grant",
+            Self::AuthorityRow => "authority_row",
             Self::CredentialBounds => "credential_bounds",
             Self::Unreadable(_) => "unreadable",
         }
@@ -166,6 +198,9 @@ impl DeleteRefusal {
             }
             Self::NoDeleteGrant => "the agent holds no live Grant that names delete and holds \
                                     this record"
+                .to_owned(),
+            Self::AuthorityRow => "this record restricts access or authority, and removing \
+                                   it widens it; only a live Owner deletes it"
                 .to_owned(),
             Self::CredentialBounds => "the bound credential does not reach this record".to_owned(),
             Self::Unreadable(kind) => {
@@ -262,10 +297,48 @@ fn other_arms(
         Ok(admitted) => admitted,
         Err(refusal) => return Ok(Err(refusal)),
     };
+    if removal_widens(&record) {
+        return Ok(Err(DeleteRefusal::AuthorityRow));
+    }
     if !credential_reaches(vault, txn, caller, Some(&record), false)? {
         return Ok(Err(DeleteRefusal::CredentialBounds));
     }
     Ok(Ok(admitted))
+}
+
+/// Whether deleting `record` widens someone's access or authority: the
+/// record restricts it, so it is authority, not an item, and only whoever may
+/// widen it deletes it (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A,
+/// 15 Nov: "deleting a restriction IS a widening"). DEL-2 stands for every
+/// other record. Each kind is told from the record's own kind and body, a
+/// CLAIM by its predicate and, where only some values restrict, one field:
+/// - a world-access grant or default (ARCH-0067 #tiers), open or closed;
+/// - a party's `comm.opt_out` and a `comm.do_not_contact` bar, which hold
+///   sends to that party;
+/// - a delivery window (`delivery_window.*`), which holds interrupts;
+/// - an Approved `repo.secret_mark`, which masks the bytes a repo serves;
+/// - a `project.leader_chat` rule of `false`, which narrows leader chat.
+///
+/// Rows whose restriction needs another codec or row to tell are FIX rows
+/// (`comm.reachable_via` false, a paused, suppressed or exited
+/// `campaign.member`, a narrowing `disclosure.import_audience`, a synced
+/// claim-class descriptor stricter than the compiled one).
+fn removal_widens(record: &TargetRecord) -> bool {
+    if record.kind != crate::registry::ENTITY_TYPE_CLAIM {
+        return false;
+    }
+    let Ok(body) = crate::claim::decode_claim_body(&record.body, true) else {
+        return false;
+    };
+    let predicate = body.predicate.as_str();
+    crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate)
+        || predicate == crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT
+        || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
+        || crate::delivery_window::DELIVERY_WINDOW_CLAIM_PREDICATES.contains(&predicate)
+        || (predicate == crate::origin::secret_marks::REPO_SECRET_MARK_PREDICATE
+            && body.approval == crate::claim::ClaimApprovalStatus::Approved)
+        || (predicate == crate::workspace_roster::LEADER_CHAT_RULE_PREDICATE
+            && body.value == rmpv::Value::Boolean(false))
 }
 
 /// The record as `txn` holds it: its kind, body, a TASK's Owner fact and
@@ -455,7 +528,7 @@ fn agent_arm(
     let Some(position) = record.position.as_ref() else {
         return Ok(None);
     };
-    let now = vault.instant_in_txn(txn)?.secs();
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let shared = vault.shared_vault_creation_in_txn(txn)?.is_some();
     let grants = live_grants_in(vault, txn)?;

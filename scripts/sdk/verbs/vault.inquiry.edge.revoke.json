@@ -1,0 +1,17 @@
+{
+  "name": "vault.inquiry.edge.revoke",
+  "description": "The member revokes one inquiry edge: its guest grant is withdrawn and its pact disconnected; the opened statements stay in the member's vault.",
+  "input": "crate::task_verb::sdk::InquiryEdgeRef",
+  "output": "crate::receipt::GuestRevokeResponse",
+  "call": "crate::task_verb::sdk::revoke_inquiry_edge_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

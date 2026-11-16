@@ -16,19 +16,12 @@ use super::constants::{
 };
 use super::default_policy_manifest_id;
 use super::manifest_authenticity::manifest_is_trusted;
+use oneiron_contracts::msgpack::Entries;
 
 const PROJECT_REF_KEY: &str = "project_ref";
 
-/// The row's exact scope. A vault row has neither scope key on disk.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub enum PolicyRowScope {
-    Vault,
-    World(String),
-    Project(String),
-    WorldProject { world: String, project: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::owner_policy_mutation::PolicyRowScope;
 
 /// The allowed row actions, with the same spellings as the manifest decoder.
 #[derive(
@@ -136,15 +129,9 @@ fn invalid(message: &'static str) -> Error {
 }
 
 fn field<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
-    let mut matching = entries
-        .iter()
-        .filter(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| value);
-    let first = matching.next();
-    if matching.next().is_some() {
-        return Err(invalid("duplicate policy manifest field"));
-    }
-    Ok(first)
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid("duplicate policy manifest field"))
 }
 
 fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {

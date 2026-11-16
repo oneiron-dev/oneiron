@@ -5,8 +5,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::gate::{
-    GatedDeletion, refuse_claim, reverify_deletion_authority_when_unpublished,
-    revoke_guest_grants_in_txn,
+    GatedDeletion, journal_deletion_in_txn, refuse_claim,
+    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
@@ -65,10 +65,12 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
-        let mut gate_decision = gate.map(|gate| {
-            gate.context
-                .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
-        });
+        let mut gate_decision = gate
+            .map(|gate| {
+                gate.context
+                    .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
+            })
+            .transpose()?;
         // FIX 5736: a purge names the turn-program rows it removes whole
         // because they do not decode. FIX 5775: the count rides the returned
         // outcome too, so a delete with no gate decision carries it.
@@ -276,6 +278,17 @@ impl Vault {
             gate_decision.as_ref(),
             id,
             tombstone.reason,
+        )?;
+        // The run that asked it keeps the delete in its journal, in the purge
+        // that commits it (ARCH-0040 #revert-run). The scope probe above
+        // found residue, so this delete removed something even when that was
+        // only index rows with no entity record.
+        journal_deletion_in_txn(
+            self,
+            gate,
+            &mut wtxn,
+            id,
+            reason.active_store_hard_purge_v1(),
         )?;
         if reason == DeleteReason::UserDelete {
             // A headerless soft deletion still retires proposals. Its

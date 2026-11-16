@@ -12,8 +12,11 @@ use super::super::applied;
 use super::ProactivityPresentation;
 use crate::{Result, Vault};
 
-/// The derived group the applied-maintenance line renders under.
-pub const APPLIED_GROUP: &str = "dreamer.applied";
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::digest::after_notice::{
+    APPLIED_GROUP, DigestAppliedItem,
+};
+
 /// The line's view: the owner's list of applied maintenance, where each
 /// write reverts.
 pub const APPLIED_VIEW: &str = "/v1/owner/dreamer/maintenance/applied";
@@ -24,22 +27,6 @@ pub const APPLIED_VIEW: &str = "/v1/owner/dreamer/maintenance/applied";
 pub struct DigestApplied {
     pub items: Vec<DigestAppliedItem>,
     pub view: String,
-}
-
-/// One applied write, as the owner's list names it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DigestAppliedItem {
-    /// The write's target as the revert takes it: a finding's 32 hex, an
-    /// ask's 64 hex, or a project's and a fork's 32 hex joined by `:`.
-    pub target: String,
-    /// Its kind on the owner's list (`curator`, `reach_out`, ...).
-    pub kind: String,
-    pub facet: String,
-    pub applied_at: u64,
-    /// The receipt (`gate:<id>`) the item is keyed by: a digest carries each
-    /// one once.
-    pub receipt_ref: String,
 }
 
 impl DigestApplied {

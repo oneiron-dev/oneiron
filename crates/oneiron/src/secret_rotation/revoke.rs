@@ -5,7 +5,9 @@
 
 use zeroize::Zeroize;
 
-use super::{LEASES, RECEIPTS, RotationKind, RotationReceipt, encode_rotation_receipt_body};
+use super::{
+    LEASES, RECEIPTS, RotationCause, RotationKind, RotationReceipt, encode_rotation_receipt_body,
+};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
@@ -178,6 +180,7 @@ pub(crate) fn revoke_secret_with_context_in_txn(
         to_generation: generation,
         rotated_at: at,
         kind: RotationKind::Revoked,
+        cause: RotationCause::Owner,
     };
     RECEIPTS.put(
         write.store,

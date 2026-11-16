@@ -36,24 +36,11 @@ use crate::{EntityId, Error, Result, Vault};
 /// and the date on either side.
 const BOUNDARY_SEARCH_DAYS: usize = 4;
 
-/// Whether a cycle still admits its items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FreeTimeCycleState {
-    Open,
-    /// Ended: no new item runs; calls already made settle normally.
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::free_time::cycle::FreeTimeCycleState;
 
-/// What the agent chose for its own time, in its free time for its human.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FreeTimeOwnTimeChoice {
-    /// Its own dreaming.
-    Reflect,
-    /// Rest: no call, no spend, no text. It meets the floor.
-    Rest,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::free_time::cycle::{FreeTimeNote, FreeTimeOwnTimeChoice};
 
 /// One item a cycle opened with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,18 +51,6 @@ pub struct FreeTimeItemRef {
     /// The attempt that runs it; `None` for an own-time item of a resident
     /// whose dreaming is off, which only rest can end.
     pub attempt: Option<[u8; 16]>,
-}
-
-/// The agent's short note to its human on what it got up to. Only the
-/// resident writes it, in its item's own result; never its diary, never a
-/// stored response, never the engine's words.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FreeTimeNote {
-    pub author: EntityId,
-    /// Vault clock seconds.
-    pub at: u64,
-    pub text: String,
 }
 
 /// One free-time cycle of one agent.

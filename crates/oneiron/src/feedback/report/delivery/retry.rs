@@ -1,7 +1,5 @@
 //! Explicit owner retry after the outbound ledger proves non-delivery.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::{store, validate_ref};
 use super::{
     DELIVERIES, ENDPOINTS, ReportDeliveryKey, ReportDeliveryRecord, ReportFrozenSend, publisher_of,
@@ -13,15 +11,8 @@ use crate::outbound_intent_ledger::{
 };
 use crate::{EntityId, Error, Result, Vault};
 
-/// A new logical send for exactly the failed send the owner read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReportDeliveryRetryRequest {
-    /// The ISSUE, 32 hex.
-    pub issue_ref: String,
-    /// The current frozen send's exact reference from delivery status.
-    pub expected_send_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::report::delivery::retry::ReportDeliveryRetryRequest;
 
 impl Vault {
     /// Prepares a fresh logical send of the same content-free signature to

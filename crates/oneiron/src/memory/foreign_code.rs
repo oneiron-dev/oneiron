@@ -12,7 +12,9 @@ mod outputs;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
-use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
+use crate::code_sandbox::foreign::{
+    ForeignCodeArtifact, execute_foreign_code, foreign_code_egress,
+};
 use crate::code_sandbox::source::{PreparedSource, prepare_source};
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
@@ -24,49 +26,11 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ForeignCodeRunRequest {
-    /// Plain JavaScript for the foreign interpreter, not native code or a host path.
-    pub source: String,
-    /// Named records to freeze through this credential's scoped read.
-    /// Entry N is frozen as JSON at /mnt/workspace/record-N.json.
-    /// The answer repeats the reference-to-path mapping.
-    #[serde(default)]
-    pub reads: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ForeignCodeRead {
-    pub reference: String,
-    pub path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ForeignCodeOutput {
-    pub path: String,
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ForeignCodeTier {
-    Foreign,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ForeignCodeApproval {
-    Proposed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ForeignCodeSource {
-    Generated,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::foreign_code::{
+    ForeignCodeApproval, ForeignCodeIsolation, ForeignCodeOutput, ForeignCodeRead,
+    ForeignCodeRunRequest, ForeignCodeSource, ForeignCodeTier,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -105,20 +69,6 @@ pub struct ForeignCodeProposal {
     pub source: ForeignCodeSource,
     pub approval: ForeignCodeApproval,
     pub effect: ForeignCodeEffect,
-}
-
-/// The public part of the backend's own proof. The complete manifest is
-/// retained by the sandbox receipt, not asserted by the calling program.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ForeignCodeIsolation {
-    pub backend: String,
-    pub runtime: String,
-    pub image: String,
-    pub argv_digest: String,
-    pub network: String,
-    pub generation: String,
-    pub fence_proven: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -186,7 +136,9 @@ impl Memory<'_> {
     /// actor, source stamp, approval or grant is accepted from the wire. Its
     /// proposed files spool on `spool`, the host's measured disk floor; one
     /// that would cross it fails the run as `SANDBOX_PROPOSAL_DISK_FLOOR`
-    /// before any receipt (FIX 7650).
+    /// before any receipt (FIX 7650). `host` must name this handle's own
+    /// vault: the run's network, when the owner lends one, keeps it for its
+    /// receipts ([`foreign_code_egress`]).
     ///
     /// Once its credential and its source are admitted, the run has its
     /// identity and its program its one check on `type_feedback`, the host's
@@ -200,15 +152,19 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// The run's refusal, as it was, with the program's feedback once its
-    /// source was admitted.
+    /// source was admitted; `host` naming another vault.
     pub fn execute_foreign_code(
         &self,
+        host: &std::sync::Arc<crate::Vault>,
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
         spool: std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
         type_feedback: Option<&TypeFeedback>,
     ) -> Result<ForeignCodeRunResult, ForeignCodeFailure> {
+        if !std::ptr::eq(self.vault, std::sync::Arc::as_ptr(host)) {
+            return Err(MemoryError::bad_request("foreign run belongs to another vault").into());
+        }
         let proof = self.foreign_code_credential()?;
         if input.source.trim().is_empty() {
             return Err(MemoryError::bad_request("foreign source is empty").into());
@@ -226,7 +182,7 @@ impl Memory<'_> {
             &prepared,
         );
         let launch = (artifact, budget, spool);
-        let ran = self.run_foreign_program(input.reads, &prepared, run_id, proof, launch);
+        let ran = self.run_foreign_program(host, input.reads, &prepared, run_id, proof, launch);
         let program_steps = vec![check.feedback()];
         match ran {
             Ok(mut result) => {
@@ -248,6 +204,7 @@ impl Memory<'_> {
     /// foreign contract with `references` frozen into its workspace.
     fn run_foreign_program(
         &self,
+        host: &std::sync::Arc<crate::Vault>,
         references: Vec<String>,
         prepared: &PreparedSource<'_>,
         run_id: EntityId,
@@ -274,7 +231,9 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let floor = self.vault.host_net_floor();
+        // The network the owner lends the run: none unless
+        // `code_sandbox.foreign.execute_code_egress` is on.
+        let egress = foreign_code_egress(host, run_id)?;
         let mut streamed =
             crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
         // A failed program's own error is masked with this vault's custody
@@ -287,7 +246,7 @@ impl Memory<'_> {
             artifact,
             budget,
             spool,
-            floor,
+            egress,
             &mut streamed,
             self.vault,
         )?;
@@ -331,7 +290,7 @@ impl Memory<'_> {
                 txn,
                 run_id,
                 "session_manifest",
-                "recorded",
+                crate::code_sandbox::egress::SandboxReceiptOutcome::noted("recorded"),
                 manifest,
                 digest,
             )?;
@@ -437,7 +396,13 @@ impl Memory<'_> {
                     .map_err(|_| MemoryError::bad_request("foreign proposal cannot be encoded"))?;
                 let digest = *blake3::hash(body.as_bytes()).as_bytes();
                 proposal.receipt_ref = self.vault.append_sandbox_gate_receipt_in_txn(
-                    txn, run_id, "proposal", "proposed", body, digest,
+                    txn,
+                    run_id,
+                    "proposal",
+                    // The proposal waits on its own record; the row decides nothing.
+                    crate::code_sandbox::egress::SandboxReceiptOutcome::noted("proposed"),
+                    body,
+                    digest,
                 )?;
                 proposals.push(proposal);
             }

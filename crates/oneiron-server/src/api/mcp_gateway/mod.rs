@@ -69,6 +69,9 @@ pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflo
 pub(crate) use self::code_mode_verbs::draft_checked_span;
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;
+// The integration tests' door to the carrier release check (census L2-38).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::device_release::carrier_releases_for_test;
 use self::device_release::{mcp_release_listed, mcp_release_result};
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{
@@ -84,12 +87,19 @@ pub(crate) use self::owner_call::resolve_mcp_caller;
 pub(crate) use self::read_result::execute_mcp_read_result;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
+// The integration tests' door to the envelope-error count (FIX
+// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wire::count_parse_error_for_test;
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
 // but no production path does, so a plain `pub(crate)` re-export would warn as
 // unused in non-test builds.
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
 pub(crate) use self::facade_refusals::mcp_facade_error;
+// The integration tests' door to the facade refusal vocabulary (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade_refusals::mcp_refusal_for_test;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_agent_verb_input,
     mcp_api_error, mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,

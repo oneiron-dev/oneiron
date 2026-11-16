@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, ExportSecretWork, OwnerAct, OwnerWorkBody,
 };
-use crate::world_keys::{OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
+use crate::world_keys::{OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::{EntityId, Vault};
 
 pub(crate) use crate::batch::export::secret_supplement_record::HolderExportNeed;
@@ -40,61 +40,12 @@ pub struct HolderExportRequest {
     pub state: HolderExportState,
 }
 
-/// Where one holder export request stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum HolderExportState {
-    /// Recorded for its holder: the request's signed authority-log entry,
-    /// as hex, the install that holds the secret, and its status as the
-    /// fold read it. Enacted means its holder committed the sealed copy,
-    /// never that the owner fetched it.
-    Recorded {
-        request: String,
-        holder: EntityId,
-        status: OwnerWorkStatus,
-    },
-    /// No request was recorded, for the reason given; the archive's handle
-    /// stands.
-    Unassigned { reason: HolderExportUnassigned },
-    /// Not recorded for a holder: the export's audit write failed (logged),
-    /// or its door writes no audit. Nothing waits for a holder.
-    Unrecorded,
-}
-
-/// Why an export recorded no request for a secret's holder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HolderExportUnassigned {
-    /// The export's door records no owner act (an embedded or raw door):
-    /// no act exists to carry to a holder.
-    NoOwnerAct,
-    /// The exporting owner is no live owner of the vault any more.
-    OwnerNotLive,
-    /// The owner named no machine to receive the sealed copy.
-    NoRecipient,
-    /// The machine the owner named is no live linked install with an
-    /// encryption key that imports.
-    RecipientNotLinked,
-    /// No linked install is known to hold the secret at this generation.
-    NoHolder,
-    /// This install has no live machine profile to carry the owner's act.
-    NoCarrier,
-}
-
-impl HolderExportUnassigned {
-    /// The words a surface shows.
-    #[must_use]
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::NoOwnerAct => "this export recorded no owner act to carry to a holder",
-            Self::OwnerNotLive => "the exporting owner is no live owner of the vault",
-            Self::NoRecipient => "no machine was named to receive the sealed copy",
-            Self::RecipientNotLinked => "the named recipient is not a linked install",
-            Self::NoHolder => "no linked install is known to hold this secret",
-            Self::NoCarrier => "this install cannot carry the owner's act",
-        }
-    }
-}
+#[doc(hidden)]
+use oneiron_verb_wire::authority::export_secret_work::entry_of_hex;
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::export_secret_work::{
+    HolderExportState, HolderExportUnassigned,
+};
 
 impl HolderExportRequest {
     /// The need this entry names.
@@ -167,43 +118,8 @@ impl HolderExportRequest {
     }
 }
 
-/// The entry hash a receipt's lowercase hex names.
-fn entry_of_hex(hex: &str) -> Option<AuthorityEntryHash> {
-    blake3::Hash::from_hex(hex)
-        .ok()
-        .map(|hash| *hash.as_bytes())
-}
-
-/// One export secret request as its owner reads it (FIX 4624(b)): where it
-/// stands and, once its holder sealed it and this install keeps the copy,
-/// the sealed copy itself. Ids, digests and ciphertext only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ExportSecretSupplement {
-    /// The request's signed authority-log entry, as hex.
-    pub request: String,
-    pub secret: EntityId,
-    pub generation: u32,
-    /// The export it supplements, as its audit row names it.
-    pub export: EntityId,
-    /// The install that holds the secret and seals it.
-    pub holder: EntityId,
-    /// The machine the copy is sealed to: only it opens the copy.
-    pub recipient: EntityId,
-    pub status: OwnerWorkStatus,
-    /// Whether an admitted import mark is present in the authority fold.
-    /// This is not the local custody import's outcome.
-    pub marked_imported: bool,
-    /// BLAKE3 of the sealed copy, lowercase hex, as its signed result names
-    /// it; `None` before the holder sealed it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub digest: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
-    /// The sealed copy, standard base64, when this install keeps it; `None`
-    /// before it is sealed, or when only its holder keeps it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sealed: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::export_secret_work::ExportSecretSupplement;
 
 pub use crate::batch::export::secret_supplement_record::{
     OpenedSecretSupplement, SecretSupplementImport,

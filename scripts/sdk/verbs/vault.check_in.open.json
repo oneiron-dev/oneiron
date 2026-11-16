@@ -1,0 +1,14 @@
+{
+  "name": "vault.check_in.open",
+  "description": "Opens the durable check-in ask for the caller's act when it must wait for a proof from the ladder, or returns the handle the same saved call opened before; any other answer opens nothing.",
+  "input": "crate::task_verb::sdk::CheckInOpenRequest",
+  "output": "crate::task_verb::sdk::CheckInVerdict",
+  "call": "crate::task_verb::sdk::check_in_open(memory, input)?",
+  "scope": "Write",
+  "grant_class": "the caller's own live owner Grant listing the asked verb, or the vault owner",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

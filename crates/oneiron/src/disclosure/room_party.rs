@@ -52,7 +52,14 @@ impl RoomParty {
 /// delete's purged row, or a binding whose PERSON is deleted, names no owner.
 /// An embedded owner whose row was never written still is one, as before: the
 /// permanent hard-delete marker tells the purged row from the never-written
-/// one, since both read [`LiveEntityRow::Absent`] without it.
+/// one, since both read [`LiveEntityRow::Absent`] without it. On an unrooted
+/// shared vault the embedded owner is one only while the live owner census
+/// names it ([`crate::memory::embedded_owner_shortcut_holds_in_txn`]): one
+/// another Owner made an Admin is classed as any other member is
+/// (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A census that cannot be read names
+/// no owner here, as the callers' own census read does
+/// (`owners_in_txn(..).unwrap_or_default()`): it fails closed, never a
+/// refusal.
 pub(crate) fn is_vault_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -68,10 +75,15 @@ pub(crate) fn is_vault_owner(
         if vault.local_hard_delete_marker_exists_in_txn(txn, member)? {
             return Ok(false);
         }
-        return Ok(!matches!(
+        if matches!(
             crate::vault::live_entity_row_in_txn(&vault.store, txn, member)?,
             LiveEntityRow::DeletedShell
-        ));
+        ) {
+            return Ok(false);
+        }
+        return Ok(
+            crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn).unwrap_or(false),
+        );
     }
     Ok(fold.vault_id.is_some()
         && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, member, "human")?)

@@ -33,14 +33,8 @@ const RESERVATION_PREFIX: &str = "generation:";
 pub const SEALED_BUNDLE_WORK_PART_BYTES: u64 = STORED_PART as u64;
 const WORK_ID_CONTEXT: &str = "oneiron sealed bundle commit work v1";
 
-/// The immutable publication a caller asks the home to finish.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SealedBundleCommitInput {
-    pub generation: SealedBundleGeneration,
-    pub parent: Option<SealedBundleGeneration>,
-    pub root: Option<RecoveryRootId>,
-    pub request: Option<AuthorityEntryHash>,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::residence::bundle::work::SealedBundleCommitInput;
 
 /// Execution outcome, distinct from an owner-request publication receipt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

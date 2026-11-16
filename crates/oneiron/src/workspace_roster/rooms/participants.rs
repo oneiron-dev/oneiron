@@ -20,22 +20,8 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::workspace_roster::JoinSubject;
 use crate::{EntityId, Vault};
 
-/// One page of a room's, or one thread's, participants.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ParticipantsRequest {
-    pub room: EntityId,
-    /// A thread of the room, by its root turn; `None` reads the room itself.
-    #[serde(default)]
-    pub branch: Option<EntityId>,
-    /// The `next_after` of the page before.
-    #[serde(default)]
-    pub after: Option<String>,
-    /// Rows per page, positive; the room message page's bound when unset.
-    /// A page holds at most that bound; the rest follow through its cursor.
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::participants::ParticipantsRequest;
 
 /// One participant, folded from its facts in one place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,17 +128,8 @@ impl Memory<'_> {
         let limit = request.limit.map_or(PAGE_LIMIT, |limit| {
             usize::try_from(limit).unwrap_or(usize::MAX)
         });
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
         // A larger ask is served a page at a time through its cursor.
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            request.room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), request.room, limit)?;
         let mut start = match request.after.as_deref() {
             Some(after) => Some(parse_cursor(after).ok_or_else(invalid)?),
             None => None,

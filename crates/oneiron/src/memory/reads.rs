@@ -70,6 +70,13 @@ pub struct ClaimView {
     pub claim_scope: ClaimScope,
     /// Original host-stamped Rule A provenance.
     pub made_by: Option<crate::provenance::made_by::MadeBy>,
+    /// The org `made_by`'s actor ran as its house when it made the claim, as
+    /// 32-hex (HOUSE-BIND = A, ARCH-0063 #house-bind, FIX
+    /// SPEAKER-BYLINE-FOR-ORG-CLAIMS): the claim reads "pr2, for <org>". Read
+    /// from the house link receipts at `made_by.at` on each read, never
+    /// stored. `None` for a claim with no birth, or whose maker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
     /// Validity window start.
     pub valid_from: Option<u64>,
     /// Validity window end.
@@ -84,22 +91,8 @@ pub struct ClaimView {
     pub claim: Option<crate::lens::RecordRef>,
 }
 
-/// Filter for [`Memory::claim_list`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClaimListFilter {
-    /// Restrict to claims on this subject (short-id ref or hex).
-    pub subject_ref: Option<String>,
-    /// Restrict to this predicate.
-    pub predicate: Option<String>,
-    /// Restrict to this lifecycle (`active`/`superseded`/`retracted`).
-    pub lifecycle: Option<String>,
-    /// Maximum results (required; no unbounded scans).
-    pub limit: usize,
-    /// The caller's retrieval filter (FIX 3977): it narrows the claims the
-    /// list reads, never the subject it names.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::reads::{ClaimListFilter, NeighborOpts};
 
 /// One BM25 hit (engine index scores, never re-ranked app-side).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,17 +110,6 @@ pub struct LexicalHit {
     /// read already admitted.
     #[serde(default)]
     pub record: Option<crate::lens::RecordRef>,
-}
-
-/// Options for [`Memory::neighbors`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct NeighborOpts {
-    /// Restrict to this snake_case `EdgeKind` name.
-    pub edge_kind: Option<String>,
-    /// Drop edges below this weight (engine-side filter).
-    pub min_weight: Option<f32>,
-    /// Maximum hits (required; no unbounded scans).
-    pub limit: usize,
 }
 
 /// One graph neighbor.
@@ -183,13 +165,8 @@ impl Memory<'_> {
         let target = self.read_target(reference, mode)?;
         // Opened after the lane and target, whose own snapshots have closed:
         // LMDB allows one read snapshot per thread.
-        let txn = self
-            .vault
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::Error::from)?;
-        self.read_named_view_in_txn(&lane, &txn, target)
+        let snapshot = self.lane_snapshot()?;
+        self.read_named_view_in_txn(&lane, snapshot.txn(), snapshot.known(), target)
     }
 
     /// Reads LIVE, the last indexed revision, or an exact retained pin.
@@ -572,9 +549,19 @@ impl Memory<'_> {
             &Default::default(),
             |(hit, _, body)| (hit.score, body.as_ref()),
         )?;
+        // Every reader but the owner reads each hit's snippet and label from
+        // the body the typed Nulled rule releases (ruling EXPORTDOORS
+        // Q4 = A); a withheld body gives the hit no snippet.
+        let reads_stored = lane.reads_stored_bodies()?;
         let mut out = Vec::with_capacity(ranked.len());
         for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
-            let mut body = row.body.as_deref().and_then(decode_body_json);
+            let released = match row.body.as_deref() {
+                Some(stored) => {
+                    crate::batch::export::released_body_for(reads_stored, row.entity_type, stored)?
+                }
+                None => None,
+            };
+            let mut body = released.as_deref().and_then(decode_body_json);
             if let Some(value) = &mut body {
                 let txn = self
                     .vault
@@ -725,6 +712,8 @@ impl Memory<'_> {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
+        let made_by = self.collection_view(id)?.and_then(|view| view.made_by);
+        let for_org = self.claim_for_org(made_by.as_ref())?;
         Ok(ClaimView {
             claim: Some(claim),
             claim_ref: id.to_hex(),
@@ -743,12 +732,39 @@ impl Memory<'_> {
             world_ref: body.world.map(|world| world.to_hex()),
             scope,
             claim_scope: ClaimScope::of_body(body),
-            made_by: self.collection_view(id)?.and_then(|view| view.made_by),
+            made_by,
+            for_org,
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
         })
+    }
+
+    /// [`ClaimView::for_org`]: the org the claim's maker ran as its house at
+    /// its birth's `at`, as the room half reads a turn's speaker
+    /// (`turns_for_org`). Its own snapshot opens after the claim's reads have
+    /// closed theirs (one read snapshot per thread).
+    fn claim_for_org(
+        &self,
+        made_by: Option<&crate::provenance::made_by::MadeBy>,
+    ) -> MemoryResult<Option<String>> {
+        let Some(made_by) = made_by else {
+            return Ok(None);
+        };
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(crate::workspace_roster::house_org_at_in_txn(
+            self.vault,
+            &txn,
+            made_by.process.actor,
+            made_by.at,
+        )?
+        .map(|org| org.to_hex()))
     }
 
     /// The receipt of a structural write of `id`, whose kind the caller does
