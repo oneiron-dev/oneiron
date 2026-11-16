@@ -90,7 +90,7 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ("POST", "/esign/verify/report", PublicProof),
     // A signing link's exchange doors: the exchange reads the link's
     // capability (the link stays reusable) and answers a single-use
-    // exchange, which the session consumes to open the link's signing
+    // exchange, which the session door consumes to open the link's signing
     // session.
     ("POST", "/sign/exchange", PublicProof),
     ("POST", "/sign/session", PublicProof),
