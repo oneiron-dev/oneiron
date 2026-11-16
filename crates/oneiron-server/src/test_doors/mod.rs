@@ -4,6 +4,7 @@
 //! cargo test ... --test <stem>`); never behind a cargo feature, so no
 //! `--all-features` build reaches them. Hidden; never API.
 
+pub mod background_embedding;
 pub mod big_rung;
 pub mod booking_turn_line;
 pub mod build_server;
@@ -25,9 +26,11 @@ pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;
 pub mod replay_admission;
+pub mod residence_connection;
 pub mod resident_pump;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
+pub mod voice_call;
 pub mod wire_health_sweep;
 pub mod workflow_park;

@@ -3,8 +3,11 @@
 //! already writes keeps the bytes of the plain string the `outcome` field holds today, so a row a
 //! vault holds decodes unchanged once the field is typed; and `admits()` is true for exactly
 //! `allow`, `approved` and `approved_amended`. Red on main: main has no `GateReceiptOutcome`, so this
-//! file does not build. Kept as a guard through UC-03 stage 3.
+//! file does not build. Kept as a guard through UC-03 stage 3. Since R2b (Fable pass 25) the enum
+//! is a Register: `ROWS` replaced the hand `ALL`, and the derive writes `as_str`, so this file is the
+//! pin that the derive spells every word as the hand table did.
 
+use oneiron_contracts::register::Register;
 use oneiron_store::gate_reason::{GateOutcome, GateReceiptOutcome};
 use serde::{Deserialize, Serialize};
 
@@ -57,12 +60,14 @@ struct TypedRow {
 #[test]
 fn the_table_names_every_outcome_once() {
     assert_eq!(
-        TOKENS.map(|(outcome, _)| outcome),
-        GateReceiptOutcome::ALL,
-        "TOKENS lists ALL in order"
+        TOKENS.map(|(outcome, _)| outcome).as_slice(),
+        GateReceiptOutcome::ROWS,
+        "TOKENS lists ROWS in order"
     );
+    assert_eq!(GateReceiptOutcome::NAME, "gate.outcome");
     for (outcome, token) in TOKENS {
         assert_eq!(outcome.as_str(), token, "{outcome:?}");
+        assert_eq!(GateReceiptOutcome::named(token), Some(outcome), "{token}");
     }
 }
 
@@ -166,8 +171,9 @@ fn a_word_outside_the_set_does_not_decode() {
 
 #[test]
 fn admits_is_true_for_exactly_allow_approved_and_approved_amended() {
-    let admitting: Vec<&str> = GateReceiptOutcome::ALL
-        .into_iter()
+    let admitting: Vec<&str> = GateReceiptOutcome::ROWS
+        .iter()
+        .copied()
         .filter(|outcome| outcome.admits())
         .map(GateReceiptOutcome::as_str)
         .collect();
