@@ -60,7 +60,7 @@ use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatu
 use super::state::{
     MailOccurrence, MailPresence, MailReplyHeaders, MailReplyRecipients, OCCURRENCES,
 };
-use super::wire::{MailAddressHeaders, MailProviderWire, MailSyncSource};
+use super::wire::{MailAddressHeaders, MailProviderWire};
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailReplyThread, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
@@ -616,6 +616,18 @@ fn dispatch_settlement<E: std::fmt::Display>(
     }
 }
 
+/// Whether a dispatch that settles a revision to `settled` may replace its
+/// stored state `held`, whichever press settles first, the drafter's send or
+/// its person's approval: a sent revision stays sent, an uncertain one
+/// becomes only sent, and a discarded one stays discarded.
+fn settlement_sets_state(held: MailReplyDraftState, settled: MailReplyDraftState) -> bool {
+    match held {
+        MailReplyDraftState::Sent | MailReplyDraftState::Discarded => false,
+        MailReplyDraftState::Unsettled => settled == MailReplyDraftState::Sent,
+        MailReplyDraftState::Proposed | MailReplyDraftState::Approved => true,
+    }
+}
+
 /// Whether `person`, a mailbox's own person, is the vault's Owner: a live
 /// owner the vault records, or the person the embedded owner of a vault with
 /// no authority root stands for. The vault's send grant reaches only the
@@ -1047,13 +1059,18 @@ impl Memory<'_> {
                 vault.dispatch_outbound_intent_recorded(request, &mut sink)
             }
         };
-        // Sent or unsettled, the revision no longer waits for its person;
-        // held or refused, it stays proposed for them. A revision redrafted,
-        // approved or discarded meanwhile keeps its own state.
+        // Sent or unsettled, the revision no longer waits for its person,
+        // nor does one they approved meanwhile (the ledger keeps its one
+        // send); held or refused, it stays proposed for them. A revision
+        // redrafted or discarded meanwhile keeps its own state.
         let (settled, outcome) = dispatch_settlement(&answer);
         let row = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             let mut held = DRAFTS.get(&vault.store, txn, &id)?.ok_or_else(unknown)?;
-            if held.revision == row.revision && held.state == MailReplyDraftState::Proposed {
+            let settles = match settled {
+                Some(state) => settlement_sets_state(held.state, state),
+                None => held.state == MailReplyDraftState::Proposed,
+            };
+            if held.revision == row.revision && settles {
                 if let Some(state) = settled {
                     held.state = state;
                     clear_reply_ask_in_txn(vault, txn, &id, held.revision)?;
@@ -1245,12 +1262,13 @@ impl Vault {
                 None => self.dispatch_outbound_intent_recorded(request, sink.as_mut()),
             },
         };
-        // Held or refused, the approved revision stays approved.
+        // Held or refused, the approved revision stays approved, unless its
+        // drafter's send settled it meanwhile.
         let (settled, outcome) = dispatch_settlement(&answer);
         let state = settled.unwrap_or(MailReplyDraftState::Approved);
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             let mut held = DRAFTS.get(&self.store, txn, &id)?.ok_or_else(unknown)?;
-            if held.revision == row.revision {
+            if held.revision == row.revision && settlement_sets_state(held.state, state) {
                 held.state = state;
                 held.outcome = Some(outcome);
                 held.updated_at = crate::unix_seconds_now();
