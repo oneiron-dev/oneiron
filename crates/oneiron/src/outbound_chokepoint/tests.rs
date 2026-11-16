@@ -40,6 +40,7 @@ fn register_scoped_key(
     key.retained_manifest = Some(
         crate::connector_key::ResolvedConnectorManifest::resolve(vec![
             crate::connector_key::ConnectorToolSchema {
+                output_schema: None,
                 name: "read_file".into(),
                 permissions: ["read".into()].into(),
                 triggers: Default::default(),
@@ -94,6 +95,7 @@ fn charged_record(
     if let Some(capability) = capability {
         let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
             crate::connector_key::ConnectorToolSchema {
+                output_schema: None,
                 name: "read_file".into(),
                 permissions: ["read".into()].into(),
                 triggers: Default::default(),

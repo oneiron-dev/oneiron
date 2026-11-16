@@ -1,6 +1,6 @@
 {
   "name": "connector.schema",
-  "description": "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest.",
+  "description": "One connector tool's approved input schema, its output schema when declared, and both as TypeScript, for the selected catalog or builtin source. Catalog schemas use the caller's own governing grant and approved manifest.",
   "input": "crate::task_verb::sdk::ConnectorSchemaRequest",
   "output": "crate::task_verb::sdk::ConnectorSchemaReply",
   "call": "crate::task_verb::sdk::connector_schema_read(memory, input)?",
