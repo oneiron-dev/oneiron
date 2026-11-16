@@ -55,9 +55,9 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
-pub mod grant_act;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
+pub mod grant_act;
 pub mod grant_roles;
 pub mod grant_standing;
 pub mod graph_ask_centre;
