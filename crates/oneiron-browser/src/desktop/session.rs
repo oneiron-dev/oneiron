@@ -179,6 +179,17 @@ impl DesktopSession {
         &self.manifest
     }
 
+    /// Stores the pressure the guest's container shows now into this
+    /// session's manifest, when it shows any (FIX 8013): what each answer's
+    /// `session_manifest` and the run's receipt then name. Every verb's
+    /// entry records it; the host records it again before it reads the
+    /// manifest. Best-effort, never an error.
+    pub fn record_pressure(&mut self) {
+        if let Some(pressure) = self.guest.observe_pressure() {
+            self.manifest.guest_pressure = Some(pressure);
+        }
+    }
+
     /// The PNG bytes of a screenshot this session took, while it holds them.
     #[must_use]
     pub fn image(&self, image: &str) -> Option<&[u8]> {

@@ -113,6 +113,7 @@ pub mod run_doors;
 pub(crate) mod run_rows;
 mod runner_done;
 mod scheduling;
+pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
@@ -410,6 +411,8 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_record::ask_group_route;
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use fanout_launch::launch_override_actors_in_txn;
