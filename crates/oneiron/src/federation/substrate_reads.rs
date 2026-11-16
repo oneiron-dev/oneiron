@@ -15,13 +15,21 @@
 //! so an owner credential the owner doors refuse, attenuated or handed to
 //! another key, reads none of these rows through them.
 //!
-//! These rows are the engine's own, kept for the whole vault, and no reader
-//! here filters them by project, world, band or sensitivity. So the grant
-//! must reach the whole vault: one narrowed to part of it (a vault or holder
-//! override row) reads none of them (review of #6996).
+//! These rows are the engine's own, kept for the whole vault. The learning
+//! cell and the learning dials answer a grant narrowed to some projects with
+//! the rows its ceiling holds ([`SubstrateReach`]; DEC-0005 #scope: "the
+//! answer is the ceiling"; FIX [SUBSTRATE-READS-NO-SCOPE-FILTER]). A row lies
+//! inside a narrowed ceiling only by the project it records, so a row that
+//! records none stays whole-vault-only, and so does every row for a ceiling
+//! narrowed on an axis these rows record nothing for. The other reads (the
+//! agent health cards and calls, the failure evidence, the retrieval runs, a
+//! project's intake goal, a hosted import, the snapshot and world settings)
+//! still ask a grant that reaches the whole vault: one narrowed to part of it
+//! reads none of them (review of #6996).
 
-use super::grant_scope;
+use super::engine_controls::reaches_whole_vault;
 use super::system_agent_grant::SystemAgent;
+use super::{Scope, ScopeId, grant_scope};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -54,27 +62,100 @@ impl SubstrateRead {
     }
 }
 
+/// How far an admitted substrate read reaches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SubstrateReach {
+    /// The vault's owner under its proof, or a grant that reaches the whole
+    /// vault: every row.
+    WholeVault,
+    /// Grants narrowed to part of the vault, each by its own ceiling: a row
+    /// lies inside when every project it records lies inside one of them.
+    Within(Vec<Scope>),
+}
+
+impl SubstrateReach {
+    /// Whether a row that records the projects `projects` lies inside this
+    /// reach: always for the whole vault; inside narrowed ceilings only when
+    /// it records at least one project and each lies inside a ceiling
+    /// ([`project_inside`]). A row that records no project stays
+    /// whole-vault-only.
+    ///
+    /// This is the reader's one judgement. The act rule (pass 26, A0 #8320)
+    /// takes it over in one line: `true` and `false` here are its
+    /// `Permitted::AnyMove` and `Permitted::Nothing` for one row.
+    pub(crate) fn holds_row_of(&self, projects: &[EntityId]) -> bool {
+        match self {
+            Self::WholeVault => true,
+            Self::Within(ceilings) => {
+                !projects.is_empty()
+                    && projects.iter().all(|project| {
+                        ceilings
+                            .iter()
+                            .any(|ceiling| project_inside(ceiling, *project))
+                    })
+            }
+        }
+    }
+
+    /// [`Self::holds_row_of`] for a row that records at most one project.
+    pub(crate) fn holds_row_in(&self, project: Option<EntityId>) -> bool {
+        self.holds_row_of(project.as_slice())
+    }
+}
+
+/// Whether `project` lies inside the narrowed ceiling `ceiling`: its
+/// audience (project) axis names `project`, and no other axis but `verbs` is
+/// narrowed, since these rows record no world, facet, band or sensitivity.
+fn project_inside(ceiling: &Scope, project: EntityId) -> bool {
+    *ceiling
+        == Scope {
+            audience: ceiling.audience.clone(),
+            verbs: ceiling.verbs.clone(),
+            ..Scope::top()
+        }
+        && ceiling.audience.contains(&ScopeId(project))
+}
+
 impl Vault {
+    /// How far `holder` reads the substrate read `read` through its grants:
+    /// the whole vault when a live Steward grant naming one of the read's
+    /// verbs reaches it ([`reaches_whole_vault`]), else the ceilings of the
+    /// narrowed ones ([`Self::steward_grant_ceilings_with_verb_in`]); None
+    /// when no such grant names `holder`. Who the holder is plays no part,
+    /// the vault's owner included.
+    pub(crate) fn substrate_read_reach_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        read: SubstrateRead,
+    ) -> Result<Option<SubstrateReach>> {
+        let mut ceilings = Vec::new();
+        for verb in read.grants() {
+            for ceiling in self.steward_grant_ceilings_with_verb_in(txn, holder, verb)? {
+                if reaches_whole_vault(&ceiling) {
+                    return Ok(Some(SubstrateReach::WholeVault));
+                }
+                ceilings.push(ceiling);
+            }
+        }
+        Ok((!ceilings.is_empty()).then_some(SubstrateReach::Within(ceilings)))
+    }
+
     /// Whether `holder` holds a live Steward grant that names a verb the
     /// substrate read `read` needs and reaches the whole vault
-    /// ([`Self::whole_vault_steward_grant_with_verb_in`]). The one rule of
-    /// every holder and reader door: who the holder is plays no part, the
-    /// vault's owner included.
+    /// ([`Self::substrate_read_reach_in_txn`]). The one rule of every holder
+    /// and reader door of a read that does not filter by project: who the
+    /// holder is plays no part, the vault's owner included.
     pub(crate) fn substrate_read_granted_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
         read: SubstrateRead,
     ) -> Result<bool> {
-        for verb in read.grants() {
-            if self
-                .whole_vault_steward_grant_with_verb_in(txn, holder, verb)?
-                .is_some()
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(matches!(
+            self.substrate_read_reach_in_txn(txn, holder, read)?,
+            Some(SubstrateReach::WholeVault)
+        ))
     }
 
     /// Whether the engine makes the substrate read `read` for `reader`, a
@@ -126,6 +207,62 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.substrate_read_granted_in_txn(&txn, holder, read)
     }
+
+    /// [`Self::substrate_read_reach_in_txn`] in a snapshot of its own.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub(crate) fn substrate_read_reach(
+        &self,
+        holder: EntityId,
+        read: SubstrateRead,
+    ) -> Result<Option<SubstrateReach>> {
+        let txn = self.store.env.read_txn()?;
+        self.substrate_read_reach_in_txn(&txn, holder, read)
+    }
+}
+
+/// Admits `holder` to the substrate read `read` of verb `verb` as far as its
+/// grants reach ([`Vault::substrate_read_reach_in_txn`]), or refuses a
+/// holder no such grant names without saying what the rows hold. The vault's
+/// owner, named here by its actor id, holds no such grant and is refused as
+/// anyone is (review of #6999).
+pub(crate) fn admit_scoped_substrate_read_by(
+    vault: &Vault,
+    holder: WriteActor,
+    verb: &str,
+    read: SubstrateRead,
+) -> MemoryResult<SubstrateReach> {
+    vault
+        .substrate_read_reach(holder.entity_ref(), read)
+        .map_err(MemoryError::from)?
+        .ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                &format!(
+                    "{verb} reads for the vault owner under its proof, or for a holder of a Steward grant naming `{}`, as far as that grant reaches",
+                    read.grants().join("` or `")
+                ),
+                &[
+                    "Ask the owner for the grant; the Coach holds it by default.",
+                    "The owner reads with its own verified, unattenuated credential.",
+                ],
+            )
+        })
+}
+
+/// The refusal of a scoped substrate read's one row that lies outside the
+/// reader's reach ([`SubstrateReach::holds_row_of`]): it says nothing of
+/// what the row holds, or whether it exists.
+pub(crate) fn outside_reach(verb: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        &format!("{verb}: this row lies outside the projects the reader's grant reaches"),
+        &[
+            "A grant narrowed to some projects reads the rows each of them records; a row that records no project reads only for a grant across the whole vault.",
+        ],
+    )
 }
 
 /// Admits the caller of a read that has no owner door of its own (the agent

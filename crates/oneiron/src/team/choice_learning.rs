@@ -81,16 +81,9 @@ impl ChoiceLearning {
     /// vault's; a type row reads the vault's runs at its node. The planner
     /// learns no budget from a team run, so a budget reads none.
     pub(crate) fn learned(&self, choice: SpawnChoice, scope: &SettingScope) -> LearnedChoice {
-        let own = self.fold(choice, |receipt| match scope {
-            SettingScope::Vault => receipt.project.is_none(),
-            SettingScope::Project(project) => receipt.project == Some(*project),
-            SettingScope::Type(type_ref) => {
-                receipt.project.is_none() && receipt.type_ref.node_id == type_ref.node_id
-            }
-            SettingScope::Goal(_) => false,
-        });
+        let own = self.fold(choice, self.window, |receipt| runs_in_scope(receipt, scope));
         if own.is_empty() && *scope != SettingScope::Vault {
-            let vault = self.fold(choice, |receipt| receipt.project.is_none());
+            let vault = self.fold(choice, self.window, |receipt| receipt.project.is_none());
             if !vault.is_empty() {
                 return ranked(vault, PriorOrigin::Parent, self.window);
             }
@@ -98,12 +91,28 @@ impl ChoiceLearning {
         ranked(own, PriorOrigin::Shipped, self.window)
     }
 
-    /// The faded `(wins, losses)` under each value of `choice` over the
-    /// anchored receipts `keeps` admits, by the value's label. A team on
-    /// several models splits its run evenly among them.
+    /// What the runs of `scope` alone learned under `choice`, faded at the
+    /// window the catalog ships: never the vault's runs standing in for a
+    /// scope with none, and never a window a vault row set. A grant narrowed
+    /// to some projects reads a row's learning so (UNBUILT-08), resting on
+    /// nothing outside the row's own scope.
+    pub(crate) fn learned_within_scope(
+        &self,
+        choice: SpawnChoice,
+        scope: &SettingScope,
+    ) -> LearnedChoice {
+        let window = crate::learning::project::catalog_window();
+        let own = self.fold(choice, window, |receipt| runs_in_scope(receipt, scope));
+        ranked(own, PriorOrigin::Shipped, window)
+    }
+
+    /// The `(wins, losses)` faded at `window` under each value of `choice`
+    /// over the anchored receipts `keeps` admits, by the value's label. A
+    /// team on several models splits its run evenly among them.
     fn fold(
         &self,
         choice: SpawnChoice,
+        window: Window,
         keeps: impl Fn(&TeamReceipt) -> bool,
     ) -> BTreeMap<String, (ChoiceValue, f64, f64)> {
         let mut mass: BTreeMap<String, (ChoiceValue, f64, f64)> = BTreeMap::new();
@@ -128,7 +137,7 @@ impl ChoiceLearning {
             };
             #[allow(clippy::cast_precision_loss)]
             let weight =
-                self.window.decay(self.now.saturating_sub(outcome.at)) / values.len().max(1) as f64;
+                window.decay(self.now.saturating_sub(outcome.at)) / values.len().max(1) as f64;
             for value in values {
                 let cell = mass.entry(label(&value)).or_insert((value, 0.0, 0.0));
                 if outcome.success {
@@ -139,6 +148,19 @@ impl ChoiceLearning {
             }
         }
         mass
+    }
+}
+
+/// Whether `receipt` is a run of `scope` itself. A goal keys no team
+/// receipt; a type's runs are the vault's runs at its node.
+fn runs_in_scope(receipt: &TeamReceipt, scope: &SettingScope) -> bool {
+    match scope {
+        SettingScope::Vault => receipt.project.is_none(),
+        SettingScope::Project(project) => receipt.project == Some(*project),
+        SettingScope::Type(type_ref) => {
+            receipt.project.is_none() && receipt.type_ref.node_id == type_ref.node_id
+        }
+        SettingScope::Goal(_) => false,
     }
 }
 

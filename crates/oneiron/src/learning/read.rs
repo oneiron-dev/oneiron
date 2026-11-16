@@ -331,7 +331,7 @@ fn borrowed_read(
 
 /// The form an unregistered cell reads in: Beta for the success members, a
 /// mean for the magnitude members.
-fn default_form(cell: &LearningCell) -> super::estimate::EstimateForm {
+pub(super) fn default_form(cell: &LearningCell) -> super::estimate::EstimateForm {
     use super::cell::LearningPredicate;
     use super::estimate::EstimateForm;
     match cell.predicate {

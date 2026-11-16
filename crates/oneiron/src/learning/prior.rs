@@ -179,6 +179,29 @@ pub(super) fn stored_prior_for_cell_in_txn(
     Ok((StoredPrior::plain(prior), false))
 }
 
+/// The prior `cell` starts from before any row tunes it: for a
+/// `learning.setting` cell its key's catalog seed at the catalog's shipped
+/// weight, for every other cell the shipped default of its form. No stored
+/// prior, owner's seed, pattern line or judge conversion enters it.
+pub(crate) fn catalog_prior(cell: &LearningCell, form: EstimateForm, of: &str) -> Prior {
+    let spec = match cell.predicate {
+        LearningPredicate::Setting => cell
+            .setting_key
+            .as_deref()
+            .and_then(learning_setting::setting_spec),
+        _ => None,
+    };
+    match spec {
+        Some(spec) => Prior {
+            origin: PriorOrigin::Shipped,
+            value: point_value(form, of, spec.seed),
+            weight_runs: learning_setting::LEARNING_SHIPPED_PRIOR_RUNS.seed,
+            from: Some(format!("catalog {}", spec.key)),
+        },
+        None => Prior::shipped(form),
+    }
+}
+
 fn shipped_setting_prior(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

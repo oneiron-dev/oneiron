@@ -141,11 +141,12 @@ fn the_dials_read_needs_engine_controls() {
     dials(coach, EdgeActorClass::System).expect("the narrowed Coach still reads the dials");
 }
 
-/// A grant narrowed to part of the vault reads none of these vault-wide
-/// rows (review of #6996): no reader here filters by project, so a holder
-/// whose grant names one project is refused, another project's learning
-/// cell included. The same holder reads once its grant reaches the whole
-/// vault.
+/// A grant narrowed to part of the vault reads none of the vault-wide
+/// evidence rows (review of #6996): no reader of them filters by project
+/// yet, so a holder whose grant names one project is refused them. It reads
+/// the dials inside its project, and none here (UNBUILT-08), and is refused
+/// another project's learning cell. The same holder reads everything once
+/// its grant reaches the whole vault.
 #[test]
 fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -153,7 +154,12 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     let agent = define_agent(&vault).expect("an agent");
     let (own_project, other_project) = (EntityId::now(), EntityId::now());
     let other_cell = json!({
-        "cell": { "subject": agent.to_hex(), "predicate": "learning.reliability" },
+        "cell": {
+            "subject": agent.to_hex(),
+            "predicate": "learning.edit_cost",
+            "executor": "coach-grant-reads",
+            "consent_scope": "coach-grant-reads",
+        },
         "project_ref": other_project.to_hex(),
     });
     let learning = || {
@@ -184,7 +190,16 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
         );
     }
     assert_refused(learning(), "vault.learning.read");
-    assert_refused(dials(), "vault.settings.learning");
+    let narrowed =
+        dials().expect("a narrowed engine.controls holder reads the dials inside its project");
+    assert_eq!(
+        (
+            narrowed["rows"].as_array().map(Vec::len),
+            narrowed["catalog"].as_array().map(Vec::len)
+        ),
+        (Some(0), Some(0)),
+        "vault.settings.learning: no row inside the project, and no catalog line: {narrowed}"
+    );
 
     stand_steward_grant(&vault, agent, &read_and_engine_controls())
         .expect("a grant across the whole vault");
