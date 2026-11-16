@@ -221,6 +221,7 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     // The view never carries the room's shared pins: a reader gets them only
     // through the room's admitted projection (ROOM-SCOPED-PINS).
     room.pins.clear();
+    room.unpinned.clear();
     Ok(room)
 }
 /// `room`'s access for `actor` on its roster, in any room: a home room's

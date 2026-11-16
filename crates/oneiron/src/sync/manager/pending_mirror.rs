@@ -106,6 +106,33 @@ impl Vault {
         self.put_pending_mirrors(wtxn, &owed)
     }
 
+    /// Leaves, in `wtxn`, a pending-mirror marker for the row `id`, whose
+    /// carried copy `blob` a sync import merged with the row held here
+    /// (ROOM-PINS-LWW-MERGE): the row lands as the merge, which the carrier
+    /// lacks, so the window that holds the row owes the merged carrier. The
+    /// live mirror writes it over the carrier the import brought, as it
+    /// writes a local edit; a sync import's other rows leave no marker.
+    pub(crate) fn mark_merged_carrier_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+        blob: &[u8],
+    ) -> Result<()> {
+        if !rides_window(blob) || self.store.off_record_sessions.contains_entity(id)? {
+            return Ok(());
+        }
+        let Ok(window) = residence_window_for_blob(blob) else {
+            return Ok(());
+        };
+        self.put_pending_mirrors(
+            wtxn,
+            &[OwedKey {
+                window: window.as_str().to_owned(),
+                carrier: id.to_hex(),
+            }],
+        )
+    }
+
     /// Leaves, in `wtxn`, a pending-mirror marker for each edge in `removed`
     /// the transaction's local write deleted (FIX 9599): the window that held
     /// the edge owes the removal of its key. A `blocks` edge never rode one.

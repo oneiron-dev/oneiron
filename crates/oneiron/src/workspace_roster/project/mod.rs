@@ -601,6 +601,7 @@ pub(crate) fn seeded_root_home_room(root: EntityId) -> Result<Option<(EntityId, 
         claims_scope_ref: root.to_hex(),
         origin: None,
         pins: Vec::new(),
+        unpinned: Vec::new(),
         pin_policy: Default::default(),
     };
     Ok(Some((home_room_id(root)?, encode(&room)?)))
