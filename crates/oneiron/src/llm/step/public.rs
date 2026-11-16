@@ -38,6 +38,9 @@ use crate::{EdgeActorClass, Vault, WriteActor};
 pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
+mod parked;
+pub use parked::{ParkedStep, parked_as_owner};
+
 pub(crate) use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
 pub use crate::store::model_step_submission::{
     ModelStepFailure, ModelStepFailureClass, ModelStepResult, ModelStepRetryPolicy,
