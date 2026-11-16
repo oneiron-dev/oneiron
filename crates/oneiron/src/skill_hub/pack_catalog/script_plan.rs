@@ -1,6 +1,7 @@
 //! One qualified execution shape for both pack admission and foreign launch.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_sandbox_contract::{OutputReservation, ProgramBudget, WorkspacePath, WorkspaceShape};
 use serde_json::Value;
 
@@ -150,7 +151,7 @@ impl ScriptOutputContract {
         };
         let edit = &file.edit;
         if file.path.as_str() != self.reservation.path().as_str()
-            || file.base_content_hash != *blake3::hash(b"").as_bytes()
+            || file.base_content_hash != *ContentHash::of(b"").as_bytes()
             || edit.path != self.reservation.path().relative()
             || edit.start != 0
             || edit.end != 0

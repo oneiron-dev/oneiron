@@ -30,6 +30,7 @@ use crate::scope_summary::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
@@ -649,7 +650,7 @@ fn source_pin(
             vault
                 .store
                 .port_entity_raw(txn, &id)?
-                .map(|raw| *blake3::hash(&raw).as_bytes())
+                .map(|raw| *ContentHash::of(&raw).as_bytes())
         } else {
             None
         },

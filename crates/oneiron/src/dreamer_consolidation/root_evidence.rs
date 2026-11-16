@@ -16,6 +16,7 @@ use crate::provenance::EdgeRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeKind, EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 const ROOTS: SideTable<EntityId, Root, Named> =
@@ -134,7 +135,7 @@ fn ancestors(
         if id != source {
             found.push(ConsolidationAncestor {
                 source_ref: id.to_hex(),
-                source_revision: *blake3::hash(&body).as_bytes(),
+                source_revision: *ContentHash::of(&body).as_bytes(),
                 trust_class: trust,
             });
         }
@@ -278,7 +279,7 @@ fn pin_reference(
         .collect();
     Ok(ConsolidationRootEvidence {
         reference: input.clone(),
-        source_revision: *blake3::hash(&body).as_bytes(),
+        source_revision: *ContentHash::of(&body).as_bytes(),
         content_hash: verified.content_hash,
         trust_class: verified.trust_class,
         corroborates,
