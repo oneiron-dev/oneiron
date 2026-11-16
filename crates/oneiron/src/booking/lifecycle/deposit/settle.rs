@@ -334,12 +334,14 @@ pub struct BookingDepositSettlementDrain {
     pub waiting: u32,
     /// Rows that owed nothing any more.
     pub settled_nothing: u32,
-    /// Rows whose provider call failed and runs again promptly.
+    /// Rows whose provider call, or whose store write, failed and runs again
+    /// promptly.
     pub retrying: u32,
     /// Rows whose move the provider holds pending, asked again later.
     pub pending: u32,
-    /// Rows whose move the provider refused, or whose prompt tries are spent:
-    /// the deposit still owes the move, and the row asks again later.
+    /// Rows whose move the provider refused, or whose prompt tries are spent
+    /// on a failing provider call or store write: the deposit still owes the
+    /// move, and the row asks again later.
     pub still_owed: u32,
     /// Rows that failed for good: a row whose payload names no deposit, so
     /// no move is owed through it.
