@@ -13,8 +13,9 @@
 //! candidate with no vector (a provisional entity has none) keeps the list
 //! in the key's order. The tagger may save a turn before the embed worker
 //! reaches it, so the re-check ranks the candidates again when it builds
-//! the ask. No step writes a person's vector yet, so on a vault today the
-//! rung keeps every list as it is (FIX [LINKER-PERSON-VECTOR-PRODUCER]).
+//! the ask. A person's vector is the embed worker's vector of the person's
+//! public `about` line (embed/person.rs), so a person with no public line
+//! has none and the list keeps the key's order.
 
 use crate::error::Result;
 use crate::learning_setting::{SettingSpec, setting_value_in_txn};
