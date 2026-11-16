@@ -162,15 +162,12 @@ impl RecordingJsHost<'_, '_> {
 
     /// `summarize(r, {group?, ...})`: every member resolved in this run and
     /// read-checked as a read of it is, in order, then the call dispatched
-    /// with them bound; the run's record keeps the guest's call. A member no
-    /// read shows answers the reply its read would, so a withheld body is
-    /// never summarized; a tainted member its redacted view shows is bound,
-    /// summarized from that view, and the summary inherits its marks
-    /// (ARCH-0069 `#result-bodies`). Any other refusal answers its own
-    /// reason. A reader child's call goes straight to its refusal. Each
-    /// member's origins are this run's ledger as its read left it, frozen
-    /// then: a member another run holds noted its own frozen origins there
-    /// in that read (FIX 7084).
+    /// with them bound; the run's record keeps the guest's call. A tainted
+    /// member answers the reply its read would, so a withheld body is never
+    /// summarized; any other refusal answers its own reason. A reader
+    /// child's call goes straight to its refusal. Each member's origins are
+    /// this run's ledger as its read left it, frozen then: a member another
+    /// run holds noted its own frozen origins there in that read (FIX 7084).
     pub(super) fn summarize(
         &mut self,
         seq: u64,
@@ -198,6 +195,10 @@ impl RecordingJsHost<'_, '_> {
                         ));
                     }
                 };
+                // A tainted member its redacted view shows is bound and
+                // summarized from that view, and the summary inherits its
+                // marks (ARCH-0069 `#result-bodies`); one no read shows is
+                // never summarized.
                 if read.withheld_whole() {
                     return Ok((
                         SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
