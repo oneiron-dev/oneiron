@@ -541,7 +541,7 @@ fn live_passports_for_event_in_txn(
             // An unadmitted revision wins over an admitted head; within one
             // kind, the later claim id, so scan order never picks.
             Some(kept) => {
-                if (!admitted, claim_id.as_bytes()) > (!kept.2, kept.0.as_bytes()) {
+                if (admitted, claim_id.as_bytes()) > (kept.2, kept.0.as_bytes()) {
                     *kept = (claim_id, value, admitted);
                 }
             }
