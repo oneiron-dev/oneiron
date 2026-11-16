@@ -16,7 +16,7 @@ use oneiron::secret_custody::{
 };
 use oneiron::secret_lease::SecretTaintRef;
 use oneiron::test_doors::code_run_result_body as doors;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_store::file_secret_marks::FILLER;
 use serde_json::{Value, json};
 
@@ -402,6 +402,77 @@ fn a_lease_tainted_log_blanks_the_known_value() {
         fixture.body,
     );
     assert!(fixture.mark().is_none());
+}
+
+#[test]
+fn a_lease_tainted_log_is_withheld_whole_once_its_custody_record_is_erased() {
+    // FIX RESULT-VIEW-ERASED-CUSTODY-VALUE-SHOWN: the view blanks the values
+    // the known-value index holds, and an erase of the custody record takes
+    // its value's history (KS-3), so no view can blank it any more.
+    let head = clean_lines();
+    let body = format!("{head}{CUSTODY_VALUE}\n{}", clean_lines()).into_bytes();
+    let secret = head.len()..head.len() + CUSTODY_VALUE.len();
+    let fixture = ResultBodyFixture::new(body, secret);
+    assert!(fixture.mark().is_none(), "the token matches no text rule");
+    let registered = fixture
+        .vault
+        .register_secret_as_owner(
+            &fixture.owner,
+            &OwnerSecretRegistration {
+                name: CUSTODY_NAME,
+                class: CustodyClass::CustodyPortable,
+                device_only: true,
+                rung: CustodyTier::T1Leased,
+                bindings: vec![RequestedBinding {
+                    effector: "deploy".to_owned(),
+                    tier_ceiling: None,
+                    scopes: vec!["read".to_owned()],
+                }],
+                manifest: None,
+                value: CUSTODY_VALUE.as_bytes(),
+            },
+            fixture.vault.now_recorded_at() / 1_000,
+        )
+        .expect("register custody only after the plaintext body was stored");
+    doors::mark_result_body_with_lease_refs(
+        &fixture.vault,
+        fixture.run_id,
+        fixture.occurrence,
+        &[SecretTaintRef {
+            secret_ref: registered.name.clone(),
+            generation: registered.rotation_generation,
+        }],
+    )
+    .expect("attach the registered secret's lease taint");
+    let len = fixture.body.len();
+    assert_redacted_slice(&fixture.slice(0, len), 0, len, &fixture.masked());
+
+    let erased = fixture
+        .vault
+        .delete_entity_with_reason(&registered.secret_id, DeleteReason::UserHardDelete)
+        .expect("erase the custody record");
+    assert!(erased.existed, "the custody record existed");
+
+    let output = fixture.slice(0, len);
+    assert!(
+        !output.to_string().contains(CUSTODY_VALUE),
+        "an erased secret's value must not be shown: {output}"
+    );
+    assert_eq!(output["withheld"], "tainted_stale", "{output}");
+    assert!(output.get("text").is_none(), "{output}");
+    assert!(output.get("redacted").is_none(), "{output}");
+    let card = fixture.raw(&fixture.reference(), None, json!({}));
+    assert!(!card.to_string().contains(CUSTODY_VALUE), "{card}");
+    assert!(card.get("redacted").is_none(), "{card}");
+    let preflight = fixture.preflight();
+    assert_eq!(preflight["can"], false, "{preflight}");
+    assert_eq!(preflight["reason"], "tainted", "{preflight}");
+    assert!(preflight.get("redacted").is_none(), "{preflight}");
+    assert_eq!(
+        doors::stored_result_bytes(&fixture.vault, fixture.run_id, fixture.occurrence)
+            .expect("the erase did not rewrite the stored bytes"),
+        fixture.body,
+    );
 }
 
 #[test]
