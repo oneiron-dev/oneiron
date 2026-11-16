@@ -133,11 +133,14 @@ impl SyncServer {
     /// window's update passed, is rechecked in the committing transaction
     /// (FIX 5999); a full-window socket's update has none, as before.
     /// `landings`, the new bytes its translated copy edits land, carry their
-    /// mark in the same transaction (FIX 10732).
+    /// mark in the same transaction (FIX 10732). `inserts`, the entity ids
+    /// its history inserts as admission read them, owe the erasure sweep a
+    /// compaction in it when one names a row hard-deleted here (census L6-05).
     pub(crate) fn persist_imported_update(
         &self,
         key: &WindowKey,
         update_bytes: &[u8],
+        inserts: &oneiron::sync::window::UpdateInserts,
         landings: &oneiron::sync::selector::RepoSyncLandings,
         auth: Option<&crate::auth::CoreAuth>,
     ) -> Result<u64, oneiron::Error> {
@@ -145,6 +148,7 @@ impl SyncServer {
             &self.vault,
             key,
             update_bytes,
+            inserts,
             landings,
             |txn| auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn)),
         )
