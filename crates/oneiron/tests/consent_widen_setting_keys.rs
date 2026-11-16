@@ -20,7 +20,7 @@ use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwn
 use oneiron::counterparty_contact::CounterpartyContactRecord;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -80,16 +80,7 @@ impl Fixture {
     fn set_as_owner(&self, key: &str, value: Value) -> oneiron::Result<SetSettingOutcome> {
         self.vault.set_setting(
             SettingCaller::Owner(&self.owner_proof),
-            SetSetting {
-                key: key.to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(value),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
+            SetSetting::vault_value(key, value),
         )
     }
 
