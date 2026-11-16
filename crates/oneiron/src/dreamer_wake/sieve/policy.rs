@@ -2,6 +2,7 @@
 //! of span is, how sure each rule is, and where the uncertain band lies.
 //! Every number is data the owner can change; the defaults ship as JSON.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::rules::RuleClass;
@@ -82,12 +83,12 @@ impl SievePolicy {
     }
 
     /// BLAKE3 of the row's canonical JSON: which policy scored a span.
+    /// Stored span policy digests keep their bytes (K, PLAN-UC-04 stage 7).
     pub(super) fn digest(&self) -> Result<[u8; 32]> {
         let json = serde_json::to_vec(self).map_err(|_| invalid())?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron:dreamer-sieve:policy:v1");
-        hash.update(&json);
-        Ok(*hash.finalize().as_bytes())
+        let mut hash = LegacyDigest::new(purposes::dreamer_wake::POLICY_DIGEST);
+        hash.raw(&json);
+        Ok(hash.finish())
     }
 }
 
@@ -192,3 +193,8 @@ impl Vault {
 
 #[doc(hidden)]
 pub use oneiron_records::dreamer_wake::sieve::policy::SievePassBudgets;
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn policy_digest_for_test(policy: &SievePolicy) -> Option<[u8; 32]> {
+    policy.digest().ok()
+}

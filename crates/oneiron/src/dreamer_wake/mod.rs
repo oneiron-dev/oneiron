@@ -236,3 +236,10 @@ pub(crate) use tests::block_on_ready;
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::follower::dreamer_follower_result_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program::response_digest_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::recipe_wake::read_phase_trigger_key_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::scheduling::turn_projection_key_for_test;
