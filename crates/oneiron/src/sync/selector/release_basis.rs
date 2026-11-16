@@ -11,7 +11,9 @@
 //!   ceilings), from the snapshot-bound view, so a read takes no writer;
 //! - the reach the grant's member reads relationship labels with (FIX
 //!   SELECTOR-RELATIONSHIP-LABELS): its live access grants and relationship
-//!   memberships, or none for an Owner's member, who reads every row. An
+//!   memberships, or none for an Owner's member, who reads every row, and
+//!   whether the member is homed in this vault, which decides whether it
+//!   reads a stamped claim (RULING SECREAD-HOME-SELECTOR-EXPORT = A). An
 //!   access grant is stored outside the authority log, so the fold does not
 //!   show its revocation or expiry;
 //! - for a forwarded search, the standing of the caller it reads for
@@ -160,6 +162,8 @@ struct MadeUnder {
     authority: AuthorityView,
     /// `None` for an Owner's member, which reads every row.
     member: Option<AccessContextSnapshot>,
+    /// Whether the member is homed in this vault.
+    homed_here: bool,
 }
 
 impl MadeUnder {
@@ -178,11 +182,13 @@ impl MadeUnder {
         if !decoded.confers_at(now) {
             return None;
         }
+        let (member, homed_here) = super::authorize::member_access(vault, &txn, &decoded)
+            .ok()?
+            .release_reach();
         Some(Self {
             authority: vault.authority_view_readonly_in_txn(&txn).ok()?,
-            member: super::authorize::member_label_access(vault, &txn, &decoded)
-                .ok()?
-                .map(|access| access.snapshot().clone()),
+            member,
+            homed_here,
             grant,
         })
     }
@@ -190,6 +196,7 @@ impl MadeUnder {
     fn same(&self, other: &Self) -> bool {
         self.grant == other.grant
             && self.authority.same_image(&other.authority)
+            && self.homed_here == other.homed_here
             && match (&self.member, &other.member) {
                 (None, None) => true,
                 (Some(member), Some(other)) => member.same_reach(other),
