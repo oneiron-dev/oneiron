@@ -119,10 +119,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/ingest/mod.rs` | src | s | 1 mod · 2 re-export | — | — |
 | `src/calendar/invite/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/calendar/invite/payload.rs` | src | s | 1 enum · 2 fn | CalendarInviteMethod | Moved from `crates/oneiron/src/calendar/invite/payload.rs` (lib split R2: record types below the lib) |
-| `src/calendar/mod.rs` | src | s | 5 mod · 39 re-export | — | — |
+| `src/calendar/mod.rs` | src | s | 5 mod · 38 re-export | — | — |
 | `src/calendar/prep/home_node.rs` | src | s | 1 struct · 1 fn | PrepHomeNodeJob | Moved from `crates/oneiron/src/calendar/prep/home_node.rs` (lib split R2: record types below the lib) |
-| `src/calendar/prep/mod.rs` | src | s | 2 mod · 7 re-export | — | — |
-| `src/calendar/prep/wake.rs` | src | s | 1 struct · 1 const | PrepWake | Moved from `crates/oneiron/src/calendar/prep/wake.rs` (lib split R2: record types below the lib) |
+| `src/calendar/prep/mod.rs` | src | s | 2 mod · 6 re-export | — | — |
+| `src/calendar/prep/wake.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/calendar/prep/wake.rs` (lib split R2: record types below the lib) |
 | `src/calendar/transcript.rs` | src | s | 2 struct · 2 re-export | ParsedTranscript, ParsedTranscriptTurn | Moved from `crates/oneiron/src/calendar/transcript.rs` (lib split R2: record types below the lib) |
 | `src/campaign/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/campaign/presets/defaults.rs` | src | s | 1 struct | CampaignPresetDefaults | Moved from `crates/oneiron/src/campaign/presets/defaults.rs` (lib split R1: record types below the lib) |
@@ -765,7 +765,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/legal_hold/use_limit.rs` | src | s | 1 struct | CooperativeRestriction | Moved from `crates/oneiron/src/store/legal_hold/use_limit.rs` (lib split R2: record types below the lib) |
 | `src/store/mod.rs` | src | s | 28 mod · 79 re-export · 2 crate-vis | — | — |
 | `src/store/open_gates/mod.rs` | src | s | 1 mod · 6 re-export | — | — |
-| `src/store/open_gates/open_version_keys.rs` | src | s | 1 struct · 5 const | DbManifestEntry | Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the… |
+| `src/store/open_gates/open_version_keys.rs` | src | m | 1 struct · 5 const | DbManifestEntry | Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the… |
 | `src/store/pack_predicate_rewrites.rs` | src | s | 1 struct · 1 enum | PackMigrationMap, PackPredicateRewrite | Moved from `crates/oneiron/src/store/pack_predicate_rewrites.rs` (lib split R2: record types below the lib) |
 | `src/store/pending_gate_consent/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/store/pending_gate_consent/records.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | PendingGateConsentGroup, PendingGateConsentRecord | Moved from `crates/oneiron/src/store/pending_gate_consent/records.rs` (lib split R2: record types below the… |
