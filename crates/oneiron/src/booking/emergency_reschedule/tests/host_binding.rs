@@ -153,6 +153,7 @@ fn confirm_with_real_solver_in_zone(
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: None,
+            cap_override: None,
         }),
         slot,
     );
@@ -399,6 +400,7 @@ fn confirmation_refuses_missing_or_competing_host_bindings_without_guessing_conf
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             slot,
         );
