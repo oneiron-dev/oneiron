@@ -7586,7 +7586,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 2
      }
     },
@@ -9330,7 +9330,7 @@
      "path": "src/blob_artifact/body.rs",
      "purpose": "Core half of `blob_artifact::body`: its store-layer items live in `oneiron_store::blob_artifact::body` and…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "re-export": 1,
       "struct": 1
@@ -12306,7 +12306,7 @@
      "path": "src/calendar/ingest/admission.rs",
      "purpose": "Diff-to-claim admission path and its test module",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 2
      }
     },
@@ -12328,7 +12328,7 @@
      "purpose": "The queued continuation of one event's property admissions (FIX 11997)",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "re-export": 1
      }
@@ -12393,6 +12393,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CalendarIcsFeedConsent"
+     ],
+     "path": "src/calendar/ingest/consent.rs",
+     "purpose": "CAL-02 standing import consent for an installed ICS feed (ruling CAL-02-FEED-CONSENT = A, Engine 12:04 Sun…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -12404,19 +12417,22 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarIcsFeedConfigureRequest",
       "CalendarIcsFeedRegistration",
+      "CalendarIcsFeedReviewDecision",
+      "CalendarIcsFeedReviewRequest",
       "CalendarIcsFeedStatus"
      ],
      "path": "src/calendar/ingest/feed_door.rs",
      "purpose": "Owner-installed ICS feeds and public observations of completed polls",
      "surface": {
-      "fn": 7,
-      "re-export": 1,
-      "struct": 3
+      "enum": 1,
+      "fn": 10,
+      "re-export": 2,
+      "struct": 4
      }
     },
     {
@@ -12433,7 +12449,7 @@
      "path": "src/calendar/ingest/fetch.rs",
      "purpose": "Custody-door HTTP egress, raw archive, and registry normalize",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "struct": 3,
@@ -12465,7 +12481,7 @@
      "purpose": "ICS feed poll queue, cursor store, and poll runner",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "re-export": 1,
@@ -18951,7 +18967,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 62,
+      "crate-vis": 63,
       "mod": 8,
       "re-export": 38
      }
@@ -19811,7 +19827,7 @@
      "path": "src/code_run/storage/folds.rs",
      "purpose": "One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -19831,7 +19847,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 44,
       "re-export": 6
      }
     },
@@ -20467,7 +20483,7 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 10,
       "re-export": 1,
       "struct": 2
@@ -29021,10 +29037,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ByoEndpointBackendFactory",
+      "ByoEndpointBinding",
       "ByoaCliExecutor",
       "ByoaDispatcher",
       "ByoaExecutionFence",
@@ -29035,7 +29052,7 @@
      "surface": {
       "crate-vis": 6,
       "fn": 10,
-      "struct": 2,
+      "struct": 3,
       "trait": 3
      }
     },
@@ -33728,6 +33745,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/idle_return_tables.rs",
+     "purpose": "The idle-fold return tables, rebuilt weekly (L2-37 PR-1; ARCH-0067 #idle-fold-policy: \"E+'s tables are…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/judge_label_rechecks.rs",
      "purpose": "The judge labels' re-check after a rubric edit, run (ARCH-0042 \"A human edits the rubric at any time",
      "surface": {
@@ -33755,7 +33783,7 @@
       "crate-vis": 20,
       "fn": 1,
       "mod": 25,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -38052,7 +38080,7 @@
      "path": "src/engine_executor/compaction_host.rs",
      "purpose": "The executor's side of the compaction host: landing a finished pass, the token feed, and sealing a window…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -38143,7 +38171,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -38299,7 +38327,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 4,
       "re-export": 11
      }
@@ -45055,7 +45083,7 @@
      "path": "src/human_task/mod.rs",
      "purpose": "Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "re-export": 4
      }
@@ -45077,6 +45105,16 @@
       "enum": 3,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/human_task/setting_keys.rs",
+     "purpose": "The human-task follow-up ladder's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B): the three…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -45554,6 +45592,59 @@
       "crate-vis": 77,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idle_fold/e_plus.rs",
+     "purpose": "E+'s call between Fold and Expire at a parked run's cache horizon (L2-37 PR-2; RESEARCH-1333, the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CachedPrefixHorizon"
+     ],
+     "path": "src/idle_fold/horizon.rs",
+     "purpose": "The idle call at a parked run's cache horizon (L2-37 PR-2; ARCH-0067 #idle-fold-policy)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idle_fold/mod.rs",
+     "purpose": "Wall-clock wait records for the idle fold call (L2-37 PR-1; ARCH-0067 #idle-fold-policy)",
+     "surface": {
+      "crate-vis": 17,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idle_fold/returns.rs",
+     "purpose": "The weekly return-table pass (L2-37 PR-1; ARCH-0067 #idle-fold-policy: \"E+'s tables are rebuilt weekly\")",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idle_fold/tables.rs",
+     "purpose": "The side tables `idle_fold` keeps (L2-37): one row per parked canonical wait, the return cells the Coach's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -47627,7 +47718,7 @@
      "path": "src/lens/mediation/hosted_render.rs",
      "purpose": "Host custody of one generated-lens render (OF-181): the frame that minted a card's backing refs, beside the…",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "re-export": 1,
       "struct": 1
      }
@@ -47664,7 +47755,7 @@
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
       "crate-vis": 6,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -47992,7 +48083,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 219,
+      "mod": 220,
       "re-export": 106
      }
     },
@@ -71518,7 +71609,7 @@
      "path": "src/secret_rotation.rs",
      "purpose": "Core half of `secret_rotation`: its store-layer items live in `oneiron_store::secret_rotation` and are…",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 7,
       "enum": 3,
       "fn": 10,
@@ -80432,7 +80523,7 @@
      "path": "src/store/person_party_keys.rs",
      "purpose": "The PERSON party-key index (L6-22, ARCH-0057 H174): each PERSON whose synced body carries a `party_key`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -90021,7 +90112,7 @@
      "path": "src/test_doors/do_not_contact_subject_reads.rs",
      "purpose": "Door for `tests/do_not_contact_subject_reads.rs` (L6-22, ARCH-0057 H174 party-key index): the PERSONs the…",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -90248,6 +90339,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/host_taint_replica.rs",
+     "purpose": "The own-device replay of chosen rows from one vault into another, for the test that a host's taint mark…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/house_link.rs",
      "purpose": "The house link's bind-interval read (HOUSE-BIND = A, S3) for the test that reads it on both sides of an…",
      "surface": {
@@ -90272,6 +90373,23 @@
      "purpose": "The nightly identity re-check, one page, run from a test, and the open identity asks after it (census item…",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FoldLedgerView",
+      "IdleCallView",
+      "IdleReturnCellView",
+      "IdleWaitView"
+     ],
+     "path": "src/test_doors/idle_fold.rs",
+     "purpose": "Doors for `tests/idle_wait_returns.rs` (L2-37 PR-1): the wall-clock wait rows, the weekly return-table pass…",
+     "surface": {
+      "enum": 1,
+      "fn": 10,
+      "struct": 3
      }
     },
     {
@@ -90485,7 +90603,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 136,
+      "mod": 138,
       "re-export": 1
      }
     },
@@ -99123,6 +99241,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/calendar_ics_feed_consent.rs",
+     "purpose": "CAL-02-FEED-CONSENT = A (Engine ruling 12:04, Sun 15 Nov): one import consent per installed ICS feed",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100435,6 +100561,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_round_trip_state.rs",
+     "purpose": "GENUI-STATE-PERSIST at the event gate: a pick in a composed card is card state only, and it reaches the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -100590,6 +100724,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/host_taint_mark_replicates.rs",
+     "purpose": "Census L6-32 (ARCH-0069 `#exhaust-taint-open`; Engine RULING L6-32-CARRIER = A): a host's taint mark rides…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/house_bind_deputy.rs",
      "purpose": "HOUSE-ROLE-DEPUTY-AFTER-7071 = A (the Engine, 12 Nov 09:36), on DEPUTY = A (the owner, 10 Nov 07:45) and…",
      "surface": {}
@@ -100648,6 +100790,22 @@
      "notable": [],
      "path": "tests/identity_distinct_source_label.rs",
      "purpose": "The distinct fact an identity answer derives from a relationship-scoped MESSAGE stays inside that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/idle_fold_horizon.rs",
+     "purpose": "L2-37 PR-2 (ARCH-0067 #idle-fold-policy): a minute before the provider lets a parked run's cached prompt…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/idle_wait_returns.rs",
+     "purpose": "L2-37 PR-1 (ARCH-0067 #idle-fold-policy): every parked canonical wait records its session kind, its wait…",
      "surface": {}
     },
     {
@@ -101834,6 +101992,14 @@
      "notable": [],
      "path": "tests/pack_keys_booking.rs",
      "purpose": "PACK-SETTINGS-ALL W1: each of four owner choices defaults to today's behaviour, and an owner value changes it",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_human_task.rs",
+     "purpose": "PACK-SETTINGS-ALL = B: the human-task follow-up ladder's three intervals are pack Setting keys. - With no…",
      "surface": {}
     },
     {
@@ -103711,7 +103877,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104110,7 +104276,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 226,
+     "files": 227,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104320,7 +104486,7 @@
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
     },
     "human_task": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -104353,6 +104519,13 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
+    },
+    "idle_fold": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Wall-clock wait records for the idle fold call (L2-37 PR-1; ARCH-0067 #idle-fold-policy)"
     },
     "inbox": {
      "files": 16,
@@ -105069,7 +105242,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 139,
+     "files": 141,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105244,10 +105417,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 267,
+   "over_bar": 268,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7647,
-   "test_files": 1401
+   "source_files": 7657,
+   "test_files": 1407
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -105759,7 +105932,7 @@
      "purpose": "FIX 1380 / FIX 3899: the comm reach, whom an agent may address",
      "surface": {
       "enum": 1,
-      "fn": 3
+      "fn": 2
      }
     },
     {
@@ -106277,7 +106450,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 4,
-      "fn": 11,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -106397,7 +106570,7 @@
      "surface": {
       "const": 5,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -106538,7 +106711,7 @@
      "purpose": "ChannelIdentity addressability shapes with wire serde",
      "surface": {
       "enum": 2,
-      "fn": 5
+      "fn": 4
      }
     },
     {
@@ -106554,7 +106727,7 @@
      "surface": {
       "const": 3,
       "enum": 3,
-      "fn": 7
+      "fn": 4
      }
     },
     {
@@ -106683,7 +106856,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 13,
+      "fn": 12,
       "struct": 2,
       "trait": 1
      }
@@ -106769,7 +106942,7 @@
      "purpose": "The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body…",
      "surface": {
       "enum": 2,
-      "fn": 6,
+      "fn": 5,
       "struct": 1,
       "type": 1
      }
@@ -106780,6 +106953,22 @@
      "notable": [],
      "path": "tests/act_rule.rs",
      "purpose": "The authority rule's table (`oneiron_authority::authority::Permitted`): what each reading admits, the lesser…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_channel_register_names.rs",
+     "purpose": "The names of 7 name lists in `oneiron-authority`, one line per row, generated from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_register_names.rs",
+     "purpose": "The names of 5 name lists in `oneiron-authority`, one line per row, generated from…",
      "surface": {}
     },
     {
@@ -106867,7 +107056,7 @@
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
    "source_files": 71,
-   "test_files": 3
+   "test_files": 5
   },
   "oneiron-base": {
    "files": [
@@ -106925,7 +107114,7 @@
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 7,
+      "fn": 6,
       "mod": 2,
       "re-export": 1,
       "struct": 4
@@ -107085,6 +107274,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FollowupTimings",
       "HumanFollowupDispatch",
       "HumanFollowupStage",
       "HumanResponseSignal",
@@ -107096,10 +107286,10 @@
      "path": "src/human_task_followup.rs",
      "purpose": "Human TASK follow-up shared types, stage machine and timing bounds",
      "surface": {
-      "const": 10,
+      "const": 11,
       "enum": 2,
       "fn": 3,
-      "struct": 5,
+      "struct": 6,
       "type": 1
      }
     },
@@ -107122,7 +107312,7 @@
      "surface": {
       "const": 1,
       "enum": 4,
-      "fn": 20,
+      "fn": 18,
       "struct": 5
      }
     },
@@ -107385,6 +107575,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/base_register_names.rs",
+     "purpose": "The names of 3 name lists in `oneiron-base`, one line per row, generated from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/request_limit_rules.rs",
      "purpose": "The five page-limit rules (UC-13 PR 3): each at an absent ask, 0, 1, the default, the maximum and the…",
      "surface": {}
@@ -107591,7 +107789,7 @@
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
    "source_files": 36,
-   "test_files": 2
+   "test_files": 3
   },
   "oneiron-bench": {
    "files": [
@@ -111924,7 +112122,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 6,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -112055,7 +112253,7 @@
      "purpose": "Moved from `crates/oneiron/src/gate/code_consent_settlement.rs` (core split slice 2: consent state below core)",
      "surface": {
       "enum": 2,
-      "fn": 3,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -112183,7 +112381,7 @@
      "purpose": "Moved from `crates/oneiron/src/verbs/voice_records/consent.rs` (core split slice 2: consent state below core)",
      "surface": {
       "enum": 2,
-      "fn": 3
+      "fn": 2
      }
     },
     {
@@ -112217,6 +112415,14 @@
       "enum": 1,
       "struct": 9
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/consent_state_register_names.rs",
+     "purpose": "The names of 4 name lists in `oneiron-consent-state`, one line per row, generated from…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -112280,7 +112486,7 @@
    "over_bar": 0,
    "purpose": "Consent state below core (core split slice 2): the consent grant, marker, bypass, effect and tool-scope…",
    "source_files": 29,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-container": {
    "files": [
@@ -112958,7 +113164,7 @@
      "purpose": "What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and…",
      "surface": {
       "enum": 2,
-      "fn": 8,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -112988,7 +113194,7 @@
      "purpose": "The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle…",
      "surface": {
       "enum": 3,
-      "fn": 7
+      "fn": 5
      }
     },
     {
@@ -113235,7 +113441,6 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 1,
       "struct": 2
      }
     },
@@ -113785,7 +113990,7 @@
      "purpose": "ARCH-0069 S1 custody classes and tiers",
      "surface": {
       "enum": 2,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -113854,7 +114059,7 @@
      "surface": {
       "const": 1,
       "enum": 6,
-      "fn": 8,
+      "fn": 7,
       "struct": 6
      }
     },
@@ -113883,6 +114088,14 @@
       "fn": 7,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/contracts_register_names.rs",
+     "purpose": "The names of 8 name lists in `oneiron-contracts`, one line per row, generated from…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -114158,7 +114371,7 @@
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 70,
-   "test_files": 7
+   "test_files": 8
   },
   "oneiron-crypto": {
    "files": [
@@ -114709,7 +114922,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DeliveryWindowApnsInterruptionLevel",
@@ -114727,7 +114940,7 @@
      "surface": {
       "const": 18,
       "enum": 7,
-      "fn": 15,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -114740,13 +114953,21 @@
      "surface": {
       "mod": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/delivery_vocabulary_register_names.rs",
+     "purpose": "The names of 2 name lists in `oneiron-delivery-vocabulary`, one line per row, generated from…",
+     "surface": {}
     }
    ],
    "modules": {
     "delivery_window": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "The delivery-window modules moved out of `oneiron::delivery_window`"
     }
@@ -114754,7 +114975,7 @@
    "over_bar": 0,
    "purpose": "Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and…",
    "source_files": 4,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-derive": {
    "files": [
@@ -116223,7 +116444,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/oracle_run/spec.rs",
@@ -117006,7 +117227,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 28,
+      "fn": 27,
       "struct": 4,
       "trait": 2
      }
@@ -117493,6 +117714,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/docedit_register_names.rs",
+     "purpose": "The names of 2 name lists in `oneiron-docedit`, one line per row, generated from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/identity.rs",
      "purpose": "—",
      "surface": {}
@@ -117687,7 +117916,7 @@
    "over_bar": 2,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 194,
-   "test_files": 16
+   "test_files": 17
   },
   "oneiron-dreamer": {
    "files": [
@@ -118651,6 +118880,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/policy_model.rs",
+     "purpose": "Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/restore.rs",
      "purpose": "Purposes of the managed restore contract (`oneiron-vault-contract` `restore`)",
      "surface": {}
@@ -118734,7 +118971,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -118750,7 +118987,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -120086,7 +120323,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 6
      }
     },
@@ -120260,6 +120497,14 @@
      "path": "tests/genui_interpolation_state_key.rs",
      "purpose": "GENUI-INTERP-KEY: in a generated card, a text block's one escaped interpolation reads `$state`",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_state_carry.rs",
+     "purpose": "GENUI-STATE-PERSIST (Engine ruling 14 Nov 05:40, item 2): a live re-render of the same subscription carries…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -120274,7 +120519,7 @@
    "over_bar": 0,
    "purpose": "The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI…",
    "source_files": 25,
-   "test_files": 4
+   "test_files": 5
   },
   "oneiron-linear": {
    "files": [
@@ -121840,7 +122085,7 @@
      "purpose": "Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality",
      "surface": {
       "enum": 6,
-      "fn": 7,
+      "fn": 6,
       "struct": 5
      }
     },
@@ -122093,7 +122338,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 10,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -122218,15 +122463,16 @@
       "LlmStreamEvent",
       "LlmToolSpec",
       "LlmUsage",
-      "ReasoningPartKind"
+      "ReasoningPartKind",
+      "ServedCacheHorizon"
      ],
      "path": "src/llm/protocol.rs",
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "enum": 8,
-      "fn": 8,
-      "struct": 8
+      "fn": 10,
+      "struct": 9
      }
     },
     {
@@ -122474,6 +122720,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/model_register_names.rs",
+     "purpose": "The names of 3 name lists in `oneiron-model`, one line per row, generated from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/widened_seams.rs",
      "purpose": "Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split",
      "surface": {}
@@ -122512,7 +122766,7 @@
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
    "source_files": 54,
-   "test_files": 8
+   "test_files": 9
   },
   "oneiron-napi": {
    "files": [
@@ -123473,7 +123727,7 @@
      "path": "src/seal/binding.rs",
      "purpose": "The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -123487,6 +123741,16 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/evidence.rs",
+     "purpose": "The trusted side's own proof of a seal's evidence (ARCH-0075 `#organ-host-design-seal-residual`, L4-13): the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -123824,9 +124088,9 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]…"
     },
@@ -123852,9 +124116,9 @@
      "purpose": "Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: \"one node is too weak, means…"
     }
    },
-   "over_bar": 2,
+   "over_bar": 3,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 6
   },
   "oneiron-organ-protocol": {
@@ -124260,7 +124524,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -124293,7 +124557,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CompiledPatternRule",
@@ -124308,9 +124572,17 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 9,
+      "fn": 8,
       "struct": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/policy_vocabulary_register_names.rs",
+     "purpose": "The names of 2 name lists in `oneiron-policy-vocabulary`, one line per row, generated from…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -124325,7 +124597,7 @@
    "over_bar": 0,
    "purpose": "Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the…",
    "source_files": 5,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-py": {
    "files": [
@@ -125861,7 +126133,7 @@
      "purpose": "Moved from `crates/oneiron/src/calendar/invite/payload.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -127369,7 +127641,7 @@
      "purpose": "Moved from `crates/oneiron/src/context_board/memories.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 3,
-      "fn": 8,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -127508,7 +127780,6 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 1,
       "struct": 1
      }
     },
@@ -127775,7 +128046,7 @@
      "purpose": "Moved from `crates/oneiron/src/conversation/voice_roster.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -130163,7 +130434,7 @@
      "purpose": "Moved from `crates/oneiron/src/genui/consent_cards.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -130183,7 +130454,7 @@
      "surface": {
       "const": 6,
       "enum": 5,
-      "fn": 9,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -130258,7 +130529,6 @@
      "purpose": "Moved from `crates/oneiron/src/genui/protocol.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 1,
       "struct": 1
      }
     },
@@ -130274,7 +130544,7 @@
      "purpose": "Moved from `crates/oneiron/src/genui/receipt_view.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 2,
-      "fn": 3,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -132594,7 +132864,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 13,
+      "fn": 10,
       "struct": 5
      }
     },
@@ -133379,7 +133649,6 @@
      "purpose": "Moved from `crates/oneiron/src/secret_custody/pending_restore.rs` (lib split R2: record types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 1,
       "mod": 1,
       "re-export": 4
      }
@@ -136349,8 +136618,27 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_policy_hash.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.4a: the hosted legal policy hash keeps its bytes",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/identity_ask_key_hex.rs",
      "purpose": "The identity ask key's hex form (UC-07 PR 8; FIX [IDENTITY-ASK-KEY-ACCEPTS-SIGN])",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/records_register_names.rs",
+     "purpose": "Register names (oneiron-records, wave A1): the names each hand table below wrote before its type became a…",
      "surface": {}
     }
    ],
@@ -137129,7 +137417,7 @@
    "over_bar": 0,
    "purpose": "Engine-internal, not a public interface: the stored record types below `oneiron` (lib split, stage A), the…",
    "source_files": 895,
-   "test_files": 1
+   "test_files": 3
   },
   "oneiron-remote": {
    "files": [
@@ -138584,13 +138872,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/facade_types/index.rs",
      "purpose": "Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/index/resolution.rs",
+     "purpose": "The resolver of `Index`: a file's imports, a path's crate and module, the item a path or a bare name names…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -138624,13 +138922,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/facade_types/inventory/rust_ir.rs",
      "purpose": "The `Rust type -> IR` section of `Inventory`: a Rust type, field, struct or enum as its serde wire shape",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/inventory/rust_ir/item_ir.rs",
+     "purpose": "The item section of the `Rust type -> IR` walk: a declared struct, enum or alias as what it writes (its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -138655,13 +138963,31 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/facade_types/reader.rs",
      "purpose": "The Rust-text scanner (strings, char literals, comments, brackets), the attribute readers and the type parser",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/facade_types/reader/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/reader/type_parser.rs",
+     "purpose": "The type parser: a Rust type's text as an `Ast` tree (Python's `parse_type`, and the cursor its nested…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -139006,9 +139332,9 @@
      "purpose": "`GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python…"
     },
     "facade_types": {
-     "files": 8,
+     "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The facade's wire types, read from the Rust serde types every facade row names"
     },
@@ -139048,10 +139374,10 @@
      "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order"
     }
    },
-   "over_bar": 10,
+   "over_bar": 7,
    "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
-   "source_files": 40,
-   "test_files": 4
+   "source_files": 43,
+   "test_files": 5
   },
   "oneiron-seal": {
    "files": [
@@ -139857,7 +140183,17 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/support/rogue_evidence.rs",
+     "purpose": "What a test hands the hostile seal organ's evidence modes (feature `hostile-organ-tests`): a timestamp…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/support/rogue_seal_organ.rs",
@@ -139914,7 +140250,7 @@
    "over_bar": 5,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
    "source_files": 63,
-   "test_files": 12
+   "test_files": 13
   },
   "oneiron-server": {
    "files": [
@@ -143332,7 +143668,7 @@
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -145414,13 +145750,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/weave_admin_doors.rs",
      "purpose": "The weave Admin's host adapters (OF-499 A3, FIX 9431, FIX 11694): an Admin's live report, its lens, its…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -153875,7 +154211,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -157424,7 +157760,7 @@
      "path": "src/models/served.rs",
      "purpose": "Which model actually answered: the receipt field a ladder fills in",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -160548,6 +160884,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/lens_frames.rs",
+     "purpose": "Doors for `tests/lens_frame_state_door.rs`: moves a held card's `$state` as an accepted local event moves…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "HeldInstallLine"
      ],
@@ -160643,7 +160989,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 25
+      "mod": 26
      }
     },
     {
@@ -162173,6 +162519,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/lens_frame_state_door.rs",
+     "purpose": "GENUI-STATE-PERSIST at the served door: a card's `$state` lasts for the card's life on the server that holds…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -163155,7 +163509,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -163220,8 +163574,8 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1899,
-   "test_files": 291
+   "source_files": 1900,
+   "test_files": 292
   },
   "oneiron-setting-contract": {
    "files": [
@@ -163918,7 +164272,7 @@
      "purpose": "Queue admission inputs and durable intervention vocabulary",
      "surface": {
       "enum": 2,
-      "fn": 2,
+      "fn": 1,
       "struct": 7
      }
     },
@@ -166493,7 +166847,7 @@
      "surface": {
       "const": 9,
       "enum": 4,
-      "fn": 11,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -167971,7 +168325,7 @@
      "purpose": "The tested-revision seal's records, links and holds (FIX 6868, G2 PR3)",
      "surface": {
       "enum": 5,
-      "fn": 3,
+      "fn": 2,
       "struct": 6
      }
     },
@@ -168274,7 +168628,7 @@
      "surface": {
       "const": 9,
       "enum": 4,
-      "fn": 8,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -168554,7 +168908,7 @@
      "purpose": "Policy-only admission seam: path classes, admission verdicts, classifier trait and default",
      "surface": {
       "enum": 2,
-      "fn": 2,
+      "fn": 1,
       "struct": 1,
       "trait": 1
      }
@@ -168586,7 +168940,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -168760,7 +169114,7 @@
      "surface": {
       "const": 4,
       "enum": 4,
-      "fn": 11,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -169429,7 +169783,7 @@
      "surface": {
       "const": 38,
       "enum": 1,
-      "fn": 6
+      "fn": 4
      }
     },
     {
@@ -171042,7 +171396,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 3,
+      "fn": 2,
       "mod": 1,
       "re-export": 1,
       "struct": 4
@@ -171062,7 +171416,7 @@
      "surface": {
       "const": 1,
       "enum": 3,
-      "fn": 3,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -171454,7 +171808,7 @@
      "surface": {
       "const": 37,
       "enum": 3,
-      "fn": 8,
+      "fn": 6,
       "struct": 8
      }
     },
@@ -172187,7 +172541,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 18,
+      "fn": 17,
       "struct": 3
      }
     },
@@ -172617,7 +172971,7 @@
      "surface": {
       "const": 3,
       "enum": 4,
-      "fn": 16,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -172846,6 +173200,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/receipt_kind_names.rs",
+     "purpose": "`ReceiptKind`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names --only…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/receipt_ref.rs",
      "purpose": "PLAN-UC-04 2.4a: `ReceiptRef`, the one text form `{kind}:{lowercase hex}` of a receipt reference",
      "surface": {}
@@ -172896,6 +173258,22 @@
      "notable": [],
      "path": "tests/side_key_pins.rs",
      "purpose": "UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_envelope_register_names.rs",
+     "purpose": "The names of 6 name lists in `oneiron-store`, one line per row, generated from…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_records_register_names.rs",
+     "purpose": "The names of 11 name lists in `oneiron-store`, one line per row, generated from…",
      "surface": {}
     }
    ],
@@ -174472,7 +174850,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 17
+   "test_files": 20
   },
   "oneiron-testkit": {
    "files": [
@@ -176993,7 +177371,7 @@
      "purpose": "Moved from `crates/oneiron/src/agent_dispatch/planner.rs` (lib split W1: wire types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -177429,8 +177807,7 @@
      "path": "src/authority/support_grant.rs",
      "purpose": "Moved from `crates/oneiron/src/authority/support_grant.rs` (lib split W2: wire types below the lib)",
      "surface": {
-      "enum": 2,
-      "fn": 1
+      "enum": 2
      }
     },
     {
@@ -177924,7 +178301,7 @@
      "purpose": "Moved from `crates/oneiron/src/blob_artifact/family.rs` (lib split W3: wire types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -178077,7 +178454,7 @@
      "purpose": "Moved from `crates/oneiron/src/calendar/claims/values.rs` (lib split W3: wire types below the lib)",
      "surface": {
       "enum": 2,
-      "fn": 6,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -178910,8 +179287,7 @@
      "path": "src/code_run/blocked.rs",
      "purpose": "Moved from `crates/oneiron/src/code_run/blocked.rs` (lib split W1: wire types below the lib)",
      "surface": {
-      "enum": 1,
-      "fn": 1
+      "enum": 1
      }
     },
     {
@@ -179278,7 +179654,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 2,
+      "fn": 1,
       "struct": 3
      }
     },
@@ -179615,7 +179991,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -180551,7 +180927,7 @@
      "purpose": "Moved from `crates/oneiron/src/dreamer_runner/maintenance/agent_health/vocabulary.rs` (lib split W2: wire…",
      "surface": {
       "enum": 5,
-      "fn": 6
+      "fn": 4
      }
     },
     {
@@ -180978,7 +181354,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 3
+      "fn": 2
      }
     },
     {
@@ -181259,7 +181635,7 @@
      "purpose": "Moved from `crates/oneiron/src/failure_ladder/task_terminal.rs` (lib split W1: wire types below the lib)",
      "surface": {
       "enum": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -181410,8 +181786,7 @@
      "purpose": "Moved from `crates/oneiron/src/feedback/bundle.rs` (lib split W1: wire types below the lib)",
      "surface": {
       "const": 2,
-      "enum": 1,
-      "fn": 1
+      "enum": 1
      }
     },
     {
@@ -184338,7 +184713,7 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -184452,7 +184827,7 @@
      "purpose": "Moved from `crates/oneiron/src/memory/query_records/definition.rs` (lib split W2: wire types below the lib)",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -184468,7 +184843,7 @@
      "purpose": "Moved from `crates/oneiron/src/memory/query_records/filter.rs` (lib split W2: wire types below the lib)",
      "surface": {
       "enum": 3,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -184746,7 +185121,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -185097,7 +185472,7 @@
      "purpose": "Moved from `crates/oneiron/src/memory/witness/wake_outcome.rs` (lib split W2: wire types below the lib)",
      "surface": {
       "enum": 2,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -185924,8 +186299,7 @@
      "path": "src/policy_model/request.rs",
      "purpose": "Moved from `crates/oneiron/src/policy_model/request.rs` (lib split W3: wire types below the lib)",
      "surface": {
-      "enum": 1,
-      "fn": 1
+      "enum": 1
      }
     },
     {
@@ -186324,8 +186698,7 @@
      "path": "src/runtime_hooks/lineage.rs",
      "purpose": "Moved from `crates/oneiron/src/runtime_hooks/lineage.rs` (lib split W1: wire types below the lib)",
      "surface": {
-      "enum": 1,
-      "fn": 1
+      "enum": 1
      }
     },
     {
@@ -186949,7 +187322,7 @@
      "purpose": "Moved from `crates/oneiron/src/skill_hub/install_transition.rs` (lib split W2: wire types below the lib)",
      "surface": {
       "enum": 3,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -187043,7 +187416,7 @@
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 10,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -187628,7 +188001,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -187997,8 +188370,7 @@
      "path": "src/sync/quarantine/keys_classifier.rs",
      "purpose": "Moved from `crates/oneiron/src/sync/quarantine/keys_classifier.rs` (lib split W1: wire types below the lib)",
      "surface": {
-      "enum": 1,
-      "fn": 1
+      "enum": 1
      }
     },
     {
@@ -188331,7 +188703,7 @@
      "purpose": "Moved from `crates/oneiron/src/team/pattern.rs` (lib split W1: wire types below the lib)",
      "surface": {
       "enum": 2,
-      "fn": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -191073,6 +191445,46 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/verb_wire_register_names_a2.rs",
+     "purpose": "Register names (oneiron-verb-wire, wave A2): the names each hand table below wrote before its type became a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_wire_register_names_a3.rs",
+     "purpose": "Register names (oneiron-verb-wire, wave A3): the names each hand table below wrote before its type became a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_wire_register_names_a4.rs",
+     "purpose": "Register names (oneiron-verb-wire, wave A4): the names each hand table below wrote before its type became a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_wire_register_names_a5.rs",
+     "purpose": "Register names (oneiron-verb-wire, wave A5): the names each hand table below wrote before its type became a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_wire_register_names_a6.rs",
+     "purpose": "Register names (oneiron-verb-wire, wave A6): the names each hand table below wrote before its type became a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/wire_list_limit_rules.rs",
      "purpose": "UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1, the default, the maximum and the…",
      "surface": {}
@@ -191888,7 +192300,7 @@
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
    "source_files": 969,
-   "test_files": 1
+   "test_files": 6
   },
   "oneiron-vm-outbox": {
    "files": [
