@@ -51,7 +51,7 @@ use super::{DreamerAdmittedAttempt, DreamerConsolidationScope, decode_dreamer_at
 enum BoundFacet {
     Strength,
     ConflictSettle,
-    /// The consolidation extraction job reads inputs and verdicts and runs bound generation steps.
+    /// Extraction reads inputs and verdicts, runs bound steps and commits extraction items.
     Extraction,
 }
 
@@ -208,9 +208,15 @@ impl DreamerAttemptBinding {
 
     /// Commits `input` as the Dreamer in this attempt and run, admitting
     /// Archive items for strength, Settle items for conflict settlement and
-    /// no item for extraction. One writer proves the binding before the batch
-    /// stages. A refused binding writes no batch, receipt, archive or
-    /// settlement.
+    /// Candidate, ConflictResolution or Conflict items for extraction. One writer
+    /// proves the binding before the batch stages. A refused binding writes no
+    /// batch, receipt or item. A claim an extraction item lands is recorded as
+    /// an output of the attempt in the same write, and the deferred-grant
+    /// receipts are counted once the write has committed.
+    ///
+    /// The stagers judge every grant at the commit's own recorded time: the
+    /// batch observes the clock and persists it as the floor inside this
+    /// write before any item stages, so no read lane is prepared first.
     fn commit(&self, input: DeriveCommitInput) -> MemoryResult<DeriveCommitView> {
         let batch = facet_batch(input, self.facet)?;
         let stamp = DerivationStamp {
@@ -219,12 +225,22 @@ impl DreamerAttemptBinding {
             attempt: Some(self.lease.attempt()),
             lineage: SourceLineage::of(ClaimSource::Generated),
         };
-        let receipt = self.vault.with_write_txn_grouped(|txn| {
+        let (receipt, grants) = self.vault.with_write_txn_grouped(|txn| {
             if let Err(refused) = self.check_in_txn(txn) {
                 return Ok(Err(refused));
             }
-            self.vault.derive_commit_in_txn(txn, &stamp, &batch).map(Ok)
+            self.vault
+                .derive_commit_in_txn_with_output_recording(
+                    txn,
+                    &stamp,
+                    &batch,
+                    self.facet == BoundFacet::Extraction,
+                )
+                .map(Ok)
         })??;
+        for grant in &grants {
+            grant.record_metrics(&self.vault.store.diagnostics.gate);
+        }
         Ok(receipt.into())
     }
 }
@@ -258,17 +274,20 @@ fn bound_facet_for_attempt(record: &AttemptRecord) -> Result<Option<BoundFacet>>
 }
 
 /// The engine batch of `input`, admitted only when every item belongs to
-/// the bound facet. The extraction facet admits no item.
+/// the bound facet. Extraction admits only candidates, conflict resolutions and conflicts.
 fn facet_batch(input: DeriveCommitInput, facet: BoundFacet) -> MemoryResult<DerivationBatch> {
-    if facet == BoundFacet::Extraction {
-        return Err(facet_refused(facet));
-    }
     let batch = input.into_batch()?;
     if batch.items.iter().all(|item| {
         matches!(
             (facet, item),
             (BoundFacet::Strength, DerivationItem::Archive(_))
                 | (BoundFacet::ConflictSettle, DerivationItem::Settle(_))
+                | (
+                    BoundFacet::Extraction,
+                    DerivationItem::Candidate(_)
+                        | DerivationItem::ConflictResolution(_)
+                        | DerivationItem::Conflict(_)
+                )
         )
     }) {
         Ok(batch)
@@ -305,7 +324,7 @@ fn facet_refused(facet: BoundFacet) -> MemoryError {
         ),
         BoundFacet::Extraction => (
             "the Dreamer extraction facet does not admit this operation",
-            "An extraction attempt reads its inputs page, evidence spans and checked ai.verdict packs, and commits nothing.",
+            "An extraction attempt reads its inputs page, evidence spans and checked ai.verdict packs, and commits candidate, conflict_resolution and conflict items only.",
         ),
     };
     MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[hint])

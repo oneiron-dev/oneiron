@@ -20,8 +20,8 @@ use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn};
 use super::conflict::inputs::{derive_provenance, member_candidate};
 use super::extraction_opening::{open_attempt, open_verdict_read};
 use super::verified_landing::{
-    LandingError, LandingRefusal, attempt_dreamer_matches, land_verified_candidate,
-    promotion_run_id, refuse, refuse_or_abort,
+    LandingError, LandingRefusal, VerifiedLandingOptions, attempt_dreamer_matches,
+    land_verified_candidate, promotion_run_id, refuse, refuse_or_abort,
 };
 use crate::Vault;
 use crate::dreamer_consolidation::extraction_pack::{
@@ -309,7 +309,10 @@ pub(super) fn stage_in_txn(
         candidate,
         Some(&evidence),
         Some(&fence),
-        provenance,
+        VerifiedLandingOptions {
+            provenance,
+            record_output: context.record_outputs,
+        },
         &mut savepoint,
     ) {
         Ok(approval) => {

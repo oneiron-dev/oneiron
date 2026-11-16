@@ -31,7 +31,7 @@ const EXTRACTION_INPUTS_PAGE_VERB: &str = "vault.consolidation.extraction.inputs
 /// The evidence spans verb an extraction attempt reads its words through.
 const EVIDENCE_SPANS_VERB: &str = "vault.evidence.spans";
 
-/// The commit verb no extraction attempt admits.
+/// The commit verb whose item kinds are limited by the extraction facet.
 const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
 
 /// The conflicts page verb no extraction attempt admits.
@@ -293,8 +293,8 @@ fn a_moved_turn_serves_no_words_at_its_old_version() -> ExtractionInputsPageTest
 }
 
 /// Each facet refuses the other's verbs: a strength binding refuses the
-/// extraction page and evidence, and an extraction binding refuses commits
-/// and the conflicts page.
+/// extraction page and evidence, and an extraction binding refuses another
+/// facet's commit items and the conflicts page.
 #[test]
 fn other_facets_and_other_verbs_are_refused() -> ExtractionInputsPageTestResult<()> {
     let dir = tempfile::tempdir()?;
@@ -320,10 +320,20 @@ fn other_facets_and_other_verbs_are_refused() -> ExtractionInputsPageTestResult<
     assert!(spans.message.contains("does not admit"));
     let Err(commit) = extraction.invoke(
         DERIVE_COMMIT_VERB,
-        json!({"items": [], "sources": []}),
+        json!({
+            "items": [{
+                "kind": "settle",
+                "spec": {
+                    "local": "settlement",
+                    "marker": {"stored": witnessed.turns[0].to_hex()},
+                    "settlement": "dismiss",
+                },
+            }],
+            "sources": [],
+        }),
         None,
     ) else {
-        panic!("an extraction binding refuses commits");
+        panic!("an extraction binding refuses settlement items");
     };
     assert_eq!(commit.code, MEMORY_CODE_FORBIDDEN);
     assert!(commit.message.contains("does not admit"));
