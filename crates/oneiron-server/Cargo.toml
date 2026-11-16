@@ -10,6 +10,13 @@ readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 
+# The mail doors over a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded
+# by `oneiron/test-support`).
+[[test]]
+name = "vault_mail_doors"
+path = "tests/vault_mail_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[bin]]
 name = "oneiron-server"
 path = "src/main.rs"
@@ -19,12 +26,26 @@ name = "oneiron"
 path = "src/bin/oneiron.rs"
 doc = false
 
+# The connector doors over a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`).
+[[test]]
+name = "vault_connectors_doors"
+path = "tests/vault_connectors_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The credential broker (ARCH-0069 #broker-design). It ships beside the server
 # and calls only the `oneiron-broker` library: no model, no vault.
 [[bin]]
 name = "oneiron-broker"
 path = "src/bin/oneiron-broker.rs"
 doc = false
+
+# The campaign doors over a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`).
+[[test]]
+name = "vault_campaign_doors"
+path = "tests/vault_campaign_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # A vault VM's root bootstrap (FIX 6308): it takes the vault's binding and
 # fscrypt key from the host, lays out the encrypted storage and the UID table,
@@ -255,11 +276,29 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # The rolling tier enables test-support for the paid-leg TLS fake provider.
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 
+# The runner seat doors (`vault.runners.seats.*`) root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "vault_runners_doors"
+path = "tests/vault_runners_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
+# The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_policy_doors"
+path = "tests/vault_policy_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "it"
 path = "tests/it/main.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The desktop facade refusals root their server on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "self_desktop_doors"
+path = "tests/self_desktop_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
 # by `oneiron/test-support`): the e-sign dispatch signs with the install's keys.
@@ -268,10 +307,42 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The sieve doors (queue, spans, policies, lease, evidence, settlements, budgets) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_sieve_doors"
+path = "tests/vault_sieve_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# The signing session (ARCH-0064a [SGN-03]) over it_esign_public's fixture.
+[[test]]
+name = "esign_signing_session"
+path = "tests/esign_signing_session.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# Mints its member's one-click link through a test door (`--cfg oneiron_test_support`) on an
+# unseeded `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`).
+[[test]]
+name = "campaign_one_click_unsubscribe"
+path = "tests/campaign_one_click_unsubscribe.rs"
+required-features = ["oneiron/test-support"]
+
+# The weave doors (enqueue, schedules, digests, labels, setting changes) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_weave_doors"
+path = "tests/vault_weave_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
+
+# The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_skills_doors"
+path = "tests/vault_skills_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
@@ -279,6 +350,12 @@ required-features = ["oneiron/test-hooks"]
 name = "artifact_private_owner_read"
 path = "tests/artifact_private_owner_read.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# The vault hook doors serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_hooks_doors"
+path = "tests/vault_hooks_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
@@ -304,6 +381,13 @@ name = "facade_live_run_status"
 path = "tests/facade_live_run_status.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The self.off_record run doors and the anonymous chat route root their owner
+# on a `MemoryKeystore` too.
+[[test]]
+name = "self_off_record_doors"
+path = "tests/self_off_record_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # L9-12's broker rerank leg registers its sentinel key in a test vault and
 # answers from the paid-leg TLS fake provider.
 [[test]]
@@ -311,12 +395,37 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The skill hub door cases root their owner on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "vault_skill_hubs_doors"
+path = "tests/vault_skill_hubs_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# A key_secret provider's streamed chat registers its sentinel key in a test
+# vault and answers event streams from the broker's TLS fake provider.
+[[test]]
+name = "broker_stream_key_secret"
+path = "tests/broker_stream_key_secret.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
+# The drafter doors (owner list/status/policy/revert, agent list_as/revert_as) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_drafters_doors"
+path = "tests/vault_drafters_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
 name = "broker_followup_job_binding"
 path = "tests/broker_followup_job_binding.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
+# The self-browser door refusals root their server on a `MemoryKeystore` too.
+[[test]]
+name = "self_browser_doors"
+path = "tests/self_browser_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
@@ -330,10 +439,28 @@ name = "oauth_named_client_acceptance"
 path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
+# The fan-out doors (spawn, launch, slots, resume, resume_as, ack) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_fanout_doors"
+path = "tests/vault_fanout_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
+required-features = ["oneiron/test-support"]
+
+# The off-record room door promise tests serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_off_record_rooms_doors"
+path = "tests/vault_off_record_rooms_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
+[[test]]
+name = "lens_frame_state_door"
+path = "tests/lens_frame_state_door.rs"
 required-features = ["oneiron/test-support"]
 
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
@@ -341,6 +468,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The off-record session door promise tests serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_off_record_doors"
+path = "tests/vault_off_record_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.
 [[test]]
@@ -350,6 +483,13 @@ required-features = ["oneiron/test-support"]
 
 [lints]
 workspace = true
+
+# The host trigger doors (`host.wake`, `host.budget.hit`, `host.compact`) root their owner
+# on a `MemoryKeystore` too.
+[[test]]
+name = "host_trigger_doors"
+path = "tests/host_trigger_doors.rs"
+required-features = ["oneiron/test-support"]
 
 [features]
 # The default features are the shipped server. It serves MCP `execute_code`
@@ -371,3 +511,10 @@ mesh = [
 
 [build-dependencies]
 oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
+
+# The saved-workflow doors root their owner on a `MemoryKeystore` too; the successor-hold
+# row claims its step through the `workflow_park` test door (`--cfg oneiron_test_support`).
+[[test]]
+name = "vault_workflows_doors"
+path = "tests/vault_workflows_doors.rs"
+required-features = ["oneiron/test-support"]

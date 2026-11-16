@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { broker, calendar, plugin, testing, workspace_roster }
+areas! { broker, calendar, cluster, engine_executor, git_wire, plugin, policy_model, restore, retrieval, runtime_hooks, setting, skill, skill_attribution, testing, vault_import, web_fetch, workspace_roster }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
