@@ -303,6 +303,16 @@ async fn v1_core_route_wraps_handler_errors_after_bearer_auth() {
     );
 }
 
+/// A core:write bearer for the vault's embedded owner: a write names the
+/// principal it writes as (`core:write+principal_ref`).
+fn owner_write_bearer(server: &SyncServer) -> String {
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+    test_bearer(&format!(
+        "scope=core:write;principal_ref={};actor_class=human",
+        owner.to_hex()
+    ))
+}
+
 #[tokio::test]
 async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -310,15 +320,13 @@ async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success(
         ..Default::default()
     });
     let turn = seed_turn(&server, "cached write success");
+    let write_token = owner_write_bearer(&server);
     let body = turn_annotation_request_body(&turn, 300);
 
     let (write_status, write_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-write-success",
-        (
-            AUTHORIZATION.as_str(),
-            test_bearer("scope=core:write").as_str(),
-        ),
+        (AUTHORIZATION.as_str(), write_token.as_str()),
         &body,
     )
     .await;
@@ -350,6 +358,7 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
         ..Default::default()
     });
     let turn = seed_turn(&server, "read-only poison");
+    let write_token = owner_write_bearer(&server);
     let body = turn_annotation_request_body(&turn, 301);
 
     let (read_status, read_body) = idempotent_core_annotate(
@@ -368,10 +377,7 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
     let (write_status, write_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-read-poison",
-        (
-            AUTHORIZATION.as_str(),
-            test_bearer("scope=core:write").as_str(),
-        ),
+        (AUTHORIZATION.as_str(), write_token.as_str()),
         &body,
     )
     .await;
@@ -435,6 +441,11 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
     let principal_ref = seeded_test_entity_id(0x1265_0101).to_hex();
     let person_ref = seeded_test_entity_id(0x1265_0102).to_hex();
     let persona_ref = seeded_test_entity_id(0x1265_0103).to_hex();
+    seed_companion_profile_targets(
+        &server,
+        seeded_test_entity_id(0x1265_0102),
+        seeded_test_entity_id(0x1265_0103),
+    );
     let create_request = json!({
         "principal_ref": principal_ref,
         "scope": {
