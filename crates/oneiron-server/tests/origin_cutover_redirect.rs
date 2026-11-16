@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use axum::http::Request;
 use ed25519_dalek::SigningKey;
 use engine_stack::on_engine_stack;
 use oneiron::agent_dispatch::DEFAULT_BASE_LOGICAL_ID;

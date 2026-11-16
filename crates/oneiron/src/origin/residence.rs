@@ -388,6 +388,19 @@ impl Vault {
     /// process (FIX 283).
     pub(in crate::origin) fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
         let common_dir = super::smart_http::repo_common_dir(repo_root)?;
+        // What git asks of a git directory before it reads one: a HEAD, and
+        // objects and refs in its common directory. A served name whose
+        // directory is none is refused, as git's own read refused it.
+        if !(repo_root.join("HEAD").is_file()
+            && common_dir.join("objects").is_dir()
+            && common_dir.join("refs").is_dir())
+        {
+            return Err(Error::Code(
+                crate::error::CodeError::InvalidRepoMutationRecord(
+                    "the served repository is not a git directory",
+                ),
+            ));
+        }
         let identity = oneiron_store::git_wire::repo::repo_identity_for(&common_dir);
         crate::origin::lfs::lfs_repo_id(&identity.as_hex())
     }
