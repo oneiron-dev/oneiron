@@ -64,6 +64,7 @@ mod identity_topology;
 mod inquiry;
 mod legal_hold;
 // The build-time closure of the verb table over linked `self.*` operations.
+mod authority_attribution_erase;
 mod linked_self_surface;
 mod live_run;
 mod live_voice;
@@ -351,6 +352,7 @@ pub use self::agents::*;
 pub use self::anonymous_chat::*;
 pub use self::answer_forward::*;
 pub use self::asr::*;
+pub use self::authority_attribution_erase::*;
 pub use self::authority_history::*;
 pub use self::board_layout::*;
 pub use self::browser::*;

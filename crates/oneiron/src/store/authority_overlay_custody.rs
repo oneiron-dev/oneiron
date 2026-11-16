@@ -24,8 +24,9 @@
 //! its [`OverlayInventory`] with its home's, never a secret; a key travels
 //! only sealed to the receiver's session-ephemeral key
 //! ([`export_key`], [`open_received_key`]), its receiver recorded as a
-//! holder first, and an erased subject travels as its refs alone. A seal is
-//! never stored, so a key destroyed at every holder is gone.
+//! holder first, and an erased subject travels as its refs alone, none for
+//! one erased with no key known (census L5-22 PR 1b). A seal is never
+//! stored, so a key destroyed at every holder is gone.
 #![cfg_attr(
     not(feature = "sync"),
     allow(
@@ -53,14 +54,20 @@ use crate::store::home_handoff_custody::{
 };
 use crate::store::key_custody::{
     CustodyKind, CustodySecret, EntryState, ErasableItem, ErasablePurpose, LocalCustody,
-    delete_erasable_ref_in_txn, erasable_refs_of_in_txn, put_erasable_ref_in_txn,
-    retirement_in_txn, retirements_in_txn, stage_erasable_retirement_in_txn,
+    delete_erasable_ref_in_txn, erasable_ref_names_another_in_txn, erasable_refs_of_in_txn,
+    put_erasable_ref_in_txn, retirement_in_txn, retirements_in_txn,
+    stage_erasable_retirement_in_txn,
 };
 
 /// Each overlay key a committed writer here made ready to open its rows, by
 /// ref (census L5-22 1a-iii).
 const KEY_READY: SideTable<[u8; 32], (), Raw> =
     SideTable::new(&side_table::AUTHORITY_OVERLAY_KEY_READY);
+
+/// Each subject erased here, and when its erasure first stood (census L5-22
+/// PR 1b): it stands for good, held keys or none.
+const ERASED_SUBJECT: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::AUTHORITY_ERASED_SUBJECT);
 
 const RECIPIENT: &[u8] = b"oneiron/authority-overlay/v1";
 const AEAD: SuiteId = SuiteId::AES256GCM_V1;
@@ -150,10 +157,10 @@ impl SealedOverlay {
 /// rows never committed.
 ///
 /// # Errors
-/// An archived vault; an erased subject (a key of it retired or staged to
-/// retire, under any ref, a delivered ref with no key here among them): an
-/// erased subject is named by no new entry, and no key of it is minted;
-/// custody and crypto faults.
+/// An archived vault; an erased subject (recorded in ERASED_SUBJECT here,
+/// or a key of it retired or staged to retire, under any ref, a delivered
+/// ref with no key here among them): an erased subject is named by no new
+/// entry, and no key of it is minted; custody and crypto faults.
 pub(crate) fn seal(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -163,6 +170,9 @@ pub(crate) fn seal(
 ) -> Result<SealedOverlay> {
     if store.core.gate_custody_archived() {
         return Err(Error::Store(StoreError::ArchivedVault));
+    }
+    if ERASED_SUBJECT.contains(store, txn, subject)? {
+        return Err(CustodyKind::ErasableKey.corrupt());
     }
     store.core.key_custody.pin_in_txn(store, txn)?;
     let custody = store.core.key_custody.bind_in_txn(store, txn)?;
@@ -259,7 +269,16 @@ pub(crate) fn open(
 /// Every overlay key of `subject` this install knows (census L5-22 1a-iii):
 /// each custody holds a directory for (live, retired, or an aborted
 /// writer's), each with a ref row, each a sealed row of `heads` names for
-/// `subject`, and each ref of `refs`, held here or not.
+/// `subject` whose ref row here names no other key, and each ref of
+/// `refs`, held here or not. A held row's head names its key as its arrival
+/// carried it, unchecked: a ref whose ref row names another subject's key
+/// is that subject's, and stays out (Sol review of census L5-22 PR 1b).
+///
+/// # Errors
+/// A ref of `refs` whose ref row here names another key: one ref names one
+/// key, so a peer that names another subject's ref for `subject` never
+/// closes or rebinds that subject's rows (Astra review of census L5-22 PR
+/// 1b); storage and custody faults.
 fn subject_keys_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -279,19 +298,26 @@ fn subject_keys_in_txn(
         ErasablePurpose::AuthorityOverlay,
         parent,
     )?);
-    items.extend(
-        heads
-            .iter()
-            .filter(|head| head.subject == *subject)
-            .map(|head| item(subject, &head.key_ref)),
-    );
-    items.extend(refs.iter().map(|key_ref| item(subject, key_ref)));
+    for head in heads.iter().filter(|head| head.subject == *subject) {
+        let item = item(subject, &head.key_ref);
+        if !erasable_ref_names_another_in_txn(store, txn, &item)? {
+            items.insert(item);
+        }
+    }
+    for key_ref in refs {
+        let item = item(subject, key_ref);
+        if erasable_ref_names_another_in_txn(store, txn, &item)? {
+            return Err(CustodyKind::ErasableKey.corrupt());
+        }
+        items.insert(item);
+    }
     Ok(items)
 }
 
-/// Whether `subject` is erased here: a key of it is retired, or a
-/// retirement of one is staged. An erased subject's rows never open again,
-/// under any key or ref.
+/// Whether `subject` is erased here: its erasure stands (census L5-22 PR
+/// 1b; it stands whether or not any key of it was known here), a key of it
+/// is retired, or a retirement of one is staged. An erased subject's rows
+/// never open again, under any key or ref.
 fn subject_erased_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -299,6 +325,9 @@ fn subject_erased_in_txn(
     subject: &EntityId,
     known: &BTreeSet<ErasableItem>,
 ) -> Result<bool> {
+    if ERASED_SUBJECT.contains(store, txn, subject)? {
+        return Ok(true);
+    }
     for item in known {
         if custody.erasable_state(item)? == EntryState::Retired
             || retirement_in_txn(store, txn, &item.subject(custody)?)?.is_some()
@@ -325,8 +354,9 @@ fn subject_erased_in_txn(
 ///
 /// # Errors
 /// An archived vault; a secret that is not a 32-byte key; an erased
-/// subject (a key of it retired or staged to retire, under any ref); other
-/// bytes already under `key_ref`; custody faults.
+/// subject (a key of it retired or staged to retire, under any ref); a
+/// `key_ref` whose ref row here names another subject's key; other bytes
+/// already under `key_ref`; custody faults.
 pub(crate) fn install_key_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -357,11 +387,17 @@ pub(crate) fn install_key_in_txn(
 /// those `heads` name and the delivered `refs`, held here or not. Their ref
 /// rows and ready marks go in `txn`, so no snapshot from its commit on opens
 /// a row of `subject`; custody's finisher destroys each key after the
-/// commit (`Store::finish_erasable_retirements`). The fold side of the event
-/// is the caller's (`crate::authority::retire_authority_overlay_subject_in_txn`).
+/// commit (`Store::finish_erasable_retirements`). The subject's erasure
+/// stands from `txn` on, keeping the time it first stood (census L5-22 PR
+/// 1b): a subject of which this install knew no key is erased all the
+/// same, its erasure travels to the vault's other machines
+/// ([`overlay_inventory`]), and a key of it that arrives later is refused.
+/// The fold side of the event is the caller's
+/// (`crate::authority::erase_authority_overlay_subject_in_txn`).
 ///
 /// # Errors
-/// An archived vault; custody faults.
+/// An archived vault; a delivered ref whose ref row here names another
+/// subject's key; custody faults.
 pub(crate) fn retire_subject_keys_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -379,7 +415,24 @@ pub(crate) fn retire_subject_keys_in_txn(
         delete_erasable_ref_in_txn(store, txn, &item)?;
         KEY_READY.delete(store, txn, &item.key_ref)?;
     }
+    if !ERASED_SUBJECT.contains(store, txn, subject)? {
+        let at = crate::ports::recorded_at_in_txn(store, txn)?;
+        ERASED_SUBJECT.put(store, txn, subject, &at)?;
+    }
     Ok(())
+}
+
+/// When `subject`'s erasure first stood here, read in `txn` (census L5-22
+/// PR 1b); `None` while it is not erased here.
+///
+/// # Errors
+/// Storage faults.
+pub(crate) fn subject_erased_at_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<Option<u64>> {
+    ERASED_SUBJECT.get(store, txn, subject)
 }
 
 /// One subject erased here, as the carrier names it: every ref of its keys
@@ -397,8 +450,10 @@ pub struct ErasedSubject {
 /// This install's overlay custody, as the carrier between the vault's
 /// machines compares it (census L5-22 1a-iii commit 7): each key held here
 /// live and ready, of a subject not erased here, by subject and ref; and
-/// each subject erased here (a key of it retired, or a retirement of one
-/// staged, held here or not). Never a secret.
+/// each subject erased here (its erasure standing, a key of it retired, or
+/// a retirement of one staged, held here or not), with the refs of its keys
+/// this install knows, none for a subject erased with no key known here
+/// (census L5-22 PR 1b). Never a secret.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OverlayInventory {
     pub(crate) ready: BTreeSet<(EntityId, [u8; 32])>,
@@ -407,7 +462,8 @@ pub(crate) struct OverlayInventory {
 
 /// This install's [`OverlayInventory`], read in one snapshot: custody's
 /// overlay keys by directory and the staged retirements of any, a key with
-/// no directory here among them. An install with no custody holds none.
+/// no directory here among them, and the subjects whose erasure stands
+/// here. An install with no custody holds none.
 ///
 /// # Errors
 /// Storage and custody faults.
@@ -438,10 +494,18 @@ pub(crate) fn overlay_inventory(store: &Store) -> Result<OverlayInventory> {
             by_subject.entry(subject).or_default().insert(item);
         }
     }
+    let tombstoned: BTreeSet<EntityId> = ERASED_SUBJECT
+        .scan(store, &txn)?
+        .into_iter()
+        .map(|(subject, _)| subject)
+        .collect();
     let mut inventory = OverlayInventory::default();
+    for subject in &tombstoned {
+        by_subject.entry(*subject).or_default();
+    }
     for (subject, items) in by_subject {
         let mut erased = ErasedSubject::default();
-        let mut is_erased = false;
+        let mut is_erased = tombstoned.contains(&subject);
         let mut ready = Vec::new();
         for item in items {
             erased.refs.insert(item.key_ref);
@@ -477,16 +541,31 @@ pub(crate) fn overlay_inventory(store: &Store) -> Result<OverlayInventory> {
 /// committed after the first check refuses the seal, and one that commits
 /// after the second owes the holder's retirement.
 ///
+/// `admitted` is asked in the snapshot of each check, so a target machine
+/// removed before the second check gets no seal (Sol review of census
+/// L5-22 PR 1b).
+///
 /// # Errors
 /// An archived vault; a key not held here live and ready, or of an erased
-/// subject, at either check; custody and sealing faults.
+/// subject, or a target `admitted` no longer holds, at either check;
+/// custody and sealing faults.
 pub(crate) fn export_key(
     store: &Store,
     subject: &EntityId,
     key_ref: &[u8; 32],
     target: &LiveTarget,
+    admitted: &dyn Fn(&RoTxn<'_>) -> Result<bool>,
 ) -> Result<TransitSeal> {
-    export_key_checked(store, subject, key_ref, target, || Ok(()))
+    export_key_checked(store, subject, key_ref, target, admitted, || Ok(()))
+}
+
+/// The refusal of a peer the caller's admission no longer holds: a key is
+/// sealed to it, or its debts clear, only while it stands.
+pub(crate) fn peer_not_admitted() -> Error {
+    Error::InvalidConfig(
+        "authority overlay custody refused: the peer is no longer a machine this install trusts"
+            .to_owned(),
+    )
 }
 
 /// [`export_key`], running `before_read` between its first check and its
@@ -496,6 +575,7 @@ fn export_key_checked(
     subject: &EntityId,
     key_ref: &[u8; 32],
     target: &LiveTarget,
+    admitted: &dyn Fn(&RoTxn<'_>) -> Result<bool>,
     before_read: impl FnOnce() -> Result<()>,
 ) -> Result<TransitSeal> {
     if store.core.gate_custody_archived() {
@@ -507,7 +587,7 @@ fn export_key_checked(
         .local()
         .ok_or_else(|| CustodyKind::ErasableKey.corrupt())?;
     let item = item(subject, key_ref);
-    check_exportable(store, &custody, subject, &item)?;
+    check_exportable(store, &custody, subject, &item, admitted)?;
     before_read()?;
     let secret = custody.read_erasable(&item)?;
     custody.record_holder(key_ref, &target.machine)?;
@@ -517,19 +597,24 @@ fn export_key_checked(
     plain.extend_from_slice(&item.incarnation);
     plain.extend_from_slice(secret.expose());
     let sealed = seal_transit(target, key_ref, &plain)?;
-    check_exportable(store, &custody, subject, &item)?;
+    check_exportable(store, &custody, subject, &item, admitted)?;
     Ok(sealed)
 }
 
 /// Refuses `item`, the overlay key of `subject`, unless it is held here
-/// live and ready and `subject` is not erased here, in one snapshot.
+/// live and ready, `subject` is not erased here and `admitted` holds for
+/// the target, in one snapshot.
 fn check_exportable(
     store: &Store,
     custody: &LocalCustody<'_>,
     subject: &EntityId,
     item: &ErasableItem,
+    admitted: &dyn Fn(&RoTxn<'_>) -> Result<bool>,
 ) -> Result<()> {
     let txn = store.env.read_txn()?;
+    if !admitted(&txn)? {
+        return Err(peer_not_admitted());
+    }
     let known = subject_keys_in_txn(store, &txn, custody, subject, &[], &[])?;
     if !KEY_READY.contains(store, &txn, &item.key_ref)?
         || custody.erasable_state(item)? != EntryState::Live
@@ -683,7 +768,7 @@ pub(crate) fn deliver_authority_overlay_custody_for_test(
     let (live, retired) = held_overlay_custody_for_test(source, subject)?;
     if !retired.is_empty() {
         destination.with_write_txn_grouped(|txn| {
-            crate::authority::retire_authority_overlay_subject_in_txn(
+            crate::authority::erase_authority_overlay_subject_in_txn(
                 &destination.store,
                 txn,
                 subject,
@@ -707,16 +792,16 @@ pub(crate) fn deliver_authority_overlay_custody_for_test(
     Ok(())
 }
 
-/// Retires `subject` on `vault` through the production seam, then runs
-/// custody's finisher after the commit (census L5-22 1a-iii): an owner's
-/// erase of the subject, whose door is the census's PR 1b.
+/// Erases `subject` on `vault` through the production seam, then runs
+/// custody's finisher after the commit (census L5-22 1a-iii): the erase
+/// core of the owner's door (PR 1b), with no owner proof or check-in.
 #[cfg(test)]
 pub(crate) fn retire_authority_overlay_subject_for_test(
     vault: &crate::Vault,
     subject: &EntityId,
 ) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        crate::authority::retire_authority_overlay_subject_in_txn(&vault.store, txn, subject, &[])
+        crate::authority::erase_authority_overlay_subject_in_txn(&vault.store, txn, subject, &[])
     })?;
     vault.store.finish_erasable_retirements()?;
     Ok(())
@@ -869,6 +954,43 @@ mod carrier_tests {
         );
     }
 
+    /// The same erase after custody's finisher carried the retirement out:
+    /// no key or ref of the subject stays here, and its ERASED_SUBJECT row
+    /// still refuses a new seal, which mints no key (blind review of #8960,
+    /// census L5-22, P1).
+    #[test]
+    fn a_subject_erased_here_by_refs_alone_refuses_a_new_seal_after_the_finisher() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        let subject = EntityId::now();
+        let delivered_ref = [0x7D; 32];
+        vault
+            .with_write_txn_grouped(|txn| {
+                super::retire_subject_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &subject,
+                    &[],
+                    &[delivered_ref],
+                )
+            })
+            .unwrap();
+        vault.store.finish_erasable_retirements().unwrap();
+
+        let finished = vault.with_write_txn_grouped(|txn| {
+            seal(&vault.store, txn, &subject, &[0x5B; 32], b"overlay record")
+        });
+        assert!(
+            finished.is_err(),
+            "a subject erased here by refs alone must refuse a new seal after custody's finisher"
+        );
+        let inventory = overlay_inventory(&vault.store).unwrap();
+        assert!(
+            inventory.ready.iter().all(|(held, _)| *held != subject),
+            "no key of the erased subject is minted or ready after the finisher"
+        );
+    }
+
     /// A seal to the right session opens for its own receiver and binding,
     /// naming its subject and secret.
     #[test]
@@ -968,7 +1090,7 @@ mod carrier_tests {
         let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
         let machine = EntityId::now();
         let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
-        export_key(&vault.store, &subject, &key_ref, &target).unwrap();
+        export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(true)).unwrap();
         let debts = vault
             .store
             .core
@@ -1012,21 +1134,64 @@ mod carrier_tests {
         );
     }
 
+    /// T-EXPORT-ADMITTED (Sol review of census L5-22 PR 1b): the peer's
+    /// admission is asked in each check's snapshot, so a peer removed
+    /// between the two checks gets no seal.
+    #[test]
+    fn an_export_to_a_peer_removed_between_its_checks_refuses_the_seal() {
+        let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
+        let machine = EntityId::now();
+        let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
+        assert!(
+            export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(false)).is_err(),
+            "a peer not admitted gets no seal"
+        );
+        // Admitted at the first check only: removed before the second.
+        let calls = std::cell::Cell::new(0_u32);
+        let exported = export_key(&vault.store, &subject, &key_ref, &target, &|_| {
+            let seen = calls.get();
+            calls.set(seen + 1);
+            Ok(seen == 0)
+        });
+        assert!(
+            exported.is_err(),
+            "a peer removed after the first check gets no seal"
+        );
+        assert_eq!(
+            calls.get(),
+            2,
+            "the export asks the admission at each check"
+        );
+        assert!(
+            export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(true)).is_ok(),
+            "an admitted peer gets its seal"
+        );
+    }
+
     #[test]
     fn a_retirement_after_the_export_check_refuses_the_seal() {
         let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
         let machine = EntityId::now();
         let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
-        let exported = super::export_key_checked(&vault.store, &subject, &key_ref, &target, || {
-            vault.with_write_txn_grouped(|txn| {
-                super::retire_subject_keys_in_txn(&vault.store, txn, &subject, &[], &[])
-            })
-        });
+        let exported = super::export_key_checked(
+            &vault.store,
+            &subject,
+            &key_ref,
+            &target,
+            &|_| Ok(true),
+            || {
+                vault.with_write_txn_grouped(|txn| {
+                    super::retire_subject_keys_in_txn(&vault.store, txn, &subject, &[], &[])
+                })
+            },
+        );
         assert!(
             exported.is_err(),
             "a retirement that commits after the export's first check must refuse the seal"
         );
-        assert!(super::export_key(&vault.store, &subject, &key_ref, &target).is_err());
+        assert!(
+            super::export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(true)).is_err()
+        );
     }
 }
 

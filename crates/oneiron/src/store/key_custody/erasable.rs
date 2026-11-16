@@ -248,6 +248,20 @@ pub(crate) fn delete_erasable_ref_in_txn(
     Ok(())
 }
 
+/// Whether the metadata row under `item`'s ref, in `txn`, names another key
+/// than `item`: another purpose, parent or incarnation. One ref names one
+/// key, so an erase or install of `item` under that ref would reach the
+/// other key's rows (Astra review of census L5-22 PR 1b).
+pub(crate) fn erasable_ref_names_another_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    item: &ErasableItem,
+) -> Result<bool> {
+    Ok(REFS
+        .get(dbs, txn, &item.key_ref)?
+        .is_some_and(|row| row != item.row()))
+}
+
 /// Stages the retirement of `item`'s key in `wtxn`: an erase's intent,
 /// which custody's finisher carries out after commit. One already retired
 /// stages nothing.

@@ -40,6 +40,7 @@ mod agent_verbs {
 mod aging_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
+mod authority_attribution_erase_doors;
 mod authority_history_doors;
 mod blob_body;
 mod board_stream_doors;

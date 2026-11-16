@@ -13,8 +13,8 @@ use crate::store::authority_overlay_custody::{
 #[cfg(feature = "sync")]
 use crate::sync::authority_overlay_custody::{
     ErasedSubject, OverlayAnswer, OverlayKeySession, OverlayOffer, answer_offer,
-    apply_overlay_answer, offer_overlay_page, receive_keys, run_round_for_test,
-    run_round_then_abort_for_test,
+    apply_overlay_answer, offer_overlay_page, peer_admitted_for_test, receive_keys,
+    run_round_for_test, run_round_then_abort_for_test,
 };
 use crate::{OpenOptions, Vault, VaultConfig, VaultStorageId};
 
@@ -430,7 +430,8 @@ fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
     }
 
     let (offer, _session) = offer_overlay_page(&home, &home_id, &other_id, None).unwrap();
-    let answer = answer_offer(&other, &other_id, &home_id, &offer).unwrap();
+    let answer =
+        answer_offer(&other, &other_id, &home_id, &offer, &peer_admitted_for_test).unwrap();
     assert!(answer.same, "the delivered inventories answer same");
     run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
@@ -655,11 +656,26 @@ fn a_held_key_session_closes_when_its_machine_offers_again() {
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert_eq!(offer.ready.len(), 1);
     let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(answer.session.is_some());
     assert!(answer.wanted.contains(&(subject, key_ref)));
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert_eq!(sent.len(), 1);
 
     let offer2 = OverlayOffer {
@@ -674,10 +690,17 @@ fn a_held_key_session_closes_when_its_machine_offers_again() {
             .0
             .session,
     };
-    let answer2 = answer_offer(&home, &home_id, &machine_id, &offer2).unwrap();
+    let answer2 = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer2,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(answer2.session.is_none());
     assert!(
-        receive_keys(&home, &home_id, &machine_id, sent).is_err(),
+        receive_keys(&home, &home_id, &machine_id, sent, &peer_admitted_for_test).is_err(),
         "a batch sealed to the session the machine's next offer replaced must not install"
     );
     let fold = home.authority_fold().unwrap();
@@ -734,7 +757,16 @@ fn an_offer_whose_session_key_does_not_import_retires_nothing() {
             nonce: [7; 32],
         },
     };
-    assert!(answer_offer(&home, &home_id, &machine_id, &offer).is_err());
+    assert!(
+        answer_offer(
+            &home,
+            &home_id,
+            &machine_id,
+            &offer,
+            &peer_admitted_for_test
+        )
+        .is_err()
+    );
     assert!(
         home.authority_fold()
             .unwrap()
@@ -753,7 +785,7 @@ fn an_offer_whose_session_key_does_not_import_retires_nothing() {
 
 #[test]
 #[cfg(feature = "sync")]
-fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing() {
+fn an_offer_naming_a_subject_erased_with_no_key_erases_it_where_it_arrives() {
     let home_dir = tempfile::tempdir().unwrap();
     let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
     let home_id = EntityId::now();
@@ -767,7 +799,17 @@ fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing()
     let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
     let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
     let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
-    let _subject = authority_overlay_subject(&entry.op).unwrap();
+    let row_subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let spare_dir = tempfile::tempdir().unwrap();
+    let spare = Vault::open(spare_dir.path(), VaultConfig::default()).unwrap();
+    spare
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    deliver_authority_overlay_custody_for_test(&home, &spare, &row_subject).unwrap();
 
     let machine_id = EntityId::now();
     let inventory_offer = offer_overlay_page(&home, &home_id, &machine_id, None)
@@ -790,21 +832,26 @@ fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing()
         erased: BTreeMap::from([(subject, ErasedSubject::default())]),
         session: inventory_offer.session,
     };
-    assert!(
-        answer_offer(&home, &home_id, &machine_id, &offer).is_err(),
-        "an offer naming a subject erased with no key must be refused"
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
     );
     assert!(
-        home.authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&mint_row)
+        answer.is_ok(),
+        "a ref-less erasure stands where the offer arrives"
     );
+    assert!(deliver_authority_overlay_custody_for_test(&spare, &home, &subject).is_err());
+    let fold = home.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
 }
 
 #[test]
 #[cfg(feature = "sync")]
-fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
+fn an_answer_naming_a_subject_erased_with_no_key_erases_it_where_it_arrives() {
     let machine_dir = tempfile::tempdir().unwrap();
     let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
     let machine_id = EntityId::now();
@@ -818,7 +865,17 @@ fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
     let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
     let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
     let entry = machine.get_authority_log_entry(&id).unwrap().unwrap();
-    let _subject = authority_overlay_subject(&entry.op).unwrap();
+    let row_subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let (history, overlays) = machine
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let spare_dir = tempfile::tempdir().unwrap();
+    let spare = Vault::open(spare_dir.path(), VaultConfig::default()).unwrap();
+    spare
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    deliver_authority_overlay_custody_for_test(&machine, &spare, &row_subject).unwrap();
 
     let home_id = EntityId::now();
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
@@ -837,17 +894,24 @@ fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
                 .session,
         ),
     };
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).is_err(),
-        "an answer naming a subject erased with no key must be refused before a key is sealed"
+        sent.is_empty(),
+        "a key of the erased subject must not be sealed"
     );
-    assert!(
-        machine
-            .authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&mint_row)
-    );
+    assert!(deliver_authority_overlay_custody_for_test(&spare, &machine, &subject).is_err());
+    let fold = machine.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
 }
 
 #[test]
@@ -891,8 +955,16 @@ fn a_wanted_key_of_a_subject_the_answer_names_erased_is_retired_not_sent() {
                 .session,
         ),
     };
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(
         sent.is_empty(),
         "a key of a subject the answer names erased must not be sent"
@@ -900,6 +972,188 @@ fn a_wanted_key_of_a_subject_the_answer_names_erased_is_retired_not_sent() {
     let fold = machine.authority_fold().unwrap();
     assert!(fold.pass_through_entries.contains(&mint_row));
     assert!(!fold.valid_entries.contains(&mint_row));
+}
+
+/// One machine vault with one sealed mint row: the row's hash, the subject
+/// and ref of its overlay key, and the machine's first offer page to a home
+/// with that page's session.
+#[cfg(feature = "sync")]
+struct MachineWithOneSealedRow {
+    _dir: tempfile::TempDir,
+    machine: Vault,
+    machine_id: EntityId,
+    home_id: EntityId,
+    mint_row: AuthorityEntryHash,
+    subject: EntityId,
+    key_ref: [u8; 32],
+    offer: OverlayOffer,
+    session: crate::sync::authority_overlay_custody::OverlayPageSession,
+}
+
+#[cfg(feature = "sync")]
+fn machine_with_one_sealed_row(slip_id: [u8; 32]) -> MachineWithOneSealedRow {
+    let dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = machine.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:e".to_owned()]);
+    let slip = machine.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let home_id = EntityId::now();
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert_eq!(offer.ready.len(), 1);
+    let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
+    assert!(
+        machine
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row),
+        "the sealed row opens before any answer"
+    );
+    MachineWithOneSealedRow {
+        _dir: dir,
+        machine,
+        machine_id,
+        home_id,
+        mint_row,
+        subject,
+        key_ref,
+        offer,
+        session,
+    }
+}
+
+/// T-FOREIGN-REF (Astra review of census L5-22 PR 1b, threat 5): an answer
+/// that names another subject erased under the ref of this machine's key
+/// for the row's subject is refused in the writer. One ref names one key:
+/// the row still opens, its key stays ready, and the named subject is not
+/// erased here either.
+#[test]
+#[cfg(feature = "sync")]
+fn a_page_naming_another_subjects_key_under_an_erased_subject_closes_nothing() {
+    let held = machine_with_one_sealed_row([107; 32]);
+    let named = EntityId::now();
+    assert_ne!(named, held.subject);
+    let answer = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::from([(
+            named,
+            ErasedSubject {
+                refs: BTreeSet::from([held.key_ref]),
+                destroyed: BTreeSet::new(),
+            },
+        )]),
+        keys: Vec::new(),
+        wanted: BTreeSet::new(),
+        session: None,
+    };
+    assert!(
+        apply_overlay_answer(
+            &held.machine,
+            &held.machine_id,
+            &held.home_id,
+            &held.offer,
+            &held.session,
+            answer,
+            &peer_admitted_for_test,
+        )
+        .is_err(),
+        "an erased subject named under another subject's key must be refused"
+    );
+    let fold = held.machine.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&held.mint_row),
+        "the row of the subject whose key was named still opens"
+    );
+    assert!(!fold.pass_through_entries.contains(&held.mint_row));
+    let inventory = overlay_inventory(&held.machine.store).unwrap();
+    assert!(inventory.ready.contains(&(held.subject, held.key_ref)));
+    assert!(!inventory.erased.contains_key(&named));
+    assert!(!inventory.erased.contains_key(&held.subject));
+}
+
+/// T-REMOVED-HOME (Astra review of census L5-22 PR 1b, threat 3): a home
+/// the machine no longer admits when its answer arrives (removed while the
+/// answer was on the way) erases nothing here and is sealed no key: each
+/// writer and the seal ask the admission again.
+#[test]
+#[cfg(feature = "sync")]
+fn an_answer_from_a_home_no_longer_admitted_erases_and_seals_nothing() {
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "it stands where an admission callback goes, which answers Result<bool>"
+    )]
+    fn home_removed(_: &heed::RoTxn<'_>) -> crate::error::Result<bool> {
+        Ok(false)
+    }
+    let held = machine_with_one_sealed_row([108; 32]);
+    let erasing = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::from([(
+            held.subject,
+            ErasedSubject {
+                refs: BTreeSet::from([held.key_ref]),
+                destroyed: BTreeSet::new(),
+            },
+        )]),
+        keys: Vec::new(),
+        wanted: BTreeSet::new(),
+        session: None,
+    };
+    assert!(
+        apply_overlay_answer(
+            &held.machine,
+            &held.machine_id,
+            &held.home_id,
+            &held.offer,
+            &held.session,
+            erasing,
+            &home_removed,
+        )
+        .is_err(),
+        "an erasure from a home no longer admitted must be refused"
+    );
+    let fold = held.machine.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&held.mint_row),
+        "a home no longer admitted erased the row"
+    );
+    let inventory = overlay_inventory(&held.machine.store).unwrap();
+    assert!(inventory.ready.contains(&(held.subject, held.key_ref)));
+    assert!(!inventory.erased.contains_key(&held.subject));
+
+    let wanting = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::new(),
+        keys: Vec::new(),
+        wanted: BTreeSet::from([(held.subject, held.key_ref)]),
+        session: Some(
+            offer_overlay_page(&held.machine, &held.machine_id, &held.home_id, None)
+                .unwrap()
+                .0
+                .session,
+        ),
+    };
+    assert!(
+        apply_overlay_answer(
+            &held.machine,
+            &held.machine_id,
+            &held.home_id,
+            &held.offer,
+            &held.session,
+            wanting,
+            &home_removed,
+        )
+        .is_err(),
+        "a home no longer admitted must be sealed no key"
+    );
 }
 
 /// T-DEBT (census L5-22 1a-iii, RULING 21:24; ASK L5-22-1A-III-DEBT-FIX):
@@ -934,15 +1188,30 @@ fn a_key_refused_for_a_subject_the_home_erased_mid_round_leaves_no_debt_after_tw
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert_eq!(offer.ready.len(), 1);
     let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(answer.wanted.contains(&(subject, key_ref)));
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert_eq!(sent.len(), 1);
 
     retire_authority_overlay_subject_for_test(&home, &subject).unwrap();
     assert_eq!(
-        receive_keys(&home, &home_id, &machine_id, sent).unwrap(),
+        receive_keys(&home, &home_id, &machine_id, sent, &peer_admitted_for_test).unwrap(),
         0,
         "a key of a subject erased here must not install"
     );
@@ -976,9 +1245,15 @@ fn a_key_refused_for_a_subject_the_home_erased_mid_round_leaves_no_debt_after_tw
     );
     let (offer, _session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert!(
-        answer_offer(&home, &home_id, &machine_id, &offer)
-            .unwrap()
-            .same,
+        answer_offer(
+            &home,
+            &home_id,
+            &machine_id,
+            &offer,
+            &peer_admitted_for_test
+        )
+        .unwrap()
+        .same,
         "the pair answers same once both holder debts are clear"
     );
     let fold = home.authority_fold().unwrap();
@@ -1022,14 +1297,29 @@ fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after
 
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert!(offer.ready.is_empty());
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert_eq!(answer.keys.len(), 1);
 
     retire_authority_overlay_subject_for_test(&machine, &subject).unwrap();
     assert!(
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer)
-            .unwrap()
-            .is_empty()
+        apply_overlay_answer(
+            &machine,
+            &machine_id,
+            &home_id,
+            &offer,
+            &session,
+            answer,
+            &peer_admitted_for_test
+        )
+        .unwrap()
+        .is_empty()
     );
     assert!(
         overlay_inventory(&machine.store)
@@ -1059,13 +1349,404 @@ fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after
     );
     let (offer, _session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert!(
-        answer_offer(&home, &home_id, &machine_id, &offer)
-            .unwrap()
-            .same,
+        answer_offer(
+            &home,
+            &home_id,
+            &machine_id,
+            &offer,
+            &peer_admitted_for_test
+        )
+        .unwrap()
+        .same,
         "the pair answers same once both holder debts are clear"
     );
     let fold = machine.authority_fold().unwrap();
     assert!(fold.pass_through_entries.contains(&mint_row));
     assert!(!fold.valid_entries.contains(&mint_row));
     assert!(!machine.capability_slip_id_is_live(&slip_id).unwrap());
+}
+
+/// The owner closes attribution without a checkpoint; signed history remains intact.
+#[test]
+fn the_owner_erase_closes_the_row_keeps_its_scaffold_and_reports_it_erased() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [104; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:owner-erase".to_owned()]);
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = vault.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = vault.get_authority_log_entry(&id).unwrap().unwrap();
+    let subject = authority_overlay_subject(&entry.op).unwrap();
+    let history = vault.export_signed_authority_history().unwrap();
+
+    let erased = vault
+        .erase_authority_attribution_as(&owner, &subject, None)
+        .unwrap();
+    assert!(
+        vault
+            .get_authority_log_entry(&id)
+            .is_err_and(|error| is_authority_overlay_unavailable(&error)),
+        "the erased subject's row reads as erased, never opened"
+    );
+    assert_eq!(erased.rows_erased, 1);
+    let fold = vault.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert_eq!(vault.export_signed_authority_history().unwrap(), history);
+
+    let requested = BTreeSet::from([mint_row]);
+    let verification = vault.authority_history_verification(&requested).unwrap();
+    assert!(verification.erased.contains(&mint_row));
+    assert!(verification.scaffold_verified.contains(&mint_row));
+    assert!(!verification.semantics_replayed.contains(&mint_row));
+    let coverage = vault.authority_history_coverage(&requested).unwrap();
+    assert!(coverage.scaffold.contains(&mint_row));
+    assert!(coverage.erased.contains(&mint_row));
+    assert!(!coverage.semantic.contains(&mint_row));
+
+    let repeated = vault
+        .erase_authority_attribution_as(&owner, &subject, None)
+        .unwrap();
+    assert_eq!(repeated.rows_erased, 0);
+    assert_eq!(repeated.at, erased.at);
+}
+
+/// An erase made without any subject key travels back to its key holder.
+#[test]
+#[cfg(feature = "sync")]
+fn an_erase_of_a_subject_this_machine_knows_nothing_of_reaches_its_key_holder() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [105; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:unknown-subject-erase".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
+    let subject = authority_overlay_subject(&entry.op).unwrap();
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    let other_id = EntityId::now();
+    other
+        .import_signed_authority_history(&history, &BTreeMap::new())
+        .unwrap();
+    let actor = other.ensure_embedded_owner_actor().unwrap();
+    let owner = other
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let erased = other
+        .erase_authority_attribution_as(&owner, &subject, None)
+        .unwrap();
+    assert!(
+        deliver_authority_overlay_custody_for_test(&home, &other, &subject).is_err(),
+        "a key of a subject erased here must not install"
+    );
+    assert_eq!(erased.rows_erased, 0);
+    let round = run_round_for_test(&other, &other_id, &home, &home_id);
+    assert!(
+        round.is_ok(),
+        "the erase travels without a key ref: {round:?}"
+    );
+    assert!(
+        home.authority_fold()
+            .unwrap()
+            .pass_through_entries
+            .contains(&mint_row)
+    );
+    assert!(!home.capability_slip_id_is_live(&slip_id).unwrap());
+
+    other
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    let overlay: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+        SideTable::new(&side_table::AUTHORITY_OVERLAY);
+    let txn = other.store.env.read_txn().unwrap();
+    assert!(
+        overlay
+            .get(&other.store, &txn, &mint_row)
+            .unwrap()
+            .is_none()
+    );
+    drop(txn);
+    assert!(
+        other
+            .authority_history_verification(&BTreeSet::from([mint_row]))
+            .unwrap()
+            .erased
+            .contains(&mint_row)
+    );
+}
+
+/// The kept scaffold id cannot resolve the PERSON after its record is erased.
+#[test]
+fn scaffold_id_leaf_resolves_to_nothing_after_actor_erase() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    // Every delete loads the install's signing key before its first write.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let member = EntityId::now();
+    vault
+        .put_entity(
+            &member,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"member",
+        )
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [106; 32];
+    let kept_id = member.to_hex();
+    claims.holder_ref = kept_id.clone();
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = vault.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = vault.get_authority_log_entry(&id).unwrap().unwrap();
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    let request = crate::memory::PeopleListRequest {
+        vault: None,
+        page: Some(0),
+    };
+    let before = memory.people_list(&request).unwrap();
+    let handle = before
+        .people
+        .iter()
+        .find(|person| person.person == member)
+        .expect("the owner resolves the member before erasure")
+        .handle
+        .clone();
+
+    memory
+        .safe_delete(&kept_id, crate::SafeDeleteReason::UserHardDelete)
+        .unwrap();
+    assert!(vault.get_raw(&member).unwrap().is_none());
+    assert_eq!(authority_overlay_subject(&entry.op).unwrap(), member);
+    let after = memory.people_list(&request).unwrap();
+    assert!(
+        !after
+            .people
+            .iter()
+            .any(|person| person.person.to_hex() == kept_id)
+    );
+    assert!(
+        memory
+            .people_get(&crate::memory::PersonRequest { pr: handle })
+            .is_err()
+    );
+    let fold = vault.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&mint_row) || fold.pass_through_entries.contains(&mint_row)
+    );
+    assert!(
+        vault
+            .authority_history_verification(&BTreeSet::from([mint_row]))
+            .unwrap()
+            .scaffold_verified
+            .contains(&mint_row)
+    );
+}
+
+fn mint_sealed_overlay_row(
+    vault: &Vault,
+    slip_id: [u8; 32],
+) -> (AuthorityEntryHash, EntityId, Vec<u8>, Vec<u8>) {
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let holder = EntityId::now();
+    let mut claims = root.claims.clone();
+    claims.slip_id = slip_id;
+    claims.holder_ref = holder.to_hex();
+    claims.records = BTreeSet::from(["record:overlay-custody".to_owned()]);
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    let hash = fold.slips.mints[&slip.claims.slip_id].entry_hash;
+    assert!(
+        fold.valid_entries.contains(&hash),
+        "the fixture's sealed mint row opens"
+    );
+    let id = authority_log_entity_id_from_hash(&hash).unwrap();
+    let entry = vault.get_authority_log_entry(&id).unwrap().unwrap();
+    let subject = authority_overlay_subject(&entry.op).unwrap();
+    assert_eq!(
+        subject, holder,
+        "the canonical holder id is the overlay subject"
+    );
+    let raw = vault.get_raw(&id).unwrap().unwrap();
+    let body = raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let overlay: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+        SideTable::new(&side_table::AUTHORITY_OVERLAY);
+    let txn = vault.store.env.read_txn().unwrap();
+    let row = overlay.get(&vault.store, &txn, &hash).unwrap().unwrap();
+    drop(txn);
+    (hash, subject, body, row)
+}
+
+fn vault_with_a_head_naming_another_subjects_key() -> (
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    AuthorityEntryHash,
+    AuthorityEntryHash,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let (row_a, subject_a, body_a, mut overlay_a) = mint_sealed_overlay_row(&vault, [151; 32]);
+    let (row_b, subject_b, _, overlay_b) = mint_sealed_overlay_row(&vault, [152; 32]);
+    assert_ne!(subject_a, subject_b, "the fixture has two overlay subjects");
+    assert_ne!(
+        &overlay_a[16..48],
+        &overlay_b[16..48],
+        "the fixture has two distinct ready overlay keys"
+    );
+    // The head is subject (16) | key ref (32); A's envelope stays unchanged.
+    overlay_a[16..48].copy_from_slice(&overlay_b[16..48]);
+    let carried = crate::authority::CarriedOverlays::from([(row_a, overlay_a)]);
+    let overlay: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+        SideTable::new(&side_table::AUTHORITY_OVERLAY);
+    vault
+        .with_write_txn_grouped(|txn| {
+            overlay.delete(&vault.store, txn, &row_a)?;
+            crate::authority::stage_carried_overlays_in_txn(
+                &vault.store,
+                txn,
+                [body_a.as_slice()],
+                &carried,
+            )
+        })
+        .unwrap();
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&row_b),
+        "the other subject's row opens before the erase"
+    );
+    (dir, vault, subject_a, row_a, row_b)
+}
+
+/// T-HEAD-REF (Sol review of census L5-22 PR 1b): a held row of A whose
+/// head names B's key ref is A's row, not B's key. Erasing A retires A's
+/// keys and leaves B's key ready, so B's row still opens.
+#[test]
+fn an_erase_through_a_head_naming_another_subjects_key_leaves_that_key_ready() {
+    let (_dir, vault, subject_a, row_a, row_b) = vault_with_a_head_naming_another_subjects_key();
+    vault
+        .with_write_txn_grouped(|txn| {
+            crate::authority::erase_authority_overlay_subject_in_txn(
+                &vault.store,
+                txn,
+                &subject_a,
+                &[],
+            )
+        })
+        .unwrap();
+    let fold = vault.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&row_b),
+        "an erase of one subject leaves another subject's key ready"
+    );
+    let txn = vault.store.env.read_txn().unwrap();
+    let marked = crate::authority::authority_row_erased_in_txn(&vault.store, &txn, &row_a).unwrap();
+    drop(txn);
+    assert!(marked, "the erased subject's held row is marked erased");
+}
+
+/// T-HELD-LIE (Sol review of census L5-22 PR 1b): no signature binds a
+/// carried head to its body, so a row this vault holds, re-sent under a head
+/// naming an erased subject, keeps its held overlay and gets no erased mark.
+#[test]
+fn a_held_row_re_sent_under_a_head_naming_an_erased_subject_stays_unmarked() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let (row, _subject_b, body, mut overlay) = mint_sealed_overlay_row(&vault, [153; 32]);
+    let subject_a = EntityId::now();
+    vault
+        .with_write_txn_grouped(|txn| {
+            crate::authority::erase_authority_overlay_subject_in_txn(
+                &vault.store,
+                txn,
+                &subject_a,
+                &[],
+            )
+        })
+        .unwrap();
+    // Only the carried subject changes; the held key ref and envelope stay.
+    overlay[..16].copy_from_slice(subject_a.as_bytes());
+    let carried = crate::authority::CarriedOverlays::from([(row, overlay)]);
+    vault
+        .with_write_txn_grouped(|txn| {
+            crate::authority::stage_carried_overlays_in_txn(
+                &vault.store,
+                txn,
+                [body.as_slice()],
+                &carried,
+            )
+        })
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let marked = crate::authority::authority_row_erased_in_txn(&vault.store, &txn, &row).unwrap();
+    drop(txn);
+    assert!(!marked, "a carried head marks no row this vault holds");
+    assert!(
+        vault.authority_fold().unwrap().valid_entries.contains(&row),
+        "the held row still opens"
+    );
+}
+
+/// T-MARKED-OPEN (Sol review of census L5-22 PR 1b): archive coverage
+/// reports a row erased only when it reads as pass-through. A row that opens
+/// here is not erased, whatever an erased-row mark says.
+#[test]
+fn archive_coverage_reports_no_open_row_erased() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let (row, _subject, _body, _overlay) = mint_sealed_overlay_row(&vault, [154; 32]);
+    let erased: SideTable<AuthorityEntryHash, (), Raw> =
+        SideTable::new(&side_table::AUTHORITY_ERASED_ROW);
+    vault
+        .with_write_txn_grouped(|txn| erased.put(&vault.store, txn, &row, &()))
+        .unwrap();
+    let coverage = vault
+        .authority_history_coverage(&BTreeSet::from([row]))
+        .unwrap();
+    assert!(
+        !coverage.archive.erased.contains(&row),
+        "a row that opens here is not reported erased"
+    );
+    assert!(coverage.archive.held.contains(&row), "the open row is held");
+    assert!(coverage.semantic.contains(&row), "the open row decodes");
 }

@@ -50,8 +50,8 @@ pub(crate) use self::anchor::FileAnchor;
 // FIX 8875: the erasable key client and its holder debt, for the home
 // handoff's custody contract (`crate::store::home_handoff_custody`).
 pub(crate) use self::erasable::{
-    ErasableItem, ErasablePurpose, delete_erasable_ref_in_txn, erasable_refs_of_in_txn,
-    put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
+    ErasableItem, ErasablePurpose, delete_erasable_ref_in_txn, erasable_ref_names_another_in_txn,
+    erasable_refs_of_in_txn, put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
 };
 // FIX 10584 item 3: erased credentials' facts on the custody head.
 pub(crate) use self::erase_evidence::{CredentialFenceFact, FenceFact};
