@@ -510,31 +510,42 @@ fn key_is_the_owners(
 /// owner holds: the install key of a live profile of that machine signed
 /// [`OwnerKeyVouchRequest::machine_transcript`] (no chain of the machine
 /// removed, as the carrier rule reads a profile), and that profile's role is
-/// one the owner answered as theirs. A hosted or execution node, or an
-/// install the owner has not answered, holds no owner key (ruling
+/// one the owner answered as theirs. Any one such chain of the machine, the
+/// roster's or an anchor's, is enough, as one admitting chain admits a
+/// machine ([`FoldedMachine::is_admitted`]): a live chain of another role
+/// beside it vetoes nothing. A hosted or execution node, or an install the
+/// owner has not answered, holds no owner key (ruling
 /// CARRIER-HOSTED-SERVER-OWNER-KEY = A).
 ///
 /// # Errors
 /// [`RecordError::InvalidAuthorityLogBody`] for a machine proof no live
 /// profile of the machine verifies; [`RecordError::AuthorityRefused`] for a
-/// machine the owner has not answered as theirs.
+/// machine the owner has not answered as theirs in any live profile whose
+/// install key verifies it.
 fn require_holding_machine(fold: &AuthorityFold, request: &OwnerKeyVouchRequest) -> Result<()> {
     let transcript = request.machine_transcript()?;
     let proof = ed25519_dalek::Signature::from_slice(&request.machine_proof)
         .map_err(|_| not_valid(MACHINE_PROOF_NOT_VALID))?;
-    let signing = fold
+    let folded = fold
         .machine(request.machine)
         .filter(|folded| folded.chains().all(|(_, chain)| !chain.removed))
-        .and_then(|folded| {
-            folded.chains().map(|(_, chain)| chain).find(|chain| {
-                chain.is_live()
-                    && strong_ed25519_key(&chain.profile.machine_key)
-                        .is_ok_and(|key| key.verify_strict(&transcript, &proof).is_ok())
-            })
-        })
         .ok_or_else(|| not_valid(MACHINE_PROOF_NOT_VALID))?;
-    if !matches!(signing.profile.role, MachineRole::Owned(_)) {
-        return Err(authority_refused(MACHINE_NOT_THE_OWNERS));
+    let mut verified = false;
+    for (_, chain) in folded.chains() {
+        let signed = chain.is_live()
+            && strong_ed25519_key(&chain.profile.machine_key)
+                .is_ok_and(|key| key.verify_strict(&transcript, &proof).is_ok());
+        if !signed {
+            continue;
+        }
+        if matches!(chain.profile.role, MachineRole::Owned(_)) {
+            return Ok(());
+        }
+        verified = true;
     }
-    Ok(())
+    Err(if verified {
+        authority_refused(MACHINE_NOT_THE_OWNERS)
+    } else {
+        not_valid(MACHINE_PROOF_NOT_VALID)
+    })
 }
