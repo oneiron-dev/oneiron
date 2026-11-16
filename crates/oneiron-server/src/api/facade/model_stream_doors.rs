@@ -20,6 +20,7 @@ use oneiron::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::{EntityId, LlmStreamEvent};
+use oneiron_base::request_limits::page_limit_zero_as_one;
 use tokio::sync::Notify;
 
 use super::host_doors::support::{internal, owner_proof};
@@ -444,8 +445,8 @@ pub(crate) async fn ai_streams_events(
     const VERB: &str = "ai.streams.events";
     owner_proof(auth, server, VERB)?;
     let entry = server.model_streams.get(auth, &input.stream_key)?;
-    let limit =
-        usize::try_from(input.limit.unwrap_or(64).clamp(1, 512)).map_err(|_| internal(VERB))?;
+    let limit = usize::try_from(page_limit_zero_as_one(input.limit, 64, 512).rows)
+        .map_err(|_| internal(VERB))?;
     let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
     let subscription = state
         .subs

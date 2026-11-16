@@ -119,16 +119,8 @@ pub(crate) struct AgentRunEffectAsk {
     pub(super) answer: Option<AgentRunEffectChoice>,
 }
 
-/// The owner's answer on one marked effect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AgentRunEffectChoice {
-    /// The effect goes once more, under the same intent id.
-    Resend,
-    /// The effect is not made again; the step reads that it may have
-    /// happened elsewhere.
-    Leave,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::agent_dispatch::run_effects::AgentRunEffectChoice;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::agent_dispatch::run_effects::AgentRunEffectAnswerOutcome;
