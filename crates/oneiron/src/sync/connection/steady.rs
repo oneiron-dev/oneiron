@@ -458,6 +458,7 @@ impl SyncConnection {
                         let config = self.client_config();
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
+                        let predicted = std::sync::Arc::clone(&self.predicted_wake);
                         let follow = std::sync::Arc::clone(&self.follow_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
                         let jobs = upkeep.blocking_jobs();
@@ -504,6 +505,9 @@ impl SyncConnection {
                             // The owner's residence directives naming this
                             // machine run once its history is in (OF-534).
                             directives.notify_one();
+                            // So does the predicted level's upkeep on this
+                            // machine (ARCH-0023b #predicted-residence).
+                            predicted.notify_one();
                             // The owner work those rows name this machine to
                             // do (a world's key work) runs once they are in.
                             let vault = std::sync::Arc::clone(manager.vault());

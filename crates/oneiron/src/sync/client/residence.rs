@@ -17,6 +17,7 @@ pub(super) mod kit_fetch;
 mod machine_history;
 mod media_vectors;
 mod pad_custody;
+mod predict;
 mod promoted_pads;
 mod rpc;
 mod search;
