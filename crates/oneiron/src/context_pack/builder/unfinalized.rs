@@ -496,15 +496,26 @@ impl<'a> ContextPackBuilder<'a> {
                     if let Some(body) = served_claim_body {
                         claim_bodies.insert(entity.id, body);
                     }
-                    // Validated before it is kept: a seed whose references
-                    // the pack cannot serve is dropped, not the whole pack.
-                    match validate_pack_entity_reference(
+                    // Validated before it is kept, with every row its edges
+                    // name: a seed whose references the pack cannot serve is
+                    // dropped, not the whole pack.
+                    let validated = validate_pack_entity_reference(
                         &self.read,
                         &rtxn,
                         &entity.id,
                         &mut claim_bodies,
                         &quarantine_index,
-                    ) {
+                    )
+                    .and_then(|()| {
+                        validate_pack_edge_references(
+                            &self.read,
+                            &rtxn,
+                            std::slice::from_ref(&entity),
+                            &mut claim_bodies,
+                            &quarantine_index,
+                        )
+                    });
+                    match validated {
                         Ok(()) => seeded.push(entity),
                         Err(error) if refuses_one_row(&error) => {}
                         Err(error) => return Err(error),
