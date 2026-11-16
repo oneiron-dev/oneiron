@@ -13,10 +13,14 @@
 //! through. The receipt names the approver as `actor` and the first admin
 //! as `first_admin` (and as `proposer` when no ask proposed the act). The
 //! re-run's own write lands the act ([`Vault::land_approved_admin_act_in_txn`]),
-//! so an act still approving never ran. The first admin may withdraw the act
-//! while it waits; past `org.two_admin_lapse_secs` (default 7 days) the
-//! housekeeping pass marks a waiting or approving act lapsed and tells the
-//! first admin. An Owner's own act is never held.
+//! so an act still approving never ran. An approval lifts only the rule: the
+//! act stays its first admin's, so it lands only while they still stand as a
+//! live Owner, Admin or Deputy, only before `lapses_at`, and a membership
+//! act's check-in is theirs (Astra on #8482, H2 and H3). The first admin may
+//! withdraw the act while it waits and they stand; past
+//! `org.two_admin_lapse_secs` (default 7 days, at most 90) the housekeeping
+//! pass marks a waiting or approving act lapsed and tells the first admin.
+//! An Owner's own act is never held.
 //! Stored change: keep (a new table; `proposer` is an existing optional
 //! receipt field).
 use super::{Role, check_vault, invalid};
@@ -168,15 +172,42 @@ impl Vault {
         vault_id: u64,
         writer: EntityId,
     ) -> Result<()> {
-        if current_held_admin_approval()
-            .is_some_and(|approval| approval.vault_id == vault_id && approval.approver == writer)
-        {
-            return Ok(());
-        }
-        if ORG_TWO_ADMIN.read_in_txn(self, txn, &[], None)?.value {
+        if self.two_admin_holds_in_txn(txn, vault_id, writer)? {
             return Err(two_admin_hold_refusal());
         }
         Ok(())
+    }
+
+    /// Whether [`Self::two_admin_hold_in_txn`] refuses: for a door that
+    /// folds the hold into its own typed refusal (the record delete).
+    pub(crate) fn two_admin_holds_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: EntityId,
+    ) -> Result<bool> {
+        if current_held_admin_approval()
+            .is_some_and(|approval| approval.vault_id == vault_id && approval.approver == writer)
+        {
+            return Ok(false);
+        }
+        Ok(ORG_TWO_ADMIN.read_in_txn(self, txn, &[], None)?.value)
+    }
+
+    /// Whether `person` stands as a live Owner, Admin or Deputy of shared
+    /// vault `vault_id` at `now`: who approves, withdraws or lists a held
+    /// act, and the first admin an approval still lands for.
+    fn stands_as_admin_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        person: EntityId,
+        now: u64,
+    ) -> Result<bool> {
+        Ok(self
+            .live_act_holders(txn, vault_id, now)?
+            .iter()
+            .any(|holder| holder.member == person && is_admin_role(holder.role)))
     }
 
     /// The approved re-run's own write lands its held act: when this thread
@@ -185,8 +216,10 @@ impl Vault {
     /// landed in the writer that commits its change, so a crash before the
     /// approve door settles it loses nothing, and an act still approving
     /// never ran. A write under an approval whose act no longer stands as
-    /// `writer`'s to run (lapsed, withdrawn, approved by another) refuses.
-    /// With no such approval it does nothing.
+    /// `writer`'s to run (lapsed, withdrawn, approved by another, at or past
+    /// its `lapses_at`, or its first admin no longer a live Owner, Admin or
+    /// Deputy here) refuses: a claim made in time lands nothing late (Astra
+    /// on #8482, H2 and H3). With no such approval it does nothing.
     pub(crate) fn land_approved_admin_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -202,6 +235,11 @@ impl Vault {
         let mut act = HELD_ADMIN_ACT
             .get(&self.store, &*txn, &approval.held)?
             .ok_or_else(invalid)?;
+        if now >= act.lapses_at
+            || !self.stands_as_admin_in_txn(txn, vault_id, approval.first_admin, now)?
+        {
+            return Err(invalid());
+        }
         let approver = writer.to_hex();
         match &act.status {
             HeldAdminActStatus::Landed { approver: by } if *by == approver => Ok(()),
@@ -232,11 +270,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         if approved_admin_act_first_admin(vault_id, holder).is_some() {
-            if !self
-                .live_act_holders(txn, vault_id, now)?
-                .iter()
-                .any(|live| live.member == holder && is_admin_role(live.role))
-            {
+            if !self.stands_as_admin_in_txn(txn, vault_id, holder, now)? {
                 return Err(invalid());
             }
             return self.land_approved_admin_act_in_txn(txn, vault_id, holder, now);
@@ -300,7 +334,8 @@ impl Vault {
         }
         let lapse = ORG_TWO_ADMIN_LAPSE_SECS
             .read_in_txn(self, &txn, &[], None)?
-            .value;
+            .value
+            .secs();
         let id = self.store.clock.entity_id()?;
         let act = HeldAdminAct {
             id: id.to_hex(),
@@ -347,10 +382,12 @@ impl Vault {
     }
 
     /// A second, distinct live Owner, Admin or Deputy of shared vault
-    /// `vault_id` approves open held act `held` before it lapses: the act
-    /// stands as theirs to run, and the answer is the approval their re-run
-    /// of its verb runs under ([`run_approved_admin_act`]). The caller then
-    /// settles it ([`Self::settle_held_admin_act`]).
+    /// `vault_id` approves open held act `held` before it lapses, while its
+    /// first admin still stands as a live Owner, Admin or Deputy there and
+    /// its stored input still matches its digest: the act stands as theirs
+    /// to run, and the answer is the approval their re-run of its verb runs
+    /// under ([`run_approved_admin_act`]). The caller then settles it
+    /// ([`Self::settle_held_admin_act`]).
     pub(crate) fn claim_held_admin_act(
         &self,
         approver: &AuthenticatedOwner,
@@ -366,14 +403,13 @@ impl Vault {
             .get(&self.store, &txn, &id)?
             .ok_or_else(invalid)?;
         let first_admin = EntityId::from_hex(&act.first_admin)?;
-        let holders = self.live_act_holders(&txn, vault_id, now)?;
         if act.vault_id != vault_id
             || act.status != HeldAdminActStatus::Open
             || now >= act.lapses_at
             || approver == first_admin
-            || !holders
-                .iter()
-                .any(|holder| holder.member == approver && is_admin_role(holder.role))
+            || digest(&act.input)? != act.input_digest
+            || !self.stands_as_admin_in_txn(&txn, vault_id, approver, now)?
+            || !self.stands_as_admin_in_txn(&txn, vault_id, first_admin, now)?
         {
             return Err(invalid());
         }
@@ -426,7 +462,8 @@ impl Vault {
     }
 
     /// The first admin of open held act `held` in shared vault `vault_id`
-    /// takes it back; it lands no more.
+    /// takes it back while they still stand as a live Owner, Admin or Deputy
+    /// there (Astra on #8482, H7); it lands no more.
     pub fn withdraw_held_admin_act(
         &self,
         first_admin: &AuthenticatedOwner,
@@ -444,6 +481,7 @@ impl Vault {
         if act.vault_id != vault_id
             || act.status != HeldAdminActStatus::Open
             || act.first_admin != actor.to_hex()
+            || !self.stands_as_admin_in_txn(&txn, vault_id, actor, now)?
         {
             return Err(invalid());
         }
@@ -464,11 +502,12 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let reader = reader.revalidate_person_in_txn(self, &txn)?;
         check_vault(self, &txn, vault_id)?;
-        let holders = self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
-        if !holders
-            .iter()
-            .any(|holder| holder.member == reader && is_admin_role(holder.role))
-        {
+        if !self.stands_as_admin_in_txn(
+            &txn,
+            vault_id,
+            reader,
+            self.store.clock.now_recorded_at(),
+        )? {
             return Err(invalid());
         }
         Ok(HELD_ADMIN_ACT

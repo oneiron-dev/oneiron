@@ -118,7 +118,7 @@ pub use shared_act::{
 };
 pub(crate) use shared_act::{
     approved_admin_act_first_admin, current_held_admin_approval, enter_held_admin_approval,
-    run_approved_admin_act,
+    run_approved_admin_act, two_admin_hold_refusal,
 };
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub(crate) use shared_creation::role_preset;

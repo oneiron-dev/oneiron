@@ -30,7 +30,7 @@ pub use held_admin_act::{
 };
 pub(crate) use held_admin_act::{
     approved_admin_act_first_admin, current_held_admin_approval, enter_held_admin_approval,
-    run_approved_admin_act,
+    run_approved_admin_act, two_admin_hold_refusal,
 };
 pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,

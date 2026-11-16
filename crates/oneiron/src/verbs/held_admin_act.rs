@@ -9,8 +9,9 @@
 //! Memory-tier verb such as `vault.members.reset_project_access` or
 //! `vault.workspace.work_companion.set`, an onboarding whose brought
 //! companion's consent is the caller's own proof, an admin ruling, the
-//! delete of archived run attempts, or a REST door) refuses with the hold's
-//! own reason, `two_admin_hold`: it must be made by an Owner.
+//! delete of archived run attempts, an Admin's or a Deputy's `vault.delete`
+//! of a record it does not own, or a REST door) refuses with the hold's own
+//! reason, `two_admin_hold`: it must be made by an Owner.
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -171,9 +172,11 @@ fn rerun(
 /// `vault.members.held.approve`: a second, distinct live Owner, Admin or
 /// Deputy approves an open held act before it lapses. Its verb runs again,
 /// with its stored input, under the approver's own proof and the host's
-/// slip issuer: every check of that verb's door holds, and its receipt
-/// names the approver as `actor` and the first admin as `proposer`. A
-/// refused re-run leaves the act open.
+/// slip issuer: every check of that verb's door holds, a membership act's
+/// check-in is judged as its first admin's, and its receipt names the
+/// approver as `actor` and the first admin as `first_admin` (and as
+/// `proposer` when no ask proposed it). A refused re-run leaves the act
+/// open.
 pub fn approve_held_admin_act_as(
     vault: &Vault,
     approver: &AuthenticatedOwner,
