@@ -21,6 +21,7 @@
 //! [`RECALL_REPLAY_ROWS_PER_PRINCIPAL`] per principal, and an actor's erase
 //! removes its own.
 
+use oneiron_contracts::fingerprint::{ContentHash, ContentHasher};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -197,11 +198,11 @@ fn replay(
 }
 
 fn replay_key(memory: &Memory<'_>, operation: &str) -> (EntityId, [u8; 32]) {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = ContentHasher::new();
     hasher.update(b"oneiron.recall.replay.v1\0");
     hasher.update(&[memory.actor_class as u8]);
     hasher.update(operation.as_bytes());
-    (memory.actor, *hasher.finalize().as_bytes())
+    (memory.actor, hasher.finish().into_bytes())
 }
 
 fn request_digest(input: &RecallRequest) -> MemoryResult<[u8; 32]> {
@@ -210,12 +211,12 @@ fn request_digest(input: &RecallRequest) -> MemoryResult<[u8; 32]> {
         ..input.clone()
     };
     let bytes = serde_json::to_vec(&request).map_err(|error| replay_internal(&error))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(ContentHash::of(&bytes).into_bytes())
 }
 
 fn items_digest(items: &[MemoryItem]) -> MemoryResult<[u8; 32]> {
     let bytes = serde_json::to_vec(items).map_err(|error| replay_internal(&error))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(ContentHash::of(&bytes).into_bytes())
 }
 
 fn pins_of(items: &[MemoryItem]) -> MemoryResult<Vec<RecallReplayPin>> {
