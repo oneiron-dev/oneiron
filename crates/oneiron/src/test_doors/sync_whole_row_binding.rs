@@ -18,7 +18,7 @@ use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::loro_support::map_insert_bytes;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
-use crate::sync::turn_programs::TURN_PROGRAM_ARMS_MAP;
+use crate::sync::turn_programs::{TURN_PROGRAM_ARMS_MAP, TURN_PROGRAM_WAKES_MAP};
 use crate::workspace_roster::{RoomClaimReceipt, RoomSideRow, RoomTurn};
 
 /// A window map that carries a row whole, filed under a key the row's own
@@ -36,14 +36,18 @@ pub enum WholeMap {
     /// A turn program's disarmed arming row: its key is the registration,
     /// its holder the actor.
     TurnProgramArming,
+    /// A turn program's decided wake: its key is the turn then the
+    /// registration, and it is held while the turn is.
+    TurnProgramWake,
 }
 
 /// Each map, in a fixed order.
-pub const WHOLE_MAPS: [WholeMap; 4] = [
+pub const WHOLE_MAPS: [WholeMap; 5] = [
     WholeMap::DocumentPin,
     WholeMap::RoomTurn,
     WholeMap::RoomSideRow,
     WholeMap::TurnProgramArming,
+    WholeMap::TurnProgramWake,
 ];
 
 /// The actor every fixture arming row names: a correct arming row goes
@@ -99,6 +103,22 @@ pub fn whole_window(map: WholeMap, keyed: EntityId, body: EntityId) -> Result<Ve
             }))
             .map_err(|_| refused("an arming row that does not encode"))?;
             map_insert_bytes(&doc.get_map(TURN_PROGRAM_ARMS_MAP), &keyed.to_hex(), &value)?;
+        }
+        WholeMap::TurnProgramWake => {
+            let id = |id: EntityId| {
+                serde_json::to_value(id).map_err(|_| refused("an id that does not encode"))
+            };
+            let registration = fixed(0x47);
+            let value = serde_json::to_vec(&serde_json::json!({
+                "admitted": {
+                    "turn": id(body)?,
+                    "registration": id(registration)?,
+                    "admission": [0_u8; 32],
+                },
+            }))
+            .map_err(|_| refused("a wake row that does not encode"))?;
+            let key = format!("{}{}", keyed.to_hex(), registration.to_hex());
+            map_insert_bytes(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &key, &value)?;
         }
     }
     doc.commit();

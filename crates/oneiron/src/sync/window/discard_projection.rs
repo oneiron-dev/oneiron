@@ -66,9 +66,9 @@ const BASE_WINDOW_DISCARD: SideTable<String, Vec<u8>, Raw> =
 /// (UC-10 PR 1).
 const UNBOUND_PARTED_ROW: &str = "a parted row whose parts join to a row its key does not name";
 
-/// A whole row filed under another row's key: the key's holder is not the
-/// row's, and the row names a holder the projection cannot trust either
-/// (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+/// A whole row whose own key differs from the key that files it: the key
+/// and the row name two rows, and the projection cannot tell which one the
+/// value goes with (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
 const UNBOUND_WHOLE_ROW: &str = "a whole row filed under a key it does not name";
 
 /// A part: its root map and its digest key. A manifest lists parts of its
