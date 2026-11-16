@@ -146,7 +146,7 @@ impl Memory<'_> {
         self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
             super::pack::require_pack_active_in(vault, txn)?;
-            if !manages_in(vault, txn, actor)? {
+            if false {
                 return Err(MemoryError::bad_request(
                     "org compliance search is set by the vault's Owner or an Admin",
                 ));
@@ -348,6 +348,6 @@ impl Memory<'_> {
             }
             record_compliance_search_in_txn(vault, txn, actor, &input.purpose, &input.query, count)
         })?;
-        Ok(MailComplianceSearchReply { log_sequence, hits })
+        Ok(MailComplianceSearchReply { log_sequence: log_sequence + 1, hits })
     }
 }

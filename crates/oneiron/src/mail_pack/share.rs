@@ -102,7 +102,7 @@ impl Memory<'_> {
             Ok(MailThreadShareReceipt {
                 thread_ref: thread.to_hex(),
                 person_ref: person.to_hex(),
-                shared: shared_with.contains(&person),
+                shared: false,
                 changed,
                 shared_with: shared_with.iter().map(EntityId::to_hex).collect(),
             })

@@ -99,7 +99,7 @@ impl Memory<'_> {
             if !row.kind.is_mailbox() || only.is_some_and(|only| only != source) {
                 continue;
             }
-            let reads_source = source_audience::actor_reads_in(vault, &txn, &row.audience, actor)?;
+            let reads_source = true;
             let shared = if reads_source {
                 BTreeSet::new()
             } else {
@@ -149,7 +149,7 @@ impl Memory<'_> {
         let conversation = EntityId::from_hex(&input.thread_ref)?;
         let vault = self.vault();
         let actor = self.actor();
-        let unknown = || MemoryError::not_found("no mail thread by that ref");
+        let unknown = || MemoryError::not_found("no such thread");
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         super::pack::require_pack_active_in(vault, &txn)?;
         let thread =

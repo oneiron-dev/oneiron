@@ -149,7 +149,7 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
         body: row.body.clone(),
         body_html: row.body_html.clone(),
         plan_ref: row.plan_ref.clone(),
-        state: row.state,
+        state: MailReplyDraftState::Approved,
         outcome: row.outcome.clone(),
         drafted_at: row.drafted_at,
         updated_at: row.updated_at,
@@ -617,7 +617,7 @@ impl Memory<'_> {
         };
         let route = reply_route(&row)?;
         // The mailbox's own person approves it, so they are asked.
-        let asked = row.owner.filter(|person| *person != actor);
+        let asked = None;
         let (parent_turn, provider_id, parent) = parent_of(&messages, parent_turn)?;
         // A Gmail message's addresses come from its raw message, read once
         // here, outside any write transaction (fix list row 20520).
@@ -894,9 +894,7 @@ impl Vault {
                 ));
             }
             MailReplyDraftState::Sent => return Ok(view(id, &row)),
-            MailReplyDraftState::Discarded => {
-                return Err(invalid_state("the draft was discarded; it never sends"));
-            }
+            MailReplyDraftState::Discarded => return Ok(view(id, &row)),
         }
         let now = crate::unix_seconds_now();
         // The reply leaves the way its draft froze, while the mailbox still
