@@ -685,6 +685,7 @@ impl crate::Vault {
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
         let now = self.instant_in_txn(txn)?.secs();
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        let shared_scope = self.shared_vault_scope_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let sole_owner = owners.len() == 1 && owners.first() == Some(&owner);
         let mut lapsed = false;
@@ -704,7 +705,9 @@ impl crate::Vault {
             else {
                 continue;
             };
-            let Some(row) = crate::federation::grant_row_in_fold(&fold, id, &body, now) else {
+            let Some(row) =
+                crate::federation::grant_row_in_fold(&fold, id, &body, shared_scope.as_ref(), now)
+            else {
                 continue;
             };
             let grant = row.grant();

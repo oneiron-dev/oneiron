@@ -23,8 +23,8 @@ use serde::Serialize;
 
 use super::system_agent_grant::{SystemAgent, steward_reach_in};
 use super::{
-    FederationGrantKind, FederationGrantPreset, FederationGrantRole, FederationGrantScope, Scope,
-    ScopeAxis, decode_federation_grant_body_keyed, grant_scope,
+    FederationGrantKind, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
+    decode_federation_grant_body_keyed, grant_scope,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -171,7 +171,9 @@ impl Vault {
         reach: GrantReach,
     ) -> Result<Option<EntityId>> {
         let root = self.steward_root_scope_in_txn(txn)?;
-        let shared = matches!(root, FederationGrantScope::Vault { .. });
+        // The root's shape never tells a shared vault from a personal one: the own-device
+        // residence is a `Vault` scope too.
+        let shared = self.shared_vault_creation_in_txn(txn)?.is_some();
         let now = self.store.clock.now_recorded_at();
         // Only a Grant the fold stands behind holds a verb, never a row alone (pass 28 R3):
         // over a shared vault one that stands in its row's families; over this install's own
