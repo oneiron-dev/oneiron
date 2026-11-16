@@ -507,19 +507,11 @@ impl ProjectRecord {
 }
 
 pub use crate::store::conversation_body::{ProjectRoom, RoomOriginCard};
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRoomChange {
-    pub project_id: String,
-    pub room_id: String,
-    pub previous_members: Vec<String>,
-    pub member_ids: Vec<String>,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::ProjectRoomChange;
+#[doc(hidden)]
+pub(super) use oneiron_records::workspace_roster::project::encode;
 
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| invalid())
-}
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
 }

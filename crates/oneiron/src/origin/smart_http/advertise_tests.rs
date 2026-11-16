@@ -278,7 +278,7 @@ fn stock_git_publication_roundtrip() {
         provenance_claim_id: recovery_attribution.provenance_claim_id,
         actor_id: recovery_attribution.actor_id,
         occurred: landing_time(),
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     let prepared = vault
         .prepare_origin_publication_for_test(&wire, &ask)
@@ -290,13 +290,19 @@ fn stock_git_publication_roundtrip() {
         None
     );
     assert!(
-        wire.update_ref_cas(&handle, &recovered_ref, None, &second, now_secs())
-            .expect("CAS before crash")
-            .is_applied()
+        wire.update_ref_cas(
+            &handle,
+            &recovered_ref,
+            None,
+            &second,
+            crate::unix_seconds_now()
+        )
+        .expect("CAS before crash")
+        .is_applied()
     );
     assert!(!git(client.path(), &["ls-remote", "--heads", &url]).contains("refs/heads/recovered"));
     let report = vault
-        .reconcile_origin_publications(&wire, repo_id, &handle, now_secs())
+        .reconcile_origin_publications(&wire, repo_id, &handle, crate::unix_seconds_now())
         .expect("recover publication");
     assert!(report.items.contains(&(
         prepared.publication_id,

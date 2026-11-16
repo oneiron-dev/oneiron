@@ -46,8 +46,12 @@ These rules outrank every other process line in this repo.
   head. Nothing else blocks a merge. Add `--locked`, so a stale manifest fails instead of
   rewriting `Cargo.lock`.
 - **No tests.** Do not write, compile or run tests. The existing tests stay in the repo, untouched.
-- **No backward compatibility.** No vault exists yet. Write no migrations, legacy paths, upgrade
-  code or old-format readers. Formats change freely.
+- **Stored data.** A row a vault already holds never changes meaning, and never stops decoding,
+  under an unchanged ABI stamp (`STORAGE_ABI_VERSION`). A change takes one of three paths: keep
+  (old rows read as before), loud (bump the ABI stamp, at most one bump per train, announced by
+  the Engine; development vaults are rebuilt, never auto-upgraded on bel or kel), or reset (it
+  joins the launch-reset stack). Additive changes are free. There is no migration runner and no
+  legacy decoder (storage-abi.md: rebuilt, not migrated).
 - **No review rounds.** No Sol, Astra, CodeRabbit or Greptile review blocks a merge, and bot
   comments need no answer.
 - No security sweeps, perf work, A/B tests, build-speed work or test work.

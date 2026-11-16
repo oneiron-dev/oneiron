@@ -979,6 +979,7 @@ fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
 /// prepared before the vault narrowed an agent, or before it took a new agent
 /// id, is not put in the vault's place: it would hold that agent looser than
 /// the vault now does. Prepared again, it goes in.
+#[cfg(unix)]
 #[test]
 fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
     use crate::agent_def::AgentCeiling;
@@ -1005,7 +1006,7 @@ fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
     };
     let publishes = |replacement: &Vault| {
         let mut swapped = false;
-        let published = vault.swap_in_replacement(replacement, || {
+        let published = vault.swap_in_replacement(replacement, |_, _| {
             swapped = true;
             Ok(())
         });

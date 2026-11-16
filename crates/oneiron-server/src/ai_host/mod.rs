@@ -14,6 +14,7 @@ use oneiron::dreamer_wake::{AgentWakeSignals, WakeIdleState, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
+use oneiron_base::unix_seconds_now;
 use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig, VoiceSettings};
@@ -144,6 +145,9 @@ pub struct AiHandle {
     raw_budget_units: u64,
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
+    /// What a rerank call is priced at a pair beside its words
+    /// (`[models.recall] rerank_pair_template_units`).
+    rerank_pair_template_units: u64,
     turns: TurnTracker,
     /// When the last turn landed, in seconds: the inbound silence the
     /// Dreamer's wake policy waits out before an idle recipe.
@@ -228,10 +232,4 @@ struct Attached {
 struct SieveDrain {
     stop: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
