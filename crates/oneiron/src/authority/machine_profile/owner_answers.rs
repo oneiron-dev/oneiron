@@ -248,16 +248,20 @@ pub(in crate::authority) fn apply_owner_answer(
     Ok(())
 }
 
-/// Whether an admitted answer still stands in `state`: its carrier's roster
-/// chain still names the key that signed it live, or that chain lost it at
-/// the act's parents only by revisions that saw the act (FIX 2998's removal
-/// race, mesh contract §4). The one carrier rule's reading
-/// (`owner_act_signer_admits`): an anchor's chain
-/// neither removes the carrier here nor keeps its answer standing (RULING
-/// FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B; Astra T1 and T5 on #8673). Read off the
-/// raw chain, so judging one machine never folds another's answers. A role
-/// change between linked roles takes nothing away: only a removal or a new
-/// key does.
+/// Whether an admitted answer still stands in `state`: every revision of its
+/// carrier's roster chain outside the act's past that took the key away (a
+/// removal, a new key) saw the act, and that chain still names the key that
+/// signed it live or lost it only by such revisions (FIX 2998's removal race,
+/// mesh contract §4). The takers are judged before the head: a new key is
+/// not sticky in the raw head, where a higher revision on a branch that never
+/// saw it names the old key again, so the head never keeps an act that a
+/// re-key or a removal did not see (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION).
+/// The one carrier rule's reading (`owner_act_signer_admits`): an anchor's
+/// chain neither removes the carrier here nor keeps its answer standing
+/// (RULING FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B; Astra T1 and T5 on #8673). Read
+/// off the raw chain, so judging one machine never folds another's answers. A
+/// role change between linked roles takes nothing away: only a removal or a
+/// new key does.
 pub(in crate::authority) fn act_stands(
     state: &FoldState,
     proof: &ActProof,
@@ -270,12 +274,13 @@ pub(in crate::authority) fn act_stands(
     else {
         return false;
     };
-    if !chain.head.removed && !chain.head.conflicted && chain.head.profile.machine_key == proof.key
-    {
-        return true;
-    }
+    let names_key = !chain.head.removed
+        && !chain.head.conflicted
+        && chain.head.profile.machine_key == proof.key;
+    // An act with no roster mark has no past to judge the takers against:
+    // the head decides alone, as it did before.
     let Some(mark) = proof.marks.get(&MachineAdmitter::Roster) else {
-        return false;
+        return names_key;
     };
     let mut takers = chain
         .revisions
@@ -286,9 +291,10 @@ pub(in crate::authority) fn act_stands(
                     || revision.profile().machine_key != proof.key)
         })
         .peekable();
-    let saw = takers.peek().is_some()
-        && takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
-    !chain.head.conflicted && saw
+    let taken = takers.peek().is_some();
+    let every_taker_saw =
+        takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
+    every_taker_saw && (names_key || (taken && !chain.head.conflicted))
 }
 
 /// The heads of `T(X)` that count for the owner's say-so: each head another
