@@ -7,8 +7,7 @@
 //! follow-up index (`purposes::task::POLICY_CHANGE_FOLLOWUP_INDEX_KEY`), a skill or amendment
 //! receipt's causes (`purposes::learning::{SKILL_CAUSE_RECEIPT_KEY,
 //! AMENDMENT_CAUSE_RECEIPT_KEY}`), a workflow wrapper's dedupe row
-//! (`purposes::agent::WORKFLOW_DEDUPE_KEY`), a graduation threshold row
-//! (`purposes::learning::GRADUATION_PATTERN_KEY`) and a booking lifecycle receipt, confirm or
+//! (`purposes::agent::WORKFLOW_DEDUPE_KEY`) and a booking lifecycle receipt, confirm or
 //! revision (`purposes::booking::LIFECYCLE_RECEIPT_KEY`), now start their BLAKE3 through the
 //! fingerprint crate's K door. Each is the key of a stored row: a changed key would miss
 //! every row a vault already holds. So each must give main's bytes for every value. The
@@ -152,36 +151,6 @@ mod base_workflow {
 
 #[rustfmt::skip]
 #[allow(unreachable_pub)]
-mod base_graduation {
-    use oneiron_contracts::entity_id::ENTITY_ID_LEN;
-
-    /// Main's tag, which is private there.
-    // main 65fca8fefceb: crates/oneiron/src/edit_distance/graduation/mod.rs:97-98
-    /// Domain separator for the threshold-pattern digest.
-    const PATTERN_DIGEST_DOMAIN: &[u8] = b"oneiron.edit_distance.graduation.pattern.v1";
-
-    // main 65fca8fefceb: crates/oneiron/src/edit_distance/graduation/threshold_policy.rs:160-168
-    /// The 16-byte storage handle of a threshold pattern.
-    pub(super) fn pattern_key(pattern: &str) -> [u8; ENTITY_ID_LEN] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(PATTERN_DIGEST_DOMAIN);
-        hasher.update(pattern.as_bytes());
-        let mut key = [0_u8; ENTITY_ID_LEN];
-        key.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
-        key
-    }
-
-    /// Main's graduation pattern key, which is visible only to its parent there.
-    pub(crate) fn main_graduation_pattern_key(pattern: &str) -> [u8; ENTITY_ID_LEN] {
-        pattern_key(pattern)
-    }
-
-    /// The tag's bytes, for the tag test outside this module.
-    pub(crate) const MAIN_PATTERN_DIGEST_DOMAIN: &[u8] = PATTERN_DIGEST_DOMAIN;
-}
-
-#[rustfmt::skip]
-#[allow(unreachable_pub)]
 mod base_booking {
     use oneiron::booking::LifecycleTokenScope;
     use oneiron::{EntityId, TimeRange};
@@ -278,16 +247,11 @@ fn the_index_key_purposes_keep_main_s_tags() {
         base_policy::MAIN_INDEX_PREFIX
     );
     assert_eq!(
-        purposes::learning::GRADUATION_PATTERN_KEY.tag().as_bytes(),
-        base_graduation::MAIN_PATTERN_DIGEST_DOMAIN
-    );
-    assert_eq!(
         purposes::booking::LIFECYCLE_RECEIPT_KEY.tag().as_bytes(),
         base_booking::MAIN_RECEIPT_KEY_DOMAIN
     );
     for purpose in [
         purposes::task::POLICY_CHANGE_FOLLOWUP_INDEX_KEY,
-        purposes::learning::GRADUATION_PATTERN_KEY,
         purposes::booking::LIFECYCLE_RECEIPT_KEY,
     ] {
         assert_eq!(
@@ -398,17 +362,6 @@ fn the_cause_receipt_keys_keep_their_bytes() {
         // Three purpose names, one recipe: the three tables keep main's identical bytes.
         assert_eq!(skill, amendment);
         assert_eq!(skill, workflow);
-    }
-}
-
-#[test]
-fn the_graduation_pattern_key_keeps_its_bytes() {
-    for pattern in strings() {
-        assert_eq!(
-            door::graduation_pattern_key(&pattern),
-            base_graduation::main_graduation_pattern_key(&pattern),
-            "{pattern:?}"
-        );
     }
 }
 

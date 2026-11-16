@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::cli::HookEffort;
+use crate::cli::{HookEffort, HookHost};
 use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 
 /// One hit's longest text, in characters.
@@ -34,6 +34,8 @@ pub(super) enum RecallAuth<'a> {
 }
 
 pub(super) struct Recall<'a> {
+    /// The harness the session runs in, which the call's consent names.
+    pub(super) host: HookHost,
     pub(super) oneiron: &'a Path,
     pub(super) url: &'a str,
     pub(super) auth: RecallAuth<'a>,
@@ -169,8 +171,11 @@ impl Recall<'_> {
             json!({
                 "schema_version": version,
                 "consent": {
-                    "policy_ref": "policy:claude-code-hooks",
-                    "purpose": "recall context for a new Claude Code session",
+                    "policy_ref": format!("policy:{}-hooks", self.host.as_str()),
+                    "purpose": format!(
+                        "recall context for a new {} session",
+                        self.host.product_name()
+                    ),
                 },
                 "arguments": arguments,
             }),

@@ -1,11 +1,10 @@
 //! Door for `tests/fingerprint_keep_index_keys.rs` (PLAN-UC-04 stage 5): the keys local
 //! vault tables are indexed and deduplicated by (a channel assignment, a wave plan's seal,
 //! per-task rows and frozen statement, a policy change's follow-up, a skill or amendment
-//! receipt's causes, a workflow wrapper's dedupe row, a graduation threshold pattern and a
-//! booking lifecycle receipt), which the engine computes in private code.
+//! receipt's causes, a workflow wrapper's dedupe row and a booking lifecycle receipt), which the engine computes in private code.
 
 use crate::channel_identity::AssignmentKey;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;
 
 /// The key an assignment's two slots are kept under.
@@ -48,12 +47,6 @@ pub fn amendment_cause_receipt_key(receipt: &str) -> [u8; 32] {
 #[must_use]
 pub fn workflow_dedupe_key_hash(key: &str) -> [u8; 32] {
     crate::agent_dispatch::workflow_dedupe_key_hash_for_test(key)
-}
-
-/// The 16-byte key a graduation threshold row is kept under.
-#[must_use]
-pub fn graduation_pattern_key(pattern: &str) -> [u8; ENTITY_ID_LEN] {
-    crate::edit_distance::graduation::pattern_key_for_test(pattern)
 }
 
 /// The key a booking confirm's receipt is kept under.

@@ -27,13 +27,11 @@
 //! current evidence, and current status when the host says it fired — a card is
 //! never surfaced from the plan alone.
 //!
-//! Inherited hole, not owned here: `gate::default_policy_manifest()` carries no
-//! `calendar.` rule, so on a default-seeded vault every calendar claim write —
-//! including this one — is gate-pending. CAL-09's surface oracle pins that state
-//! (`calendar_claims_are_gate_pending_under_the_default_policy_manifest`), and
-//! the fix is one manifest rule in `gate.rs`, a lane-wide CAL non-claim. This
-//! layer deliberately routes through the ordinary claim door rather than around
-//! the gate.
+//! Every outcome write goes through the ordinary claim door, never around the
+//! gate. The default policy manifest's `calendar.` rule reads the family as
+//! normal on both axes, so an owner-attested or observed outcome lands live on a
+//! stock vault; a source that needs an explicit Auto permit is refused loudly
+//! ([`record_event_outcome`]).
 
 use super::claims::{
     CalendarStatus, CalendarStatusValue, PREDICATE_CALENDAR_STATUS, decode_event_outcome_value,
@@ -54,6 +52,7 @@ use crate::lens::{
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use oneiron_vault_contract::{Schedule, WakeEntry};
 
 /// One recorded outcome per EVENT, superseded in place.
 ///
@@ -276,10 +275,8 @@ struct OutcomeHead {
 /// Live means lifecycle-active, deliberately wider than [`claim_surfaceable`]:
 /// a gate-pending `Proposed` head is invisible to readers but is still a head,
 /// and only the writer that supersedes it stops a later approval resurrecting it
-/// beside its own replacement. On a default-seeded vault that is the ORDINARY
-/// state of a calendar claim write, not an exotic one — see the module note on
-/// the missing `calendar.` policy rule. `surfaceable` carries the read path's
-/// consent gate forward unchanged.
+/// beside its own replacement. `surfaceable` carries the read path's consent
+/// gate forward unchanged.
 fn live_outcome_heads_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -334,43 +331,27 @@ pub(in crate::calendar) fn current_status_in(
         .map(|(_, value)| value))
 }
 
-/// One exact host wake: the three fields of the supervisor wake contract.
-///
-/// This is the engine-side image of `oneiron_vault_contract::WakeEntry` with
-/// `Schedule::Exact` — exact by construction, since CAL never plans a window.
-/// `crates/oneiron` does not depend on the contract crate at this commit (the
-/// path dep is ONE-1783's reserved `Cargo.toml` append), so the fields ride this
-/// struct and map one-to-one when that dep lands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutcomeCheckInWake {
-    /// Stable, caller-assigned wake id.
-    pub id: String,
-    /// Exact fire instant, unix seconds UTC.
-    pub at_utc: u64,
-    /// Opaque tag echoed back when the wake fires.
-    pub reason_tag: String,
-}
-
 /// Plans the post-end check-in wake for one EVENT, or `None` when the EVENT is
 /// not meeting-class.
 ///
-/// The engine owns no timer: this only describes the wake the host is asked to
-/// deliver, `grace_secs` after the EVENT's end; the host passes the vault's
-/// grace ([`outcome_grace_secs`]). `_event_ref` is unused at this layer — the
-/// wake carries id, instant, and tag only, and the recheck at due time takes the
-/// EVENT explicitly — but it stays in the signature so the host call sites do
-/// not move when the contract `WakeEntry` becomes available.
+/// The wake is the supervisor contract's own [`WakeEntry`] on the
+/// [`Schedule::Exact`] arm, `grace_secs` after the EVENT's end; the host passes
+/// the vault's grace ([`outcome_grace_secs`]). It carries id, instant, and tag
+/// only: the recheck at due time ([`check_in_is_still_due`]) takes the EVENT
+/// explicitly. The engine owns no timer: this only describes the wake the host
+/// is asked to deliver.
 #[must_use]
 pub fn plan_outcome_check_in(
     wake_id: String,
-    _event_ref: EntityId,
     event_end_utc: u64,
     signals: MeetingClassSignals,
     grace_secs: u64,
-) -> Option<OutcomeCheckInWake> {
-    is_meeting_class(signals).then(|| OutcomeCheckInWake {
+) -> Option<WakeEntry> {
+    is_meeting_class(signals).then(|| WakeEntry {
         id: wake_id,
-        at_utc: event_end_utc.saturating_add(grace_secs),
+        at: Schedule::Exact {
+            at: event_end_utc.saturating_add(grace_secs),
+        },
         reason_tag: OUTCOME_CHECK_IN_REASON_TAG.to_owned(),
     })
 }
