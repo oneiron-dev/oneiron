@@ -57,7 +57,31 @@ impl Vault {
             record,
             record.updated_at,
         )?;
+        // A record that is born opted out moves party-level truth with it, as
+        // `opt_out_counterparty_contact` does: the send gate reads the party's
+        // `comm.opt_out` head, never the contact's own (ARCH-0057 §6 cutover).
+        if let Some(opt_out) = record.opt_out {
+            self.store
+                .record_hooks
+                .supersede_party_opt_out_head_in_txn(
+                    self,
+                    &mut wtxn,
+                    &record.counterparty,
+                    opt_out.reason,
+                    opt_out.recorded_at,
+                )
+                .map_err(comm_fold_error)?;
+        }
         rematerialize_contact_cache_in_txn(self, &mut wtxn, id, record.updated_at)?;
+        if record.opt_out.is_some() {
+            rematerialize_party_contact_cache_in_txn(
+                self,
+                &mut wtxn,
+                &record.counterparty,
+                None,
+                record.updated_at,
+            )?;
+        }
         wtxn.commit()?;
         Ok(())
     }
@@ -230,8 +254,9 @@ impl Vault {
     /// the heads itself would be asserting against its own copy of the door's
     /// rules rather than the door. This changes nothing about the door: it is
     /// the same call the shipping writers make, reachable from the sibling
-    /// module that pins the opt-out coexistence ladder.
-    #[cfg(test)]
+    /// module that pins the opt-out coexistence ladder, and from the
+    /// integration tests' door (`test_doors::contact_family_heads`).
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn supersede_counterparty_contact_claim_heads_for_test(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

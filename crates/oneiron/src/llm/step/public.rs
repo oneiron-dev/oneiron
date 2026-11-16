@@ -33,6 +33,7 @@ use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
+use crate::store::model_step_submission::CorrectionPoint;
 use crate::task_verb::HostBinding;
 use crate::{EdgeActorClass, Vault, WriteActor};
 
@@ -397,6 +398,7 @@ async fn submit(
                     step_hash: digest,
                     result: None,
                     sends: 0,
+                    correction: None,
                 };
                 let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
                     attempt_type: MODEL_STEP_ATTEMPT_KIND.into(),
@@ -494,6 +496,17 @@ async fn submit(
     // Each send is kept on the step's row before it goes, so a stop while it
     // is out, or in the wait after it, resumes with it spent (FIX 11226).
     let keep = move |sends: usize| keep_sends(vault, id, sends);
+    // A schema correction's point is kept on the row with each of its sends,
+    // so the pass after a park continues it and no paid call is asked twice
+    // (STEP-CORRECTION-HEALTH-PARK).
+    let point = std::sync::Mutex::new(row.correction.clone());
+    let keep_point = |at: &CorrectionPoint| {
+        let kept = keep_correction(vault, id, at);
+        if kept && let Ok(mut held) = point.lock() {
+            *held = Some(at.clone());
+        }
+        kept
+    };
     let retries = TransportRetries::resumed(
         usize::from(row.input.retry.max_attempts - 1),
         execution
@@ -501,7 +514,8 @@ async fn submit(
             .map_or(Duration::ZERO, |(_, _, _, rest_wait)| *rest_wait),
         sent,
     )
-    .keeping(&keep);
+    .keeping(&keep)
+    .correcting(row.correction.clone(), &keep_point);
     let outcome = if let Some((backend, guard, _, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
@@ -524,6 +538,14 @@ async fn submit(
     // its row for the next pass (FIX 11226).
     row.sends = u8::try_from(retries.sends()).unwrap_or(u8::MAX);
     row.result = Some(step_result(vault, id, &row, outcome)?);
+    // A suspension (a park, a budget trap) keeps the correction the step
+    // stands at for the pass that resumes it; a settled step clears it.
+    row.correction = match row.result {
+        Some(ModelStepResult::Parked { .. } | ModelStepResult::BudgetDenied { .. }) => {
+            point.lock().ok().and_then(|held| held.clone())
+        }
+        _ => None,
+    };
     // A run its host let go, or whose lease lapsed, while the call ran gets
     // no answer, and its try is not settled under a standing it no longer
     // has. An answer the provider gave is already kept by the durable step
@@ -588,6 +610,28 @@ fn keep_sends(vault: &Vault, id: AttemptId, sends: usize) -> bool {
     });
     kept.unwrap_or_else(|error| {
         tracing::warn!(%error, "a model step's send count did not keep");
+        false
+    })
+}
+
+/// Keeps `point` as the correction step `id` stands at
+/// (STEP-CORRECTION-HEALTH-PARK): what its next pass continues. Whether it
+/// kept: a row that is gone or erased, or a write that faulted, keeps
+/// nothing, and the correction's send is not made.
+fn keep_correction(vault: &Vault, id: AttemptId, point: &CorrectionPoint) -> bool {
+    let kept = vault.with_write_txn(|txn| {
+        let Some(mut row) = SUBMISSIONS.get(&vault.store, txn, &id)? else {
+            return Ok(false);
+        };
+        if erased(&row) {
+            return Ok(false);
+        }
+        row.correction = Some(point.clone());
+        put_submission_in_txn(vault, txn, &id, &mut row)?;
+        Ok(!erased(&row))
+    });
+    kept.unwrap_or_else(|error| {
+        tracing::warn!(%error, "a model step's correction point did not keep");
         false
     })
 }
