@@ -318,6 +318,7 @@ fn delivered(tool: WebTool, output: Value, is_error: bool) -> ConnectorCallReply
             }),
             result_absence: None,
             budget_steering: Vec::new(),
+            session_manifest: None,
         },
     )
 }

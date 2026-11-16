@@ -668,6 +668,30 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             .map(move |row| table.decode_row(row?)))
     }
 
+    /// [`Self::iter_range`] with each value as stored: the decoded key and the value's bytes, for
+    /// a reader that looks at a few fields of most rows before it decodes any whole. Decode a
+    /// value with [`Self::decode_value`].
+    pub(crate) fn iter_raw_range<'txn>(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+        start: Bound<&K>,
+        end: Bound<&K>,
+    ) -> Result<impl Iterator<Item = Result<(K, Vec<u8>)>> + 'txn>
+    where
+        K: 'txn,
+        V: 'txn,
+        C: 'txn,
+    {
+        let table = *self;
+        Ok(self
+            .raw_range(dbs, txn, start, end, false)?
+            .map(move |row| {
+                let (key, value) = row?;
+                Ok((table.decode_row_key(&key)?, value))
+            }))
+    }
+
     /// The rows whose keys fall between `start` and `end`, descending.
     pub(crate) fn iter_rev_range<'txn>(
         &self,

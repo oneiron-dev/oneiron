@@ -30,8 +30,8 @@ use serde_json::{Map, Value};
 use super::ledger::{self, LedgerRow, content_hash};
 use super::sharing;
 use super::{
-    HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
-    HistoryThreadKind,
+    HistoryConversation, HistoryMessage, HistoryRole, HistorySharingCounts, HistorySkips,
+    HistorySource, HistoryThreadKind,
 };
 use crate::TimeRange;
 use crate::Vault;
@@ -101,6 +101,10 @@ pub struct HistoryImportReport {
     pub refusal_reasons: BTreeSet<String>,
     /// What the reader did not keep.
     pub not_kept: HistorySkips,
+    /// Who reads a conversation the source shared, in counts; absent for
+    /// one the source did not share, and in a dry run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<HistorySharingCounts>,
     /// The TURNs that took the messages landed new or as a revision, each
     /// once, in landing order: what a hosted import's progress counts for
     /// embeddings. Not part of the report's wire form.
@@ -121,6 +125,7 @@ impl HistoryImportReport {
             pending: 0,
             refusal_reasons: BTreeSet::new(),
             not_kept: conversation.skipped,
+            sharing: None,
             turns: Vec::new(),
         }
     }
@@ -172,7 +177,7 @@ pub(super) fn runs<'c>(
 /// external assistant the export recorded, each `Counterparty`. The source's
 /// own side and `said_by` stay in the provenance.
 fn witness_author(message: &HistoryMessage) -> WitnessAuthor {
-    match (message.role, message.said_by) {
+    match (message.role, &message.said_by) {
         (HistoryRole::User, None) => WitnessAuthor::User,
         (HistoryRole::User, Some(_)) | (HistoryRole::Assistant, _) => WitnessAuthor::Counterparty,
     }
@@ -292,8 +297,8 @@ fn provenance(
     if let Some(at) = message.at_ms {
         fields.insert("at_ms".into(), Value::from(at));
     }
-    if let Some(said_by) = message.said_by {
-        fields.insert("said_by".into(), Value::from(said_by));
+    if let Some(said_by) = &message.said_by {
+        fields.insert("said_by".into(), Value::from(said_by.as_str()));
     }
     if !message.tools.is_empty() {
         let tools: Vec<Value> = message
@@ -368,6 +373,35 @@ impl Vault {
         conversation: &HistoryConversation,
         imported_at: u64,
     ) -> MemoryResult<HistoryImportReport> {
+        self.import_history_in_facet(owner, source, conversation, imported_at, None)
+    }
+
+    /// [`Self::import_history`], with each TURN it births born under `facet`
+    /// when one is named: a shared workspace's own FACET (Engine ruling
+    /// L2-18-WORKSPACE-FACET-CARRIER = A). The CONVERSATION and its MESSAGEs
+    /// keep their substrate facet, as for every source; a facet grants
+    /// nothing and never limits the owner (ARCH-0022), so who reads the rows
+    /// is the source policy's alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::import_history`], and a bad request for a `facet` that is
+    /// not a live FACET.
+    pub fn import_history_in_facet(
+        &self,
+        owner: &AuthenticatedOwner,
+        source: HistorySource,
+        conversation: &HistoryConversation,
+        imported_at: u64,
+        facet: Option<EntityId>,
+    ) -> MemoryResult<HistoryImportReport> {
+        if let Some(facet) = &facet
+            && self.live_entity_row(facet)?.live_type() != Some(crate::registry::ENTITY_TYPE_FACET)
+        {
+            return Err(MemoryError::bad_request(
+                "an import's facet is a live FACET",
+            ));
+        }
         let mut report = HistoryImportReport::new(conversation);
         let memory = self.memory(owner.revalidate(self)?, EdgeActorClass::Human);
         // The container's readers, as this export names them, are set before
@@ -389,13 +423,15 @@ impl Vault {
                 })
             })
             .transpose()?;
+        report.sharing = sharing.map(|(_, counts)| counts);
         let import = Import {
             vault: self,
             memory,
             owner,
             source,
             conversation,
-            sharing,
+            sharing: sharing.map(|(policy, _)| policy),
+            facet,
             conversation_id: derive(
                 derived_domains::HISTORY_CONVERSATION,
                 &[source.source_id(), &conversation.native_id],
@@ -439,6 +475,9 @@ struct Import<'v> {
     /// The source policy of the conversation's sharing container; `None`
     /// for a conversation the source did not share.
     sharing: Option<EntityId>,
+    /// The FACET each TURN this import births is born under; `None` for the
+    /// vault default.
+    facet: Option<EntityId>,
     conversation_id: EntityId,
     conversation_body: Vec<u8>,
     fallback_ms: u64,
@@ -710,6 +749,7 @@ impl Import<'_> {
             message_occurred: occurred,
             source_audience: birth,
             attribution: SourceAttribution::Unbound,
+            facet: self.facet,
         };
         let moved = Cell::new(false);
         let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {

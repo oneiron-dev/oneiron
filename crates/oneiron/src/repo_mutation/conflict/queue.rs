@@ -35,11 +35,7 @@ impl Vault {
                 "queue resolution must name its recorded branch conflict",
             )));
         }
-        let key = super::super::oplog::repo_mutation_repo_key(repo);
-        let id = entity_id_from_hash_material(
-            QUEUE_RESOLUTION_DOMAIN,
-            &[open.claim_id.as_bytes(), key.as_bytes(), batch.as_bytes()],
-        )?;
+        let id = queue_conflict_resolution_id(repo, open, batch)?;
         if let Some(body) = self.get_claim(&id)? {
             let saved = decode_repo_conflict_resolution_value(&body.value)?;
             if body.predicate != PREDICATE_CONFLICT_RESOLVED
@@ -81,4 +77,43 @@ impl Vault {
         supersede_repo_conflict_claim(self, id, open.claim_id, crate::unix_seconds_now())?;
         Ok((paths, true))
     }
+
+    /// The resolution claim that closed `open`, which green `batch`'s
+    /// coverage completed: that batch's own queue claim when it closed the
+    /// conflict, else the first, in claim-id order, of the claims whose
+    /// `Supersedes` edge closed it (a typed member's, written before GREEN).
+    /// `None` while no claim has closed it.
+    pub(crate) fn queue_conflict_closing_resolution(
+        &self,
+        repo: &RepoRef,
+        open: &RepoConflictClaim,
+        batch: &str,
+    ) -> Result<Option<EntityId>> {
+        let queue_claim = queue_conflict_resolution_id(repo, open, batch)?;
+        let mut closing = Vec::new();
+        for row in self.repo_conflict_resolution_claims(&open.subject)? {
+            if row.open_conflict_claim_id == open.claim_id
+                && self.edge_exists(&row.claim_id, EdgeKind::Supersedes, &open.claim_id)?
+            {
+                closing.push(row.claim_id);
+            }
+        }
+        if closing.contains(&queue_claim) {
+            return Ok(Some(queue_claim));
+        }
+        Ok(closing.into_iter().min())
+    }
+}
+
+/// The id of green `batch`'s queue resolution claim for `open`.
+fn queue_conflict_resolution_id(
+    repo: &RepoRef,
+    open: &RepoConflictClaim,
+    batch: &str,
+) -> Result<EntityId> {
+    let key = super::super::oplog::repo_mutation_repo_key(repo);
+    entity_id_from_hash_material(
+        QUEUE_RESOLUTION_DOMAIN,
+        &[open.claim_id.as_bytes(), key.as_bytes(), batch.as_bytes()],
+    )
 }
