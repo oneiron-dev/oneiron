@@ -11,12 +11,14 @@ use std::collections::BTreeMap;
 use super::chain::{admission_in, reactions_on_in};
 use crate::conversation::AudienceCache;
 use crate::edge::EdgeKind;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::retrieval_deadline::RetrievalDeadline;
 use crate::{EntityId, Vault};
+use oneiron_contracts::cursor_text::parse_hex_cursor;
 use serde::{Deserialize, Serialize};
 
 /// Largest page one call returns. A larger ask is served in pages of this
@@ -88,23 +90,11 @@ fn bad_cursor() -> Error {
 }
 
 fn parse_cursor(cursor: &str) -> Result<[u8; CURSOR_BYTES]> {
-    if cursor.len() != CURSOR_BYTES * 2
-        || !cursor
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(bad_cursor());
-    }
-    let mut key = [0u8; CURSOR_BYTES];
-    for (slot, pair) in key.iter_mut().zip(cursor.as_bytes().chunks_exact(2)) {
-        let pair = std::str::from_utf8(pair).map_err(|_| bad_cursor())?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| bad_cursor())?;
-    }
-    Ok(key)
+    parse_hex_cursor(cursor).ok_or_else(bad_cursor)
 }
 
 fn cursor_hex(key: &[u8; CURSOR_BYTES]) -> String {
-    key.iter().map(|byte| format!("{byte:02x}")).collect()
+    bytes_to_hex_lower(key)
 }
 
 /// The page size a `limit` asks for: at most [`MAX_REACTION_SIGNAL_PAGE`],
