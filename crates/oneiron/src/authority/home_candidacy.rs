@@ -172,6 +172,11 @@ pub(crate) struct JudgedHomeCandidacy {
     /// It stands as one of the owner's machines under this install's pin,
     /// under that same key: what makes it a candidate.
     pub(crate) owner_machine: bool,
+    /// Its machine holds a full copy here ([`AuthorityFold::holds_full_copy`]):
+    /// the election ranks it only while it does, once any candidate holds
+    /// one (CROSS-ARCH-0024 `#my-network` item 04: "Only a full copy can
+    /// become home").
+    pub(crate) full_copy: bool,
 }
 
 impl AuthorityFold {
@@ -202,6 +207,7 @@ impl AuthorityFold {
             cloud: declared.cloud,
             stands,
             owner_machine,
+            full_copy: self.holds_full_copy(machine),
         })
     }
 }
