@@ -133,16 +133,15 @@ impl EngineNativeExecutor<'_> {
             cancel.check()?;
             let completed_steps = completed_step_count(&record)?;
             if steps_run >= config.limits.soft_steps {
-                return Ok(attach_preflight(
-                    self.outcome(
+                return Ok(self
+                    .outcome(
                         EngineExecutorStatus::Yielded {
                             next_step_seq: completed_steps,
                         },
                         steps_run,
                         record,
-                    ),
-                    &resume_preflight,
-                ));
+                    )
+                    .with_resume_preflight(&resume_preflight));
             }
 
             // A step its deadline stopped runs its stored program again,
@@ -172,10 +171,9 @@ impl EngineNativeExecutor<'_> {
                 {
                     TurnProgram::Generated(program) => (program, None, false),
                     TurnProgram::Ended(status) => {
-                        return Ok(attach_preflight(
-                            self.outcome(status, steps_run, record),
-                            &resume_preflight,
-                        ));
+                        return Ok(self
+                            .outcome(status, steps_run, record)
+                            .with_resume_preflight(&resume_preflight));
                     }
                 },
             };
@@ -288,10 +286,9 @@ impl EngineNativeExecutor<'_> {
                 if parked.is_some() {
                     resume_preflight = parked;
                 }
-                return Ok(attach_preflight(
-                    self.outcome(status, steps_run, record),
-                    &resume_preflight,
-                ));
+                return Ok(self
+                    .outcome(status, steps_run, record)
+                    .with_resume_preflight(&resume_preflight));
             }
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
@@ -332,10 +329,9 @@ impl EngineNativeExecutor<'_> {
                         && !cancelled
                     {
                         checking.ended(Some(&status));
-                        return Ok(attach_preflight(
-                            self.outcome(status, steps_run + 1, record),
-                            &resume_preflight,
-                        ));
+                        return Ok(self
+                            .outcome(status, steps_run + 1, record)
+                            .with_resume_preflight(&resume_preflight));
                     }
                     // A response whose program failed before its first host bridge call
                     // commits no step; its correction record is written alone, as a
@@ -393,10 +389,9 @@ impl EngineNativeExecutor<'_> {
                     config,
                 )? {
                     checking.ended(Some(&status));
-                    return Ok(attach_preflight(
-                        self.outcome(status, steps_run + 1, record),
-                        &resume_preflight,
-                    ));
+                    return Ok(self
+                        .outcome(status, steps_run + 1, record)
+                        .with_resume_preflight(&resume_preflight));
                 }
                 return Err(failure.into());
             }
@@ -446,10 +441,9 @@ impl EngineNativeExecutor<'_> {
                         )?
                     {
                         checking.ended(Some(&status));
-                        return Ok(attach_preflight(
-                            self.outcome(status, steps_run + 1, record),
-                            &resume_preflight,
-                        ));
+                        return Ok(self
+                            .outcome(status, steps_run + 1, record)
+                            .with_resume_preflight(&resume_preflight));
                     }
                     return Err(err);
                 }
@@ -689,25 +683,23 @@ impl EngineNativeExecutor<'_> {
                     expected_generation = Some(generation);
                     continue;
                 }
-                return Ok(attach_preflight(
-                    self.outcome(status, steps_run, record),
-                    &resume_preflight,
-                ));
+                return Ok(self
+                    .outcome(status, steps_run, record)
+                    .with_resume_preflight(&resume_preflight));
             }
             // A person's pause this step took holds the run here, before its
             // next model request: its row is already Paused and its lease
             // released, and a resume runs it on from this record.
             if paused {
-                return Ok(attach_preflight(
-                    self.outcome(
+                return Ok(self
+                    .outcome(
                         EngineExecutorStatus::Paused {
                             next_step_seq: completed_step_count(&record)?,
                         },
                         steps_run,
                         record,
-                    ),
-                    &resume_preflight,
-                ));
+                    )
+                    .with_resume_preflight(&resume_preflight));
             }
             expected_generation = Some(next_generation);
         }
@@ -767,16 +759,6 @@ impl EngineNativeExecutor<'_> {
             ));
         }
     }
-}
-
-/// The entry's outcome with its resume-preflight report, when the entry resumed a pending
-/// step and then committed it or parked it again (L8-23).
-fn attach_preflight(
-    mut outcome: EngineExecutorOutcome,
-    resume_preflight: &Option<ResumePreflightReport>,
-) -> EngineExecutorOutcome {
-    outcome.resume_preflight = resume_preflight.clone();
-    outcome
 }
 
 fn answering_model(response: &LlmResponse) -> Option<ModelId> {
