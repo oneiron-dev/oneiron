@@ -129,10 +129,18 @@ impl Vault {
         {
             return Err(refused("is not the bytes its digest names"));
         }
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::removal_import_passes::after_pass(
+            crate::test_doors::removal_import_passes::RemovalImportPass::Digest,
+        );
         if version.checked_add(REMOVAL_EXPORT_RETAIN_SECS) != Some(copy.copy.expires_at) {
             return Err(refused("names a term no removal grants"));
         }
         let held = self.removal_archive_holds(&mut copy.archive)?;
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::removal_import_passes::after_pass(
+            crate::test_doors::removal_import_passes::RemovalImportPass::ArchiveRead,
+        );
         let row = import_key(person, receipt, version);
         // An archive not kept here yet is written as its file before the
         // writer opens (FIX 3679); one kept here already keeps its file.
