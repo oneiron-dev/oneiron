@@ -12,6 +12,7 @@
 //! case (cards dedupe per EVENT start).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test pack_keys_calendar_prep`.
+#![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
@@ -80,6 +81,19 @@ fn open_fixture(pinned_at: u64) -> Fixture {
             .is_none(),
         "a fresh vault sets no reminder route, so the re-ask clock is UTC"
     );
+    Fixture { _dir: dir, vault }
+}
+
+/// An unseeded vault on a clock pinned at `pinned_at`, for the two prep tests. Their meetings
+/// write Approved claims (`calendar.attendee`, `prep.commitment`) through the plain claim door,
+/// which carries no owner proof: a seeded vault's policy manifest holds such a write at the
+/// criticality floor (`gate.pending.criticality_floor`, tests/owner_approval_criticality_floor.rs).
+/// The prep oracle opens unseeded for the same reason (tests/it/calendar_prep.rs `temp_vault`).
+/// The owner still sets keys: `ensure_embedded_owner_actor` makes the owner on any vault.
+fn open_unseeded_fixture(pinned_at: u64) -> Fixture {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = common::on_pinned_clock(VaultConfig::device(), pinned_at);
+    let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open unseeded vault");
     Fixture { _dir: dir, vault }
 }
 
@@ -542,7 +556,7 @@ fn an_internal_meeting_gets_no_prep_by_default_and_gets_it_once_the_owner_turns_
         DEFAULT_PREP_LEAD_SECS, 2_700,
         "the shipped prep lead is T-45"
     );
-    let fixture = open_fixture(PREP_START_1);
+    let fixture = open_unseeded_fixture(PREP_START_1);
     let vault = &fixture.vault;
     let copy = card_copy();
 
@@ -593,7 +607,7 @@ fn the_meeting_prep_read_keeps_250_words_by_default_and_the_owners_ceiling() {
         DEFAULT_PREP_MAX_WORDS, 250,
         "the shipped prep word ceiling is 250 words"
     );
-    let fixture = open_fixture(MEETING_START);
+    let fixture = open_unseeded_fixture(MEETING_START);
     let vault = &fixture.vault;
     let start = MEETING_START;
     let event_ref = put_prep_meeting(vault, 0x51, 0x61, 0x71, start, "owen", MEETING_THREAD);
