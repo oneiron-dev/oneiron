@@ -528,9 +528,10 @@ fn binding_status(fold: &AuthorityFold, key: &AuthorityKey) -> Option<ActorBindi
 /// Y = K's confirmations with their own ids at K's sequence 1 on P; the
 /// revocation = O2's RevokeActor of K's binding at O2's sequence 2 on
 /// [X, Y]; B = K's confirmation with a third id at K's sequence 2 on P.
-/// K's holder sends B here first, so X and Y arrive below K's floor of 2:
-/// the fold refuses them, and the revocation waits on them for good. Its
-/// own signed branch still proves it, so K's binding stays revoked.
+/// K's holder sends B here first, so on main X and Y arrive below K's
+/// floor of 2: the fold refuses them, and the revocation waits on them for
+/// good. Its own signed branch still proves it, so K's binding stays
+/// revoked whatever order the rows arrived in.
 #[test]
 fn an_actor_revocation_over_two_floor_refused_siblings_keeps_the_binding_revoked() {
     let rooted = rooted();
@@ -607,23 +608,17 @@ fn an_actor_revocation_over_two_floor_refused_siblings_keeps_the_binding_revoked
         puts.iter().all(|outcome| outcome == "stored"),
         "setup: the door stores every row; puts {puts:?}"
     );
+    // On main the arrival floor refuses X and Y and the revocation waits
+    // on them, so only its proof revokes K. Where no floor refuses a row
+    // (#8449's floor shape), the revocation folds itself. K stays revoked
+    // under either shape.
     let fold = rooted.vault.authority_fold().expect("the fold");
-    assert!(
-        fold.valid_entries.contains(&hash_of(&later)),
-        "setup: B folds; issues {:?}",
-        fold.issues
-    );
-    assert!(
-        [&first, &second, &revocation]
-            .iter()
-            .all(|row| !fold.valid_entries.contains(&hash_of(row))),
-        "setup: K's floor refuses X and Y, and the revocation waits on them; issues {:?}",
-        fold.issues
-    );
+    let valid = [&later, &first, &second, &revocation]
+        .map(|row| fold.valid_entries.contains(&hash_of(row)));
     assert_eq!(
         binding_status(&fold, &key_of(&bound)),
         Some(ActorBindingStatus::Revoked),
-        "K's two rows at one sequence below its floor must not void the revocation's proof; issues {:?}",
+        "K's two rows at one sequence must not void the revocation; B, X, Y, R valid {valid:?}, issues {:?}",
         fold.issues
     );
 }
