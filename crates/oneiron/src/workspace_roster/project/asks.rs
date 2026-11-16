@@ -12,15 +12,8 @@ fn unplaced() -> Error {
     RecordError::InvalidProjectBody("task is not placed in a project that serves authority").into()
 }
 
-/// Where one project ask went: the project, the TASK that placed it there and
-/// the ask's handle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectAsk {
-    pub project: EntityId,
-    pub task: EntityId,
-    pub ask: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::asks::ProjectAsk;
 
 impl Vault {
     /// The served project whose task list holds `task` in this snapshot, if
