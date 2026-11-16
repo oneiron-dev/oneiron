@@ -834,13 +834,16 @@ impl Vault {
 
     /// The first step of a device key's enrollment whose predecessor signs
     /// elsewhere (row WEB-PASSKEY-OWNER-KEY: the owner's passkey, in his
-    /// browser, vouches for a new device): the entry
-    /// [`Self::enrol_owner_signing_key_as`] would write, built now with no
-    /// signature, and the challenge its predecessor's assertion names. A
+    /// browser, vouches for a new device): the enrollment entry
+    /// [`Self::enrol_owner_signing_key_as`] would write first, built now with
+    /// no signature, and the challenge its predecessor's assertion names. A
     /// frontier join this needs is written and kept; nothing else is.
     ///
     /// # Errors
-    /// As [`Self::enrol_owner_signing_key_as`], before any signature.
+    /// As [`Self::enrol_owner_signing_key_as`], before any signature; an
+    /// authority refusal for an enrollment that would bind its owner to the
+    /// key (OWNER-ENROL), whose second entry a prepared enrollment does not
+    /// carry.
     pub fn prepare_owner_key_enrollment_as(
         &self,
         authority: &ActAuthority,
@@ -886,8 +889,9 @@ impl Vault {
     /// [`RecordError::InvalidAuthorityLogBody`] for an entry this install
     /// does not carry for this owner, for a key the roster names by now, or
     /// for a predecessor revoked or past the entry's sequence or a holding
-    /// machine removed since prepare; then as
-    /// [`Self::enrol_owner_signing_key_as`].
+    /// machine removed since prepare; an authority refusal for an enrollment
+    /// that would bind its owner to the key (OWNER-ENROL), judged here again;
+    /// then as [`Self::enrol_owner_signing_key_as`].
     pub fn land_owner_key_enrollment_as(
         &self,
         authority: &ActAuthority,
@@ -1297,11 +1301,42 @@ impl Vault {
     /// its key as a predecessor. Empty before any passkey enrollment.
     pub fn enrolled_owner_passkeys(&self) -> Result<Vec<EnrolledOwnerPasskey>> {
         let txn = self.store.env.read_txn()?;
+        self.enrolled_owner_passkeys_in_txn(&txn)
+    }
+
+    /// [`Self::enrolled_owner_passkeys`] in the caller's transaction.
+    fn enrolled_owner_passkeys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EnrolledOwnerPasskey>> {
         let mut keys = BTreeMap::new();
-        self.visit_authority_entries_in_txn(&txn, |fold, hash, entry| {
+        self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
             keep_enrolled_passkey(&mut keys, fold, hash, entry);
         })?;
         Ok(keys.into_values().collect())
+    }
+
+    /// Every live owner key whose enrolment names `person`: their device
+    /// keys and their passkeys (row WEB-PASSKEY-OWNER-KEY), whose enrolment
+    /// names its owner as a device key's does.
+    fn live_owner_keys_enrolled_for_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<AuthorityKey>> {
+        let mut keys: Vec<AuthorityKey> = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .filter(|key| key.live && key.owner == person)
+            .map(|key| AuthorityKey::Ed25519(key.public_key))
+            .collect();
+        keys.extend(
+            self.enrolled_owner_passkeys_in_txn(txn)?
+                .into_iter()
+                .filter(|passkey| passkey.live && passkey.owner == person)
+                .map(|passkey| AuthorityKey::P256(passkey.public_key)),
+        );
+        Ok(keys)
     }
 
     /// Calls `visit` with the fold in `txn` and each authority entry this
@@ -1332,11 +1367,12 @@ impl Vault {
     /// Ends the owner authority `person` holds on this vault's log, in the
     /// transaction of the membership move that ends their standing
     /// (OWNER-ENROL): under `issuer`, a `RevokeDevice` for each live owner
-    /// key whose enrolment names them, which ends any binding on that key,
-    /// then a `RevokeActor` for each other live `human` binding that names
-    /// them, the host root's binding of its embedded owner among them. The
-    /// root key itself stays: only its binding ends. Each entry must count,
-    /// or the move commits nothing. A person with neither writes no entry.
+    /// key whose enrolment names them, a passkey among them, which ends any
+    /// binding on that key, then a `RevokeActor` for each other live `human`
+    /// binding that names them, the host root's binding of its embedded
+    /// owner among them. The root key itself stays: only its binding ends.
+    /// Each entry must count, or the move commits nothing. A person with
+    /// neither writes no entry.
     ///
     /// # Errors
     /// The log's: an `issuer` that is not this vault's live host root, or an
@@ -1349,10 +1385,8 @@ impl Vault {
     ) -> Result<()> {
         let root = issuer.public_key();
         let keys: Vec<AuthorityKey> = self
-            .enrolled_owner_keys_in_txn(txn)?
+            .live_owner_keys_enrolled_for_in_txn(txn, person)?
             .into_iter()
-            .filter(|key| key.live && key.owner == person)
-            .map(|key| AuthorityKey::Ed25519(key.public_key))
             .filter(|key| *key != root)
             .collect();
         for revoked_key in keys {
@@ -1459,10 +1493,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         person: EntityId,
     ) -> Result<()> {
-        let holds_key = self
-            .enrolled_owner_keys_in_txn(txn)?
-            .iter()
-            .any(|key| key.live && key.owner == person);
+        let holds_key = !self
+            .live_owner_keys_enrolled_for_in_txn(txn, person)?
+            .is_empty();
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let holds_binding = fold.actor_bindings.values().any(|binding| {
             binding.status == ActorBindingStatus::Active
