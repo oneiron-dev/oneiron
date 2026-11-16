@@ -672,9 +672,8 @@ pub(crate) enum RowPlacement {
     },
     /// Ids alone, dropped with each entity it names.
     Structure { dependencies: Vec<EntityId> },
-    /// A row filed under another row's key, which admit refuses and no
-    /// writer files: its key's holder is not the row's (FIX
-    /// SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+    /// A row whose own key differs from the key that files it, which admit
+    /// refuses and no writer files (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
     KeyMismatch,
 }
 

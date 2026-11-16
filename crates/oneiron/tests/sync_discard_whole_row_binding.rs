@@ -2,14 +2,14 @@
 //! SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW; Engine RULING UC10-PR1-PREMISE =
 //! A, 15 Nov 17:45: "the window defers: its projection stays owed").
 //!
-//! A document pin, a room turn, a room side row and a turn program arming
-//! row each ride whole under a key their own body spells. Filed under one
-//! row's key while its body names another, such a row was placed under no
-//! one, and the BASE-window discard projection kept it, whichever of the
-//! two rows went: the discarded row's content stayed in the persisted
-//! window. The projection now defers the window. A correct whole row places
-//! as before, and bytes that read as no row prove no other row: they place
-//! by their key, as before.
+//! A document pin, a room turn, a room side row, a turn program arming row
+//! and a decided wake each ride whole under a key their own body spells.
+//! Filed under one row's key while its body names another, such a row was
+//! placed under no one, and the BASE-window discard projection kept it,
+//! whichever of the two rows went: the discarded row's content stayed in
+//! the persisted window. The projection now defers the window. A correct
+//! whole row places as before, and bytes that read as no row prove no
+//! other row: they place by their key, as before.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
 use oneiron::EntityId;
@@ -66,6 +66,11 @@ fn whole_row_discard_defers_on_mismatch_room_side_row() {
 #[test]
 fn whole_row_discard_defers_on_mismatch_turn_program_arming() {
     whole_row_discard_defers_on_mismatch(WholeMap::TurnProgramArming);
+}
+
+#[test]
+fn whole_row_discard_defers_on_mismatch_turn_program_wake() {
+    whole_row_discard_defers_on_mismatch(WholeMap::TurnProgramWake);
 }
 
 /// A correct whole row places as before: its holder's discard erases it,
