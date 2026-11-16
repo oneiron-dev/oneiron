@@ -8033,6 +8033,7 @@ dependencies = [
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
  "oneiron-sdk-build",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
@@ -8326,6 +8327,7 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-derive",
  "oneiron-fingerprint",
  "oneiron-hex",
  "rand 0.8.8",
@@ -8378,6 +8380,16 @@ dependencies = [
  "oneiron-contracts",
  "schemars 0.8.22",
  "serde",
+]
+
+[[package]]
+name = "oneiron-derive"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -8684,6 +8696,7 @@ dependencies = [
  "der 0.7.10",
  "ipnet",
  "libc",
+ "lopdf",
  "oneiron",
  "oneiron-container",
  "oneiron-docedit",
@@ -8693,6 +8706,7 @@ dependencies = [
  "oneiron-sandbox-contract",
  "oneiron-spawn",
  "p256",
+ "pkix-chain",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8704,6 +8718,8 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "x509-cert",
+ "x509-ocsp",
+ "x509-tsp",
 ]
 
 [[package]]
@@ -9011,6 +9027,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-setting-contract"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "rmp-serde",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
@@ -9055,6 +9081,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-derive",
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
