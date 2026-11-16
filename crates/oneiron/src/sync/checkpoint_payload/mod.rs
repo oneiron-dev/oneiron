@@ -659,3 +659,42 @@ pub(crate) fn restore_checkpoint_windows(
 ) -> Result<SyncRestoreRows> {
     self::restore::restore(carriers, opened)
 }
+
+/// The window-map dispatch functions the checkpoint pin door asks beside
+/// [`root_entry`] (`test_doors::sync_checkpoint_pins`, UC-10 PR 6). Each is
+/// `pub(super)` where it is declared, so a `pub(crate) use` cannot name it
+/// (E0364): each is called from here, under its own name, with its own
+/// signature. Compiled only under `--cfg oneiron_test_support`.
+///
+/// At the PR 6 head `key_refusal` and `withheld_part_key` live in
+/// `super::descriptor`: those two bodies name `descriptor` there, and the
+/// other two stay in `owners`.
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_support {
+    use super::{Holder, SyncUnclassified, ValueSplit};
+    use crate::store::checkpoint_payload::rows::OtherClient;
+
+    /// Why `key` of the window root map `root` cannot stand plaintext in a
+    /// skeleton; `None` for an opaque id or a schema name.
+    pub(crate) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
+        super::owners::key_refusal(root, key)
+    }
+
+    /// Whether the skeleton withholds `key` of `root` as a part's digest.
+    pub(crate) fn withheld_part_key(root: &str, key: &str) -> bool {
+        super::owners::withheld_part_key(root, key)
+    }
+
+    /// The client the skeleton withholds `key` of `root` for, beside that
+    /// client's copy of its value.
+    pub(crate) fn withheld_client_key(root: &str, key: &str) -> Option<OtherClient> {
+        super::owners::withheld_client_key(root, key)
+    }
+
+    /// The rightful holders of the key `key` of `root` the skeleton
+    /// withholds, and the actor split out of it: what `withheld_key` returns,
+    /// field by field.
+    pub(crate) fn withheld_key(root: &str, key: &str) -> Option<(Vec<Holder>, Option<ValueSplit>)> {
+        super::owners::withheld_key(root, key).map(|withheld| (withheld.holders, withheld.split))
+    }
+}
