@@ -51,7 +51,8 @@ pub(super) fn check_moved_output(
             return Err(OutputRefusal::BadConfidence);
         }
     }
-    check_links(input, output)
+    check_links(input, output)?;
+    check_relations(output)
 }
 
 /// The windows' moods of a turn read in several (FIX 9518): each in range,
@@ -141,6 +142,25 @@ pub(crate) fn check_links(
         claim(link.span)?;
         if !is_confidence(link.confidence) {
             return Err(OutputRefusal::BadConfidence);
+        }
+    }
+    Ok(())
+}
+
+/// The relation rules: each relation joins two different spans of the
+/// answer, under a label of 1 to 64 bytes, with a confidence in 0..1. Any
+/// number of relations holds, and two may join the same spans.
+pub(crate) fn check_relations(output: &EncoderOutput) -> Result<(), OutputRefusal> {
+    let spans = output.spans.len();
+    for relation in output.relations.iter().flatten() {
+        if relation.head >= spans
+            || relation.tail >= spans
+            || relation.head == relation.tail
+            || relation.label.is_empty()
+            || relation.label.len() > MAX_LABEL_BYTES
+            || !is_confidence(relation.confidence)
+        {
+            return Err(OutputRefusal::BadRelation);
         }
     }
     Ok(())
