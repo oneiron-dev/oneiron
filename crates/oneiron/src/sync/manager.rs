@@ -45,16 +45,16 @@
 //!   its retry pass after it drops the registry lock, and a replacement
 //!   forwards its candidate, which no import reaches before it is
 //!   registered, without the turn. The turn's holder may take the registry
-//!   lock: Observer B's NOTE scrub lists the live windows under the
-//!   materializer lock (FIX 12128).
+//!   lock: Observer B's NOTE scrub lists the live windows inside an import's
+//!   callback (FIX 12128).
 //!   The registry lock before the materializer lock: a cold open takes the
 //!   materializer lock for step-5 forward remat, and an unload for its
-//!   persist, without the registry lock. Two holders break that order and
-//!   can deadlock against each other: a replacement forwards its candidate
-//!   under the registry lock, and that NOTE scrub takes the registry lock
-//!   under the materializer lock (FIX 25183). Every other observer callback
-//!   takes only the materializer lock. Code built on the manager must never
-//!   acquire the registry lock while holding the materializer lock.
+//!   persist, without the registry lock, and a replacement forwards its
+//!   candidate under the registry lock. Observer B's NOTE scrub takes the
+//!   registry lock only once its callback has dropped the materializer lock
+//!   (FIX 25183); every other observer callback takes only the materializer
+//!   lock. Code built on the manager must never acquire the registry lock
+//!   while holding the materializer lock.
 
 mod document_api;
 mod live_mirror;
