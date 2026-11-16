@@ -5,8 +5,10 @@ use super::invalid_autonomy;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::context_projection::ResolvedContextProjection;
 use crate::error::Result;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, Vault};
+use oneiron_contracts::RecordedSeconds;
 use rmpv::Value;
 
 const POSTING_ENVELOPE: &str = "channel_identity.space_posting_envelope";
@@ -150,7 +152,19 @@ impl Vault {
                     });
                 }
             }
-            let decision_id = GateDecisionId::now();
+            let mut receipt = GateReceipt::new(
+                GateReceiptOutcome::Approved,
+                "channel_identity.posting",
+                "gate.identity.space_posting_configured",
+                ReceiptActor::human(owner_actor),
+                setting.as_bytes().to_vec(),
+                PolicyBasis::NOT_READ,
+            );
+            // The row keeps the setting's own second.
+            receipt.decided_at = Some(RecordedSeconds::from_secs(at));
+            // Minted first: the head row names the decision.
+            let record = self.store.mint_gate_receipt_in_txn(txn, receipt)?;
+            let decision_id = record.decision_id;
             self.write_autonomy_row(
                 txn,
                 &head,
@@ -158,28 +172,7 @@ impl Vault {
                 at,
                 Value::Array(vec![id_value(setting), Value::from(decision_id.to_hex())]),
             )?;
-            self.store.append_gate_decision_in_txn(
-                txn,
-                &GateDecisionRecord {
-                    version: GATE_DECISION_LEDGER_VERSION,
-                    decision_id,
-                    created_at: at,
-                    outcome: "approved".to_owned(),
-                    reason_codes: vec!["gate.identity.space_posting_configured".to_owned()],
-                    receipt_reasons: Vec::new(),
-                    system_notices: Vec::new(),
-                    actor_class: "human".to_owned(),
-                    actor_ref: Some(owner_actor.to_hex()),
-                    content_kind: "channel_identity.posting".to_owned(),
-                    policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-                    claim_id: None,
-                    grant_ref: None,
-                    diff_handle: setting.as_bytes().to_vec(),
-                    read_frontier_hash: [0; 32],
-                    context: Default::default(),
-                    redacted_at: None,
-                },
-            )?;
+            self.store.append_gate_decision_in_txn(txn, &record)?;
             Ok(SpacePostingReceipt {
                 setting_ref: setting,
                 decision_id,

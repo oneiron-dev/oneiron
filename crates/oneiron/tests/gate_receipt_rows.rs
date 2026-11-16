@@ -9,7 +9,9 @@
 //! - 1e Dreamer: the facet admission receipt of an enqueued attempt (`dreamer_runner/authority.rs`).
 //! - 1g the rest: the booking guard parks a borderline submission (`booking/anti_abuse/quarantine.rs`;
 //!   added by UC-03 PR 1g, the one row here with a bound id and a bound time).
-//! - 1h the rest: the owner approves an agent's plan-doc (`note/plan_doc.rs`).
+//! - 1h the rest: the owner approves an agent's plan-doc (`note/plan_doc.rs`), and a connector
+//!   key's register receipt (`connector_key/txn.rs`; added by UC-03 PR 1h, a row whose time its
+//!   caller binds).
 //!
 //! The foreign grant and the plan-doc approval are two of the owner's yeses that D2 (UC-03 PR 5)
 //! respells from `allow` to `approved`; PR 5 moves those two pins with its behaviour change.
@@ -27,6 +29,7 @@ use oneiron::booking::anti_abuse::{
     BookingRequestFacts, booking_ip_hash, quarantine_borderline_submission,
 };
 use oneiron::claim::base_world_id;
+use oneiron::connector_key::{ConnectorKeyRecord, encode_connector_key_body};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::counterparty_contact::CounterpartyContactRecord;
 use oneiron::dreamer_runner::{
@@ -46,6 +49,7 @@ use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_hos
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -400,6 +404,75 @@ fn a_booking_quarantine_row_keeps_its_fields() -> TestResult {
             claim_id: Some(receipt.claim_id),
             grant_ref: None,
             diff_handle: pending.diff_handle.clone(),
+            read_frontier_hash: frontier,
+            context: GateDecisionContext::default(),
+            redacted_at: None,
+        }
+    );
+    Ok(())
+}
+
+/// Family 1h: a connector key's register receipt. The fixture is
+/// `tests/connector_key_suspend_admission.rs`'s: an owned vault with install signing, its embedded
+/// owner, and the person the key acts for.
+#[test]
+fn a_connector_key_register_row_keeps_its_fields() -> TestResult {
+    const REGISTERED_AT: u64 = 10;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device())?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing()?;
+    vault.ensure_embedded_owner_actor()?;
+    let person = EntityId::now();
+    let body = rmp_serde::to_vec_named(&json!({ "name": "connector person" }))?;
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &body,
+    )?;
+    let key = EntityId::now();
+
+    let record = vault.register_connector_key(
+        &key,
+        ConnectorKeyRecord::active("email", Some(person), Vec::new(), REGISTERED_AT),
+    )?;
+
+    let grant_ref = format!("ckey:{}", key.to_hex());
+    let rows: Vec<GateDecisionRecord> = vault
+        .gate_decisions(64)?
+        .into_iter()
+        .filter(|row| {
+            row.content_kind == "connector_key_op"
+                && row.grant_ref.as_deref() == Some(grant_ref.as_str())
+        })
+        .collect();
+    assert_eq!(rows.len(), 1, "a registration writes one receipt");
+    let row = &rows[0];
+    assert_eq!(
+        row.created_at, REGISTERED_AT,
+        "the row keeps the registration's time"
+    );
+    let mut handle = Sha256::new();
+    handle.update(b"oneiron.connector_key.op.v0");
+    handle.update(encode_connector_key_body(&record)?);
+    let frontier = door::policy_frontier(&vault)?;
+    assert_eq!(
+        fields(row),
+        Fields {
+            version: 0,
+            outcome: "allow".to_owned(),
+            reason_codes: strings(&["gate.connector_key.register"]),
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "first_party".to_owned(),
+            actor_ref: None,
+            content_kind: "connector_key_op".to_owned(),
+            policy_manifest_version: POLICY_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: Some(grant_ref),
+            diff_handle: handle.finalize().to_vec(),
             read_frontier_hash: frontier,
             context: GateDecisionContext::default(),
             redacted_at: None,
