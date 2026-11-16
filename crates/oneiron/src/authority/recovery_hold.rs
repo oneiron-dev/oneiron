@@ -24,7 +24,10 @@ use crate::world_keys::{OwnerRootSigner, RecoveryAuthoritySigner, keystore_error
 use crate::{EntityId, Result, TimeRange, Vault};
 
 mod answers;
+mod hold_view;
 mod landing;
+
+pub use hold_view::{RecoveryHoldState, RecoveryHoldView};
 
 /// The hold's signer and successor, judged at the parents' state: the
 /// signer is the recovery root's authority key R (the generic transition
@@ -57,7 +60,9 @@ pub(super) fn judge_recovery_hold(
 /// is outside the wait (WAYBACK-WAIT-PLACEMENT = A). Nor does an admin's key
 /// or a host's answer ([`answers_recovery_holds`]): the generic consent rule
 /// admits both, and either answer would end or stop an owner's wait with no
-/// owner device (WAYBACK-7: no staff override).
+/// owner device (WAYBACK-7: no staff override). Whose `ItIsMe` ends a wait
+/// is the hold view's rule, not this judge's: the fold counts a co-owner's
+/// `ItIsMe` row, and the view gives it no weight (`hold_view::key_is_the_owners`).
 pub(super) fn judge_recovery_hold_answer(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -100,218 +105,6 @@ pub(super) fn answers_recovery_holds(device: &FoldedDevice) -> bool {
     folded_device_can_authority_consent(device) && device.roles & ROLE_OWNER != 0
 }
 
-/// The rows the hold view reads off the counted log: each hold with its
-/// signer R, each answer with its kind and signer, and every key a valid
-/// enrolment made a recovery root's authority key (the fold's own memory of
-/// the R keys), which tells the kit's Cancel from an owner device's.
-#[derive(Default)]
-struct HoldRows {
-    holds: Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)>,
-    answers: BTreeMap<AuthorityEntryHash, Vec<(RecoveryHoldAnswerKind, AuthorityKey)>>,
-    root_keys: BTreeSet<AuthorityKey>,
-}
-
-impl HoldRows {
-    fn read(&mut self, hash: AuthorityEntryHash, entry: &AuthorityLogEntry) {
-        match &entry.op {
-            AuthorityOp::RecoveryHold(hold) => {
-                self.holds
-                    .push((hash, hold.clone(), entry.signer_key().clone()));
-            }
-            AuthorityOp::RecoveryHoldAnswer(answer) => {
-                self.answers
-                    .entry(answer.hold)
-                    .or_default()
-                    .push((answer.answer, entry.signer_key().clone()));
-            }
-            AuthorityOp::OwnerKeyEnroll(enroll) if enroll.is_recovery_authority() => {
-                self.root_keys.insert(enroll.device.key.clone());
-            }
-            _ => {}
-        }
-    }
-}
-
-/// One recovery hold as this install reads it: the attempt, its successor
-/// and lost keys, its landing second, its state on the reader's clock, and
-/// who answered it. Every owner device folds the same rows; only the
-/// Due/Waiting line moves with the reader's clock.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecoveryHoldView {
-    /// The hold's entry hash: the attempt id.
-    pub hold: AuthorityEntryHash,
-    /// The hold's signer R: the recovery root's authority key whose released
-    /// seed the landing signs with. An R-signed Cancel (the kit's) counts for
-    /// this hold only when this R signed it; another root's R is inert here.
-    pub root_key: AuthorityKey,
-    /// The successor key the landing enrols.
-    pub successor_key: AuthorityKey,
-    /// The machine that holds the successor key.
-    pub successor_machine: EntityId,
-    /// The lost keys the landing revokes.
-    pub lost: Vec<AuthorityKey>,
-    /// Unix seconds the wait ends at, on the door install's clock.
-    pub lands_at: u64,
-    /// What the attempt is now.
-    pub state: RecoveryHoldState,
-    /// The signers of the hold's valid answers that count for it,
-    /// ascending, each once: an owner device key's answers, and this hold's
-    /// signer R for the kit's Cancel (another root's R is inert, and leaves
-    /// no name here).
-    pub answered_by: Vec<AuthorityKey>,
-}
-
-/// What a recovery hold is now, judged from the log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecoveryHoldState {
-    /// Live and not due: lands at `lands_at` unless answered first.
-    Waiting,
-    /// Live and due: an ItIsMe answered it, or the reader's clock reached
-    /// `lands_at`. Lands at the seed holder's next call.
-    Due,
-    /// The successor key is on the roster: the attempt completed.
-    Landed,
-    /// A Cancel answered it: it never lands, and no later answer revives it.
-    Cancelled,
-    /// The hold's signer R is no longer a live roster key: it never lands.
-    Void,
-}
-
-/// The view order: Landed, then Cancelled, then Void, then Due/Waiting.
-fn state_rank(state: RecoveryHoldState) -> u8 {
-    match state {
-        RecoveryHoldState::Landed => 0,
-        RecoveryHoldState::Cancelled => 1,
-        RecoveryHoldState::Void => 2,
-        RecoveryHoldState::Due | RecoveryHoldState::Waiting => 3,
-    }
-}
-
-impl Vault {
-    /// Every recovery hold this install's log holds, with its state: Landed
-    /// once the successor key is on the roster (live or since revoked: the
-    /// attempt completed), else Cancelled on any valid Cancel that counts
-    /// for the hold (an owner device key's, or the kit's, which this hold's
-    /// signer R signs; another root's R is inert, and an ItIsMe never
-    /// revives one), else Void when the hold's signer R is no longer live,
-    /// else Due on a valid ItIsMe or when this reader's
-    /// `instant_in_txn` reached `lands_at`, else Waiting. Only rows this
-    /// install's fold counts are read: a refused hold or answer is as if
-    /// unwritten, and an answer to an unknown hold is inert. On a vault
-    /// that adopted a checkpoint image, a hold or an answer the image
-    /// carries and the vault does not store counts as a stored one does.
-    /// Ordered Landed, Cancelled, Void, then Due/Waiting; within a rank by
-    /// `lands_at`, then the attempt id.
-    ///
-    /// # Errors
-    /// The log's and the clock's.
-    pub fn recovery_holds_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<RecoveryHoldView>> {
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let now = self.instant_in_txn(txn)?.secs();
-        let history = super::history_transfer::history_in_txn(self, txn)?;
-        let mut rows = HoldRows::default();
-        let mut stored = BTreeSet::new();
-        for (hash, (_, entry)) in &history {
-            stored.insert(*hash);
-            if !fold.valid_entries.contains(hash) {
-                continue;
-            }
-            rows.read(*hash, entry);
-        }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
-        {
-            for (hash, entry) in evidence.carried_past(&stored) {
-                if !fold.valid_entries.contains(hash) {
-                    continue;
-                }
-                rows.read(*hash, entry);
-            }
-        }
-        let HoldRows {
-            holds,
-            answers,
-            root_keys,
-        } = rows;
-        let mut views: Vec<RecoveryHoldView> = holds
-            .into_iter()
-            .map(|(hash, hold, signer)| {
-                let successor_key = hold.successor_key();
-                let named = answers.get(&hash);
-                // A Cancel counts for this hold when an owner device key
-                // signed it, or when this hold's signer R did (the kit's
-                // Cancel). Another root's R is inert for this hold. The fold
-                // refused an ItIsMe that any R signs.
-                let counts = |kind: RecoveryHoldAnswerKind, answerer: &AuthorityKey| {
-                    kind == RecoveryHoldAnswerKind::ItIsMe
-                        || !root_keys.contains(answerer)
-                        || *answerer == signer
-                };
-                let cancelled = named.is_some_and(|list| {
-                    list.iter().any(|(kind, answerer)| {
-                        *kind == RecoveryHoldAnswerKind::Cancel && counts(*kind, answerer)
-                    })
-                });
-                let affirmed = named.is_some_and(|list| {
-                    list.iter()
-                        .any(|(kind, _)| *kind == RecoveryHoldAnswerKind::ItIsMe)
-                });
-                let state = if fold.roster.contains_key(&successor_key) {
-                    RecoveryHoldState::Landed
-                } else if cancelled {
-                    RecoveryHoldState::Cancelled
-                } else if !fold
-                    .roster
-                    .get(&signer)
-                    .is_some_and(|device| !device.revoked)
-                {
-                    RecoveryHoldState::Void
-                } else if affirmed || now >= hold.lands_at {
-                    RecoveryHoldState::Due
-                } else {
-                    RecoveryHoldState::Waiting
-                };
-                let mut answered_by: Vec<AuthorityKey> = named.map_or(Vec::new(), |list| {
-                    list.iter()
-                        .filter(|(kind, answerer)| counts(*kind, answerer))
-                        .map(|(_, answerer)| answerer.clone())
-                        .collect()
-                });
-                answered_by.sort();
-                answered_by.dedup();
-                RecoveryHoldView {
-                    hold: hash,
-                    root_key: signer,
-                    successor_key,
-                    successor_machine: hold.enrolment.machine,
-                    lost: hold.lost.clone(),
-                    lands_at: hold.lands_at,
-                    state,
-                    answered_by,
-                }
-            })
-            .collect();
-        views.sort_by(|a, b| {
-            (state_rank(a.state), a.lands_at, a.hold).cmp(&(
-                state_rank(b.state),
-                b.lands_at,
-                b.hold,
-            ))
-        });
-        Ok(views)
-    }
-
-    /// [`Self::recovery_holds_in_txn`] in its own read transaction: the
-    /// owner-visible "recovery started, lands at <time>, cancel?" event
-    /// list, and what the recovering device's poll reads.
-    ///
-    /// # Errors
-    /// The log's and the clock's.
-    pub fn recovery_holds(&self) -> Result<Vec<RecoveryHoldView>> {
-        let txn = self.store.env.read_txn()?;
-        self.recovery_holds_in_txn(&txn)
-    }
-}
-
 /// A recovery hold's seed slot this install may hold, by successor key:
 /// the pending record the door commits before R's seed enters the slot, so
 /// a crash between the keystore put and the hold commit still leaves the
@@ -347,6 +140,12 @@ const ANSWER_KEY_IS_ROOT: &str = "the root's authority key never answers a recov
 /// answer. Nothing was written.
 const NO_OWNER_KEY: &str = "this install holds no live owner key to answer the recovery hold; \
                              sign-in alone cannot answer; nothing was written";
+/// Only the owner whose recovery it is says it is them: a co-owner's
+/// "it is me" never ends another owner's wait, though a co-owner may cancel
+/// it (WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B). Nothing was
+/// written.
+const ANSWER_NOT_HOLD_OWNER: &str = "only the owner whose recovery this is says it is them; \
+                                      another owner may cancel it; nothing was written";
 /// A recovery hold is the owner's to answer or cancel: no Grant action names
 /// it. Nothing was written.
 const ANSWER_OWNER_ONLY: &str =
