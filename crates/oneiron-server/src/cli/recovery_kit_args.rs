@@ -272,7 +272,9 @@ pub struct RecoveryKitConfirmArgs {
     /// Write the new root's recovery box deposit to FILE: a new file, readable
     /// by you alone, holding one `seeds` element of the control plane's
     /// recovery box enrol, without the PIN. Nothing is written under "Nobody
-    /// but me". Without this flag the deposit is not written anywhere.
+    /// but me"; a self-hosted or relay vault has no box and refuses the flag
+    /// before confirming. Without this flag the deposit is not written
+    /// anywhere.
     #[arg(long, value_name = "FILE")]
     pub box_deposit_out: Option<PathBuf>,
 

@@ -4,12 +4,17 @@
 //! activation hands out (WAYBACK-BOX-AUTHORITY-SEED = A). The deposit rides
 //! the owner confirm doors, so it takes no new grant, and nothing is stored.
 //!
-//! Under "Nobody but me" the box holds no deposit: the answer carries none
-//! and the CLI writes no file. The deposit is never logged: its serializer
+//! Only a vault with a recovery box gets one: a managed vault, whose host
+//! root carries the host's stamp in the log (REVIEW2 #8597 P2-1; pass 27
+//! DESIGN: under relay mode or self-host "No box exists there"). Under
+//! "Nobody but me" the box holds no deposit either. Where none is due the
+//! answer carries none, the seed is dropped (zeroized) and the CLI writes no
+//! file. The deposit is never logged: its serializer
 //! wipes the hex after writing it, and its `Debug` prints no seed bytes. The
 //! seed's hex is made here, not by `owner::vault_key::hex`, which no secret
 //! passes through.
 
+use oneiron::authority::{AuthorityTier, ROLE_CLOUD, ROLE_OWNER};
 use oneiron::world_keys::{RecoveryAuthoritySeed, RecoveryRootId};
 use serde::Serialize;
 use zeroize::Zeroizing;
@@ -65,14 +70,44 @@ fn secret_hex(bytes: &[u8]) -> Zeroizing<String> {
     text
 }
 
-/// The box deposit for a kit confirm that activated `root`: `None` under
-/// "Nobody but me", where the box holds no deposit, and when the preset
-/// cannot be read, which is warned without the seed or the root.
+/// Whether `vault` has a recovery box: its fold holds a live owner key with
+/// the host's stamp (`ROLE_CLOUD` or `CloudCustodial`), which a managed
+/// vault's host root carries (`HostSlipIssuer::root_device`) and a relay or
+/// self-hosted vault's root never does. The stamp is a fact in the log, so
+/// the owner's own device, where a hosted vault's kit confirm runs (the
+/// hosted install refuses kit calls, `kit_requires_owner_device`), reads it
+/// as the hosted node does; this install's own posture is not asked. The
+/// same reading as `refuse_re_root_of_a_serving_host` and the kit
+/// activation's predecessor.
+pub(crate) fn vault_has_recovery_box(vault: &oneiron::Vault) -> oneiron::Result<bool> {
+    Ok(vault.authority_fold()?.roster.values().any(|device| {
+        !device.revoked
+            && device.roles & ROLE_OWNER != 0
+            && (device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial)
+    }))
+}
+
+/// The box deposit for a kit confirm that activated `root`: `None` on a
+/// vault with no recovery box ([`vault_has_recovery_box`]) and under "Nobody
+/// but me", where the box holds no deposit, and when either cannot be read,
+/// which is warned without the seed or the root. `None` drops the seed,
+/// zeroized.
 pub(crate) fn box_deposit(
     vault: &oneiron::Vault,
     seed: RecoveryAuthoritySeed,
     root: &RecoveryRootId,
 ) -> Option<BoxDeposit> {
+    match vault_has_recovery_box(vault) {
+        Ok(true) => {}
+        Ok(false) => return None,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "authority fold unread after a kit confirm: no box deposit in the answer"
+            );
+            return None;
+        }
+    }
     match vault.recovery_preset() {
         Ok(preset) if preset.is_nobody_but_me() => None,
         Ok(_) => Some(BoxDeposit {

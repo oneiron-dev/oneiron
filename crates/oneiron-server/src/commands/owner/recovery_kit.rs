@@ -41,7 +41,7 @@ use crate::cli::{
 use crate::commands::credential_file;
 use crate::config::resolve_serve_config;
 use crate::owner::local_owner;
-use crate::owner::recovery_box_deposit::box_deposit;
+use crate::owner::recovery_box_deposit::{box_deposit, vault_has_recovery_box};
 use crate::owner::recovery_kit::{self as view, kit_id};
 use crate::owner::vault_key::{WrapView, hex, secret32};
 
@@ -294,8 +294,9 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
 /// deposit is written and synced with its directory entry, and a failure to
 /// encode, write or sync it removes the file and is answered with a fresh
 /// kit to issue; under "Nobody but me" no deposit is written and the file is
-/// removed. Without the flag the seed is dropped, zeroized, and nothing
-/// reaches stdout but [`Confirmed`].
+/// removed. A vault with no recovery box (relay or self-host) refuses the
+/// flag before anything is confirmed or created. Without the flag the seed
+/// is dropped, zeroized, and nothing reaches stdout but [`Confirmed`].
 pub(crate) fn confirm_on(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -304,6 +305,12 @@ pub(crate) fn confirm_on(
     carry: &BTreeSet<EntityId>,
     box_deposit_out: Option<&Path>,
 ) -> anyhow::Result<Confirmed> {
+    if box_deposit_out.is_some() && !vault_has_recovery_box(vault)? {
+        anyhow::bail!(
+            "--box-deposit-out: this vault has no recovery box (it is self-hosted or a relay), so \
+             there is nothing to deposit; nothing was confirmed"
+        );
+    }
     let pending = match box_deposit_out {
         Some(path) => Some((path, credential_file::create(path)?)),
         None => None,

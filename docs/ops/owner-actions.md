@@ -2264,8 +2264,9 @@ to a new file readable by you alone, as one `seeds` element of the box's enrol (
 changes. Without the flag it is written nowhere, and the printed JSON never carries it. On a
 running server the `/roots/confirm` answer, and `/roots/requests/run`'s for a kit confirm, carry it
 as `box_deposit`; your app then asks for the recovery PIN and enrols it with the box. The confirm
-stands if that enrol fails, and the app retries it. Under "Nobody but me" there is no deposit and
-no file.
+stands if that enrol fails, and the app retries it. Only a managed vault has a recovery box: a
+self-hosted or relay vault's confirm carries no deposit, and `--box-deposit-out` is refused there
+before anything is confirmed. Under "Nobody but me" there is no deposit and no file.
 
 `issue-vault-key` takes the same `--home`, `--out` and `--secret-file` flags and writes a kit of
 the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's

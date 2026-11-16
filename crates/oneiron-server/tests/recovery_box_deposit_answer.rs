@@ -1,8 +1,11 @@
 //! OPUS-WAYBACK-BOX R7 box deposit, engine half (WAYBACK-BOX-DEPOSIT-PATH =
-//! A, Engine 16 Nov 02:00): the confirm answer at both route sites carries
-//! R's authority seed for the recovery box once, and none under "Nobody but
-//! me"; the CLI writes it only with `--box-deposit-out`; the answer never
-//! reaches a log line.
+//! A, Engine 16 Nov 02:00): on a managed vault, whose host root carries the
+//! host's stamp, the confirm answer at both route sites carries R's
+//! authority seed for the recovery box once (also on the owner's own device,
+//! a self-host install of that vault), and none under "Nobody but me"; a
+//! self-hosted vault has no box, so its answer carries none and the CLI flag
+//! is refused (REVIEW2 #8597 P2-1); the CLI writes it only with
+//! `--box-deposit-out`; the answer never reaches a log line.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test recovery_box_deposit_answer`
 //!
@@ -22,7 +25,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::test_support::bind_host_owner;
 use oneiron::verbs::{RootRequestCreateRequest, create_root_request_as};
 use oneiron::world_keys::{IssuedWorldKit, KitPasskey, RecoveryPreset};
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_server::test_doors::root_work_answer as doors;
 use zeroize::Zeroizing;
 
@@ -32,8 +35,9 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("an owner proof")
 }
 
-/// A self-hosted vault whose host seed this install holds in its keystore.
-struct SelfHosted {
+/// A vault whose host seed this install holds in its keystore, opened under
+/// one posture.
+struct Install {
     _dir: tempfile::TempDir,
     vault: Vault,
     issuer: HostSlipIssuer,
@@ -43,9 +47,11 @@ struct SelfHosted {
     held: BTreeSet<Vec<u8>>,
 }
 
-fn self_hosted() -> SelfHosted {
+fn install(posture: HostingPrivacyPosture) -> Install {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = posture;
+    let vault = Vault::open(dir.path(), config).expect("the vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let machine = vault.prepare_install_signing().expect("install signing");
     let issuer = vault.bootstrap_host_slip_issuer().expect("the host seed");
@@ -63,7 +69,7 @@ fn self_hosted() -> SelfHosted {
         .expect("the fold")
         .vault_id
         .expect("a rooted vault");
-    SelfHosted {
+    Install {
         _dir: dir,
         vault,
         issuer,
@@ -74,7 +80,25 @@ fn self_hosted() -> SelfHosted {
     }
 }
 
-impl SelfHosted {
+/// A self-hosted vault: its host root carries no host stamp, so it has no
+/// recovery box; its kit's predecessor is the host root.
+fn self_hosted() -> Install {
+    install(HostingPrivacyPosture::SelfHostLocal)
+}
+
+/// A managed vault: its host root carries the host's stamp, so it has a
+/// recovery box. The host root is never an owner-held key there, so this
+/// install's device owner key is enrolled as the kit's predecessor.
+fn hosted() -> Install {
+    let fixture = install(HostingPrivacyPosture::Hosted);
+    fixture
+        .vault
+        .enrol_device_owner_signing_key(&fixture.authority(), &fixture.issuer)
+        .expect("the owner enrols this install's device key");
+    fixture
+}
+
+impl Install {
     fn owner(&self) -> AuthenticatedOwner {
         proof(&self.vault, self.person)
     }
@@ -103,10 +127,10 @@ impl SelfHosted {
     }
 }
 
-/// A self-hosted vault under "Nobody but me": its data key held, the preset
+/// A managed vault under "Nobody but me": its data key held, the preset
 /// entered the way `recovery_preset_nobody_but_me` enters it.
-fn nobody_but_me() -> SelfHosted {
-    let fixture = self_hosted();
+fn nobody_but_me() -> Install {
+    let fixture = hosted();
     fixture
         .vault
         .ensure_vault_key()
@@ -118,10 +142,10 @@ fn nobody_but_me() -> SelfHosted {
     fixture
 }
 
-/// A self-hosted vault under "Nobody but me, any 2 pieces", the other
+/// A managed vault under "Nobody but me, any 2 pieces", the other
 /// "Nobody but me" preset: entered from "Nobody but me" with its own kit,
 /// the way `recovery_preset_nobody_but_me` enters it.
-fn any_two_pieces() -> SelfHosted {
+fn any_two_pieces() -> Install {
     let fixture = nobody_but_me();
     let prf = Zeroizing::new([6u8; 32]);
     let switched = fixture
@@ -193,7 +217,7 @@ fn take(taker: &Vault, held: &mut BTreeSet<Vec<u8>>, giver: &Vault) {
     held.extend(new);
 }
 
-fn second_install(first: &SelfHosted) -> SecondInstall {
+fn second_install(first: &Install) -> SecondInstall {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the second install");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -321,7 +345,7 @@ fn confirm_codes(issued: &IssuedWorldKit) -> Vec<String> {
 
 #[test]
 fn the_confirm_answer_carries_the_box_deposit_once() {
-    let fixture = self_hosted();
+    let fixture = hosted();
     let issued = fixture.issue();
     let answer = doors::confirm_answer_json(
         &fixture.vault,
@@ -339,8 +363,10 @@ fn the_confirm_answer_carries_the_box_deposit_once() {
 fn the_run_answer_carries_the_box_deposit_once() {
     // A root change's target is never the install the owner asked on
     // (`TargetIsRecorder`), so the activate request is recorded on the first
-    // install for the second, which runs it.
-    let mut first = self_hosted();
+    // install for the second, which runs it. The second is the owner's own
+    // device, a self-host install: the box is the vault's, read from its
+    // folded host stamp, not from the install's posture.
+    let mut first = hosted();
     let mut second = second_install(&first);
     // The second install's predecessor for R: its own device key, enrolled
     // with the vault's live host root signing.
@@ -420,9 +446,25 @@ fn under_any_two_pieces_the_confirm_answer_has_no_box_deposit() {
     confirm_answer_has_no_box_deposit(&any_two_pieces());
 }
 
-/// The confirm answer of `fixture`, a vault under a "Nobody but me"
-/// preset, carries no box deposit.
-fn confirm_answer_has_no_box_deposit(fixture: &SelfHosted) {
+#[test]
+fn a_self_hosted_vault_s_confirm_answer_has_no_box_deposit() {
+    let fixture = self_hosted();
+    assert!(
+        fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .roster
+            .values()
+            .all(|device| device.roles & oneiron::authority::ROLE_CLOUD == 0),
+        "a self-hosted root carries no host stamp"
+    );
+    confirm_answer_has_no_box_deposit(&fixture);
+}
+
+/// The confirm answer of `fixture`, a vault under a "Nobody but me" preset
+/// or with no recovery box, carries no box deposit.
+fn confirm_answer_has_no_box_deposit(fixture: &Install) {
     let issued = fixture.issue();
     let answer = doors::confirm_answer_json(
         &fixture.vault,
@@ -439,7 +481,7 @@ fn confirm_answer_has_no_box_deposit(fixture: &SelfHosted) {
     );
     assert!(
         answer.get("box_deposit").is_none(),
-        "no box deposit under Nobody but me: {answer}"
+        "no box deposit: {answer}"
     );
     let text = serde_json::to_string(&answer).expect("the answer serializes");
     assert!(!text.contains("seed_hex"), "no seed_hex key: {text}");
@@ -470,7 +512,7 @@ impl<'w> tracing_subscriber::fmt::MakeWriter<'w> for Captured {
 
 #[test]
 fn the_box_deposit_never_reaches_a_log_line() {
-    let fixture = self_hosted();
+    let fixture = hosted();
     let sink = Captured::default();
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
@@ -501,7 +543,7 @@ fn the_box_deposit_never_reaches_a_log_line() {
 fn the_cli_writes_the_box_deposit_only_with_the_flag() {
     // Without the flag: the answer names no file and carries no seed.
     {
-        let fixture = self_hosted();
+        let fixture = hosted();
         let issued = fixture.issue();
         let pieces: Vec<&KitPiece> = issued.pieces.iter().take(2).collect();
         let answer = doors::cli_confirm_json(&fixture.vault, &fixture.owner(), &pieces, None)
@@ -519,7 +561,7 @@ fn the_cli_writes_the_box_deposit_only_with_the_flag() {
     }
     // With the flag: the deposit alone is written to the named file.
     {
-        let fixture = self_hosted();
+        let fixture = hosted();
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("deposit.json");
         let issued = fixture.issue();
@@ -570,7 +612,7 @@ fn the_cli_writes_the_box_deposit_only_with_the_flag() {
 
 #[test]
 fn the_cli_refuses_an_existing_deposit_file_before_confirming() {
-    let fixture = self_hosted();
+    let fixture = hosted();
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("deposit.json");
     std::fs::write(&path, b"held").expect("the held file");
@@ -603,9 +645,44 @@ fn under_any_two_pieces_the_cli_writes_no_deposit_file() {
     cli_writes_no_deposit_file(&any_two_pieces());
 }
 
+#[test]
+fn a_self_hosted_vault_refuses_the_cli_deposit_flag_before_confirming() {
+    let fixture = self_hosted();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("deposit.json");
+    let issued = fixture.issue();
+    let pieces: Vec<&KitPiece> = issued.pieces.iter().take(2).collect();
+    let refused = doors::cli_confirm_json(
+        &fixture.vault,
+        &fixture.owner(),
+        &pieces,
+        Some(path.as_path()),
+    )
+    .expect_err("a vault with no recovery box refuses the flag");
+    assert!(
+        refused.to_string().contains("no recovery box"),
+        "the refusal names the missing box: {refused}"
+    );
+    assert!(!path.exists(), "no deposit file is created");
+    assert!(
+        live_recovery_authority(&fixture.vault).is_empty(),
+        "the kit is still unconfirmed"
+    );
+    // Without the flag the same vault confirms, and nothing names a seed.
+    let answer = doors::cli_confirm_json(&fixture.vault, &fixture.owner(), &pieces, None)
+        .expect("the CLI confirm answers");
+    assert_eq!(
+        answer["box_deposit_out"],
+        serde_json::Value::Null,
+        "{answer}"
+    );
+    let text = serde_json::to_string(&answer).expect("the answer serializes");
+    assert!(!text.contains("seed_hex"), "no seed: {text}");
+}
+
 /// The CLI confirm on `fixture`, a vault under a "Nobody but me" preset,
 /// writes no deposit file and answers no path.
-fn cli_writes_no_deposit_file(fixture: &SelfHosted) {
+fn cli_writes_no_deposit_file(fixture: &Install) {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("deposit.json");
     let issued = fixture.issue();
