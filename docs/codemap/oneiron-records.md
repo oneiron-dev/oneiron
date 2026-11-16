@@ -287,7 +287,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/root_evidence/mod.rs` | src | s | 1 mod | — | — |
 | `src/dreamer_consolidation/routing.rs` | src | s | 1 struct | PredicateKeyRule | Moved from `crates/oneiron/src/dreamer_consolidation/routing.rs` (lib split R1: record types below the lib) |
 | `src/dreamer_consolidation/selection.rs` | src | s | 3 struct · 5 fn | SelectionConfig, StrengthSignals, StrengthWeights | Moved from `crates/oneiron/src/dreamer_consolidation/selection.rs` (lib split R1: record types below the lib) |
-| `src/dreamer_prefilter/config.rs` | src | s | 2 struct · 2 fn | PrefilterConfig, PrefilterWeights | Moved from `crates/oneiron/src/dreamer_prefilter/config.rs` (lib split R1: record types below the lib) |
+| `src/dreamer_prefilter/config.rs` | src | s | 2 struct · 3 fn | PrefilterConfig, PrefilterWeights | Moved from `crates/oneiron/src/dreamer_prefilter/config.rs` (lib split R1: record types below the lib) |
 | `src/dreamer_prefilter/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/dreamer_prefilter/score.rs` | src | s | 5 const | — | Moved from `crates/oneiron/src/dreamer_prefilter/score.rs` (lib split R1: record types below the lib) |
 | `src/dreamer_runner/authority.rs` | src | s | 2 struct | DreamerAuthorityStamp, ResidentAuthorityStamp | Moved from `crates/oneiron/src/dreamer_runner/authority.rs` (lib split R2: record types below the lib) |
@@ -544,7 +544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/checker_types.rs` | src | s | 1 struct · 2 enum · 5 re-export | MergeQueueCheckState, MergeQueueCheckWorkKind, MergeQueueCheckWorkView | Moved from `crates/oneiron/src/memory/merge_queue_doors/checker_types.rs` (lib split R1: record types below… |
 | `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 11 re-export | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 5 struct · 4 re-export | MergeQueueBatchView, MergeQueueObservation, MergeQueuePathView, MergeQueuePointersView, MergeQueueRequeueView | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split R2: record types below the lib) |
-| `src/memory/mod.rs` | src | s | 24 mod · 273 re-export | — | — |
+| `src/memory/mod.rs` | src | s | 24 mod · 272 re-export | — | — |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 mod · 30 re-export | — | — |
 | `src/memory/origin_doors/workbench_types.rs` | src | s | 8 struct · 3 re-export | CodeForkDocumentView, CodeForkView, CodeIngressRef, CodePushIngressView, CodeRepoImportLink, CodeRepoView, CodeRunWorkFile, CodeRunWorkLink | Moved from `crates/oneiron/src/memory/origin_doors/workbench_types.rs` (lib split R2: record types below the… |
 | `src/memory/outbound/mod.rs` | src | s | 1 mod · 8 re-export | — | — |
