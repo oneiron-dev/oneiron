@@ -27,8 +27,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 
 use super::super::replay::{CodeRunReplayRecord, ResultOccurrence};
-use super::records::REPLAY_RECORDS;
 use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED};
+use super::replay_rows;
 use super::response_erase::release_occurrence_in_txn;
 use super::routing::SessionBinding;
 use crate::code_run::payload::{
@@ -198,12 +198,12 @@ pub(crate) fn retire_fold_answers_in_txn(
         super::replay_capsule::retire_fold_word_capsules_in_txn(store, wtxn, source_run)?;
     let mut records = Vec::new();
     let txn: &RoTxn<'_> = wtxn;
-    for row in REPLAY_RECORDS.iter_raw_from(store, txn, &[])? {
+    for row in replay_rows::iter_canonical_from(store, txn, &[])? {
         let (key, bytes) = row?;
         let Some(id) = <EntityId as SideKey>::decode_key(&key) else {
             continue;
         };
-        let Ok(record) = REPLAY_RECORDS.decode_value(&bytes) else {
+        let Ok(record) = replay_rows::decode(&bytes) else {
             continue;
         };
         let answers = withdrawn_answers(store, txn, &record, source_run)?;
@@ -240,7 +240,7 @@ pub(crate) fn retire_fold_answers_in_txn(
                 released.entry(record.run_id).or_default().insert(digest);
             }
         }
-        REPLAY_RECORDS.put_erased(
+        replay_rows::put_erased(
             store,
             wtxn,
             &id,
@@ -378,7 +378,7 @@ impl SessionBinding<'_> {
     ) -> Result<Option<CodeRunReplayRecord>> {
         self.answered(|| {
             self.session.read_composed(|view, rtxn| {
-                let Some(mut record) = REPLAY_RECORDS.get(view, rtxn, run_id)? else {
+                let Some(mut record) = replay_rows::get(view, rtxn, run_id)? else {
                     return Ok(None);
                 };
                 let answers = withdrawn_answers(view, rtxn, &record, None)?;
