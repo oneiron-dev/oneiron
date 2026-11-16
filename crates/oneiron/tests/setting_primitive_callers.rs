@@ -6,8 +6,9 @@
 //! - the side-row wall reads every setting value before it is stored: a secret never lands raw;
 //! - a key's after-commit hook runs once per applied change, after the write commits;
 //! - a leave keeps the rows of a key about this machine and drops a vault key's;
-//! - an agent whose Grant lists a key's own line sets its value rows as the owner does, never a
-//!   pin, and the key's read line reads it; a line of another key, or none, asks;
+//! - an agent whose Grant lists a key's own line sets its value rows as a holder does, never a
+//!   pin, and asks to replace the owner's row or to widen; the key's read line reads it; a line
+//!   of another key asks;
 //! - a dials key reads for a whole-vault grant naming any `engine.controls` class, not for a
 //!   plain agent;
 //! - a holder never raises a key past its default where the owner set no row;
@@ -469,52 +470,63 @@ fn a_leave_keeps_the_rows_of_a_key_about_this_machine() {
 }
 
 #[test]
-fn an_agent_whose_grant_lists_a_keys_line_sets_it_as_the_owner_and_its_read_line_reads_it() {
+fn an_agent_whose_grant_lists_a_keys_line_sets_it_as_a_holder_and_its_read_line_reads_it() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
     let key = "test.owner_number";
-    call(&me, SET, set(key, vault_scope(), json!(3)));
-
-    let lined = fx.agent();
     let budget = "test.work_budget";
+    let lined = fx.agent();
     fx.grant(lined, &[SET, GET, &set_line(key), &set_line(budget)]);
     let them = fx.as_agent(lined);
-    let replaced = call(&them, SET, set(key, vault_scope(), json!(9)));
+
+    let first = call(&them, SET, set(key, vault_scope(), json!(9)));
     assert_eq!(
-        replaced["status"],
+        first["status"],
         json!("applied"),
-        "the line replaces the owner's row: {replaced}"
+        "an owner key with no row: {first}"
     );
     assert_eq!(get(&me, key, json!([]))["value"], json!(9));
     let listed = rows(&me, key);
     assert_eq!(listed[0]["setter"]["as"], json!("key_grant"), "{listed:?}");
     assert_eq!(listed[0]["by"], json!(lined.to_hex()), "{listed:?}");
+
+    call(&me, SET, set(key, vault_scope(), json!(3)));
+    let replace = call(&them, SET, set(key, vault_scope(), json!(8)));
+    assert_eq!(
+        replace["status"],
+        json!("pending"),
+        "the owner's row: the line asks before it replaces it: {replace}"
+    );
     let pin = call(
         &them,
         SET,
         json!({ "key": key, "scope": vault_scope(), "pin": true, "value": 1 }),
     );
     assert_eq!(pin["status"], json!("pending"), "a line never pins: {pin}");
-    let widened = call(&them, SET, set(budget, vault_scope(), json!(20)));
-    assert_eq!(widened["status"], json!("applied"), "{widened}");
+
+    // Default 10, lower is tighter, no owner row: a widening asks (AUTH-1 = A).
+    let widen = call(&them, SET, set(budget, vault_scope(), json!(20)));
     assert_eq!(
-        get(&me, budget, json!([]))["value"],
-        json!(20),
-        "its row is the owner's: no default caps it"
+        widen["status"],
+        json!("pending"),
+        "past the default: {widen}"
     );
+    let tighten = call(&them, SET, set(budget, vault_scope(), json!(5)));
+    assert_eq!(tighten["status"], json!("applied"), "{tighten}");
+    assert_eq!(get(&me, budget, json!([]))["value"], json!(5));
     read_refused(&them, GET, json!({ "key": key }));
 
     let reader = fx.agent();
     fx.grant(reader, &[SET, GET, &get_line(key)]);
     let read = get(&fx.as_agent(reader), key, json!([]));
-    assert_eq!(read["value"], json!(9), "the read line reads it: {read}");
+    assert_eq!(read["value"], json!(3), "the read line reads it: {read}");
 
     let unlined = fx.agent();
     fx.grant(unlined, &[SET, GET, &set_line("test.hooked")]);
     let asked = call(
         &fx.as_agent(unlined),
         SET,
-        set(key, vault_scope(), json!(5)),
+        set(budget, vault_scope(), json!(4)),
     );
     assert_eq!(
         asked["status"],
@@ -522,7 +534,7 @@ fn an_agent_whose_grant_lists_a_keys_line_sets_it_as_the_owner_and_its_read_line
         "another key's line asks: {asked}"
     );
     read_refused(&fx.as_agent(unlined), GET, json!({ "key": key }));
-    assert_eq!(get(&me, key, json!([]))["value"], json!(9), "nothing moved");
+    assert_eq!(get(&me, key, json!([]))["value"], json!(3), "nothing moved");
 }
 
 #[test]

@@ -15,9 +15,9 @@
 //!   decided it.
 //! - Set: [`Vault::set_setting`], one door whose power is checked live in its write: the owner
 //!   sets every key; an agent whose live owner Grant lists the key's own line
-//!   (`settings.set:<key>`) sets its value rows as the owner does; a live holder of the key's
-//!   `engine.controls` class sets a key of that class; a subject tightens its own row; anyone
-//!   else's change waits on a check-in.
+//!   (`settings.set:<key>`), or a live holder of the key's `engine.controls` class, sets the
+//!   key's value rows inside the owner's; a subject tightens its own row; anyone else's change,
+//!   and an agent's widening, waits on a check-in.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
 //! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`.
@@ -27,6 +27,7 @@
 
 mod catalogue;
 mod change;
+mod learned;
 mod read;
 mod set;
 pub(crate) mod tables;
@@ -34,7 +35,7 @@ pub(crate) mod tables;
 use std::marker::PhantomData;
 
 pub use oneiron_setting_contract::{
-    EncodedValue, ReadBy, Resolved, Restore, ScopeKind, Setter, SettingMode, SettingScope,
+    EncodedValue, FitCell, ReadBy, Resolved, Restore, ScopeKind, Setter, SettingMode, SettingScope,
     SettingSource, SettingSync, SettingValue, higher_is_tighter, lower_is_tighter,
 };
 
@@ -42,11 +43,14 @@ pub use oneiron_setting_contract::{
 pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
 pub use self::change::SettingChange;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::change::change_in_txn;
 pub(crate) use self::change::{
     erase_setting_change_actor_in_txn, erase_setting_content_actor_in_txn,
     erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, settings_after_in_txn,
     settings_head_in_txn,
 };
+pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
@@ -59,8 +63,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::EngineControlClass;
 
-/// The Grant line that hands one key's value rows over to an agent: the owner's act on that key
-/// (DESIGN 1.2 step 3). A Grant lists it as a verb, matched exactly.
+/// The Grant line that makes an agent a holder of one key (DESIGN 1.2 step 3): it sets the key's
+/// value rows inside the owner's, and its widening asks the user (AUTH-1 = A). A Grant lists it
+/// as a verb, matched exactly.
 #[must_use]
 pub fn set_line(key: &str) -> String {
     format!("settings.set:{key}")
@@ -155,6 +160,12 @@ impl SettingSpec {
         kind == ScopeKind::Vault || self.scopes.contains(&kind)
     }
 
+    /// Whether a fit learns this key under its rows ([`Kind::learned`]).
+    #[must_use]
+    pub fn is_learned(&self) -> bool {
+        self.kind.learned_range().is_some()
+    }
+
     /// Whether `item` is one this key admits: none for a key that is no family, one of its
     /// domain's for one that is.
     ///
@@ -231,6 +242,11 @@ pub trait ValueKind: Sync {
         let _ = (stored, id);
         None
     }
+
+    /// A learned key's range ([`Kind::learned`]); `None` for a key no fit learns.
+    fn learned_range(&self) -> Option<LearnedRange> {
+        None
+    }
 }
 
 /// The typed [`ValueKind`] of a key whose value is a `T`: its default, and optionally its
@@ -240,6 +256,7 @@ pub struct Kind<T> {
     strictest: Option<fn() -> T>,
     tighter: Option<fn(&T, &T) -> bool>,
     erase_mentions: Option<fn(&T, EntityId) -> Option<T>>,
+    learned: Option<LearnedRange>,
 }
 
 impl<T: SettingValue> Kind<T> {
@@ -251,6 +268,7 @@ impl<T: SettingValue> Kind<T> {
             strictest: None,
             tighter: None,
             erase_mentions: None,
+            learned: None,
         }
     }
 
@@ -309,6 +327,22 @@ impl<T: SettingValue> Kind<T> {
     }
 }
 
+impl Kind<f64> {
+    /// This kind, of a learned key (ARCH-0003 `#learning-settings`): a number in `[min, max]` that
+    /// a fit learns under the stored rows. A value row is the seed the fit starts from and names
+    /// its weight in runs; once a cell's fit has runs of its own it decides at its place before
+    /// the seed there; the owner's pin fixes the value against it. A row outside the range is
+    /// refused, and a fit outside it is clamped into it. A learned key has no item and sits only at
+    /// the goal, project, task type and vault scopes, the places a fit's cell is keyed by.
+    #[must_use]
+    pub const fn learned(self, min: f64, max: f64) -> Self {
+        Self {
+            learned: Some(LearnedRange { min, max }),
+            ..self
+        }
+    }
+}
+
 impl<T: SettingValue> ValueKind for Kind<T> {
     fn schema(&self) -> serde_json::Value {
         serde_json::to_value(schemars::schema_for!(T)).unwrap_or(serde_json::Value::Null)
@@ -336,7 +370,19 @@ impl<T: SettingValue> ValueKind for Kind<T> {
         let value: T = serde_json::from_value(json).map_err(|error| {
             Error::InvalidConfig(format!("the value is not of this key's type: {error}"))
         })?;
-        EncodedValue::checked(value)
+        let encoded = EncodedValue::checked(value)?;
+        // Only `Kind<f64>` is learned, so its value decodes as a number.
+        if let Some(range) = self.learned
+            && !encoded
+                .decode::<f64>()
+                .is_some_and(|value| range.contains(value))
+        {
+            return Err(Error::InvalidConfig(format!(
+                "a value of this learned key lies in [{}, {}]",
+                range.min, range.max
+            )));
+        }
+        Ok(encoded)
     }
 
     fn has_direction(&self) -> bool {
@@ -346,6 +392,10 @@ impl<T: SettingValue> ValueKind for Kind<T> {
     fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool> {
         let tighter = self.tighter?;
         Some(tighter(&Self::decode(a)?, &Self::decode(b)?))
+    }
+
+    fn learned_range(&self) -> Option<LearnedRange> {
+        self.learned
     }
 
     fn erase_mentions_in(&self, stored: &EncodedValue, id: EntityId) -> Option<EncodedValue> {

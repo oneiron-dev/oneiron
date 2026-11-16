@@ -22,7 +22,7 @@ mod key;
 mod scope;
 mod value;
 
-pub use self::decide::{Decided, FoundRow, decide};
+pub use self::decide::{Decided, FoundFit, FoundRow, decide};
 pub use self::key::{RowKey, check_item, check_name};
 pub use self::scope::{ScopeKind, SettingScope};
 pub use self::value::{EncodedValue, SettingValue, higher_is_tighter, lower_is_tighter};
@@ -97,8 +97,8 @@ pub enum SettingSync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadBy {
-    /// The owner, a holder of the power to set the key, and a subject for its own rows. The
-    /// default.
+    /// The owner, a holder of the key's `engine.controls` class, an agent whose Grant lists the
+    /// key's read line (`settings.get:<key>`), and a subject for its own rows. The default.
     Holders,
     /// Any reader of the vault.
     Members,
@@ -117,8 +117,9 @@ pub enum Setter {
     /// A live holder of the key's class, through this grant.
     Holder { grant: EntityId },
     /// An agent through its live owner Grant that lists the key's own line
-    /// (`settings.set:<key>`): the owner's act on that one key, handed over (DESIGN 1.2 step 3).
-    /// Its value row counts as the owner's; it never pins.
+    /// (`settings.set:<key>`, DESIGN 1.2 step 3), as a holder: its value stays inside the
+    /// owner's row, or the catalogue default where the owner set none; a widening asks the user
+    /// (AUTH-1 = A). It never pins.
     KeyGrant { grant: EntityId },
     /// The agent or person the row's scope names, on its own row.
     Subject,
@@ -138,6 +139,16 @@ pub struct Resolved<T> {
     pub revision: u64,
 }
 
+/// The cell a learned key's fit is learned in (ARCH-0003 `#learning-settings`): the project its
+/// runs ran under, else the vault; the project's goal, for a fit learned on that goal; the task
+/// type's node, for a fit learned at one type rather than the root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FitCell {
+    pub project: Option<EntityId>,
+    pub goal: Option<EntityId>,
+    pub task_type: Option<String>,
+}
+
 /// Which row decided a read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "from", content = "scope", rename_all = "snake_case")]
@@ -146,6 +157,8 @@ pub enum SettingSource {
     Pin(SettingScope),
     /// The value row at this scope.
     Row(SettingScope),
+    /// A learned key's fit, learned in this cell.
+    Fit(FitCell),
     /// No row: the catalogue default.
     Default,
     /// The deciding row at this scope does not decode: the key's strictest value, never the
