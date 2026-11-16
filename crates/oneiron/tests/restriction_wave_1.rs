@@ -20,7 +20,7 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -236,16 +236,7 @@ struct MeshFixture {
 }
 
 fn owner_change(key: &str, seconds: u64) -> SetSetting {
-    SetSetting {
-        key: key.to_owned(),
-        item: None,
-        scope: SettingScope::Vault,
-        mode: SettingMode::Value,
-        value: Some(json!(seconds)),
-        expected_revision: None,
-        why: None,
-        check_in_ref: None,
-    }
+    SetSetting::vault_value(key, json!(seconds))
 }
 
 /// The authority clock advances monotonically even with a manual store clock. Bracket the
