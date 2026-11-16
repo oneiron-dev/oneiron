@@ -202,10 +202,22 @@ fn permit_class_agnostic_reads(vault: &Vault, actors: &[EntityId]) -> Result<()>
     )
 }
 
-/// The owner's header, the stored card that minted the vault's project with
-/// its leader, and the interview the owner's tap opens on them, its first
-/// run leased and loaded.
-fn opened_interview() -> Result<Interview> {
+/// The vault's project before its interview opens: the owner's header and
+/// the stored card that minted the project with its leader.
+struct Unopened {
+    dir: tempfile::TempDir,
+    vault: Vault,
+    project: EntityId,
+    room: EntityId,
+    agent: EntityId,
+    human: EntityId,
+    card: String,
+    header: EntityId,
+}
+
+/// The owner's header and the stored card that minted the vault's project
+/// with its leader, as a tap leaves them before the interview opens.
+fn unopened_interview() -> Result<Unopened> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let project = vault.root_project()?;
@@ -219,12 +231,6 @@ fn opened_interview() -> Result<Interview> {
     // through a grant. The opening finds the owner's header on the owner's
     // own read, which admits only what the leader may read as well.
     permit_class_agnostic_reads(&vault, &[agent, human])?;
-    let owner = vault.authenticate_owner(
-        human,
-        &human.to_hex(),
-        true,
-        crate::store::GateDecisionId::now(),
-    )?;
     // The header a tap witnesses at a project's birth.
     let header = say(&vault, room, human, HUMAN, "A goal", None, 3);
     let card = EntityId::now().to_hex();
@@ -239,6 +245,38 @@ fn opened_interview() -> Result<Interview> {
             && turn.reply_to.is_none()),
         "the owner reads the header as their own trunk turn: {read:?}"
     );
+    Ok(Unopened {
+        dir,
+        vault,
+        project,
+        room,
+        agent,
+        human,
+        card,
+        header,
+    })
+}
+
+/// The owner's header, the stored card that minted the vault's project with
+/// its leader, and the interview the owner's tap opens on them, its first
+/// run leased and loaded.
+fn opened_interview() -> Result<Interview> {
+    let Unopened {
+        dir,
+        vault,
+        project,
+        room,
+        agent,
+        human,
+        card,
+        header,
+    } = unopened_interview()?;
+    let owner = vault.authenticate_owner(
+        human,
+        &human.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
     let first = match vault.open_project_goal_interview(&owner, &card, project, room, agent, 4)? {
         Some(AgentDispatchOutcome::Dispatched(first)) => first,
         other => panic!("the opening dispatches the leader's first intake run, not {other:?}"),
@@ -415,6 +453,65 @@ fn opening_binds_the_leaders_interview_task_to_the_cards_thread() -> Result<()> 
     );
     // The held TASK addresses the leader to the card's turn.
     assert!(matches!(s.claim(s.thread, 5), RoomClaimOutcome::Claimed(_)));
+    Ok(())
+}
+
+/// Review round 1 on #8162: the owner's credential is revoked while the
+/// opening waits for the writer. The write that would land the thread root
+/// checks the owner's proof again and refuses it, so none of the opening
+/// lands: no thread root, interview or intake run. A live credential then
+/// opens it.
+#[test]
+fn a_credential_revoked_while_the_opening_waits_opens_no_interview() -> Result<()> {
+    let Unopened {
+        dir: _dir,
+        vault,
+        project,
+        room,
+        agent,
+        human,
+        card,
+        ..
+    } = unopened_interview()?;
+    let vault = std::rc::Rc::new(vault);
+    let (owner, slip) = crate::test_util::credentialed_owner_proof(&vault, b"goal interview");
+    crate::test_util::revoke_before_the_next_write(&vault, slip);
+    let refused = vault
+        .open_project_goal_interview(&owner, &card, project, room, agent, 4)
+        .expect_err("a credential revoked while the opening waits opens no interview");
+    assert_eq!(
+        refused.kind(),
+        crate::ErrorKind::ConsentOwnerNotAuthenticated,
+        "{refused}"
+    );
+    assert_eq!(
+        vault
+            .project_goal_interview_context(project, true)?
+            .interview_thread,
+        None,
+        "no interview is recorded"
+    );
+    assert!(
+        intake_runs(&vault, project)?.is_empty(),
+        "no intake run is dispatched"
+    );
+    let read = vault.memory(human, HUMAN).rooms_messages(room).unwrap();
+    assert!(
+        read.iter().all(|turn| turn.thread_of.is_none()),
+        "no thread root lands on the header: {read:?}"
+    );
+    let (fresh, _) = crate::test_util::credentialed_owner_proof(&vault, b"goal interview again");
+    match vault.open_project_goal_interview(&fresh, &card, project, room, agent, 5)? {
+        Some(AgentDispatchOutcome::Dispatched(_)) => {}
+        other => panic!("a live credential opens the interview, not {other:?}"),
+    }
+    assert!(
+        vault
+            .project_goal_interview_context(project, true)?
+            .interview_thread
+            .is_some()
+    );
+    assert_eq!(intake_runs(&vault, project)?.len(), 1);
     Ok(())
 }
 
