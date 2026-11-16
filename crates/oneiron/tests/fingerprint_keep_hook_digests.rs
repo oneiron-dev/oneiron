@@ -250,7 +250,7 @@ fn binding(selector: &Value, n: u8) -> PackHookBinding {
         "pack": format!("pack-{n}"),
         "hook": "on-settle",
         "hook_version": format!("{n}.0.{}", n % 3),
-        "body_hash": oneiron_hex::encode(bytes::<32>(n)),
+        "body_hash": oneiron_hex::encode(&bytes::<32>(n)),
         "selector": selector,
         "enabled": n % 2 == 0,
         "author": {"kind": "owner"},
