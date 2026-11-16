@@ -1777,3 +1777,109 @@ fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
         );
     });
 }
+
+impl Served {
+    /// The taps `person`'s own notices of an agent-logged withdrawal offer,
+    /// as their wire form.
+    fn subject_withdrawal_taps(&self, person: EntityId) -> Vec<Value> {
+        self.vault
+            .memory(person, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the person's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                serde_json::to_value(row.kind).ok()
+                    == Some(json!("voice_recognition_withdrawal_logged_for_subject"))
+            })
+            .flat_map(|row| row.actions)
+            .map(|action| serde_json::to_value(action).expect("the tap's wire form"))
+            .collect()
+    }
+}
+
+/// The member's "that wasn't me" on their notice of an agent-logged
+/// withdrawal (VOICE-WITHDRAW-UNDO-SHAPE = B): one tap, on their own proof,
+/// logs a new recognition grant for the purposes the withdrawal ended. It
+/// restores consent only: the print stays deleted, and a fresh enrolment on
+/// the restored grant recognizes the member again. An agent cannot send the
+/// tap, and a tapped notice offers it no more.
+#[test]
+fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
+    run_on_engine_stack("voices-recognition-withdraw-disown", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-spoken-withdrawal", now, Some(member)),
+            )
+            .await;
+
+        let taps = served.subject_withdrawal_taps(member);
+        assert_eq!(taps.len(), 1, "one tap on the member's notice: {taps:?}");
+        let tap = &taps[0];
+        assert_eq!(tap["verb"], RECOGNITION_CONSENT, "{tap}");
+        assert!(
+            tap["args"].get("subject").is_none(),
+            "the tap is of the member's own voice: {tap}"
+        );
+        let notices = served.subject_withdrawal_notices(member);
+        let detail = notices[0].1.as_deref().expect("the notice's detail");
+        assert!(detail.contains("fresh enrolment"), "{detail}");
+
+        let (status, body) = served
+            .post(Caller::Agent, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert!(
+            !status.is_success(),
+            "an agent cannot send the member's tap: {status} {body}"
+        );
+
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert_eq!(restored["subject"], member.to_hex(), "{restored}");
+        assert_eq!(restored["recorded_by"], member.to_hex(), "{restored}");
+        assert_eq!(restored["replayed"], false, "{restored}");
+        let purposes: BTreeSet<&str> = restored["purposes"]
+            .as_array()
+            .expect("the restored purposes")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            purposes,
+            BTreeSet::from(["live_interlocutor", "meeting_attribution"]),
+            "the purposes the withdrawal ended: {restored}"
+        );
+        assert_eq!(
+            served.recognized("after-disown", &axis_vector(1)),
+            None,
+            "the print stays deleted"
+        );
+        assert!(
+            served.subject_withdrawal_taps(member).is_empty(),
+            "a tapped notice offers it no more"
+        );
+
+        let event_id = tap["args"]["event_id"]
+            .as_str()
+            .expect("the restore's event id");
+        let at = tap["args"]["occurred_at"]
+            .as_u64()
+            .expect("the restore's date");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(member, event_id, &axis_vector(1), at + 10))
+            .expect("a fresh enrolment on the restored grant");
+        assert_eq!(
+            served.recognized("after-fresh-enrolment", &axis_vector(1)),
+            Some(member)
+        );
+    });
+}
