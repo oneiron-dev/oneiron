@@ -56,6 +56,9 @@ use crate::{
     git_wire::{GitWire, GitWireRepo},
     store::code_snapshot::RepoRef,
 };
+// The base a later batch of a split enqueue was reviewed on, which the
+// reviewed landing admits it at ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+pub(crate) use batch_split::{EnqueueBase, enqueue_base};
 // The pinned-plan checker (FIX 6868).
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,

@@ -111,10 +111,16 @@ impl MergeQueue<'_> {
                 written: true,
             });
         }
+        // A later batch of a split enqueue keeps its enqueue's green pin:
+        // its members were pinned there, and green moves on as the batches
+        // before it settle ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+        let pin = if source.follows.is_some() {
+            source.base_green.clone()
+        } else {
+            queue.pointers.green.clone()
+        };
         if queue.pointers.head != source.expected_head
-            || survivors
-                .iter()
-                .any(|proposal| proposal.base_green != queue.pointers.green)
+            || survivors.iter().any(|proposal| proposal.base_green != pin)
         {
             return Ok(SurvivorFormation::Refused(SurvivorRefusal::NeedsNewBase));
         }
@@ -122,7 +128,7 @@ impl MergeQueue<'_> {
             self.require_current(&queue)?;
             self.require_clean(self.repo.repo_root())?;
         }
-        super::staging::validate_proposals(&survivors, &queue.pointers.green)?;
+        super::staging::validate_proposals(&survivors, &pin)?;
         let child_id = self.next_batch_id(&mut queue, &survivors)?;
         let selected_tests = queue.graph.affected_tests(
             survivors
@@ -134,7 +140,7 @@ impl MergeQueue<'_> {
             schema_version: 1,
             id: child_id.clone(),
             expected_head: queue.pointers.head.clone(),
-            base_green: queue.pointers.green.clone(),
+            base_green: pin,
             baseline_id: queue.baseline_id.clone(),
             proposals: survivors,
             state: BatchState::Queued,
@@ -149,10 +155,12 @@ impl MergeQueue<'_> {
                 survivor_of: Some(source.id.clone()),
                 ..QueueBatchDrive::default()
             }),
-            // A followed batch's survivors carry its landing; the batch
-            // that follows it walks the survivor link to them.
-            follows: None,
-            followed_by: None,
+            // The survivors take their source's place in its enqueue: they
+            // follow what it followed (and stage on that landed head, which
+            // is the queue head they form on), and the batch that follows
+            // it walks the survivor link to them.
+            follows: source.follows.clone(),
+            followed_by: source.followed_by.clone(),
         };
         let drive = source.drive.get_or_insert_with(QueueBatchDrive::default);
         drive.survivor = Some(QueueSurvivorLink::Batch(child_id.clone()));

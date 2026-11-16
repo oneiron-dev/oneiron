@@ -14,6 +14,10 @@
 //! batch's serialized form, so this file compiles on main too.
 //!
 //! `cargo test --locked -p oneiron --all-features --test merge_queue_enqueue_split`.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

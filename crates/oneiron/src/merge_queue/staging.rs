@@ -50,7 +50,7 @@ pub(super) fn speculative_masks(count: usize) -> Vec<u64> {
 
 impl MergeQueue<'_> {
     /// Admit reviewed proposals from the last green tree, without applying them.
-    /// More than [`MAX_BATCH_PROPOSALS`] form consecutive batches in request
+    /// More than 63 form consecutive batches of at most 63 in request
     /// order, each staged on the head the one before it landed; the answer
     /// is the first, whose `followed_by` names the next
     /// ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).

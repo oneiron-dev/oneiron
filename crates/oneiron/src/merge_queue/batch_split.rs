@@ -4,11 +4,20 @@
 //! of more forms consecutive batches of at most that many, in request
 //! order, in one writer. Each later batch names the batch it follows and
 //! stages on the head that batch landed, once it has: no batch is staged on
-//! a base its predecessor has not reached, and none is rebased.
+//! a base its predecessor has not reached, and none is rebased. Every
+//! member of every batch was reviewed on the base the enqueue's first batch
+//! staged on ([`enqueue_base`]); the reviewed landing admits it there, and
+//! checks each path it touches against its own stage.
 
 use super::staging::MAX_BATCH_PROPOSALS;
-use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, QueueSurvivorLink};
+use super::{
+    BatchState, MergeBatch, MergeProposal, MergeQueue, QueueDriveHoldReason, QueueSurvivorLink,
+};
+use crate::Vault;
 use crate::error::{Error, Result};
+use crate::git_wire::GitWireRepo;
+use crate::repo_mutation::RepoForkHash;
+use std::collections::BTreeSet;
 
 /// What a later batch of a split enqueue whose followed batch ended
 /// without landing answers: it never stages.
@@ -26,8 +35,50 @@ pub(super) enum FollowedBase {
     /// That batch landed as this head; this one stages there.
     Landed(String),
     /// That batch ended without landing: cancelled, rolled back,
-    /// superseded, or every member quarantined.
+    /// superseded, every member quarantined, or its survivors refused a
+    /// new base.
     Ended,
+}
+
+/// The base a later batch's members were reviewed on: the live checkout
+/// snapshot and the head the first batch of its enqueue staged on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EnqueueBase {
+    pub(crate) pre_snapshot: RepoForkHash,
+    pub(crate) head: String,
+}
+
+/// The base of the enqueue `batch` belongs to when it is a later batch of a
+/// split enqueue, read along its `follows` links to the first batch; `None`
+/// for a first batch, or while the first has not staged.
+///
+/// # Errors
+/// A linked batch that cannot be read, or links that return to a batch.
+pub(crate) fn enqueue_base(
+    vault: &Vault,
+    repo: &GitWireRepo,
+    batch: &MergeBatch,
+) -> Result<Option<EnqueueBase>> {
+    let Some(mut followed) = batch.follows.clone() else {
+        return Ok(None);
+    };
+    let queue = MergeQueue::of_repo(vault, repo.clone());
+    let mut seen = BTreeSet::from([batch.id.clone()]);
+    loop {
+        if !seen.insert(followed.clone()) {
+            return Err(Error::CorruptedIndex("merge batch follows links return"));
+        }
+        let earlier = queue.batch(&followed)?;
+        match earlier.follows {
+            Some(next) => followed = next,
+            None => {
+                return Ok(earlier.pre_snapshot.map(|pre_snapshot| EnqueueBase {
+                    pre_snapshot,
+                    head: earlier.expected_head,
+                }));
+            }
+        }
+    }
 }
 
 /// `proposals` in request order, cut into consecutive groups of at most
@@ -70,9 +121,18 @@ impl MergeQueue<'_> {
                 | BatchState::Ready
                 | BatchState::Landing => return Ok(FollowedBase::Waiting),
                 BatchState::Quarantined => {
-                    match predecessor.drive.and_then(|drive| drive.survivor) {
+                    let drive = predecessor.drive.unwrap_or_default();
+                    match drive.survivor {
                         Some(QueueSurvivorLink::Batch(child)) => followed = child,
                         Some(QueueSurvivorLink::Empty) => return Ok(FollowedBase::Ended),
+                        // Its survivors wait to be formed, unless the queue
+                        // moved past its base: they never are then.
+                        None if drive.hold.as_ref().is_some_and(|hold| {
+                            hold.reason == QueueDriveHoldReason::HeldNeedsNewBase
+                        }) =>
+                        {
+                            return Ok(FollowedBase::Ended);
+                        }
                         None => return Ok(FollowedBase::Waiting),
                     }
                 }
