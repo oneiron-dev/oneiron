@@ -55,6 +55,7 @@ pub(in crate::calendar) use self::codec::{
 pub(crate) use self::codec::{
     decode_event_outcome_value, decode_passport_value, validate_calendar_claim_structure,
 };
+pub(crate) use self::values::attendee_address_identity;
 
 // These four decoders are named only by sibling test modules (`series` and
 // `tz`); the re-export exists in test builds so those paths keep resolving,

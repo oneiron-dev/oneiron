@@ -26,6 +26,9 @@ mod executor;
 mod received;
 mod tree;
 
+#[cfg(all(oneiron_test_support, unix))]
+pub(crate) use executor::run_empty_isolated_check;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
