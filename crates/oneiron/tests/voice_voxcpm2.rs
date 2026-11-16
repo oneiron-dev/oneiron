@@ -170,7 +170,9 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     assert_eq!(origin, target);
     // Bank identity is pinned by the revision, not a vendor voice ID.
     assert_eq!(MODEL, "VoxCPM2");
-    // A callback accepted before withdrawal cannot be played afterwards.
+    // A callback accepted before the render consent's withdrawal cannot be
+    // played afterwards. That withdrawal, not the voice print's, stops a
+    // render: the print's withdraws recognition only.
     let mut second = VoxCpm2Adapter::new(
         Arc::clone(&vault),
         "owner-voice",
@@ -196,15 +198,18 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
         channels: 1,
         body: &Arc::new(VoxCpm2PcmBody::from(vec![1, 0])),
     })?;
-    vault.withdraw_voice_consent(&oneiron::voice_identity::VoiceWithdrawalRequest {
+    vault.record_voice_render_consent(&VoiceRenderDecision {
         event_id: "withdraw-before-playback".into(),
-        subject_ref: owner,
-        recorded_by_ref: owner,
+        voice_id: "owner-voice".into(),
+        subject: owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: owner,
         occurred_at: 10,
-        purposes: vec![oneiron::voice_identity::VoicePrintPurpose::LiveInterlocutor],
-        basis: oneiron::voice_identity::VoiceConsentBasis::ConversationalNotice {
+        reach: WORKER_LOCALITY,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
             notice: "withdraw".into(),
-        },
+        }),
+        state: VoiceConsentState::Withdrawn,
     })?;
     assert!(pending.next_window(&cascade)?.is_none());
     Ok(())

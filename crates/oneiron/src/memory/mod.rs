@@ -158,7 +158,7 @@ pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
 mod skill_bodies;
-mod structural;
+pub(crate) mod structural;
 mod subscriptions;
 mod support;
 pub(crate) use support::TranscriptRetainedCaller;
@@ -295,7 +295,7 @@ pub use plugin_sections::{
     PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposeRequest,
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
-    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+    PluginSectionsView,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
@@ -426,8 +426,9 @@ pub(crate) use witness::{
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};
 pub(crate) use support::{
-    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
-    verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
+    embedded_owner_shortcut_holds_in_txn, facade_provenance, hard_deleted_refusal,
+    verify_actor_binding, verify_actor_binding_in_txn, verify_deletion_authority_in_txn,
+    verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
