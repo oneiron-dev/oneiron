@@ -7,7 +7,10 @@
 //! row for the same `who`, here the same person as another calendar system
 //! reported them. `vault.claims.list` reads the rows back.
 //!
-//! `cargo test --locked -p oneiron-server --all-features --test calendar_ics_attendee_doors`.
+//! Fleet command: `cargo test --locked -p oneiron-server --all-features
+//! --features oneiron/test-support --test calendar_ics_attendee_doors`. The
+//! test calls no test door; it needs `oneiron/test-support` for
+//! `MemoryKeystore`.
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 

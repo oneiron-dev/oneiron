@@ -34,7 +34,7 @@ const MULTI_CARDINALITY_VALUE_KEYS: [(&str, &str); 2] = [
     ("calendar.attendee", "who"),
 ];
 
-/// The predicates of [`MULTI_CARDINALITY_VALUE_KEYS`].
+/// The predicates of the value-key table `MULTI_CARDINALITY_VALUE_KEYS`.
 pub const MULTI_CARDINALITY_PREDICATES: [&str; MULTI_CARDINALITY_VALUE_KEYS.len()] = {
     let mut predicates = [""; MULTI_CARDINALITY_VALUE_KEYS.len()];
     let mut index = 0;
