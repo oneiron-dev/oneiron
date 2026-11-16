@@ -39,7 +39,7 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::HostSlipIssuer;
+use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::check_in::CheckInDecision;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
@@ -112,6 +112,9 @@ impl Org {
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's live machine profile, to carry acts");
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
         let [deputy, admin] = std::array::from_fn(|_| EntityId::now());
