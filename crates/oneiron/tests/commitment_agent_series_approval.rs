@@ -8,7 +8,8 @@
 //! `commitment.record` value. Landing indexes a commitment series only once
 //! it is consented (`commitment_schedule/projection.rs`,
 //! `PROJECT_ONLY_CONSENTED_SERIES`), and the owner's approval indexes it in
-//! the approval's own write (`claim/deferred.rs`).
+//! the approval's own write (`gate/bundle/claim_settle.rs` ->
+//! `task_verb::settle_task_proposal_in_txn`, FIX 5993).
 //!
 //! The test enters the way an agent does: a registered agent definition with
 //! an owner-minted grant for `read` and `vault.claims.upsert` in the base
