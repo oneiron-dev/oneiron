@@ -15,6 +15,7 @@ use crate::dreamer_consolidation::{
 use crate::dreamer_runner::maintenance::MaintenanceTarget;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, WriteActor};
 
 const REVERT_KIND: &str = "dreamer_change_revert";
@@ -108,19 +109,17 @@ impl Memory<'_> {
             let receipt = decision(
                 actor,
                 REVERT_KIND,
-                "approved",
+                GateReceiptOutcome::Approved,
                 REVERT_REASON,
                 Some(change),
                 change.as_bytes().to_vec(),
                 now,
             );
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(DreamerRevertReceipt {
                 change,
                 reverted,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             })
         })
     }

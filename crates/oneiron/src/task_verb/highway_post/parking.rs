@@ -191,7 +191,7 @@ impl Memory<'_> {
                             wtxn,
                             &proposal_ref,
                             now,
-                            "rejected",
+                            crate::store::gate_reason::GateReceiptOutcome::Rejected,
                             vec![TAKE_DECLINED_REASON.to_owned()],
                             None,
                         )?;

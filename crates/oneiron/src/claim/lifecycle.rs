@@ -798,7 +798,7 @@ impl Vault {
                     wtxn,
                     id,
                     now,
-                    "retracted",
+                    crate::store::gate_reason::GateReceiptOutcome::Retracted,
                     vec!["gate.pending.claim_retracted".to_owned()],
                     None,
                     crate::store::TrayRemoval::Silent,

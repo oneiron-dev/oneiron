@@ -6,6 +6,8 @@
 //! - 1a secret custody: the owner's payment mark (`secret_custody/payment_credential.rs`).
 //! - 1b consent, kept words: the owner revokes a contact's clearance (`consent/contact_clearance.rs`).
 //! - 1c the gate's own doors: the owner grants a foreign principal (`gate/foreign_agent.rs`).
+//! - 1d settlements: the owner's direct correction of their own claim (`claim/deferred.rs`;
+//!   added by UC-03 PR 1d).
 //! - 1e Dreamer: the facet admission receipt of an enqueued attempt (`dreamer_runner/authority.rs`).
 //! - 1g the rest: the booking guard parks a borderline submission (`booking/anti_abuse/quarantine.rs`;
 //!   added by UC-03 PR 1g, the one row here with a bound id and a bound time).
@@ -38,7 +40,7 @@ use oneiron::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
 };
 use oneiron::federation::{Scope, ScopeId};
-use oneiron::memory::SafeDeleteReason;
+use oneiron::memory::{ClaimInput, SafeDeleteReason, resolve_entity_ref};
 use oneiron::note::{
     PlanDocProposeRequest, PlanDocVerdictRequest, TakeTarget, approve_plan_doc_as,
 };
@@ -52,7 +54,11 @@ use oneiron::test_doors::gate_receipt_rows as door;
 use oneiron::test_doors::payment_credential::register_bound_secret;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::write_envelope::claim_body::encode_claim_body;
+use oneiron::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange, Vault,
+    VaultConfig,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -544,6 +550,94 @@ fn an_owner_delete_row_keeps_its_fields() -> TestResult {
             claim_id: None,
             grant_ref: None,
             diff_handle: handle,
+            read_frontier_hash: frontier,
+            context: GateDecisionContext::default(),
+            redacted_at: None,
+        }
+    );
+    Ok(())
+}
+
+/// Family 1d: the owner's direct correction of their own landed claim (FIX 22041). The
+/// replacement lands at once and closes the prior in the same write, with this row. The fixture
+/// is `tests/claim_settle_supersession.rs`'s: an unrooted vault and its embedded owner.
+#[test]
+fn an_owner_correction_row_keeps_its_fields() -> TestResult {
+    let (_dir, vault, owner, _proof) = signing_vault();
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 5, end: 5 },
+        5,
+        b"correction guard subject",
+    )?;
+    let facet = vault.default_facet()?;
+    let input = |value: &str| ClaimInput {
+        id: None,
+        // The shipped manifest declares `profile.` normal, so no confirmation holds the write.
+        predicate: "profile.name".to_owned(),
+        subject_ref: subject.to_hex(),
+        value: json!(value),
+        confidence: 1.0,
+        confidence_details: None,
+        source: "user_stated".to_owned(),
+        world_ref: None,
+        relationship_ref: None,
+        scope: Some(json!({ "facet": facet.to_hex() })),
+        valid_from: Some(100),
+        valid_to: None,
+        occurred_at: None,
+        learned_at: None,
+        salience: None,
+    };
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let first = memory.claim_upsert(&input("Owen"))?;
+    assert_eq!(first.approval, "auto", "the owner's claim lands");
+    let prior = resolve_entity_ref(&vault, &first.claim_short_id)?;
+
+    let second = memory.claim_upsert(&input("Owen, corrected"))?;
+
+    assert_eq!(
+        second.approval, "auto",
+        "the owner's correction lands at once"
+    );
+    let replacement = resolve_entity_ref(&vault, &second.claim_short_id)?;
+    assert_eq!(
+        vault.get_claim(&prior)?.expect("the prior reads").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "the correction closes the prior in the same write",
+    );
+    let rows: Vec<GateDecisionRecord> = vault
+        .gate_decisions(64)?
+        .into_iter()
+        .filter(|row| row.reason_codes == ["gate.supersede.owner_correction"])
+        .collect();
+    assert_eq!(rows.len(), 1, "the correction writes one row");
+    // The handle binds the replacement's body as a proposal would carry it.
+    let mut body = vault
+        .get_claim(&replacement)?
+        .expect("the replacement reads");
+    body.approval = ClaimApprovalStatus::Proposed;
+    let mut handle = Sha256::new();
+    handle.update(b"oneiron.gate.claim_diff.v0");
+    handle.update(encode_claim_body(&body)?);
+    let frontier = door::policy_frontier(&vault)?;
+    assert_eq!(
+        fields(&rows[0]),
+        Fields {
+            version: 0,
+            outcome: "allow".to_owned(),
+            reason_codes: strings(&["gate.supersede.owner_correction"]),
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "human".to_owned(),
+            actor_ref: Some(owner.to_hex()),
+            content_kind: "claim".to_owned(),
+            policy_manifest_version: POLICY_VERSION.to_owned(),
+            claim_id: Some(*replacement.as_bytes()),
+            grant_ref: None,
+            diff_handle: handle.finalize().to_vec(),
             read_frontier_hash: frontier,
             context: GateDecisionContext::default(),
             redacted_at: None,

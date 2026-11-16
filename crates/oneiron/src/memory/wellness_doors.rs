@@ -7,6 +7,7 @@ use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionModeRule};
 use crate::memory::state_index::StateIndex;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, Error};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -167,19 +168,17 @@ impl Memory<'_> {
                     .as_deref()
                     .map(EntityId::from_hex)
                     .transpose()?;
-                let decision = super::authorship::decision(
+                let receipt = super::authorship::decision(
                     self.write_actor(),
                     "wellness_projection",
-                    "approved",
+                    GateReceiptOutcome::Approved,
                     "gate.affect.wellness.configured_policy",
                     target,
                     bytes,
                     now,
                 );
-                projection.receipt_ref = Some(format!("gate:{}", decision.decision_id.to_hex()));
-                self.vault
-                    .store
-                    .append_gate_decision_in_txn(txn, &decision)?;
+                let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+                projection.receipt_ref = Some(format!("gate:{}", record.decision_id.to_hex()));
             }
             Ok(projection)
         })

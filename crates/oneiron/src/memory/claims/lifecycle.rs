@@ -5,6 +5,8 @@
 use super::commit::claim_envelope_actor;
 use super::*;
 
+use crate::store::gate_reason::GateReceiptOutcome;
+
 /// Whether `proof` lets `actor` propose a claim born at `position`, judged
 /// in the committing snapshot (FIX 1400). The record bounds may narrow the
 /// world and facet the claim is born at and nothing else; a record or
@@ -349,11 +351,15 @@ impl Memory<'_> {
                 verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
                 let raw = crate::claim::encode_claim_body(&body)?;
                 let receipt = super::authorship::decision(
-                    WriteActor::new(self.actor, self.actor_class), "memory_claim_override", "approved",
-                    "gate.memory.explicit_owner_retraction", Some(id),
-                    blake3::hash(&raw).as_bytes().to_vec(), now,
+                    WriteActor::new(self.actor, self.actor_class),
+                    "memory_claim_override",
+                    GateReceiptOutcome::Approved,
+                    "gate.memory.explicit_owner_retraction",
+                    Some(id),
+                    blake3::hash(&raw).as_bytes().to_vec(),
+                    now,
                 );
-                self.vault.store.append_gate_decision_in_txn(wtxn, &receipt)?;
+                self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
             }
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;

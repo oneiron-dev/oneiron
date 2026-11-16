@@ -160,7 +160,7 @@ impl Vault {
                             wtxn,
                             &id,
                             now,
-                            "rejected",
+                            crate::store::gate_reason::GateReceiptOutcome::Rejected,
                             vec![INBOX_REASON_BUNDLE_REJECT.to_owned()],
                             Some(bundle_ref.clone()),
                         )? {

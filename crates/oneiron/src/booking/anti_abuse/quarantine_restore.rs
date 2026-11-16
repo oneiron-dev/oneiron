@@ -179,7 +179,7 @@ pub fn record_quarantined_submission_restored(
                 wtxn,
                 claim_ref,
                 now,
-                "approved",
+                crate::store::gate_reason::GateReceiptOutcome::Approved,
                 vec![QUARANTINE_RESTORE_REASON_CODE.to_owned()],
                 Some(format!("booking_event:{}", event_ref.to_hex())),
             )

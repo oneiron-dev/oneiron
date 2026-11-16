@@ -164,10 +164,16 @@ impl Memory<'_> {
             self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
         }
         let (outcome, reason) = match action {
-            GateConsentBundleAction::Approve => ("approved", ClaimSettlementReason::OwnerApproved),
-            GateConsentBundleAction::Decline => ("rejected", ClaimSettlementReason::OwnerDeclined),
+            GateConsentBundleAction::Approve => (
+                GateReceiptOutcome::Approved,
+                ClaimSettlementReason::OwnerApproved,
+            ),
+            GateConsentBundleAction::Decline => (
+                GateReceiptOutcome::Rejected,
+                ClaimSettlementReason::OwnerDeclined,
+            ),
         };
-        let mut record = crate::memory::authorship::decision(
+        let mut receipt = crate::memory::authorship::decision(
             actor,
             CLAIM_SETTLEMENT_CONTENT_KIND,
             outcome,
@@ -176,7 +182,7 @@ impl Memory<'_> {
             reviewed.digest.to_vec(),
             now,
         );
-        record.read_frontier_hash = reviewed.frontier;
+        receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
         // FIX 7499, 7500: the member's read context, and the loop links of
         // the pending decision it answers.
         let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -186,7 +192,7 @@ impl Memory<'_> {
                 .ok()
                 .flatten()
         });
-        record.context = crate::store::GateDecisionContext {
+        receipt.context = crate::store::GateDecisionContext {
             read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
                 .map(|read| {
                     read.with_anchors(crate::conversation::gate_claim_anchors_in(
@@ -203,9 +209,7 @@ impl Memory<'_> {
                 .map(crate::store::GateDecisionContext::answering)
                 .unwrap_or_default()
         };
-        self.vault
-            .store
-            .append_gate_decision_in_txn(wtxn, &record)?;
+        let record = self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
         // The member's savepoint commits or the whole act fails, so the index
         // takes in what this savepoint wrote.
         if changes_others {
