@@ -51,14 +51,11 @@ pub(crate) fn steer_receipt_schema() -> serde_json::Value {
 /// missing row is 404, an authority refusal 409, and a code the route does
 /// not name (an engine fault among them) 500, never a 409.
 pub(super) fn steer_error(error: MemoryError) -> OwnerError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
-        oneiron::memory::MEMORY_CODE_NOT_FOUND => OwnerError::NotFound("task", error.message),
-        oneiron::memory::MEMORY_CODE_FORBIDDEN
-        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => OwnerError::Refused(error.message),
-        _ => OwnerError::Host(anyhow::anyhow!("steer: {}", error.message)),
+    // Named override: an owner binding refusal is refused (409), as before.
+    if error.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED {
+        return OwnerError::Refused(error.message);
     }
+    OwnerError::from_memory_code(error, Some("task"), "steer")
 }
 
 /// `POST /v1/owner/steer`: the `steer` verb's input (`task_ref`,

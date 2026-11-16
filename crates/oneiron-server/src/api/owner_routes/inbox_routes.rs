@@ -53,15 +53,13 @@ async fn read(
 /// missing row is 404, an authority refusal or a state that refuses 409,
 /// and a code the route does not name (an engine fault among them) 500,
 /// never a 409.
-pub(super) fn inbox_error(error: MemoryError) -> OwnerError {
+pub(super) fn inbox_error(mut error: MemoryError) -> OwnerError {
+    // Named overrides: the lens's words carry the engine code, and a state
+    // that refuses or an owner binding refusal is refused (409), as before.
+    error.message = error.to_string();
     match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.to_string()),
-        oneiron::memory::MEMORY_CODE_NOT_FOUND => {
-            OwnerError::NotFound("inbox_lens", error.to_string())
-        }
-        oneiron::memory::MEMORY_CODE_FORBIDDEN
-        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        | oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Refused(error.to_string()),
-        _ => OwnerError::Host(anyhow::anyhow!("inbox lens: {error}")),
+        oneiron::memory::MEMORY_CODE_INVALID_STATE
+        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => OwnerError::Refused(error.message),
+        _ => OwnerError::from_memory_code(error, Some("inbox_lens"), "inbox lens"),
     }
 }
