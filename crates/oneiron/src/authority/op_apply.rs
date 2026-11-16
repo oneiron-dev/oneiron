@@ -725,7 +725,7 @@ pub(super) fn upsert_device(
     super::owner_proof::remember_owner_key(state, &device.key);
 }
 
-fn revoke_key(state: &mut FoldState, key: &AuthorityKey) {
+pub(super) fn revoke_key(state: &mut FoldState, key: &AuthorityKey) {
     state
         .roster
         .entry(key.clone())
