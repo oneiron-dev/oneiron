@@ -225,6 +225,22 @@ impl ResultRead {
         self.state.is_tainted() && self.secret.as_deref().is_none_or(span_placed_for)
     }
 
+    /// Up to `len` bytes from `offset` of the body this read shows, for a
+    /// reader that takes bytes rather than a facet's reply (a raw chunk, a
+    /// summary member). `None` for a tainted occurrence: no read shows its
+    /// content.
+    pub(crate) fn read_shown(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        if self.state.is_tainted() {
+            return Ok(None);
+        }
+        RunBody::of(self, storage).read(offset, len).map(Some)
+    }
+
     /// Runs `read` over the body this read shows in `storage`, and whether
     /// that is its redacted view: the stored bytes of a clean or withheld
     /// occurrence, else each secret span blanked (L6-31). A body that has
