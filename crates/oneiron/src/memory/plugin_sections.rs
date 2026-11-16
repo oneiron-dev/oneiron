@@ -75,7 +75,7 @@ pub use oneiron_verb_wire::memory::plugin_sections::{
     PluginSectionGrantState, PluginSectionListRequest, PluginSectionPendingRow,
     PluginSectionProposeRequest, PluginSectionRevokeRequest, PluginSectionRevoked,
     PluginSectionSuggestRequest, PluginSectionSuggestion, PluginSectionSuggestionState,
-    PluginSectionTargetInput, PluginSuggestionsSetRequest, PluginSuggestionsView,
+    PluginSectionTargetInput,
 };
 
 impl From<&PluginSectionTargetInput> for PluginInstallTarget {
@@ -392,31 +392,6 @@ impl Memory<'_> {
                     label: Some(board_row.label),
                 }
             }
-        })
-    }
-
-    /// The owner's suggestion knob, read under the owner's proof.
-    pub fn plugin_suggestions_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-    ) -> MemoryResult<PluginSuggestionsView> {
-        self.plugin_section_owner(owner)?;
-        Ok(PluginSuggestionsView {
-            enabled: self.vault().plugin_suggestions_enabled()?,
-        })
-    }
-
-    /// The owner's suggestion knob: off silences every later pass before any
-    /// catalog access.
-    pub fn plugin_suggestions_set_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: &PluginSuggestionsSetRequest,
-    ) -> MemoryResult<PluginSuggestionsView> {
-        self.plugin_section_owner(owner)?;
-        self.vault().set_plugin_suggestions_enabled(input.enabled)?;
-        Ok(PluginSuggestionsView {
-            enabled: input.enabled,
         })
     }
 }
