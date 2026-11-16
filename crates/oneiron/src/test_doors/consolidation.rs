@@ -213,6 +213,77 @@ pub fn open_dreamer_vault(path: &std::path::Path, reader: &str) -> Result<Vault>
     Ok(vault)
 }
 
+/// [`open_dreamer_vault`] with its tagger armed by `tagging`, so a witness
+/// with held tags saves them as the turn's tag set (L2-03: a slice whose
+/// turns' saved relations cover it is extracted from them).
+///
+/// # Errors
+///
+/// The vault's.
+pub fn open_tagged_dreamer_vault(
+    path: &std::path::Path,
+    reader: &str,
+    tagging: crate::tagging::TaggingMarkerConfig,
+) -> Result<Vault> {
+    let mut config = crate::VaultConfig::device();
+    config.tagging = Some(tagging);
+    let vault = Vault::open(path, config)?;
+    crate::test_fixtures::provision_engine_machines(&vault);
+    allow_own_server_extraction(&vault)?;
+    shipped_policy_with_reader(&vault, reader)?;
+    Ok(vault)
+}
+
+/// Witnesses `words`, spoken by a fresh PERSON, as one visible user MESSAGE
+/// of a fresh TURN with `tags` held for it (a tagger's answer over that one
+/// MESSAGE), saved as the turn's tag set in the witness write; then runs the
+/// pass of [`consolidate_unbound_turn`] with no readable space.
+///
+/// # Errors
+///
+/// The vault's, held tags the witness did not save, or a pass that does
+/// not complete.
+pub fn consolidate_tagged_turn(
+    vault: &Vault,
+    words: &str,
+    tags: &crate::memory::extraction::EncoderOutput,
+    reply: &str,
+) -> Result<UnboundPass> {
+    let speaker = EntityId::now();
+    vault.put_entity(&speaker, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    let turn = EntityId::now();
+    let (_, outcome) = vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness_with_held_tags(
+            &WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: Some(EntityId::now().to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: words.to_owned(),
+                    parts: None,
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: 10,
+                assertions: WitnessAssertions::default(),
+            },
+            tags,
+        )
+        .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;
+    if !matches!(outcome, crate::tagging::HeldTagsOutcome::Completed(_)) {
+        return Err(Error::InvalidConfig(format!(
+            "the held tags were not saved: {outcome:?}"
+        )));
+    }
+    consolidate_witnessed_turns(vault, turn, None, reply)
+}
+
 /// Witnesses `words` as one visible user MESSAGE carrying `metadata` into a
 /// fresh TURN, gives the Dreamer a live `MessagesRead` grant on
 /// `readable_space` when one is named, then runs one Micro consolidation pass

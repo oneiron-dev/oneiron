@@ -394,3 +394,149 @@ async fn mirrored_reaction_route_goes_through_the_signed_mirror_machine() {
     assert_eq!(removed["event"], "reaction.revoked");
     assert_eq!(server.vault.reactions_outbound(room).unwrap(), "mirrored");
 }
+
+/// Alice's signal feed as the dev hatch asks for it: no credential, from
+/// loopback, with the forwarding header a proxy on this device adds when
+/// `forwarded_for` names the caller it forwarded.
+fn hatch_signal_request(alice: EntityId, forwarded_for: Option<&'static str>) -> Request<Body> {
+    let query = json!({"query": "friday plan", "limit": 10, "signals_since": 0,
+        "signals_person": alice.to_hex(), "signals_limit": 10});
+    let mut request = json_request("POST", "/v1/core/context-pack", query);
+    if let Some(caller) = forwarded_for {
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_static(caller),
+        );
+    }
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            std::net::Ipv4Addr::LOCALHOST,
+            40_000,
+        ))));
+    request
+}
+
+/// The reaction ids and glyphs a pack's signal feed names.
+fn signalled_reactions(pack: &Value) -> Vec<(String, String)> {
+    pack["signals"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the pack carries a signal feed: {pack}"))
+        .iter()
+        .map(|signal| {
+            (
+                signal["reaction"].as_str().unwrap().to_owned(),
+                signal["glyph"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// DEC-0005 (census L5-29): "A caller off this device reads nothing a
+/// withheld world keeps." An owner-grade caller with no slip takes the raw
+/// signal feed (here the dev hatch). Once a proxy marks its request as
+/// forwarded it is off this device, and the feed names no reaction a world
+/// kept on this machine holds. Unmarked loopback stays local ("a reverse
+/// proxy on this device that adds none passes its callers as local"), so
+/// there the hatch reads the kept reaction as the owner does. On main the
+/// marked request still named it.
+#[tokio::test]
+async fn hatch_signal_feed_off_this_device_names_no_kept_reaction() {
+    let (_dir, server) = test_server();
+    let (_room, alice, bob, message) = room(&server, ConversationBody::default());
+    // Bob writes his base reaction through the vault's reaction write (the
+    // one the REST route runs): this root server's route writes only as its
+    // embedded owner (FIX 2222), and the feed under test is the read.
+    let open_id = server
+        .vault
+        .react(oneiron::reaction::ReactionInput {
+            message,
+            by: bob,
+            glyph: "👍".to_owned(),
+            occurred_at: now(),
+            actor: WriteActor::new(bob, EdgeActorClass::Human),
+        })
+        .unwrap()
+        .id;
+
+    // Bob's other reaction is born in a world the owner keeps on this
+    // machine. A claim keeps the world it was born in (a changed world is a
+    // fork with a new id, so a re-put that moves a claim is refused), so the
+    // kept reaction is the base claim's body with glyph 👀, at its own id in
+    // the world.
+    let world = EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let mut body = server
+        .vault
+        .get_claim(&open_id)
+        .unwrap()
+        .expect("the base reaction claim");
+    body.world = Some(world);
+    let rmpv::Value::Map(entries) = &mut body.value else {
+        panic!("a reaction value is a map");
+    };
+    entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("glyph"))
+        .expect("the reaction value names its glyph")
+        .1 = rmpv::Value::from("👀");
+    let kept_id = EntityId::now();
+    let at = now();
+    server
+        .vault
+        .put_claim(&kept_id, &body, TimeRange { start: at, end: at }, at)
+        .expect("a reaction born in the world");
+    let (kept, open) = (kept_id.to_hex(), open_id.to_hex());
+    server
+        .vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+    assert!(
+        server
+            .vault
+            .device_local_keeps_for(&kept_id, &oneiron::claim::CallerLocality::OffDevice.into())
+            .unwrap(),
+        "the kept world holds the reaction born in it from a caller off this device"
+    );
+
+    // Unmarked loopback is on this device: the feed names both reactions.
+    let (status, here) = route_json(server.clone(), hatch_signal_request(alice, None)).await;
+    assert_eq!(status, StatusCode::OK, "{here}");
+    let named: Vec<String> = signalled_reactions(&here)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert!(
+        named.contains(&kept) && named.contains(&open),
+        "on this device the feed names both reactions (kept {kept}, open {open}): {here}"
+    );
+
+    // A proxy marked the same request: off this device, the base reaction
+    // still comes and the kept one is not named, by id or glyph.
+    let (status, away) = route_json(
+        server.clone(),
+        hatch_signal_request(alice, Some("192.0.2.7")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{away}");
+    let signals = signalled_reactions(&away);
+    assert!(
+        signals.iter().any(|(id, _)| *id == open),
+        "the base reaction reaches a caller off this device (open {open}): {away}"
+    );
+    assert!(
+        signals
+            .iter()
+            .all(|(id, glyph)| *id != kept && glyph != "👀"),
+        "a reaction the kept world holds reached a caller off this device (kept {kept}): {away}"
+    );
+}

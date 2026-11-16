@@ -381,8 +381,9 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
         };
 
     // Each axis alone lands its TASK at that axis and leaves the other at
-    // its default: a world-only TASK keeps its own substrate facet, a
-    // facet-only one stays in base reality.
+    // its default: a world-only TASK is born under the vault default facet
+    // (ARCH-0022: every TASK carries its facet as its facet_of birth edge),
+    // a facet-only one stays in base reality.
     for (credential, id, scope) in [
         ("one-1704-world-only", "axis-world", &world_only),
         ("one-1704-facet-only", "axis-facet", &facet_only),
@@ -405,7 +406,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
             .unwrap_or_else(oneiron::claim::base_world_id);
         let facet = scope
             .facet_ref
-            .unwrap_or_else(|| oneiron::claim::substrate_facet_id(task).expect("facet"));
+            .unwrap_or_else(|| server.vault().default_facet().expect("vault default facet"));
         assert_eq!(
             (born.worlds, born.facets),
             (axis(world), axis(facet)),

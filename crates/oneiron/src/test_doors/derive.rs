@@ -11,6 +11,7 @@ use crate::derive::{
 };
 use crate::error::Result;
 use crate::gate::{DeriveCapability, DeriveRefusal};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::write_envelope::{SourceLineage, WriteActor};
 use crate::{EdgeActorClass, EntityId, Vault};
 
@@ -231,7 +232,7 @@ pub fn grant_core_read_beside_derive_rows(
     let policy = crate::gate::default_policy_manifest_id()?;
     let body = vault.get(&policy)?.ok_or(crate::Error::EntityNotFound)?;
     let body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
-    crate::test_support::put_policy_manifest_bytes(vault, policy, &body)
+    crate::test_fixtures::put_policy_manifest_bytes(vault, policy, &body)
 }
 
 /// Whether `reader` of `class` reads `row` on the recorded lane the record
@@ -442,7 +443,7 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     for agent in agents {
         body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
     }
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &body,
@@ -464,6 +465,47 @@ pub fn narrow_steward_grant_to_project(
     let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
     let mut body = decode_federation_grant_body(&raw)?;
     body.authority_scope.audience = std::iter::once(ScopeId(project)).collect();
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: grant,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_federation_grant_body(&body)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
+}
+
+/// Expires the agent grant `grant` at second 1, as if the owner had minted
+/// it with an expiry long passed, leaving every other field unchanged.
+///
+/// # Errors
+///
+/// The vault's, or a missing or malformed grant row.
+pub fn expire_agent_grant(vault: &Vault, grant: EntityId) -> Result<()> {
+    use crate::federation::{decode_federation_grant_body, encode_federation_grant_body};
+    let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
+    let mut body = decode_federation_grant_body(&raw)?;
+    body.expires_at = Some(1);
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         crate::batch::apply_ops(
@@ -557,7 +599,7 @@ pub fn permit_imported_auto(vault: &Vault, actor: EntityId) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
         .map_err(|_| invalid("encode policy"))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -997,7 +1039,7 @@ pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
     use crate::federation::{Scope, ScopeAxis};
 
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     let owner = super::steward::owner(vault)?;
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
     let mut scope = Scope::top();
@@ -1144,6 +1186,46 @@ pub fn open_conflict_with_alternative(
     member: EntityId,
     value: &str,
 ) -> Result<(EntityId, EntityId)> {
+    open_conflict_with_alternative_evidence(vault, member, value, member)
+}
+
+/// Opens a conflict over `member`, retaining `value` from imported words
+/// (FIX 5754). Its Keep stages in review, with the marker open. Returns the
+/// marker and the alternative's selector.
+///
+/// # Errors
+///
+/// The vault's, a member that is no claim, or inadmissible evidence.
+pub fn open_conflict_with_imported_alternative(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+) -> Result<(EntityId, EntityId)> {
+    let words = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("speaker", "user"),
+        ("txt", value),
+        (crate::memory::IMPORTED_SOURCE_KEY, "transcript"),
+    ]))
+    .map_err(|_| crate::error::Error::InvalidClaimBody("an imported TURN body does not encode"))?;
+    let imported = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_entity(
+        &imported,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange { start: at, end: at },
+        at,
+        &words,
+    )?;
+    open_conflict_with_alternative_evidence(vault, member, value, imported)
+}
+
+/// Opens a conflict over `member`, retaining `value` from `evidence_source`.
+fn open_conflict_with_alternative_evidence(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+    evidence_source: EntityId,
+) -> Result<(EntityId, EntityId)> {
     use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
     use crate::dreamer_consolidation::{PromotionCandidate, retained_alternatives_entry_for_test};
     use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -1163,7 +1245,7 @@ pub fn open_conflict_with_alternative(
             vault,
             &read,
             &txn,
-            &[member],
+            &[evidence_source],
             ClaimSource::Generated,
         )?
     };
@@ -1337,7 +1419,23 @@ pub fn refusal_receipt(vault: &Vault, batch: EntityId, local: &str) -> Result<Op
         .gate_decision_in_txn(&txn, crate::store::GateDecisionId::from_bytes(receipt))?
         .filter(|decision| {
             decision.content_kind == crate::derive::DERIVE_ITEM_CONTENT_KIND
-                && decision.outcome == "deny"
+                && match decision.gate_outcome() {
+                    Some(GateReceiptOutcome::Deny) => true,
+                    Some(
+                        GateReceiptOutcome::Allow
+                        | GateReceiptOutcome::Pending
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                }
         })
         .map(|decision| decision.reason_codes))
 }

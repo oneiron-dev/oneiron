@@ -63,6 +63,11 @@ impl WitnessAuthor {
     }
 }
 
+/// A message's visibility when its input omits `is_visible`.
+const fn visible_by_default() -> bool {
+    true
+}
+
 /// One message inside a witnessed turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -83,7 +88,9 @@ pub struct WitnessMessage {
     pub parts: Option<Vec<crate::ContentPart>>,
     /// Opaque metadata, passed through as MessagePack.
     pub metadata: Option<serde_json::Value>,
-    /// Visibility flag (default true app-side).
+    /// Visibility flag; omitted ⇒ `true`, on every door (UC-02 B1a: the
+    /// engine owns the default the bindings used to fill).
+    #[serde(default = "visible_by_default")]
     pub is_visible: bool,
     /// Position of the message within its turn.
     pub order: u32,

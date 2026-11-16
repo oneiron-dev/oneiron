@@ -337,12 +337,15 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
         );
     }
 
+    // DEL-2 judges the aliased delete by the delete authority: the default
+    // recipe names no actor, so the owner's own credential drives it.
     let (forget_status, forget_body) = route_json_auth(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/memory/verbs/forget",
-            json!({ "id": remembered.to_hex() }),
+            owner_bearer(),
+            Some(&json!({ "id": remembered.to_hex() })),
         ),
     )
     .await;
