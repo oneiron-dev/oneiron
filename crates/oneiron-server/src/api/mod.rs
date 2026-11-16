@@ -106,6 +106,7 @@ mod esign;
 mod esign_qr;
 mod first_party_html;
 mod inquiry_peer;
+mod inquiry_push_peer;
 mod oauth_server;
 // The vault's own sign-in routes, which `oneiron hosted login` calls as a
 // native app (L1-14).

@@ -1,6 +1,6 @@
 {
   "name": "vault.inquiry.reciprocal_grant.mint",
-  "description": "The company owner mints the propose-only grant to one member's vault that lets the member's inquiry edge pact become Active; it shares nothing.",
+  "description": "The company owner mints the grant to one member's vault that lets the member's inquiry edge pact become Active and admits the statements the member tells unasked; it shares nothing.",
   "input": "crate::task_verb::sdk::InquiryReciprocalGrantMintRequest",
   "output": "crate::task_verb::sdk::InquiryReciprocalGrantMinted",
   "call": "crate::task_verb::sdk::mint_inquiry_reciprocal_grant_embedded(memory, input)?",

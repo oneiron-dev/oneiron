@@ -6,13 +6,16 @@
 //!   inquiry over a member's route; act `read`), and the company Owner's
 //!   `vault.inquiry.route.open` and `vault.inquiry.reciprocal_grant.mint`.
 //! - The member side: `vault.inquiry.answer` (the member's word leaves the
-//!   vault; act `outbound_send`), `vault.inquiry.list` ("Asked about you"),
-//!   `vault.inquiry.scope.open` / `.close` / `.list`, and
-//!   `vault.inquiry.edge.mint` / `.revoke` / `.terms.change`.
+//!   vault; act `outbound_send`), `vault.inquiry.list` ("Asked about you",
+//!   and what the member told unasked), `vault.inquiry.scope.open` /
+//!   `.close` / `.list`, `vault.inquiry.edge.mint` / `.revoke` /
+//!   `.terms.change`, and the member's [Now] (L7-03):
+//!   `vault.inquiry.push_route.open` and `vault.inquiry.push` (one send on
+//!   `inquiry_push`; act `outbound_send`).
 //!
 //! The engine doors in `crate::inquiry` judge every act; these fns only
 //! parse the wire and project the answer. A row that signs with the host's
-//! own key (`vault.inquire`, the route open, the edge revoke) is refused on
+//! own key (`vault.inquire`, the route opens, the edge revoke) is refused on
 //! an embedded handle, which holds none.
 
 use serde::{Deserialize, Serialize};
@@ -24,7 +27,8 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::federation::FederationDirectionScope;
 use crate::inquiry::{
     InquiryAnswer, InquiryCheckInMode, InquiryDecider, InquiryEdge, InquiryEdgeReciprocalGrant,
-    InquiryEdgeRequest, InquiryKeep, InquiryLogEntry, InquiryMemberAnswer, InquiryRoute,
+    InquiryEdgeRequest, InquiryKeep, InquiryLogEntry, InquiryMemberAnswer, InquiryPushRequest,
+    InquiryPushRoute, InquiryPushRouteRequest, InquiryPushState, InquiryPushView, InquiryRoute,
     InquiryRouteRequest, InquiryScopeItem, InquirySendRequest, InquirySent, InquiryStatement,
     InquiryTermsChange, InquiryTierCeiling, InquiryTransport,
 };
@@ -117,9 +121,11 @@ pub struct InquiryReciprocalGrantMintRequest {
     pub member_name: String,
 }
 
-/// `vault.inquiry.reciprocal_grant.mint`'s answer: the company's propose-only
-/// grant to the member's vault, and the pact direction the Connect offer
-/// and accept bind it as.
+/// `vault.inquiry.reciprocal_grant.mint`'s answer: the company's grant to
+/// the member's vault, which shares nothing (classes `propose` and
+/// `inquiry_push`: the member's vault may tell the company a statement
+/// unasked), and the pact direction the Connect offer and accept bind it
+/// as.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InquiryReciprocalGrantMinted {
     pub grant: EntityId,
@@ -296,10 +302,79 @@ pub struct InquiryLogRow {
     pub decided_at: Option<u64>,
 }
 
-/// `vault.inquiry.list`'s answer, newest first.
+/// One statement the member told a company unasked (the member's [Now]),
+/// and how its send stands.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryToldRow {
+    pub push: EntityId,
+    /// The inquiry edge it was told over.
+    pub edge: EntityId,
+    pub statement: String,
+    /// The claim it was drawn from: it stayed in this vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawn_from: Option<EntityId>,
+    pub told_at: u64,
+    /// `queued`, `sent`, `undone` or `failed`.
+    pub state: String,
+    /// The send's connector TASK: `vault.outbound.undo_send` names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<EntityId>,
+}
+
+/// `vault.inquiry.list`'s answer, newest first: what companies asked, and
+/// what the member told them unasked.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InquiryLog {
     pub entries: Vec<InquiryLogRow>,
+    #[serde(default)]
+    pub told: Vec<InquiryToldRow>,
+}
+
+/// `vault.inquiry.push_route.open`'s input: the member's inquiry edge, the
+/// company host's origin, and the guest slip the company's vault minted for
+/// this host on its reciprocal grant (`v2.slip.`).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryPushRouteOpenRequest {
+    pub grant: EntityId,
+    /// `https://host[:port]`; plain `http` only on loopback.
+    pub company_host: String,
+    pub slip: String,
+}
+
+/// `vault.inquiry.push_route.open`'s answer: the route as this vault stores
+/// it, without the slip.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryPushRouteOpened {
+    pub grant: EntityId,
+    /// The company's vault, 64 hex.
+    pub company_vault: String,
+    pub company_host: String,
+    /// The company's reciprocal grant, hex, as the slip names it.
+    pub reciprocal_grant: String,
+    pub slip_expires_at: u64,
+    pub opened_at: u64,
+}
+
+/// `vault.inquiry.push`'s input: the statement to tell the company of the
+/// edge `grant` now, in the member's own words, and the claim it was drawn
+/// from (kept member-local; never part of the send).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InquiryStatementPushRequest {
+    pub grant: EntityId,
+    pub statement: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawn_from: Option<EntityId>,
+}
+
+/// `vault.inquiry.push`'s answer: the told statement's id and its send's
+/// connector TASK, which `vault.outbound.undo_send` takes back inside the
+/// owner's window.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InquiryStatementPushed {
+    pub push: EntityId,
+    pub task_ref: EntityId,
 }
 
 /// `vault.inquiry.answer`'s input: the member's answer to one pending
@@ -430,6 +505,39 @@ fn route_view(route: &InquiryRoute) -> InquiryRouteOpened {
     }
 }
 
+fn push_route_view(route: &InquiryPushRoute) -> InquiryPushRouteOpened {
+    InquiryPushRouteOpened {
+        grant: route.edge_grant,
+        company_vault: bytes_to_hex_lower(&route.company_vault_id),
+        company_host: route.company_host.clone(),
+        reciprocal_grant: route.reciprocal_grant.clone(),
+        slip_expires_at: route.slip_expires_at,
+        opened_at: route.opened_at,
+    }
+}
+
+fn told_row(view: &InquiryPushView) -> InquiryToldRow {
+    let push = &view.push;
+    InquiryToldRow {
+        push: push.push,
+        edge: push.edge,
+        statement: push.statement.clone(),
+        drawn_from: push.drawn_from,
+        told_at: push.told_at,
+        state: push_state_token(view.state).to_owned(),
+        task_ref: push.task_ref,
+    }
+}
+
+const fn push_state_token(state: InquiryPushState) -> &'static str {
+    match state {
+        InquiryPushState::Queued => "queued",
+        InquiryPushState::Sent => "sent",
+        InquiryPushState::Undone => "undone",
+        InquiryPushState::Failed => "failed",
+    }
+}
+
 /// The asking actor's role as the member's log shows it: its actor class
 /// on the asking vault. (The agent definition's own role is FIX
 /// INQUIRY-ASKER-ROLE-FROM-DEFINITION.)
@@ -534,8 +642,90 @@ pub fn open_inquiry_route_embedded(
     ))
 }
 
-/// `vault.inquiry.reciprocal_grant.mint`: the company Owner's propose-only
-/// grant to the member's vault ([`Vault::mint_inquiry_edge_reciprocal_grant`]).
+/// `vault.inquiry.push_route.open` on a server:
+/// [`Vault::open_inquiry_push_route`] under the member Owner's proof and the
+/// host's own `issuer`, which the company's slip must be bound to.
+///
+/// # Errors
+///
+/// A slip that does not parse; the engine's refusals.
+pub fn open_inquiry_push_route_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: InquiryPushRouteOpenRequest,
+) -> MemoryResult<InquiryPushRouteOpened> {
+    let slip = CapabilitySlip::from_token(input.slip.trim())
+        .map_err(|_| bad_request("slip is not a v2.slip. credential"))?;
+    let route = vault.open_inquiry_push_route(
+        owner,
+        issuer,
+        &InquiryPushRouteRequest {
+            edge_grant: input.grant,
+            company_host: input.company_host,
+            slip,
+        },
+    )?;
+    Ok(push_route_view(&route))
+}
+
+/// `vault.inquiry.push_route.open` on an embedded handle: the Owner's call,
+/// refused, because the route binds a slip to the host's own key.
+pub fn open_inquiry_push_route_embedded(
+    memory: &Memory<'_>,
+    _input: InquiryPushRouteOpenRequest,
+) -> MemoryResult<InquiryPushRouteOpened> {
+    let _owner = memory.embedded_owner("vault.inquiry.push_route.open")?;
+    Err(host_key_only(
+        "vault.inquiry.push_route.open",
+        "binds the company's slip",
+    ))
+}
+
+/// `vault.inquiry.push`: the member's [Now], one statement told to the
+/// edge's company as one send on `inquiry_push`
+/// ([`Vault::push_inquiry_statement`]), held by the owner's undo-send
+/// window when one is set.
+///
+/// # Errors
+///
+/// The engine's refusals.
+pub fn push_inquiry_statement_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: InquiryStatementPushRequest,
+) -> MemoryResult<InquiryStatementPushed> {
+    let pushed = vault.push_inquiry_statement(
+        owner,
+        &InquiryPushRequest {
+            edge_grant: input.grant,
+            statement: input.statement,
+            drawn_from: input.drawn_from,
+        },
+    )?;
+    Ok(InquiryStatementPushed {
+        push: pushed.push,
+        task_ref: pushed.task_ref,
+    })
+}
+
+/// `vault.inquiry.push` on an embedded handle. Only a host opens a push
+/// route, so the engine refuses a push where none is open.
+///
+/// # Errors
+///
+/// No embedded owner; as [`push_inquiry_statement_as`].
+pub fn push_inquiry_statement_embedded(
+    memory: &Memory<'_>,
+    input: InquiryStatementPushRequest,
+) -> MemoryResult<InquiryStatementPushed> {
+    let owner = memory.embedded_owner("vault.inquiry.push")?;
+    push_inquiry_statement_as(memory.vault(), &owner, input)
+}
+
+/// `vault.inquiry.reciprocal_grant.mint`: the company Owner's grant to the
+/// member's vault, which shares nothing and admits the member's told
+/// statements ([`Vault::mint_inquiry_edge_reciprocal_grant`]).
 ///
 /// # Errors
 ///
@@ -818,7 +1008,8 @@ pub fn inquiry_scope_items_embedded(
 }
 
 /// `vault.inquiry.list`: "Asked about you", newest first
-/// ([`Vault::inquiry_log`]), for the vault's owner alone: `owner` is
+/// ([`Vault::inquiry_log`]), and the statements the member told unasked
+/// ([`Vault::inquiry_pushes`]), for the vault's owner alone: `owner` is
 /// revalidated before the read.
 ///
 /// # Errors
@@ -831,8 +1022,10 @@ pub fn inquiry_log_as(
 ) -> MemoryResult<InquiryLog> {
     owner.revalidate(vault)?;
     let entries = vault.inquiry_log()?;
+    let told = vault.inquiry_pushes()?;
     Ok(InquiryLog {
         entries: entries.iter().map(log_row).collect(),
+        told: told.iter().map(told_row).collect(),
     })
 }
 
