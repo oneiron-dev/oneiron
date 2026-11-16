@@ -60,6 +60,15 @@ crate::side_table::side_tables! {
     /// Live vs indexed revision pointers. Key: id16.
     ENTITY_REVISION_STATE: VaultMeta b"entity_revision:state:" Named
         [restore: content] [family: owner EntityRevision] [tier: canonical];
+    /// Each move of a row's live revision, numbered in store order, so a memory fork reads the
+    /// revision each row held at its frontier (L3-39). Erased with the row. Key: id16 + sequence
+    /// u64be. Value: rev16.
+    ENTITY_REVISION_TIMELINE: VaultMeta b"entity_revision:timeline:" Raw
+        [restore: content] [family: owner EntityRevision] [tier: canonical];
+    /// The sequence of the store's last live-revision move: where a memory frontier stands
+    /// (L3-39). Names no row. Key: (). Value: u64be.
+    ENTITY_REVISION_TIMELINE_HEAD: VaultMeta b"entity_revision:timeline_head" Raw
+        [restore: content] [family: structure] [tier: canonical];
     /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
     /// idle. Key: id16.
     ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw
@@ -73,7 +82,4 @@ crate::side_table::side_tables! {
     /// action's inputs. Key: ().
     PORTS_DOCUMENT_MUTATION_HEAD: VaultMeta b"ports:document_mutation_head:v1" Raw
         [restore: content] [family: structure] [tier: canonical];
-    /// Test-only marker that closes the automatic-cleanup release blockers. Key: ().
-    VAULT_CLEANUP_TEST_BLOCKERS_CLOSED: VaultMeta b"vault_cleanup.test_blockers_closed" Raw
-        [restore: content] [family: unclassified] [tier: canonical];
 }

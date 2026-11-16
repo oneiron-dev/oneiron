@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::refused;
 use super::token::{HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, TOKEN_RAW_BYTES};
-use super::{
-    digest_serde, entity_ref_serde, entity_refs_serde, opt_digest_serde, time_range_serde,
-};
+use super::{digest_serde, entity_ref_serde, opt_digest_serde, time_range_serde};
 use crate::EntityId;
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey, RankedSlot};
@@ -35,13 +33,12 @@ pub const DEFAULT_HOLD_TTL_SECS: u64 = 5 * 60;
 /// shorten to its verified lease; it can never exceed this.
 pub const MAX_CHECKOUT_HOLD_TTL_SECS: u64 = 30 * 60;
 
-/// The closed verb table, sorted so the wire spellings live in one place.
-pub const BOOKING_VERBS: [&str; 4] = [
-    "booking.cancel",
-    "booking.confirm",
-    "booking.hold",
-    "booking.reschedule",
-];
+#[doc(hidden)]
+pub use oneiron_records::booking::lifecycle::types::{
+    BOOKING_VERBS, BookingBookerContactValue, BookingEventTypeRefValue, BookingSourcePageValue,
+    BookingStatus, BookingStatusValue, BookingVerb, CalendarRevision, CancelSpec, ConfirmReceipt,
+    ConfirmSpec, LifecycleTokenScope, RevisionReceipt,
+};
 
 /// Exact predicate: which host event type this booking realizes.
 pub const BOOKING_EVENT_TYPE_REF_PREDICATE: &str = "booking.event_type_ref";
@@ -55,14 +52,21 @@ pub const BOOKING_SOURCE_PAGE_PREDICATE: &str = "booking.source_page";
 /// Exact predicate: the booking's live status.
 pub const BOOKING_STATUS_PREDICATE: &str = "booking.status";
 
+/// Exact predicate: the owner booked this past a full day, and why.
+pub const BOOKING_CAP_OVERRIDE_PREDICATE: &str = "booking.cap_override";
+
 /// The lifecycle claim family, as an exact table. A `booking.` prefix would
 /// silently adopt every future booking predicate into this validator.
-pub const BOOKING_LIFECYCLE_PREDICATES: [&str; 4] = [
+pub const BOOKING_LIFECYCLE_PREDICATES: [&str; 5] = [
     BOOKING_BOOKER_CONTACT_PREDICATE,
+    BOOKING_CAP_OVERRIDE_PREDICATE,
     BOOKING_EVENT_TYPE_REF_PREDICATE,
     BOOKING_SOURCE_PAGE_PREDICATE,
     BOOKING_STATUS_PREDICATE,
 ];
+
+/// The longest cap override reason, in bytes.
+pub const MAX_CAP_OVERRIDE_REASON_BYTES: usize = 4096;
 
 /// The passport `system` a booking's outbound calendar identity carries. One
 /// live passport per `(system × UID)` is CAL-02's invariant; this is the
@@ -83,41 +87,6 @@ pub(super) const CONFIRM_ALTERNATIVES_PAD_SECS: u64 = 24 * 60 * 60;
 /// Row-format byte on every lifecycle `vault_meta` value.
 pub(super) const LIFECYCLE_ROW_VERSION: u8 = 1;
 
-/// The closed booking verb enum, mirroring `task_verb.rs`'s typed verb shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BookingVerb {
-    Cancel,
-    Confirm,
-    Hold,
-    Reschedule,
-}
-
-impl BookingVerb {
-    /// The pinned wire spelling, read out of [`BOOKING_VERBS`] so the enum and
-    /// the sorted table cannot drift apart.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Cancel => BOOKING_VERBS[0],
-            Self::Confirm => BOOKING_VERBS[1],
-            Self::Hold => BOOKING_VERBS[2],
-            Self::Reschedule => BOOKING_VERBS[3],
-        }
-    }
-
-    /// Parses a wire spelling, rejecting anything outside the closed set.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "booking.cancel" => Some(Self::Cancel),
-            "booking.confirm" => Some(Self::Confirm),
-            "booking.hold" => Some(Self::Hold),
-            "booking.reschedule" => Some(Self::Reschedule),
-            _ => None,
-        }
-    }
-}
-
 /// Ask to soft-hold one solved slot.
 ///
 /// `slot` is the half-open UTC interval `[start, end)` the oracle emitted — the
@@ -137,21 +106,39 @@ pub struct HoldSpec {
     /// Retry hygiene only. It becomes the attempt-queue dedupe string and takes
     /// no part in mutual exclusion or in receipt identity.
     pub idempotency_key: Option<String>,
+    /// The owner's own hold past the event type's meeting caps, with its
+    /// reason. Only a transport that verified the vault's live owner sets it
+    /// (RULING BK-CAP-OVERRIDE-WHO = B); an attempt queued before it existed
+    /// reads `None`.
+    #[serde(default)]
+    pub cap_override: Option<BookingCapOverride>,
 }
 
-/// Ask to convert a live hold into a booking.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConfirmSpec {
-    pub hold_token: OpaqueLifecycleToken,
-    pub session_key: SessionKey,
-    #[serde(with = "entity_ref_serde")]
-    pub booker_contact: EntityId,
-    /// Short pre-confirm intake; persisted with the confirmation context so
-    /// delivery and later progressive intake can read the same answers.
-    #[serde(default)]
-    pub intake: Vec<crate::booking::agent_api::BookingIntakeAnswer>,
-    /// Retry hygiene only.
-    pub idempotency_key: Option<String>,
+/// The owner's override of an event type's meeting caps for one booking: a
+/// full day still takes it, and its reason is recorded on the booking
+/// ([`BOOKING_CAP_OVERRIDE_PREDICATE`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookingCapOverride {
+    /// Why the owner books past the cap: 1 to
+    /// [`MAX_CAP_OVERRIDE_REASON_BYTES`] bytes, not blank, kept verbatim.
+    pub reason: String,
+}
+
+impl BookingCapOverride {
+    /// Checks the reason's shape.
+    ///
+    /// # Errors
+    ///
+    /// [`BookingError::InvalidConstraint`] for a blank or oversized reason.
+    pub fn validate(&self) -> Result<(), BookingError> {
+        if self.reason.trim().is_empty() || self.reason.len() > MAX_CAP_OVERRIDE_REASON_BYTES {
+            return Err(refused(
+                "a cap override reason must be 1 to 4096 bytes and not blank",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Ask to move a booking, proving authority with its reschedule token.
@@ -162,13 +149,6 @@ pub struct RescheduleSpec {
     pub new_slot: TimeRange,
     pub visitor_tz: String,
     pub constraint: Option<ConstraintObject>,
-    pub idempotency_key: Option<String>,
-}
-
-/// Ask to cancel a booking, proving authority with its cancel token.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CancelSpec {
-    pub token: OpaqueLifecycleToken,
     pub idempotency_key: Option<String>,
 }
 
@@ -226,6 +206,12 @@ pub struct SoftHoldRow {
     pub expires_at: u64,
     #[serde(with = "opt_digest_serde")]
     pub checkout_lease_hash: Option<[u8; 32]>,
+    /// The owner's override of the meeting caps this hold was taken under:
+    /// the confirm re-solves past the caps and records the reason. A row
+    /// written before the field existed reads `None` (STORED-CHANGE-RULE:
+    /// keep).
+    #[serde(default)]
+    pub cap_override: Option<BookingCapOverride>,
 }
 
 impl SoftHoldRow {
@@ -237,81 +223,12 @@ impl SoftHoldRow {
     }
 }
 
-/// What one opaque token is allowed to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleTokenScope {
-    Reschedule,
-    Cancel,
-}
-
-impl LifecycleTokenScope {
-    /// The scope's domain tag, so one booking's two credentials can never derive
-    /// to the same value and a reschedule receipt can never alias a cancel one.
-    pub(super) const fn tag(self) -> &'static [u8] {
-        match self {
-            Self::Reschedule => b"reschedule\0",
-            Self::Cancel => b"cancel\0",
-        }
-    }
-}
-
-/// A booking's live status. Changes go through supersession, never mutation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BookingStatus {
-    Confirmed,
-    Cancelled,
-}
-
-impl BookingStatus {
-    pub(super) const fn as_bytes(self) -> &'static [u8] {
-        match self {
-            Self::Confirmed => b"confirmed",
-            Self::Cancelled => b"cancelled",
-        }
-    }
-}
-
-/// The `{event_ref, uid, sequence}` triple a lifecycle receipt exposes. BK-03
-/// turns this into `calendar.invite`; this ticket dispatches nothing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CalendarRevision {
-    #[serde(with = "entity_ref_serde")]
-    pub event_ref: EntityId,
-    pub uid: String,
-    pub sequence: u32,
-}
-
-/// Value of a `booking.event_type_ref` claim.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BookingEventTypeRefValue {
-    pub event_type: EventTypeKey,
-}
-
-/// Value of a `booking.booker_contact` claim.
+/// Value of a `booking.cap_override` claim: the owner booked this past a
+/// meeting cap, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BookingBookerContactValue {
-    #[serde(with = "entity_ref_serde")]
-    pub contact_ref: EntityId,
-}
-
-/// Value of a `booking.source_page` claim.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BookingSourcePageValue {
-    #[serde(with = "entity_ref_serde")]
-    pub page_ref: EntityId,
-}
-
-/// Value of a `booking.status` claim. Calendar UID and sequence are
-/// deliberately absent: passport claims are their only home.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BookingStatusValue {
-    pub status: BookingStatus,
+pub struct BookingCapOverrideValue {
+    pub reason: String,
     pub recorded_at: u64,
 }
 
@@ -323,35 +240,6 @@ pub struct HoldReceipt {
     #[serde(with = "time_range_serde")]
     pub slot: TimeRange,
     pub expires_at: u64,
-}
-
-/// What a successful confirm returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConfirmReceipt {
-    pub calendar: CalendarRevision,
-    pub reschedule_token: OpaqueLifecycleToken,
-    pub cancel_token: OpaqueLifecycleToken,
-    /// While the Gate holds this booking's confirm invite for the owner, the
-    /// approve-once digest his one-time press must name to release it, 64
-    /// lower-hex (FIX 6424), copied from the invite's dispatch result. The
-    /// confirm stands either way. Absent otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_digest: Option<String>,
-    /// The rows the confirm writer read (FIX 5483): every row its
-    /// availability re-solve listed. A replay returns the first pass's.
-    #[serde(default, with = "entity_refs_serde")]
-    pub reads: Vec<EntityId>,
-}
-
-/// What a successful reschedule or cancel returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RevisionReceipt {
-    pub calendar: CalendarRevision,
-    /// The rows the writer read (FIX 5483): the booking EVENT and every claim
-    /// on it, and for a move every row its re-solve listed. A replay returns
-    /// the first pass's.
-    #[serde(default, with = "entity_refs_serde")]
-    pub reads: Vec<EntityId>,
 }
 
 /// The closed receipt union.
@@ -404,7 +292,9 @@ fn validate_hold_spec(spec: &HoldSpec) -> Result<(), BookingError> {
     {
         validate_token_shape(&server_issued_lease.0)?;
     }
-    Ok(())
+    spec.cap_override
+        .as_ref()
+        .map_or(Ok(()), BookingCapOverride::validate)
 }
 
 fn validate_optional_constraint(constraint: Option<&ConstraintObject>) -> Result<(), BookingError> {

@@ -9,6 +9,7 @@ use rmpv::Value;
 use super::{body_in_txn, decode_fields, encode_fields, invalid, record};
 use crate::consent::AuthenticatedOwner;
 use crate::gate::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 const KEY: PolicyValueKey = PolicyValueKey::CalendarOutcomeGraceSeconds;
@@ -148,7 +149,7 @@ pub fn set_calendar_outcome_grace_as_owner(
             id,
             &body,
             (
-                "allow",
+                GateReceiptOutcome::Allow,
                 vec!["gate.allow.owner_calendar_outcome_grace".to_owned()],
             ),
         )?;

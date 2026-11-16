@@ -123,12 +123,35 @@ fn scan_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<AttributionState
 /// The permanent redaction wins even when its attribution is received later.
 /// A receiver must call this after admitting each redaction AND attribution;
 /// the export door also calls it before returning any window bytes.
+///
+/// A carrier this vault wrote itself still stands here only under a peer's
+/// redaction: a local one scrubs this vault's carriers at once, and none is
+/// written after a redaction. It earns the refusal a local redaction records
+/// first (ARCH-0055 author-carrier-open), so a decision its wrong-class author
+/// kept out never comes into force once the author is gone.
 #[cfg(feature = "sync")]
 pub(crate) fn scrub_redacted_attributions_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<Vec<EntityId>> {
     let state = scan_in_txn(&vault.store, wtxn)?;
+    for &(target, core_digest) in &state.redacted {
+        let own = state
+            .carriers
+            .get(&(target, core_digest))
+            .into_iter()
+            .flatten()
+            .filter(|carrier| carrier.here);
+        for carrier in own {
+            if held_decision_digest_in_txn(vault, wtxn, target)? == Some(core_digest) {
+                vault.record_actor_disposition_before_redaction_in_txn(
+                    wtxn,
+                    target,
+                    carrier.actor,
+                )?;
+            }
+        }
+    }
     let ids = state
         .redacted
         .iter()

@@ -24,6 +24,7 @@ use crate::authority::PeerMachine;
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::FederationGrantScope;
 use crate::origin::lfs::{LfsOid, LfsPutOutcome};
+use crate::serialize::ExportSecrets;
 use crate::{EntityId, TimeRange, Vault};
 
 /// Binary-envelope schema, independent from Git-LFS basic transfer.
@@ -40,37 +41,10 @@ pub const MAX_WANT_CHUNKS: usize = 32;
 /// (CALLS `lfs-chunks page constant`).
 pub const CHUNK_PAGE_BYTES: usize = MAX_CHUNK_SYNC_FRAME - 64 * 1024;
 
-/// A manifest request, or the hashes the receiver still wants after its have pass.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ChunkSyncRequest {
-    /// The receiver's id for the transfer this request belongs to, echoed on
-    /// its reply, so a late reply never reaches another transfer.
-    pub request: u64,
-    /// SHA-256 pointer that scopes this exchange to one object.
-    pub oid: [u8; 32],
-    /// Existing grant-backed selector codec bytes.
-    pub selector: Vec<u8>,
-    /// Already-held ids in this bounded negotiation page.
-    pub have: Vec<[u8; 32]>,
-    /// None requests a manifest; Some requests only these missing hashes.
-    pub want: Option<Vec<[u8; 32]>>,
-    /// Where this request goes on from: the `next` its last reply named, or
-    /// `None` for the first page.
-    pub cursor: Option<ChunkPageCursor>,
-    /// What the reader asks of a lift-marked object's read (FIX 2897).
-    pub read: Option<ChunkRead>,
-}
-
-/// Where the next page of an exchange starts: the manifest every page reads,
-/// and an offset into its canonical bytes or into the WANT. A position, never
-/// authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ChunkPageCursor {
-    /// BLAKE3 of the canonical manifest.
-    pub manifest: [u8; 32],
-    /// The canonical manifest byte, or the WANT's hash, the page starts at.
-    pub offset: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::chunks::{
+    ChunkPage, ChunkPageCursor, ChunkSyncRequest, ManifestPage,
+};
 
 /// Bounded reply: one page of metadata or of requested missing bytes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -91,44 +65,6 @@ impl ChunkSyncResponse {
             Self::Chunks(page) => page.request,
         }
     }
-}
-
-/// One page of a manifest's canonical bytes.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ManifestPage {
-    /// The request id it answers.
-    pub request: u64,
-    /// BLAKE3 of the whole canonical manifest.
-    pub manifest: [u8; 32],
-    /// Where these bytes start in it.
-    pub offset: u64,
-    /// Its whole length.
-    pub total: u64,
-    /// The page's bytes.
-    pub bytes: Vec<u8>,
-    /// Where the next page starts; `None` on the last.
-    pub next: Option<ChunkPageCursor>,
-    /// The granted read the host admitted (FIX 2897), which the read's later
-    /// requests name.
-    pub read: Option<EntityId>,
-    /// The lift mark on the object, sent with its real bytes, so an owner's
-    /// device that installs it keeps it marked (FIX 2897).
-    pub mark: Option<ChunkMark>,
-}
-
-/// The requested chunks from one index of the WANT on, in its order.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ChunkPage {
-    /// The request id it answers.
-    pub request: u64,
-    /// The WANT's index of the first chunk here.
-    pub offset: u64,
-    /// Each chunk's hash and body.
-    pub chunks: Vec<([u8; 32], Vec<u8>)>,
-    /// Where the rest of the WANT goes on; `None` once every hash was sent.
-    pub next: Option<ChunkPageCursor>,
-    /// The granted read the host admitted (FIX 2897).
-    pub read: Option<EntityId>,
 }
 
 fn invalid() -> Error {
@@ -223,6 +159,11 @@ pub fn serve_chunk_request_reading(
 /// decoded from its stream ([`read_chunk_request_stream`], FIX 145), judged
 /// exactly as an envelope's is: the page it asks for, for the transport to
 /// write as its client takes it ([`write_chunk_response_stream`]).
+///
+/// An object no read authority admits goes to the peer only whole and as
+/// stored: when the Nulled rule, reading it as one file, changes none of its
+/// bytes. Otherwise its manifest and every WANT are refused alike
+/// (EXPORTDOORS Q3 = A).
 pub fn answer_chunk_request(
     vault: &Vault,
     principal: EntityId,
@@ -276,7 +217,7 @@ pub fn answer_chunk_request(
     if !admitted {
         return Err(invalid());
     }
-    respond(vault, request, peer, reader)
+    respond(vault, request, peer, reader, ExportSecrets::Nulled)
 }
 
 /// Whether a device-only world keeps an object's bytes on this device: every
@@ -428,7 +369,8 @@ pub fn serve_owner_chunk_request_for(
 
 /// [`serve_owner_chunk_request_for`] with the host's judgment of a
 /// lift-marked object's read, as [`serve_chunk_request_reading`] takes it
-/// (FIX 2897).
+/// (FIX 2897). The owner's lane reads an unmarked object's stored bytes, a
+/// credential in them included.
 pub fn serve_owner_chunk_request_reading(
     vault: &Vault,
     bytes: &[u8],
@@ -439,14 +381,24 @@ pub fn serve_owner_chunk_request_reading(
     if !request.selector.is_empty() {
         return Err(invalid());
     }
-    encode(&respond(vault, request, peer, reader)?)
+    encode(&respond(
+        vault,
+        request,
+        peer,
+        reader,
+        ExportSecrets::Included,
+    )?)
 }
 
+/// The page `request` asks for, for a reader whose lane releases an
+/// unmarked object's credentials as `secrets` says: the owner's lane
+/// [`ExportSecrets::Included`], a peer's [`ExportSecrets::Nulled`].
 fn respond(
     vault: &Vault,
     request: ChunkSyncRequest,
     peer: PeerMachine,
     reader: LfsMarkedReader<'_>,
+    secrets: ExportSecrets,
 ) -> Result<ChunkSyncResponse> {
     let oid = LfsOid::from_bytes(request.oid);
     // Where the object may go is judged first, for every reader. A marked
@@ -463,6 +415,14 @@ fn respond(
         None => None,
     };
     let manifest = vault.lfs_manifest(oid)?.ok_or_else(invalid)?;
+    // A read the host admitted reads the real bytes, as before. Any other
+    // Nulled read gets the object only whole and unchanged by the rule.
+    if read.is_none()
+        && secrets == ExportSecrets::Nulled
+        && !vault.lfs_object_released(oid, manifest.hash()?)?
+    {
+        return Err(invalid());
+    }
     let read = read.and_then(LfsReadAuthority::reference);
     page::reply(vault, oid, &manifest, request, read, mark)
 }
@@ -554,9 +514,11 @@ fn request_stream(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
 mod download;
 mod page;
 mod read;
+mod release;
 pub mod stream;
 pub use download::ChunkDownload;
 pub use read::{ChunkMark, ChunkRead, LfsMarkedReader, LfsReadAuthority};
+pub(crate) use release::LfsReleaseVerdicts;
 pub use stream::{
     CHUNK_STREAM_FRAME_BYTES, read_chunk_request_stream, read_chunk_response_stream,
     write_chunk_request_stream, write_chunk_response_stream,

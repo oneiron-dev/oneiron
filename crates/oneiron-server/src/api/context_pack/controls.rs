@@ -191,6 +191,12 @@ pub(crate) struct CoreDisclosureAssembly {
     #[serde(rename = "clamped_out")]
     #[schema(example = 2)]
     clamped_out: u64,
+    /// The home vault's id (64 hex) when the pack serves a conversation
+    /// another vault holds: claims stamped above the owner's home clearance
+    /// for that vault are left out (DEC-0006 #home-clearance). Absent for a
+    /// conversation of this vault.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    home: Option<String>,
 }
 
 /// Per-speaker interlocutor stamp echoed with a context pack (OF-365 ILD-1).
@@ -274,6 +280,15 @@ pub(crate) struct CoreContextPackRequest {
     /// explicit owner_present signal is needed for supervised room disclosure.
     #[serde(default)]
     pub(super) conversation_id: Option<String>,
+    /// The vault that holds the conversation this pack serves, as its
+    /// authority id (64 hex), when that is another vault: claims stamped
+    /// with any band but public are then read only up to the owner's home
+    /// clearance for it (DEC-0006 #home-clearance). A room named by
+    /// `conversation_id` is this vault's, so it takes no other home. Omitted
+    /// with no room, the owner and the vault's own agents read as homed
+    /// here and any other caller as homed in an unnamed vault.
+    #[serde(default)]
+    pub(super) conversation_home: Option<String>,
     /// Optional actor-bound read-session id; omission uses the active session.
     #[serde(default)]
     pub(super) session_id: Option<String>,
