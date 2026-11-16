@@ -13,10 +13,15 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 /// The fields an event's admission lays out (FIX 9609): the one field a
-/// `FieldSaved` saves, or every field of the recipient a `Signed` signs for.
+/// `FieldSaved` saves, every field of the recipient a `Signed` signs for, or
+/// every field of a draft whose fields were placed again.
 pub(super) enum EventFields {
     Saved(String),
     Signer(String),
+    /// Every field of the draft: a placement (`vault.esign.fields.place`)
+    /// lays each one out, with no value, on the page it names, so a draft
+    /// never holds a field that no signer could fill.
+    Placed,
 }
 
 impl EventFields {
@@ -34,6 +39,7 @@ impl EventFields {
         match self {
             Self::Saved(id) => field.id == *id,
             Self::Signer(recipient) => field.recipient == *recipient,
+            Self::Placed => true,
         }
     }
 }
@@ -111,6 +117,21 @@ pub(super) fn validate_event_fields(
     let Some(selected) = EventFields::of(event) else {
         return Ok(());
     };
+    validate_fields(vault, txn, state, &selected, inspected)
+}
+
+/// Lays out each of `state`'s fields that `selected` names on its item's
+/// original page, with the value saved for it if any, refusing one on an
+/// item or page the draft's PDFs lack, or one that cannot be presented
+/// there. An item's pages come from `inspected` when it holds the bytes
+/// this snapshot pins (FIX 9609).
+pub(super) fn validate_fields(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    state: &EsignState,
+    selected: &EventFields,
+    inspected: &InspectedPages,
+) -> Result<()> {
     let mut pages = BTreeMap::new();
     for field in state
         .document

@@ -1,5 +1,5 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
-use super::field_admission::InspectedPages;
+use super::field_admission::{EventFields, InspectedPages, inspect_event_pages, validate_fields};
 use super::model::*;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FACET;
@@ -453,7 +453,11 @@ pub(super) fn create_document_in(
 /// recipients, windows, commitments) is kept as it is. A document that has
 /// left Draft is refused before anything is written ("sent content is
 /// frozen", as the fold refuses a redraft), and so is a draft that names
-/// commitments ([`super::commitments::admit`]).
+/// commitments ([`super::commitments::admit`]). Each placed field is laid
+/// out on the page of its item's pinned PDF that it names, on the pages
+/// `inspected` holds for those bytes (FIX 9609): a field on a page the PDF
+/// lacks, or one that cannot be presented there, is refused before anything
+/// is written, so a sent document never freezes a field no signer can fill.
 pub(super) fn place_fields_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -461,23 +465,49 @@ pub(super) fn place_fields_in(
     fields: &[EsignField],
     actor: EsignAuditActor,
     now: u64,
+    inspected: &InspectedPages,
 ) -> Result<EsignState> {
-    let state = state_in(vault, txn, document)?;
-    if state.status != DocumentStatus::Draft {
+    let Some(placed) = placed_draft(state_in(vault, txn, document)?, fields) else {
         return Err(invalid("sent content is frozen"));
-    }
-    let mut body = state.document;
-    body.fields = fields.to_vec();
-    validate_document(&body, now)?;
-    admit_project_drafter_in(vault, txn, &body, &actor.actor)?;
+    };
+    validate_document(&placed.document, now)?;
+    validate_fields(vault, txn, &placed, &EventFields::Placed, inspected)?;
+    admit_project_drafter_in(vault, txn, &placed.document, &actor.actor)?;
     append(
         vault,
         txn,
         document,
-        EsignEvent::Drafted { document: body },
+        EsignEvent::Drafted {
+            document: placed.document,
+        },
         actor,
         now,
     )
+}
+
+/// `state` with `fields` in place of its draft's own, or `None` once the
+/// document has left Draft.
+fn placed_draft(mut state: EsignState, fields: &[EsignField]) -> Option<EsignState> {
+    if state.status != DocumentStatus::Draft {
+        return None;
+    }
+    state.document.fields = fields.to_vec();
+    Some(state)
+}
+
+/// Inspects, before any writer, the pinned PDFs a placement of `fields` on
+/// `document`'s draft lays them on (FIX 9609), for [`place_fields_in`].
+/// A document that is unknown or no longer in Draft inspects nothing: the
+/// writer answers it.
+pub(super) fn inspect_placed_pages(
+    vault: &Vault,
+    document: EntityId,
+    fields: &[EsignField],
+) -> InspectedPages {
+    inspect_event_pages(vault, |txn| {
+        Ok(placed_draft(state_in(vault, txn, document)?, fields)
+            .map(|placed| (placed, EventFields::Placed)))
+    })
 }
 
 impl Vault {

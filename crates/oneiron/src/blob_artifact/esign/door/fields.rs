@@ -10,7 +10,7 @@
 //! one more `esign.drafted` event by the caller. Once the document has left
 //! Draft its content is frozen and the door is refused.
 use super::super::lane_scope::{self, EsignScope};
-use super::super::ledger::{place_fields_in, state_in};
+use super::super::ledger::{inspect_placed_pages, place_fields_in, state_in};
 use super::super::model::EsignAuditActor;
 use super::draft::draft_view;
 use super::{EsignDraftView, document_id};
@@ -31,8 +31,9 @@ impl Memory<'_> {
     /// A `document_ref` that is no id, or the vault's refusal: a document
     /// that is unknown, out of a narrowed caller's lane or no longer in Draft,
     /// fields that do not validate against the draft (an item, page,
-    /// recipient or geometry it does not hold), a project the caller is no
-    /// member of, or a draft that names commitments.
+    /// recipient or geometry it does not hold, a page its item's pinned PDF
+    /// lacks, or a box that cannot be presented on its page), a project the
+    /// caller is no member of, or a draft that names commitments.
     pub fn esign_place_fields(
         &self,
         input: &EsignFieldsPlaceRequest,
@@ -44,8 +45,9 @@ impl Memory<'_> {
         let vault = self.vault();
         let actor = self.esign_audit_actor();
         let now = vault.now_recorded_at();
+        let inspected = inspect_placed_pages(vault, document, &input.fields);
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
-            place_fields_in(vault, txn, document, &input.fields, actor, now)?;
+            place_fields_in(vault, txn, document, &input.fields, actor, now, &inspected)?;
             Ok(())
         })?;
         Ok(draft_view(document, vault.esign_document(document)?))
@@ -70,11 +72,12 @@ impl Memory<'_> {
         }
         let actor = self.esign_audit_actor();
         let now = vault.now_recorded_at();
+        let inspected = inspect_placed_pages(vault, document, &input.fields);
         lane_scope::write_artifact(lane, self, document, |txn| {
             if !lane_scope::reaches_signing_document(lane, vault, txn, document, false)? {
                 return Err(lane_scope::unreached().into());
             }
-            place_fields_in(vault, txn, document, &input.fields, actor, now)?;
+            place_fields_in(vault, txn, document, &input.fields, actor, now, &inspected)?;
             Ok(())
         })?;
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
