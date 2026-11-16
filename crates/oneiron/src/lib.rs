@@ -333,6 +333,7 @@ pub mod host_net_floor;
 pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;
+pub mod setting;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
@@ -461,7 +462,10 @@ pub use crate::deletion::{
     NamedMemoryVerb, NamedMemoryVerbRefusal,
 };
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
-pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
+pub use crate::disclosure::{
+    ConversationHome, DisclosureAssembly, DisclosureContext, HomeClearanceRequest,
+    HomeClearanceSet, HomeClearanceView,
+};
 pub use crate::dreamer_consolidation::{
     ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, ExtractionPrompt,
     plan_partitions, read_watermark, scan_dirty_turns,
@@ -516,10 +520,9 @@ pub use crate::feedback::{
 };
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
-    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
-    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
+    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_REASON_APPROVED,
+    GATE_BUNDLE_REASON_DECLINED, GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED,
+    GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
 };
 pub use crate::genui::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
