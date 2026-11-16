@@ -620,7 +620,9 @@ impl Vault {
     /// with `include_revoked` (an expired grant shows as revoked). A row
     /// re-put at a withdrawn Grant's id (FIX-LIST 5107) stands for nothing
     /// and shows as revoked, with its revoke action, so the owner still finds
-    /// it and revokes it.
+    /// it and revokes it; so does a live row whose Grant is withdrawn on the
+    /// record ([`withdrawal::LoggedOwnerGrants::withdrew`]: a lapse's end among them,
+    /// pass 28 R2) before its row is erased.
     pub(crate) fn agent_grant_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -635,9 +637,11 @@ impl Vault {
             txn,
             grants.iter().map(|standing| &standing.grant),
         )?;
+        let logged = self.logged_owner_grants_in_txn(txn)?;
         for standing in grants {
             let withdrawn =
-                crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id);
+                crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id)
+                    || logged.withdrew(self, txn, standing.id, FederationGrantKind::Access)?;
             if !include_revoked && (withdrawn || !standing.stands_at(now)) {
                 continue;
             }
@@ -653,7 +657,6 @@ impl Vault {
             rows.push(row);
         }
         if include_revoked {
-            let logged = self.logged_owner_grants_in_txn(txn)?;
             for (id, (record, created_at)) in &logged.mints {
                 if shown.contains(id)
                     || !logged.withdrew(self, txn, *id, FederationGrantKind::Access)?
