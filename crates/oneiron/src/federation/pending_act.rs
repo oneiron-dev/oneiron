@@ -341,7 +341,7 @@ impl Vault {
         vault_id: u64,
         now: u64,
     ) -> Result<Vec<LiveActHolder>> {
-        self.live_holders_in_txn(txn, vault_id, now, HolderAdmission::Persons)
+        self.live_grant_holders_in_txn(txn, vault_id, now, HolderAdmission::Persons)
     }
 
     /// [`Self::live_act_holders`] and each house mind a live org link seats:
@@ -353,7 +353,7 @@ impl Vault {
         vault_id: u64,
         now: u64,
     ) -> Result<Vec<LiveActHolder>> {
-        self.live_holders_in_txn(txn, vault_id, now, HolderAdmission::PersonsAndHouses)
+        self.live_grant_holders_in_txn(txn, vault_id, now, HolderAdmission::PersonsAndHouses)
     }
 
     /// Whether `grant`'s member counts as a holder under `admission`: a live
@@ -372,7 +372,9 @@ impl Vault {
             && crate::vault::live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.is_live())
     }
 
-    fn live_holders_in_txn(
+    /// The live grant holders of shared vault `vault_id` at `now` that
+    /// `admission` admits.
+    fn live_grant_holders_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
