@@ -498,7 +498,12 @@ impl Memory<'_> {
                 crate::source_audience::mark_birth_in_txn(self.vault, wtxn, birth, &id)?;
             }
         }
-        let mut batch = self.vault.batch_in();
+        // A TURN an import births is born under its stamp's facet, when it
+        // names one; the vault default otherwise.
+        let mut batch = self
+            .vault
+            .batch_in()
+            .mask(plan.imported.as_ref().and_then(|stamp| stamp.facet));
         if mint_conversation {
             batch = put_container(
                 batch,
