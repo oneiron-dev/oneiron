@@ -269,6 +269,11 @@ pub(crate) fn bootstrap_skill_ids_and_hashes()
 }
 
 pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
+    seed_bootstrap_skill_files(vault, &FILES)
+}
+
+/// The seed pass over `files` (the shipped `FILES`, or a test door's list).
+fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     if SEEDED.contains(&vault.store, &rtxn, &())? {
         return Ok(());
@@ -287,7 +292,7 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     let occurred = TimeRange { start: 0, end: 0 };
-    for (name, markdown) in FILES {
+    for &(name, markdown) in files {
         let package = package(name, markdown)?;
         let seed_id = stable_id(name)?;
         let content_hash = package.content_hash()?;
@@ -448,6 +453,36 @@ impl Vault {
         }
         txn.commit()?;
         Ok(restored)
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Test door body (`test_doors::bootstrap_skills`): a later open's seed
+    /// pass, as an engine that ships `FILES` plus `extra` runs it.
+    pub(crate) fn seed_bootstrap_skills_adding_for_test(
+        &self,
+        extra: &[(&'static str, &'static str)],
+    ) -> Result<()> {
+        let files: Vec<(&str, &str)> = FILES.iter().copied().chain(extra.iter().copied()).collect();
+        seed_bootstrap_skill_files(self, &files)
+    }
+
+    /// Test door body (`test_doors::bootstrap_skills`): the fit rung's
+    /// activation write for the restored default `id` (a held-out win that
+    /// asks no permission), without the scorer.
+    pub(crate) fn admit_restored_default_for_test(&self, id: &EntityId, at: u64) -> Result<()> {
+        self.with_write_txn(|txn| {
+            let record = self.read_skill_record_in_txn(txn, id)?;
+            self.activate_scored_hub_record_in_txn(
+                txn,
+                id,
+                &record,
+                TimeRange { start: at, end: at },
+                at,
+                None,
+            )
+        })
     }
 }
 
