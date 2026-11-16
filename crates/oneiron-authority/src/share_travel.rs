@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// One text field born with a body.
@@ -21,8 +22,10 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("born.with.field")]
 pub enum BornWithField {
     /// The prompt the body was made from, read from its birth's prompt rows.
     Prompt,
@@ -36,26 +39,10 @@ pub enum BornWithField {
 }
 
 impl BornWithField {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Prompt => "prompt",
-            Self::Why => "why",
-            Self::Keep => "keep",
-            Self::IntentPrompt => "intent_prompt",
-        }
-    }
-
     /// The field [`Self::as_str`] names; `None` for any other name.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "prompt" => Some(Self::Prompt),
-            "why" => Some(Self::Why),
-            "keep" => Some(Self::Keep),
-            "intent_prompt" => Some(Self::IntentPrompt),
-            _ => None,
-        }
+        <Self as Register>::named(name)
     }
 }
 
