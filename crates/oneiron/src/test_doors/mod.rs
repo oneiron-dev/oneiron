@@ -46,6 +46,7 @@ pub mod conversation_training_fold;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;
+pub mod derivation_position;
 pub mod derive;
 pub mod derive_verbs;
 pub mod device_succession_fold;
