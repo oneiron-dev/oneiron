@@ -272,6 +272,9 @@ pub use admission::{
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
     set_authority_work_wait_ms,
 };
+pub use agent_grant_act::{
+    AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
+};
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
@@ -362,6 +365,7 @@ pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
 };
+pub(crate) use machine_profile::YoursProof;
 pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
