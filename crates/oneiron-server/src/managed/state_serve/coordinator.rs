@@ -411,7 +411,8 @@ async fn serve_with_handles(
     );
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
     // unless `--no-hooks`: each pass admitted like a served write. The sandbox
-    // loads before ready, as plain serve loads it, so no verb waits on it.
+    // loads before ready, so no verb waits on it; plain serve builds it off
+    // its gated startup instead (FIX 25667).
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {

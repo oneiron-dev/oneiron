@@ -3,7 +3,7 @@
 //! Listener setup, transport shutdown, and vault construction stay in the parent.
 
 #[cfg(feature = "code-sandbox-wasmtime")]
-use super::spawn_fact_hooks;
+use super::hooks::spawn_fact_hooks_in_background;
 use super::{Arc, ServeConfig, SyncServer, build_artifact_app};
 
 /// What [`start_desktop_workers`] hands the transport half of a serve path.
@@ -358,9 +358,15 @@ pub(crate) async fn start_desktop_workers(
     workers.push(crate::files_intake::spawn_rescans(Arc::clone(&sync_server)));
     timings.mark("files_intake");
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
+    // Their sandbox builds on a task of its own, so the gated startup never
+    // waits for it (FIX 25667).
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
-        workers.extend(spawn_fact_hooks(&sync_server, admitted(), stopped.clone()).await);
+        workers.push(spawn_fact_hooks_in_background(
+            Arc::clone(&sync_server),
+            admitted(),
+            stopped.clone(),
+        ));
     }
     #[cfg(feature = "code-sandbox-wasmtime")]
     let hook_regen = if config.hooks {
