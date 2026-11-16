@@ -49,6 +49,7 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+pub(crate) use super::esign_rules_doors::*;
 // The caller's own actor and person refs (FIX 1047).
 pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::self_actor_doors::*;
@@ -184,6 +185,7 @@ pub(crate) use super::weave_admin_doors::{
 pub(crate) use super::inbox_group_doors::*;
 // The inquiry rows (INQUIRE-1 PR 5), likewise.
 pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::schedule_doors::*;
 pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
