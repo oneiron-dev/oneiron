@@ -34,7 +34,7 @@ use oneiron::inbox::{InboxReviewDial, UnifiedInboxGroup};
 use oneiron::ingest::history::{HistorySource, history_import_review_id};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED};
 use oneiron::test_doors::derive::{
-    batches_of, claim_lifecycle, derive_item_receipts, source_version, supports,
+    batches_of, claim_lifecycle, derive_item_receipts, grant_derive_rows, source_version, supports,
 };
 use oneiron::test_doors::derive_conflict;
 use oneiron::test_doors::derive_person::person_body;
@@ -48,7 +48,10 @@ use oneiron::test_doors::extraction_single_valued::seed_extraction_single_valued
 use oneiron::test_doors::open_candidate::build_native_candidate;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{ClaimApprovalStatus, ClaimSource, EdgeActorClass, EdgeKind, EntityId, Vault};
+use oneiron::{
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, EdgeActorClass, EdgeKind, EntityId, Vault,
+    WriteActor, WriteEnvelope, WriteProvenance,
+};
 use serde_json::json;
 use std::sync::Arc;
 use support::{
@@ -633,24 +636,39 @@ fn served_version(vault: &Vault, entity: EntityId) -> TestResult<serde_json::Val
 
 /// Lands one Generated food preference about `subject` and returns its id.
 /// A replacement of it is granted with no owner.
+///
+/// The head lands attributed, under the subject's actor-bound permit: an
+/// unattributed Generated put at Auto pends on source trust. The permit door
+/// writes the policy from the shipped rows, so a test writes its own policy
+/// rows (a single-valued seed, the checker's name) after this land.
 fn land_generated_head(vault: &Vault, subject: EntityId, value: &str) -> TestResult<EntityId> {
     let head = EntityId::now();
-    let mut body = oneiron::claim::ClaimBody::new(
-        FOOD,
-        oneiron::claim::ClaimSubject::Entity(subject),
-        rmpv::Value::from(value),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        oneiron::claim::ClaimLifecycleStatus::Active,
-    )?;
-    body.source = Some(ClaimSource::Generated);
-    body.scope_facet = vault.default_facet()?;
     let now = vault.now_recorded_at();
-    let at = oneiron::TimeRange {
-        start: now,
-        end: now,
-    };
-    vault.put_claim(&head, &body, at, now)?;
+    grant_derive_rows(vault, &[subject])?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(subject, EdgeActorClass::Human),
+        ClaimSource::Generated,
+        WriteProvenance::new(rmpv::Value::from("generated-head-fixture"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &head,
+            ClaimCandidate::new(
+                FOOD,
+                oneiron::claim::ClaimSubject::Entity(subject),
+                rmpv::Value::from(value),
+                1.0,
+            ),
+            &envelope,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .commit()?;
     Ok(head)
 }
 
