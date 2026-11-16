@@ -256,3 +256,38 @@ fn a_stretch_back_off_record_while_the_provider_answers_keeps_no_hit_in_base() -
     );
     Ok(())
 }
+
+#[test]
+fn an_imap_wire_of_a_search_in_a_session_writes_no_uid_map_row_in_base() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = fresh_vault(directory.path())?;
+
+    // The wire a search inside a session takes: what it learns of the
+    // mailbox stays in memory, read back by the wire and never by base.
+    let (read_back, uids, places, forgotten) =
+        vault.imap_uid_map_learned_for_test(EntityId::now(), true)?;
+    assert!(
+        read_back,
+        "the wire did not read back the UID map row it learned"
+    );
+    assert_eq!(
+        (uids, places),
+        (0, 0),
+        "an IMAP wire of a search inside a session wrote its UID map in base"
+    );
+    assert!(forgotten, "the wire still reads a UID it forgot");
+
+    // The control: a sync's wire keeps what it learns in base.
+    let (read_back, uids, places, forgotten) =
+        vault.imap_uid_map_learned_for_test(EntityId::now(), false)?;
+    assert!(
+        read_back && forgotten,
+        "FIXTURE: a sync's wire reads its UID map"
+    );
+    assert_eq!(
+        (uids, places),
+        (1, 1),
+        "FIXTURE: a sync's wire keeps its UID map in base"
+    );
+    Ok(())
+}
