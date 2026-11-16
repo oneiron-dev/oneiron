@@ -1,6 +1,7 @@
 //! Per-call description: envelope, pin admission, roles, tier precedence, response format, and
 //! locality. `RoleModelDefaults` stays in `oneiron`: it resolves routing hints from a vault.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -232,24 +233,12 @@ pub enum ResponseFormat {
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("model.locality")]
 pub enum ModelLocality {
     OnDevice,
     OwnServer,
     ThirdParty,
-}
-
-impl ModelLocality {
-    /// The wire spelling, as the serde `snake_case` above spells it:
-    /// `on_device`/`own_server`/`third_party`. The one spelling every
-    /// route id mints (FIX 11768).
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::OnDevice => "on_device",
-            Self::OwnServer => "own_server",
-            Self::ThirdParty => "third_party",
-        }
-    }
 }
