@@ -95,9 +95,9 @@ pub use lifecycle::{
     validate_booking_family_claim,
 };
 pub use public_lens::{
-    BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, ThemeTokens,
-    bounded_public_slots, validate_booking_page_model,
+    BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,
+    ConstraintFieldConfig, EventTypeCard, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction,
+    PublicBookingPageToken, ThemeTokens, bounded_public_slots, validate_booking_page_model,
 };
 pub use publication::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,

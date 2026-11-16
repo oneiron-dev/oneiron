@@ -28,8 +28,8 @@ use oneiron::booking::constraint::{
 };
 use oneiron::booking::{
     BookingConversionPolicy, BookingError, BookingLandingContent, BookingPageModel,
-    BookingPageModelError, BookingSlotPreview, BookingSolver, CompanionPresetRow,
-    CompanionProposal, CompanionProposalCreation, ConstraintFieldConfig,
+    BookingPageModelError, BookingPagePresentation, BookingSlotPreview, BookingSolver,
+    CompanionPresetRow, CompanionProposal, CompanionProposalCreation, ConstraintFieldConfig,
     DEFAULT_INTRO_DURATION_MIN, DisclosureRung, EventTypeCard, EventTypeConfig, EventTypeKey,
     HostAvailabilityConfig, RankedSlot, RoutingMode, RungProjection, SlotOracle, SolveRequest,
     SolveResult, SurfaceClass, ThemeTokens, VaultActiveHoldSource, WeeklyWallWindow,
@@ -381,21 +381,23 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
         },
     );
     BookingPageModel::new(
-        "Owen".to_owned(),
-        vec![EventTypeCard {
-            key: request.event_type,
-            title: "Introduction".to_owned(),
-            duration_min: 10,
-            description: "Fixture description".to_owned(),
-        }],
+        BookingPagePresentation {
+            owner_display: "Owen".to_owned(),
+            event_types: vec![EventTypeCard {
+                key: request.event_type,
+                title: "Introduction".to_owned(),
+                duration_min: 10,
+                description: "Fixture description".to_owned(),
+            }],
+            constraint_field: ConstraintFieldConfig {
+                enabled: false,
+                placeholder: String::new(),
+            },
+            theme: ThemeTokens(serde_json::json!({"mode": "fixture"})),
+            landing: BookingLandingContent::default(),
+        },
         project_at_rung(&[], DisclosureRung::Full, SurfaceClass::Public, Some(&mask))
             .expect("the public clamp keeps the mask"),
-        ConstraintFieldConfig {
-            enabled: false,
-            placeholder: String::new(),
-        },
-        ThemeTokens(serde_json::json!({"mode": "fixture"})),
-        BookingLandingContent::default(),
         "UTC".to_owned(),
         policy,
     )
