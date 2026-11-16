@@ -44,6 +44,7 @@ pub fn answer_reveal_after(
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         };
         match vault.set_setting(crate::setting::SettingCaller::Owner(&owner), request)? {
             crate::setting::SetSettingOutcome::Applied { .. } => {}
@@ -132,6 +133,7 @@ pub fn set_reveal_window(value: u64) -> crate::Result<()> {
         expected_revision: None,
         why: None,
         check_in_ref: None,
+        weight_runs: None,
     };
     match vault.set_setting(crate::setting::SettingCaller::Owner(&owner), request)? {
         crate::setting::SetSettingOutcome::Applied { .. } => Ok(()),
