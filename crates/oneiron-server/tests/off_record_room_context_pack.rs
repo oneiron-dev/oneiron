@@ -56,6 +56,12 @@
 //! staged there reaches them, served in the pack's L2 base as every claim
 //! about the owner is.
 //!
+//! Over MCP (MCP-SESSION-HEADER-REFUSES-STRETCH-KEY): a call names its
+//! session in the same `x-oneiron-session` header, read as HTTP reads it, so
+//! the owner's `memory.context_pack` on the tool-first endpoint names the
+//! room's stretch by its key and reads the staged turn, and a stranger's,
+//! naming the same key, reads base alone.
+//!
 //! The owner cases that name no room drive the real route with the owner's
 //! host-root credential (on a profiled install, as a serving start enrols
 //! it). A room proves its reader the owner only by a slip naming the owner's
@@ -114,6 +120,9 @@ const FLIPPED_STRETCH: &str = "room-pack-flipped-stretch";
 const STAGED_WORD: &str = "lanternfish";
 const CONTEXT_PACK: &str = "/v1/core/context-pack";
 const CONTEXT_BOARD: &str = "/v1/core/context-board";
+/// The tool-first MCP endpoint, and the protocol version its calls name.
+const MCP_TOOL_FIRST: &str = "/mcp/tool-first";
+const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 /// The stretch the member cases stage their MESSAGE in, in a room.
 const ROOM_STRETCH: &str = "room-pack-room-stretch";
 /// The one word the room stretch's staged MESSAGE holds, which no base row
@@ -669,6 +678,80 @@ impl Host {
         });
         assert_eq!(status, StatusCode::OK, "{route} answered {answer}");
         answer
+    }
+
+    /// `principal`'s `memory.context_pack` over MCP, a tool call to the
+    /// tool-first endpoint on its own slip and holder proof, for `request`,
+    /// in the session `session` names, if any: the JSON-RPC reply, which
+    /// must come with HTTP 200.
+    async fn mcp_pack(
+        &self,
+        principal: &Principal,
+        request: Value,
+        session: Option<&str>,
+    ) -> Value {
+        let timestamp = self.vault.now_recorded_at();
+        let nonce = EntityId::now().to_hex();
+        let challenge = holder_proof_challenge(timestamp, &nonce);
+        let signature = hex(&principal
+            .key
+            .sign(
+                &principal
+                    .slip
+                    .binding_transcript(&challenge)
+                    .expect("binding transcript"),
+            )
+            .to_bytes());
+        let binding =
+            json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string();
+        let call = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "memory.context_pack",
+                "arguments": {
+                    "schema_version": oneiron_server::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+                    "consent": {
+                        "policy_ref": "policy:agent-session",
+                        "purpose": "read the context of the room's turn",
+                    },
+                    "arguments": { "request": request },
+                },
+            },
+        });
+        let mut http = Request::post(MCP_TOOL_FIRST)
+            .header(
+                "authorization",
+                format!("Bearer {}", principal.slip.to_token().expect("slip token")),
+            )
+            .header("x-oneiron-binding", binding)
+            .header("mcp-protocol-version", MCP_PROTOCOL_VERSION)
+            .header("content-type", "application/json");
+        if let Some(session) = session {
+            http = http.header("x-oneiron-session", session);
+        }
+        let response = self
+            .app
+            .clone()
+            .oneshot(
+                http.body(Body::from(call.to_string()))
+                    .expect("MCP pack request"),
+            )
+            .await
+            .expect("MCP pack response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("MCP pack response body");
+        let reply: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+            panic!(
+                "the MCP endpoint answered no JSON: {}",
+                String::from_utf8_lossy(&bytes)
+            )
+        });
+        assert_eq!(status, StatusCode::OK, "the MCP endpoint answered {reply}");
+        reply
     }
 
     /// Retrieval runs the vault keeps in base.
@@ -1288,6 +1371,66 @@ fn a_strangers_pack_in_a_room_reads_base_alone() {
             host.base_runs(),
             before + 1,
             "a stranger's pack reads base, and keeps its run there"
+        );
+    });
+}
+
+/// The pack an MCP `memory.context_pack` reply carries, after the call
+/// came back with no error.
+fn mcp_pack_response(reply: &Value) -> &Value {
+    assert!(
+        reply.get("error").is_none(),
+        "the MCP pack is answered, not refused: {reply}"
+    );
+    &reply["result"]["structuredContent"]["output"]["response"]
+}
+
+/// The owner, on their own full slip, asks for a pack over MCP
+/// (MCP-SESSION-HEADER-REFUSES-STRETCH-KEY): naming the room's stretch by its
+/// key in `x-oneiron-session`, as HTTP names it, the pack reads the MESSAGE
+/// the stretch staged; with no session it reads base alone. On the base of
+/// this change MCP refused any session header that was no SESSION id
+/// ("invalid session header"), so no MCP caller could name a room's
+/// stretch.
+#[test]
+fn the_owners_mcp_pack_naming_the_room_stretch_reads_its_staged_message() {
+    run_on_engine_stack("room-stretch-owner-mcp-pack", async {
+        let host = host();
+        let room = host.room_stretch();
+        let owner = host.owner_full_slip(0x78);
+        let outside = host.mcp_pack(&owner, room_pack_request(), None).await;
+        assert!(
+            !names_short_id(mcp_pack_response(&outside), &room.staged_message),
+            "with no session the owner's MCP pack reads base alone: {outside}"
+        );
+        let inside = host
+            .mcp_pack(&owner, room_pack_request(), Some(room.key.as_str()))
+            .await;
+        let pack = mcp_pack_response(&inside);
+        assert!(
+            names_short_id(&pack["results"], &room.staged_message),
+            "the owner's MCP pack naming the room stretch returns {} among {:?}: {inside}",
+            room.staged_message,
+            result_short_ids(pack)
+        );
+    });
+}
+
+/// An agent not on the room's roster names the room's stretch over MCP: the
+/// call is answered, and its pack reads base alone, as its HTTP pack does.
+#[test]
+fn a_strangers_mcp_pack_naming_the_room_stretch_reads_base_alone() {
+    run_on_engine_stack("room-stretch-stranger-mcp-pack", async {
+        let host = host();
+        let room = host.room_stretch();
+        let inside = host
+            .mcp_pack(&room.stranger, room_pack_request(), Some(room.key.as_str()))
+            .await;
+        let pack = mcp_pack_response(&inside);
+        assert!(
+            !names_short_id(pack, &room.staged_message),
+            "a stranger's MCP pack reads none of the room stretch: {:?}",
+            result_short_ids(pack)
         );
     });
 }

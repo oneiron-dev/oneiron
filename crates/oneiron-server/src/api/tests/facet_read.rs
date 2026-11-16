@@ -346,7 +346,10 @@ async fn an_owner_credential_handed_to_another_key_keeps_its_facet_limit() {
 /// FACET-READ check 4: a TASK born under a {work, home} credential whose
 /// write facet is home lands in home; in a session whose mode names work it
 /// lands in work; a session naming private is refused, on MCP and on the
-/// facade alike, and so is setting the session to private.
+/// facade alike, and so is setting the session to private. On MCP an
+/// off-record stretch's key, which names no SESSION, places no write either
+/// and is refused as the private session is
+/// (MCP-SESSION-HEADER-REFUSES-STRETCH-KEY).
 #[tokio::test]
 async fn a_narrowed_birth_lands_in_its_write_facet_or_its_sessions() {
     let vault = facets();
@@ -485,6 +488,24 @@ async fn a_narrowed_birth_lands_in_its_write_facet_or_its_sessions() {
     )
     .await;
     assert_mcp_structured_error(&refused, "mcp_scope_refused");
+    let mut in_stretch = mcp_endpoint_call_request(
+        MCP_TOOL_FIRST_PATH,
+        "fr-write",
+        "mcp-stretch",
+        "tasks.create",
+        mcp_merge_args(
+            mcp_scoped_envelope(member, "write_tasks", &both),
+            json!({ "arguments": { "spec": { "goal": "mcp-stretch" } } }),
+        ),
+    );
+    in_stretch.headers_mut().insert(
+        crate::api::write_facet::SESSION_HEADER,
+        oneiron::off_record::room_session_key(oneiron::EntityId::now(), "fr-stretch")
+            .parse()
+            .unwrap(),
+    );
+    let stretch_refused = mcp_refusal(&vault.server, in_stretch).await;
+    assert_mcp_structured_error(&stretch_refused, "mcp_scope_refused");
 
     let (status, created) = facade("facade-home", None).await;
     assert_eq!(status, StatusCode::OK, "{created}");
