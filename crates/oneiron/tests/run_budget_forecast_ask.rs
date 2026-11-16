@@ -184,6 +184,29 @@ fn launch(f: &Fixture, root: &SpendScopeId) -> TestResult<AttemptId> {
     Ok(status.attempt.id)
 }
 
+/// Launches the fixture's agent as a root run under a pinned `budget` and no
+/// spend scope: the launch opens its own hard scope, keyed by its attempt.
+fn launch_pinned(f: &Fixture, budget: u64) -> TestResult<AttemptId> {
+    let AgentDispatchOutcome::Dispatched(status) = AgentDispatcher::new(&f.vault)
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(f.agent),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now: NOW,
+            },
+            AgentSpawnContext {
+                budget: Some(budget),
+                ..AgentSpawnContext::default()
+            },
+        )?
+    else {
+        panic!("the agent dispatches without running a model")
+    };
+    Ok(status.attempt.id)
+}
+
 fn cap_of(f: &Fixture, scope: &SpendScopeId) -> TestResult<u64> {
     Ok(AgentDispatcher::new(&f.vault)
         .read_spend_scope(scope)?
@@ -250,6 +273,30 @@ fn the_owners_early_dollars_raise_the_root_for_good() -> TestResult {
         Some(DecisionAnswer::Choice("add_funds".to_owned()))
     );
     assert!(run_budget_questions(&f.vault)?.is_empty());
+    Ok(())
+}
+
+/// A root launch under a pinned `budget`, with no spend scope, projected past
+/// that budget asks the owner early as well: the scope it pinned, keyed by
+/// its root attempt, is the hard root it runs under, and the owner's dollars
+/// raise it for good. Before, the launch statement named no tree scope and
+/// nothing was asked (review round 1 of #8217).
+#[test]
+fn a_pinned_root_launch_projected_past_its_budget_asks_the_owner_early() -> TestResult {
+    let f = fixture(true)?;
+    let run = launch_pinned(&f, SHORT_ROOT)?;
+
+    let listed = run_budget_questions(&f.vault)?;
+    assert_eq!(listed.len(), 1, "one early ask: {listed:?}");
+    assert_eq!(listed[0].projected_units, Some(8_000), "the prior");
+    assert_eq!(listed[0].available_units, Some(SHORT_ROOT));
+    f.vault
+        .press_run_budget_add_funds(&f.owner, listed[0].seq, AMOUNT_USD_MICROS)?;
+    assert_eq!(
+        cap_of(&f, &SpendScopeId::for_attempt(&run))?,
+        SHORT_ROOT + BOUGHT_UNITS,
+        "the dollars raise the run's pinned scope"
+    );
     Ok(())
 }
 
