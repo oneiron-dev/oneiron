@@ -17,6 +17,7 @@ mod ledger;
 mod lookup;
 mod orcb;
 mod read_items;
+mod receipt;
 mod retention;
 mod retention_policy;
 mod retention_scope;
@@ -64,6 +65,10 @@ pub(in crate::store) use self::keys::{
 #[cfg(feature = "sync")]
 pub(in crate::store) use self::leave::HeldGateRows;
 pub(crate) use self::ledger::{RoomGateDecision, stage_room_gate_decision_in_txn};
+// The one Gate receipt writer (UC-03); its first callers are the secret-custody
+// rulings (stage 1a-i), and the other stage-1 families follow.
+pub(crate) use self::receipt::{GateReceipt, PolicyBasis, ReceiptActor};
+pub(crate) use self::types::GateEnginePart;
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{

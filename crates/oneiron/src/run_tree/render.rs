@@ -109,10 +109,7 @@ fn run_tree_status(record: &AttemptRecord) -> RunTreeStatus {
 }
 
 fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
-    let mut metadata = attempt_metadata(&record);
-    if let Some(placement) = &record.placement {
-        metadata.parent_id = placement.parent.map(|id| bytes_to_hex_lower(id.as_bytes()));
-    }
+    let metadata = attempt_metadata(&record);
     let state = record.state;
     let status = run_tree_status(&record);
     let attempt_id = attempt_id_hex(&record);
@@ -253,10 +250,13 @@ fn next_remaining_node(
         .cloned()
 }
 
-struct AttemptMetadata {
-    parent_id: Option<String>,
-    worker_kind: String,
-    agent_id: Option<String>,
+/// What a run-tree node names for one attempt row beside its state: its
+/// parent, its attempt type and the agent it dispatches. The job read names
+/// the same parent and type.
+pub(crate) struct AttemptMetadata {
+    pub(crate) parent_id: Option<String>,
+    pub(crate) worker_kind: String,
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) fn effective_parent(record: &AttemptRecord) -> Option<crate::attempt_queue::AttemptId> {
@@ -274,7 +274,17 @@ pub(crate) fn effective_parent(record: &AttemptRecord) -> Option<crate::attempt_
     })
 }
 
-fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
+/// The node metadata of `record`: a placed row's parent is its placement's,
+/// else the row's lineage ([`attempt_lineage`]).
+pub(crate) fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
+    let mut metadata = attempt_lineage(record);
+    if let Some(placement) = &record.placement {
+        metadata.parent_id = placement.parent.map(|id| bytes_to_hex_lower(id.as_bytes()));
+    }
+    metadata
+}
+
+fn attempt_lineage(record: &AttemptRecord) -> AttemptMetadata {
     // A retry's parent is the try it replaces — an explicit row link that
     // outranks the Dreamer payload's spawn lineage, so a retried try renders as
     // a child of the failed one rather than as a second root.

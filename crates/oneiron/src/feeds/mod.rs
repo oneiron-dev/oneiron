@@ -54,6 +54,7 @@ use serde::{Deserialize, Serialize};
 use crate::claim::{PointRead, ScopedRead};
 use crate::error::ClaimError;
 use crate::ports::{ChangeLogStoreRead, ChangeOp, EntityStoreRead};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::runtime_hooks::{ClaimChangelogPosition, FactPosition, FactSource, SettlementPosition};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -86,11 +87,10 @@ pub const FEED_READ_MAX_LIMIT: usize = 256;
 /// passes over cannot make one read unbounded. The page's `through` still moves past them.
 const SCAN_PER_ENTRY: usize = 16;
 
-/// How long a cursor in a pruned source stays held without an acknowledgement, in seconds on
-/// the vault's recording clock (lead call K, 10 Nov). Past it the prune no longer keeps the rows
-/// it has not acknowledged, and its subscription's reads answer [`FeedRead::Gap`]. An ack
-/// refreshes a cursor even when it moves nothing, so a reader that acks each page never lapses.
-pub const FEED_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+#[doc(hidden)]
+pub use oneiron_records::feeds::FEED_RETENTION_SECS;
+#[doc(hidden)]
+use oneiron_records::feeds::WAKE_SHOWN_DOMAIN;
 
 /// A sealed position's text prefix: the token format's version.
 const TOKEN_PREFIX: &str = "fp1.";
@@ -570,11 +570,10 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedReadRequest,
     ) -> Result<FeedRead> {
-        let limit = request.limit.unwrap_or(FEED_READ_DEFAULT_LIMIT);
-        if limit == 0 {
-            return Err(invalid("a feed read's limit is at least 1"));
-        }
-        let limit = limit.min(FEED_READ_MAX_LIMIT);
+        let limit =
+            page_limit_zero_refused(request.limit, FEED_READ_DEFAULT_LIMIT, FEED_READ_MAX_LIMIT)
+                .map_err(|ZeroLimitRefused| invalid("a feed read's limit is at least 1"))?
+                .rows;
         let _bodies = reader.prepare_point_read::<Error>()?;
         let txn = self.store.env.read_txn()?;
         let actor = live_reader_actor_in(reader, &txn)?;
@@ -928,9 +927,6 @@ const WAKE_SCAN_CHUNKS: usize = 16;
 /// was not shown when it was scanned may be shown later (a grant, an approval, a diary pair's
 /// consent) with no new row for the scan to find.
 const WAKE_RECHECK_CHUNKS: usize = 1;
-
-/// Domain of the digest over the entries a wake scan's lane is shown.
-const WAKE_SHOWN_DOMAIN: &[u8] = b"oneiron:feed-wake-shown:v1";
 
 /// Where a feed-woken program's wake scan stands in each source, kept with its trigger between
 /// releases. Each release scans on from the last row it looked at, so a long run of rows the

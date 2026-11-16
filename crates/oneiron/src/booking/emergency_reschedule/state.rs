@@ -124,15 +124,33 @@ pub(crate) fn ensure_no_pending_effect_in(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<(), BookingError> {
-    if let Some(item) = lookup::pending_event_in(vault, txn, event)?
-        && let Some(expected) = lookup::pending_revision(&item)
-        && crate::booking::lifecycle::emergency_current_revision_in(vault, txn, event)? == *expected
-    {
+    if pending_effect_fences_in(vault, txn, event)? {
         return Err(refused(
             "pending emergency delivery fences this lifecycle revision",
         ));
     }
     Ok(())
+}
+
+/// Whether a pending emergency delivery fences `event`'s current lifecycle
+/// revision: the fence [`ensure_no_pending_effect_in`] refuses, answered as a
+/// fact, so a caller that holds a fenced item back (a calendar feed's move)
+/// never reads it from an error's variant or text. Store failures and a
+/// corrupt pending index stay errors.
+pub(crate) fn pending_effect_fences_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool, BookingError> {
+    if let Some(item) = lookup::pending_event_in(vault, txn, event)?
+        && let Some(expected) = lookup::pending_revision(&item)
+    {
+        return Ok(
+            crate::booking::lifecycle::emergency_current_revision_in(vault, txn, event)?
+                == *expected,
+        );
+    }
+    Ok(false)
 }
 
 pub(super) fn effect_ref(
