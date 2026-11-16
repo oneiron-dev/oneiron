@@ -119,8 +119,18 @@ pub(super) fn poll_hold(
     config: &IcsFeedPollConfig,
 ) -> crate::Result<Option<&'static str>> {
     let txn = vault.store.env.read_txn()?;
+    poll_hold_in_txn(vault, &txn, config)
+}
+
+/// [`poll_hold`] in the caller's transaction: the `calendar.ics_feed` hook reads it in the
+/// write that installs the feed.
+pub(super) fn poll_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    config: &IcsFeedPollConfig,
+) -> crate::Result<Option<&'static str>> {
     Ok(
-        match read_in_txn(vault, &txn, config)?.map(|record| record.state) {
+        match read_in_txn(vault, txn, config)?.map(|record| record.state) {
             Some(IcsFeedConsentState::AwaitingReview { .. }) => {
                 Some("ICS feed waits on the owner's review of its first poll")
             }
