@@ -116,10 +116,12 @@ fn given_in_fold(
 }
 
 /// The owner's counted mint that gives his agent Grant row `id` (an `owner_agent` row, a git
-/// push Grant or a Steward mint's row), holding `grant` under `terms_key`: the line is given
-/// in [`GrantFamily::OwnerAgent`], no counted act ended it, and the mint states the row, term
-/// for term. `None` for a row no counted mint gives, one put back after its revoke and one
-/// whose terms are not its mint's. Expiry is the reader's: a lister of the owner's agent
+/// push Grant or a Steward mint's row), holding `grant` under `terms_key`: the row holds
+/// `residence`, this vault's own (no mint carries it, and every writer puts that one), the
+/// line is given in [`GrantFamily::OwnerAgent`], no counted act ended it, and the mint states
+/// the row, term for term. `None` for a row no counted mint gives, one put back after its
+/// revoke, one whose terms are not its mint's and one over another residence (a rewritten
+/// scope would read another vault's pact). Expiry is the reader's: a lister of the owner's agent
 /// Grants (backfill, a grantless agent, the default mint) asks which Grants name a holder,
 /// expired or not, and each conferring reader reads the expiry at its own time.
 #[must_use]
@@ -128,7 +130,11 @@ pub(crate) fn owner_agent_mint_in_fold(
     id: EntityId,
     grant: &FederationGrant,
     terms_key: Option<&GrantTermsKey>,
+    residence: &FederationGrantScope,
 ) -> Option<AuthorityEntryHash> {
+    if grant.scope != *residence {
+        return None;
+    }
     given_in_fold(fold, id, grant, terms_key, &[GrantFamily::OwnerAgent])
 }
 

@@ -311,6 +311,26 @@ pub(crate) struct FoldedGrantLine {
     /// or a slip revoke names it, or when two branches name it in two families (then no giving
     /// counts here).
     pub(crate) family: Option<GrantFamily>,
+    /// Every giving of the line, live or replaced since, that counts here in full, with the
+    /// terms it stated: what a ruling's witness asks of the row a writer is about to change
+    /// ([`Self::gave_row`]). Empty when two families name the Grant.
+    pub(crate) given: Vec<(AuthorityEntryHash, GrantTerms)>,
+}
+
+impl FoldedGrantLine {
+    /// Whether a giving of the line that counts here in full, live or replaced since, stated
+    /// exactly the row `id` holding `grant` under `terms_key`: a row no counted act ever gave
+    /// (a forged or widened row) never matches.
+    pub(crate) fn gave_row(
+        &self,
+        id: EntityId,
+        grant: &FederationGrant,
+        terms_key: Option<&GrantTermsKey>,
+    ) -> bool {
+        self.given
+            .iter()
+            .any(|(_, terms)| terms.matches_row(id, grant, terms_key))
+    }
 }
 
 #[cfg(any(test, oneiron_test_support))]
@@ -551,6 +571,17 @@ pub(super) fn folded_grant_lines(
                 (family.is_some() && live.next().is_none() && counts_here(&standing, hash, giving))
                     .then(|| (*hash, giving.settings.clone()))
             });
+            let given = frontier
+                .filter(|_| family.is_some())
+                .map_or_else(Vec::new, |frontier| {
+                    frontier
+                        .live
+                        .iter()
+                        .chain(&frontier.superseded)
+                        .filter(|(hash, giving)| counts_here(&standing, hash, giving))
+                        .map(|(hash, giving)| (*hash, giving.settings.clone()))
+                        .collect()
+                });
             // An end of the line's own family, or of none (a membership withdrawal, a slip
             // revoke), ends it; an end of another family, from a branch the fold cannot order,
             // ends nothing, as it would end nothing after the line's acts.
@@ -565,6 +596,7 @@ pub(super) fn folded_grant_lines(
                     giving,
                     ended,
                     family,
+                    given,
                 },
             )
         })
@@ -609,8 +641,9 @@ pub(super) fn held_grant_acts(
 
 /// Bounds each Grant's giving by `bound`'s, the fold with no vouch (`install_fold::NoVouch`):
 /// a Grant that fold gives by no act, or by another act, stands on nothing here, unless only
-/// givings after a settled handoff stand in it (`fresh`). The giving alone is bounded: a line
-/// with no giving stands for nothing whatever its family and end say, so neither is touched.
+/// givings after a settled handoff stand in it (`fresh`). The givings alone are bounded (the
+/// live one, and each one counted here that `bound` does not count): a line with no giving
+/// stands for nothing whatever its family and end say, so neither is touched.
 pub(super) fn cap_grant_lines(
     lines: &mut BTreeMap<EntityId, FoldedGrantLine>,
     bound: &BTreeMap<EntityId, FoldedGrantLine>,
@@ -624,5 +657,9 @@ pub(super) fn cap_grant_lines(
         if bound.get(grant).and_then(act) != act(line) {
             line.giving = None;
         }
+        let bound_given = bound.get(grant).map(|bound| &bound.given);
+        line.given.retain(|(act, _)| {
+            bound_given.is_some_and(|given| given.iter().any(|(bound, _)| bound == act))
+        });
     }
 }

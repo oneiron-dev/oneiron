@@ -667,10 +667,17 @@ impl Vault {
             return Ok(None);
         };
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        Ok(
-            agent_grant_row_decoded(&self.store, &fold, txn, id, grant, terms_key.as_ref())?
-                .and_then(|(row, act)| act.map(|act| AgentGrantStanding::of(row, act))),
-        )
+        let residence = owner_agent_residence_in_txn(&self.store, txn)?;
+        Ok(agent_grant_row_decoded(
+            &self.store,
+            &fold,
+            txn,
+            id,
+            grant,
+            terms_key.as_ref(),
+            &residence,
+        )?
+        .and_then(|(row, act)| act.map(|act| AgentGrantStanding::of(row, act))))
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing
@@ -894,6 +901,7 @@ fn agent_grant_rows_in_txn(
         store.privacy_posture,
         txn,
     )?;
+    let residence = owner_agent_residence_in_txn(store, txn)?;
     let mut rows = Vec::new();
     let mut undecoded = Vec::new();
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)? {
@@ -916,9 +924,24 @@ fn agent_grant_rows_in_txn(
             id,
             grant,
             terms_key.as_ref(),
+            &residence,
         )?);
     }
     Ok((rows, undecoded))
+}
+
+/// The residence every owner's agent Grant row of this vault holds, as each
+/// of its writers puts it: the shared vault's own, or the own-device
+/// residence on a personal vault. No mint carries it, so the reader holds a
+/// row to it ([`super::owner_agent_mint_in_fold`]).
+fn owner_agent_residence_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<FederationGrantScope> {
+    Ok(super::shared_vault_creation_for_store_in_txn(store, txn)?
+        .map_or_else(own_device_residence_scope, |shared| {
+            FederationGrantScope::vault(shared.vault_id)
+        }))
 }
 
 /// The live, decoded FEDERATION_GRANT row `id` as an owner's agent Grant row,
@@ -931,6 +954,7 @@ fn agent_grant_row_decoded(
     id: EntityId,
     grant: FederationGrant,
     terms_key: Option<&super::GrantTermsKey>,
+    residence: &FederationGrantScope,
 ) -> Result<Option<(AgentGrantRow, Option<AuthorityEntryHash>)>> {
     if !grant.owner_agent {
         return Ok(None);
@@ -941,7 +965,7 @@ fn agent_grant_row_decoded(
     let act = if crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
         None
     } else {
-        super::owner_agent_mint_in_fold(fold, id, &grant, terms_key)
+        super::owner_agent_mint_in_fold(fold, id, &grant, terms_key, residence)
     };
     let created_at = store
         .port_entity_record(txn, &id)?
