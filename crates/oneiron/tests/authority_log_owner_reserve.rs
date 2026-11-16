@@ -83,6 +83,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::host_root_row_signature::sign_authority_row_as_host_root;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::authority_overlay_seed_for;
 use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoinScope};
 
 /// The test's memory floor, 4 MiB: the fixture's own log folds well under it
@@ -251,6 +252,7 @@ fn row_signed_by(
     op: AuthorityOp,
 ) -> AuthorityLogEntry {
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
@@ -264,6 +266,7 @@ fn row_signed_by(
         },
         cosigns: Vec::new(),
         ts: seq + 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
@@ -286,6 +289,7 @@ fn host_root_row(
         .max()
         .expect("the host root signed the vault's root")
         + 1;
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
@@ -299,6 +303,7 @@ fn host_root_row(
         },
         cosigns: Vec::new(),
         ts: seq + 1,
+        overlay_seed,
     };
     sign_authority_row_as_host_root(&rooted.issuer, &mut entry).expect("the host root signs");
     entry

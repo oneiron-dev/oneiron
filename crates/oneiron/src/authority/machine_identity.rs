@@ -142,7 +142,7 @@ pub(super) fn resident_genesis_vault_id_in_txn(
 ) -> Result<Option<AuthorityVaultId>> {
     let mut roots = std::collections::BTreeSet::new();
     for (_, bytes) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&bytes)?;
+        let entry = decode_stored_authority_log_body(store, txn, &bytes)?;
         let AuthorityOp::Genesis { device, .. } = &entry.op else {
             continue;
         };

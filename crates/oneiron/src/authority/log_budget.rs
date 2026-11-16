@@ -600,7 +600,7 @@ pub(super) fn door_view(
             {
                 continue;
             }
-            let entry = decode_authority_log_entry_body(&body)?;
+            let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
             hashes.push(authority_entry_hash(&entry)?);
             entries.push(entry);
         }

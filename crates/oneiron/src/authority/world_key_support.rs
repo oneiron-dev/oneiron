@@ -108,6 +108,7 @@ pub(crate) fn unsigned_side_entry(
     {
         return Err(invalid_authority());
     }
+    let overlay_seed = authority_overlay_seed_for(&op)?;
     Ok(AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: fold.vault_id,
@@ -121,6 +122,7 @@ pub(crate) fn unsigned_side_entry(
         },
         cosigns: Vec::new(),
         ts: now,
+        overlay_seed,
     })
 }
 
@@ -189,7 +191,11 @@ pub(crate) fn own_world_key_records_in_txn(
     let mut records = Vec::new();
     let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
+        let read = read_authority_log_entry_body(&body)
+            .map_err(|_| crate::error::Error::CorruptedIndex("stored authority log row"))?;
+        let AuthorityEntryRead::Open(entry) = read else {
+            continue;
+        };
         if !own(&entry) {
             continue;
         }

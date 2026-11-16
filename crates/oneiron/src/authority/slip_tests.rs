@@ -1042,12 +1042,30 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
         )
         .unwrap();
     let bytes = encode_authority_log_entry_body(&entry).unwrap();
-    assert_eq!(decode_authority_log_entry_body(&bytes).unwrap(), entry);
+    // The records and channels are overlay leaves: the stored body carries
+    // their commitments, and only the entry's overlay record opens it.
+    let record = authority_entry_overlay(&entry)
+        .unwrap()
+        .expect("a slip mint with records and channels is sealed");
+    assert!(
+        decode_authority_log_entry_body(&bytes)
+            .is_err_and(|error| is_authority_overlay_unavailable(&error))
+    );
+    assert_eq!(
+        open_authority_log_entry_body(&bytes, Some(&record)).unwrap(),
+        entry
+    );
     let mut cursor = std::io::Cursor::new(&bytes);
     let value = rmpv::decode::read_value(&mut cursor).unwrap();
     let entries = super::super::map_entries(&value).unwrap();
-    let op = super::super::required(entries, "op").unwrap();
-    let fields = super::super::map_entries(op).unwrap();
+    let sealed_op = super::super::required(entries, "op").unwrap();
+    let sealed_fields = super::super::map_entries(sealed_op).unwrap();
+    let op = op_value(&entry.op);
+    let fields = super::super::map_entries(&op).unwrap();
+    assert_eq!(
+        sealed_fields.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+        fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
+    );
     assert_eq!(
         fields
             .iter()
@@ -1093,9 +1111,13 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
     if let AuthorityOp::SlipMint(action) = &mut tampered.op {
         action.claims.ttl_secs += 1;
     }
+    let tampered_record = authority_entry_overlay(&tampered).unwrap();
     assert!(
-        decode_authority_log_entry_body(&encode_authority_log_entry_body(&tampered).unwrap())
-            .is_err()
+        open_authority_log_entry_body(
+            &encode_authority_log_entry_body(&tampered).unwrap(),
+            tampered_record.as_ref()
+        )
+        .is_err()
     );
 }
 

@@ -49,6 +49,7 @@ use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
     Result, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
+use oneiron_authority::authority::authority_overlay_seed_for;
 use rmpv::Value;
 
 fn restore_as_owner(
@@ -282,25 +283,27 @@ fn archive_restore_owner_probe_refuses_an_unbound_owner() -> Result<()> {
     let (_dest_dir, dest) = open_later_vault();
     let signing = SigningKey::from_bytes(&[7; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let op = AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [0; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER,
+        },
+        genesis_nonce: [8; 32],
+        recovery: GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut genesis = AuthorityLogEntry {
         schema_version: 1,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [0; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: AuthorityTier::Software,
-                roles: ROLE_OWNER,
-            },
-            genesis_nonce: [8; 32],
-            recovery: GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: AuthoritySignature {
             suite: key.suite(),
             public_key: key,
@@ -308,6 +311,7 @@ fn archive_restore_owner_probe_refuses_an_unbound_owner() -> Result<()> {
         },
         cosigns: Vec::new(),
         ts: 7,
+        overlay_seed,
     };
     genesis.signer.signature = signing
         .sign(&authority_transcript(&genesis)?)

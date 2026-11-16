@@ -299,6 +299,7 @@ impl Vault {
                 signature: vec![0; 64],
             }],
             ts: now,
+            overlay_seed: None,
         };
         verify_unsigned(&entry)?;
         let transcript = authority_transcript(&entry)?;
@@ -447,6 +448,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&entry)?;
         entry.signer.signature = sign_predecessor(&transcript)?;
@@ -482,7 +484,7 @@ impl Vault {
         let mut keys = BTreeMap::new();
         let mut stored = BTreeSet::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
+            let entry = open_vault_authority_body_in_txn(&self.store, txn, &body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             keep_enrolled(&mut keys, &fold, managed, hash, &entry);

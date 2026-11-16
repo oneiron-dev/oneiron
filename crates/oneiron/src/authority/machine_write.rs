@@ -646,19 +646,22 @@ pub(crate) fn machine_history_authority_descends_with_image(
         let body = raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("authority history header"))?;
-        let entry = super::decode_authority_log_entry_body(body)?;
-        let hash = super::authority_entry_hash(&entry)?;
+        let read = super::read_authority_log_entry_body(body)?;
+        let hash = match &read {
+            super::AuthorityEntryRead::Open(entry) => super::authority_entry_hash(entry)?,
+            super::AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         if super::authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));
         }
-        by_hash.insert(hash, entry);
+        by_hash.insert(hash, read.parent_hashes().to_vec());
     }
     let stands = |hash: &[u8; 32]| {
         by_hash.contains_key(hash)
             || image.is_some_and(|image| covered_endpoint_stands(image, hash))
     };
     let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
-        Some(entry) => Some(entry.parent_hashes.as_slice()),
+        Some(parents) => Some(parents.as_slice()),
         None => image
             .and_then(|image| image.rows.get(hash))
             .map(|row| row.parents.as_slice()),

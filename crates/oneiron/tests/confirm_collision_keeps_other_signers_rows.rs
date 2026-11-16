@@ -48,6 +48,7 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 const AT: TimeRange = TimeRange { start: 1, end: 1 };
 
@@ -172,6 +173,7 @@ fn row_signed_by(
     op: AuthorityOp,
 ) -> AuthorityLogEntry {
     let key = key_of(signing);
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
@@ -185,6 +187,7 @@ fn row_signed_by(
         },
         cosigns: Vec::new(),
         ts: seq + 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();

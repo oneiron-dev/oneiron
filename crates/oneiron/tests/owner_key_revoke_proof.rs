@@ -30,6 +30,7 @@ use oneiron::authority::{
     machine_profile_proof_transcript,
 };
 use oneiron::{EntityId, HostingPrivacyPosture};
+use oneiron_authority::authority::authority_overlay_seed_for;
 use oneiron_authority::authority::{
     OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll,
     owner_key_enrollment_challenge, owner_key_enrollment_target, roster_has_live_owner,
@@ -71,6 +72,7 @@ fn signed(
 ) -> AuthorityLogEntry {
     let mut cosigners = cosigners.to_vec();
     cosigners.sort_by_key(|cosigner| key_of(cosigner));
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -83,6 +85,7 @@ fn signed(
             .map(|cosigner| signature_slot(key_of(cosigner)))
             .collect(),
         ts: 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();

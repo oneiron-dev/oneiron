@@ -48,6 +48,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::world_keys::{RecoveryRoot, RecoveryRootSeed};
 use oneiron::{EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::authority_overlay_seed_for;
 use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoinScope};
 
 /// The seed of the joining machine's machine key.
@@ -86,6 +87,7 @@ fn signed(
 ) -> AuthorityLogEntry {
     let mut cosigners = cosigners.to_vec();
     cosigners.sort_by_key(|cosigner| key_of(cosigner));
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -98,6 +100,7 @@ fn signed(
             .map(|cosigner| signature_slot(key_of(cosigner)))
             .collect(),
         ts: 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();

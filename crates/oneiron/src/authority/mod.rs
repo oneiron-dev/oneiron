@@ -131,6 +131,7 @@ mod oauth_server;
 mod observation_policy;
 mod op_apply;
 mod origin_cut;
+mod overlay_rows;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
@@ -232,6 +233,8 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// Census L5-22: this vault's reads of a sealed authority row.
+pub(crate) use overlay_rows::open_vault_authority_body_in_txn;
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,

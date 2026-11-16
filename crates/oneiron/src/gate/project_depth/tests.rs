@@ -346,6 +346,7 @@ fn revoked_edit_stays_non_authorizing_after_regrant_until_post_regrant_edit() ->
         signer: bind.signer.clone(),
         cosigns: Vec::new(),
         ts: 102,
+        overlay_seed: None,
     };
     revoke.signer.signature = signing
         .sign(&crate::authority::authority_transcript(&revoke)?)
@@ -374,6 +375,7 @@ fn revoked_edit_stays_non_authorizing_after_regrant_until_post_regrant_edit() ->
         signer: bind.signer,
         cosigns: Vec::new(),
         ts: 103,
+        overlay_seed: None,
     };
     regrant.signer.signature = signing
         .sign(&crate::authority::authority_transcript(&regrant)?)

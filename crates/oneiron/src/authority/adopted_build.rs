@@ -146,7 +146,7 @@ impl Vault {
                 held_covered.insert(*hash);
                 continue;
             }
-            let entry = decode_authority_log_entry_body(&body)?;
+            let entry = open_vault_authority_body_in_txn(store, txn, &body)?;
             let hash = authority_entry_hash(&entry)?;
             if image.rows.contains_key(&hash) {
                 held_covered.insert(hash);

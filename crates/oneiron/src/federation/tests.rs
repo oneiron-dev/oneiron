@@ -1351,6 +1351,7 @@ use crate::authority::{
 };
 use crate::error::{ClaimError, RecordError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 fn auth_key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -1383,6 +1384,7 @@ fn auth_entry(
     ts: u64,
 ) -> AuthorityLogEntry {
     let signer_key = auth_pub(signer);
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -1396,6 +1398,7 @@ fn auth_entry(
         },
         cosigns: Vec::new(),
         ts,
+        overlay_seed,
     };
     if let Some(cosigner) = cosigner {
         let cosign_key = auth_pub(cosigner);

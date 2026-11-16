@@ -221,7 +221,10 @@ pub(super) fn note_adopted_checkpoint_in_txn(
             held.insert(*hash);
             continue;
         }
-        let hash = authority_entry_hash(&decode_authority_log_entry_body(&body)?)?;
+        let hash = match read_authority_log_entry_body(&body)? {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(&entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         if image.rows.contains_key(&hash) {
             held.insert(hash);
         } else {

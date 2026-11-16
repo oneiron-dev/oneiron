@@ -34,7 +34,11 @@ pub(super) fn fold_adopted_in_txn(
             held_covered.insert(*hash);
             continue;
         }
-        let entry = decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
+        let entry = decode_stored_authority_log_body(
+            store,
+            txn,
+            &authority_log_body_in_txn(store, txn, &id)?,
+        )?;
         let hash = authority_entry_hash(&entry)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
