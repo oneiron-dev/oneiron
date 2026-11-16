@@ -230,6 +230,7 @@ impl<'a> BranchResources<'a> {
             known: Default::default(),
             rules: vault.consolidation_key_rules()?,
             read_receipt: std::sync::Mutex::new(receipt),
+            held: std::cell::RefCell::default(),
         };
         resources.check_axes(resources.scope())?;
         resources.require_output(resources.scope())?;

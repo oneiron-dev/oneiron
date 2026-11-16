@@ -73,4 +73,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/vm_provision.rs` | src | s | 3 struct · 2 enum · 9 fn · 4 const | VmFscryptKey, VmProvision, VmProvisionBinding, VmProvisionFailure, VmProvisionReply | A vault VM's provision connection (FIX 6308): what its root bootstrap, `oneiron-vm-init`, takes from the… |
 | `src/lib/vm_restore.rs` | src | s | 2 struct · 5 enum · 9 fn · 5 const | VmRestoreBoot, VmRestoreHello, VmRestoreMarkerObservation, VmRestoreMarkerReply, VmRestoreMarkerUnreadable, VmRestoreRecord, VmRestoreSourceDevice | A vault VM's restore channel (FIX 6584): the cold restore start mode (`crate::restore`) carried into a… |
 | `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |
+| `tests/fingerprint_keep_restore_receipt_id.rs` | test | s | 1 fn | — | K-proof (oracle) for PLAN-UC-04 stage 6.3b: the managed restore receipt id keeps its bytes |
 | `tests/sleep_watch_logind_line.rs` | test | s | — | — | — |
+| `tests/systemd_template_notify_without_socket.rs` | test | s | — | — | A `Type=notify` unit without socket activation still sets `NOTIFY_SOCKET`: the plain host reports `READY=1`… |

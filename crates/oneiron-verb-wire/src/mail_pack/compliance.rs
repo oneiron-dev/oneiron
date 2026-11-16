@@ -4,6 +4,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::check_in::CheckInDecision;
+
 /// What one compliance log entry records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +27,11 @@ pub struct MailComplianceSettingView {
     pub set_by_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_at: Option<u64>,
+    /// The check-in decision the change this call made ran on (2k4;
+    /// P25-SHAPE Q1 = A); absent on a read and on a call that changed
+    /// nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.mail.compliance.set`'s input.
@@ -34,6 +41,10 @@ pub struct MailComplianceSetRequest {
     pub enabled: bool,
     /// Why, in the setter's words; kept in the compliance log.
     pub purpose: String,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: once
+    /// it is approved, the same change and purpose run on it (2k4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One compliance log entry.
@@ -50,6 +61,9 @@ pub struct MailComplianceEventView {
     pub query_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_count: Option<u64>,
+    /// A change's check-in decision (2k4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.mail.compliance.search`'s input.

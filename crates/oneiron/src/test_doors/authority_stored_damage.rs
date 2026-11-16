@@ -1,13 +1,16 @@
 //! L9-50 (ARCH-0006a #list-read-built): damage one stored authority row in
 //! place, past every write door, so a test reads how the authority readers
-//! report store damage.
+//! report store damage. Census L7-19: store rows as a vault did before every
+//! store door held a stranger's row (#1449, H72).
 
-use crate::authority::{AuthorityObservationPolicy, advance_authority_cache_generation};
+use crate::authority::{
+    AuthorityLogEntry, AuthorityObservationPolicy, advance_authority_cache_generation,
+};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::side_table::{self, Raw, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, Result, TimeRange, Vault};
 
 /// Overwrites the signed body of the first stored AUTHORITY_LOG row with
 /// bytes of the same length that decode as no entry, keeps its header, and
@@ -63,6 +66,23 @@ pub fn put_raw_authority_observation_policy(vault: &Vault, raw: &[u8]) -> Result
     })?;
     drop_cached_authority_fold(vault);
     Ok(())
+}
+
+/// Stores `entries` through the authority write door with this thread's
+/// store doors open, as a vault did before every store door held a row no
+/// key that may vouch for signed (#1449, H72), so a test holds a stranger's
+/// row such a vault kept. Returns the rows' ids.
+///
+/// # Errors
+///
+/// The write door refuses a row for anything but its signer's standing.
+pub fn put_authority_log_entries_past_the_store_door(
+    vault: &Vault,
+    entries: &[(AuthorityLogEntry, TimeRange, u64)],
+) -> Result<Vec<EntityId>> {
+    crate::authority::with_authority_doors_open_for_test(|| {
+        vault.put_authority_log_entries(entries)
+    })
 }
 
 fn drop_cached_authority_fold(vault: &Vault) {
