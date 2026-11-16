@@ -118,6 +118,7 @@ pub mod model_step_context;
 pub(crate) mod model_step_effect;
 pub mod model_step_error;
 pub use oneiron_store::model_step_record;
+pub mod phonetic_learned;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -334,6 +335,7 @@ pub mod host_net_floor;
 pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;
+pub mod schedule;
 pub mod setting;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
