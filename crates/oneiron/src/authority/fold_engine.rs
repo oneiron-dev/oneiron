@@ -389,6 +389,7 @@ pub(super) fn fold_authority_log_once(
         &entry_ancestors,
         context,
         &mut issues,
+        |hash| retirements.fences_signer_of(hash, &by_hash),
     );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
@@ -426,6 +427,8 @@ pub(super) fn fold_authority_log_once(
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
+            held_machine_answers: BTreeMap::new(),
+            waiting_owner_choices: BTreeSet::new(),
             pinned_root: None,
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
