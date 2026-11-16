@@ -24,15 +24,18 @@ pub use crate::store::attempt_cancel::{
 /// "spent exactly the reserve" untestable.
 pub const LANDING_RESERVE_PERCENT: u64 = 10;
 
-/// Largest landing reserve a caller may dial. Past half the budget the
-/// "reserve" is the budget and ordinary execution is the exception.
+/// Largest landing reserve a caller may dial unless the owner sets
+/// `attempt_queue.landing.max_reserve_percent`: the key's default. Past half
+/// the budget the "reserve" is the budget and ordinary execution is the
+/// exception.
 pub const MAX_LANDING_RESERVE_PERCENT: u64 = 50;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::attempt_queue::cancel::types::SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD;
 
 /// Fraction of the lease timeout after which the runtime may WARN a worker to
-/// land. Distinct from expiry: the warning asks, expiry forces.
+/// land, unless the owner sets `attempt_queue.lease.warning_percent`: the
+/// key's default. Distinct from expiry: the warning asks, expiry forces.
 pub const LEASE_LANDING_WARNING_PERCENT: u64 = 80;
 
 impl CancelStanding {
