@@ -447,8 +447,7 @@ pub(in crate::calendar) fn revise_passport_in_txn(
         vault.store.close_pending_gate_consent_as_in_txn(
             txn,
             &old,
-            now,
-            "superseded",
+            crate::store::gate_reason::GateReceiptOutcome::Superseded,
             vec![REVISION_REPLACED_REASON.to_owned()],
             None,
             crate::store::TrayRemoval::Silent,
