@@ -1,5 +1,7 @@
 //! Transactional tasks.ask adapter to the shared versioned question substrate.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     arrival,
     reader_authority::{Reader, own_authority_readable_in_txn},
@@ -120,7 +122,7 @@ pub(crate) fn bind_task_answer_in_txn(
             },
             human_ask: None,
         },
-        frontier: *blake3::hash(&source).as_bytes(),
+        frontier: *ContentHash::of(&source).as_bytes(),
         source_kind,
         answered_at: input.now,
         omitted: Vec::new(),

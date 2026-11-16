@@ -1,4 +1,6 @@
 //! Transaction-bound project-policy birth and owner edit doors.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::authority::{ActorBindingStatus, AuthorityKey};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -83,7 +85,7 @@ fn birth_from_policy(
             _ => return Err(invalid()),
         };
         if selected == depth {
-            source = Some((id, *blake3::hash(body).as_bytes()));
+            source = Some((id, *ContentHash::of(body).as_bytes()));
             break;
         }
     }
@@ -120,7 +122,7 @@ pub(crate) fn put_local_birth_in_txn(
     vault.store.sync_state.put(
         txn,
         &format!("project:birth:local:{}", id.to_hex()),
-        blake3::hash(&body).as_bytes(),
+        ContentHash::of(&body).as_bytes(),
     )?;
     Ok(())
 }

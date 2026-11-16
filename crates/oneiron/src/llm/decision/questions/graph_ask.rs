@@ -22,6 +22,7 @@ use crate::{
     WriteProvenance,
 };
 use fit::{eligible_sources, fit_neighbors, same_fitted_neighbors, source_in_txn};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -531,7 +532,7 @@ fn answer_unit(
         None,
     )?;
     if context.sources.iter().zip(current.value.iter()).any(|(old, new)| {
-        !matches!(new, Some((kind, _, body)) if *kind == old.entity_type && *blake3::hash(body).as_bytes() == old.hash)
+        !matches!(new, Some((kind, _, body)) if *kind == old.entity_type && *ContentHash::of(body).as_bytes() == old.hash)
     }) {
         return Ok(UnitOutcome::Abstain);
     }
@@ -746,7 +747,7 @@ pub(crate) fn trial_unit_context_in_txn(
         // The funnel supplies the live revision's logical bytes (FIX 5396):
         // an older revision's manifest bytes miss the recorded hash and the
         // trial refuses the frontier (FIX 5398).
-        if *blake3::hash(&body).as_bytes() != pin.body_hash
+        if *ContentHash::of(&body).as_bytes() != pin.body_hash
             || !source_eligible(vault, txn, &pin.id, header.entity_type)?
         {
             return Err(Error::ConcurrentWrite(
@@ -786,7 +787,7 @@ pub(super) fn source(
     entity_type: u8,
     stored: Vec<u8>,
 ) -> Result<GraphContextSource> {
-    let hash = *blake3::hash(&stored).as_bytes();
+    let hash = *ContentHash::of(&stored).as_bytes();
     let body = if reads_stored {
         stored
     } else {
@@ -940,7 +941,7 @@ pub(super) fn unit_audio(
             name: format!("audio_{}", audio.len()),
             evidence: EvidenceVersion {
                 id: source.id,
-                body_hash: *blake3::hash(&bytes).as_bytes(),
+                body_hash: *ContentHash::of(&bytes).as_bytes(),
             },
             media_type,
             bytes,
