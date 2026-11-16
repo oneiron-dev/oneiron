@@ -43,11 +43,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneiron_rpc/mod.rs` | src | m | 1 struct · 4 fn · 1 mod · 2 re-export | OwnServerBackend | Own-server LlmBackend |
 | `src/oneiron_rpc/tests.rs` | test | m | — | — | — |
 | `src/openai_compat/backend.rs` | src | s | 2 struct · 8 fn · 4 crate-vis | OpenAiCompatBackend, OpenAiCompatConfig | Backend assembly: config, backend struct, LlmBackend impl, and capability gating |
-| `src/openai_compat/image.rs` | src | m | 4 struct · 1 enum · 1 trait · 1 fn · 1 type · 7 crate-vis | DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse, OpenAiImagePart, OpenAiImageTransport | Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned |
-| `src/openai_compat/media.rs` | src | L | 3 struct · 2 enum · 1 trait · 2 fn · 1 type · 1 re-export | OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod, OpenAiMediaTransport | OpenAI-compatible media wires for the `ai.*` calls past text: images (`/v1/images/generations`… |
+| `src/openai_compat/media.rs` | src | m | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 2 re-export | OpenAiEmbedBackend, OpenAiImagePart, OpenAiMediaBody, OpenAiMediaClient, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod, OpenAiMediaTransport | The OpenAI-compatible media wire's shared seam, and its embeddings (`/v1/embeddings`) |
 | `src/openai_compat/media/embed_shape.rs` | src | s | 1 enum · 6 crate-vis | EmbedShape | The shapes a provider's embedding endpoint speaks (FIX 866) |
-| `src/openai_compat/media/prepare.rs` | src | s | 14 crate-vis | — | The OpenAI-compatible media calls' pure builders (FIX 8614, FIX 8616): every check a call's send makes on… |
-| `src/openai_compat/mod.rs` | src | s | 8 re-export | — | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+| `src/openai_compat/media/prepare.rs` | src | s | 4 fn · 3 crate-vis | — | The OpenAI-compatible media calls' pure builders (FIX 8614, FIX 8616): every check a call's send makes on… |
+| `src/openai_compat/mod.rs` | src | s | 7 re-export | — | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 | `src/openai_compat/options.rs` | src | s | 2 struct · 4 fn · 1 const | OpenAiProviderOptions, OpenAiReasoningOptions | Namespaced provider options and reasoning controls with wire-field projection |
 | `src/openai_compat/responses.rs` | src | m | 4 struct · 2 const · 3 re-export | OpenAiResponsesChain, OpenAiResponsesLlmStream, OpenAiResponsesStreamAccumulator, OpenAiResponsesTurn | Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event… |
 | `src/openai_compat/responses/chain.rs` | src | s | 8 fn | — | Responses socket-chain operations and item digests |
@@ -61,4 +60,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/systemone/mod.rs` | src | m | 3 struct · 1 trait · 3 fn · 1 type · 2 const · 1 re-export | SystemOneHttpRequest, SystemOneHttpResponse, SystemOneSeat, SystemOneTransport | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
 | `src/systemone/pack.rs` | src | s | 4 struct · 2 fn | SystemOnePackAnswer, SystemOnePackPrediction, SystemOnePackQuestion, SystemOnePackRequest | One native System One request over a shared state and ordered typed questions |
 | `src/systemone/tests.rs` | test | s | — | — | — |
+| `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |

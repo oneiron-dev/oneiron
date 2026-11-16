@@ -84,6 +84,30 @@ pub enum ChannelIdentitySelectionPatch {
 /// companion face reserved for personal ties — so an agent may amend them like
 /// the other built-in rows. An owner may edit or unlock every row, and an
 /// exact-identity override is always canonical.
+///
+/// These six are the defaults every vault reads before any rule is written:
+/// a fresh vault compiles to them at revision `0`, and nothing is stored.
+///
+/// # Worked example: one campaign from the owner's own mailbox
+///
+/// Canon's worked override (ARCH-0063 R1): at micro-campaign volume a warm
+/// human mailbox beats a cold side domain, and the owner's wording pass is
+/// the approval step. Once the owner's mailbox is connected as a
+/// `delegated_grant` identity, the owner writes one row:
+///
+/// ```text
+/// rule_id:             owner.campaign.<campaign>
+/// relationship:        campaign_outreach
+/// scope:               { kind: brief, brief_ref: <the campaign's brief> }
+/// face:                delegated_owner_account
+/// pinned_identity_ref: <the owner's delegated mailbox identity>
+/// ```
+///
+/// A brief scope outranks the vault default, so that campaign's sends wear
+/// the owner's mailbox and every other campaign keeps the side-domain
+/// default. No vault ships the row: it must pin a live identity of its own
+/// vault, and the update door refuses an identity the vault does not hold.
+/// `crates/oneiron/tests/channel_selection_worked_example.rs` runs it.
 #[must_use]
 pub fn builtin_channel_identity_selection_rules() -> [ChannelIdentitySelectionRule; 6] {
     [

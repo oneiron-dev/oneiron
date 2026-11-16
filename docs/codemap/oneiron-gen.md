@@ -15,7 +15,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gemini/clip_length.rs` | src | s | 1 crate-vis | — | A Veo clip's length as the clip states it (FIX 1816): the operation names none, so its MP4 movie header… |
 | `src/gemini/mod.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 1 type | GeminiMediaBackend, GeminiMediaHttpRequest, GeminiMediaHttpResponse, GeminiMediaTransport | Gemini API media wires for the `ai.*` calls past text |
 | `src/gemini/prepare.rs` | src | s | 6 crate-vis | — | The Gemini media calls' pure builders (FIX 8612, FIX 8613): every check a call's send makes on its own… |
-| `src/lib.rs` | src | s | 3 mod | — | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… |
+| `src/lib.rs` | src | s | 4 mod | — | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… |
+| `src/openai_compat.rs` | src | m | 1 struct · 1 fn · 1 re-export | OpenAiGenBackend | OpenAI-compatible image and video job wires: images (`/v1/images/generations`, `/v1/images/edits`) and video… |
+| `src/openai_compat/image.rs` | src | s | 3 struct · 1 enum · 1 trait · 1 fn · 1 type · 6 crate-vis | DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse, OpenAiImageTransport | Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned |
+| `src/openai_compat/prepare.rs` | src | s | 5 crate-vis | — | The OpenAI-compatible image and video calls' pure builders (FIX 8614, FIX 8616): every check a call's send… |
+| `src/openai_compat/tests.rs` | test | s | — | — | The direct image wire's reply decoding |
 | `src/openrouter/backend.rs` | src | s | 6 struct · 1 trait · 5 fn · 1 type · 1 crate-vis | OpenRouterImageBackend, OpenRouterImageConfig, OpenRouterImageHttpRequest, OpenRouterImageHttpResponse, OpenRouterImageModel, OpenRouterImageTransport, PromptShim | Model-local prompt configuration and host-owned HTTP transport |
 | `src/openrouter/mod.rs` | src | s | 2 re-export | — | OpenRouter Image API adapter |
 | `src/openrouter/wire.rs` | src | s | 3 fn | — | Buffered `/api/v1/images` request and response mapping |
+| `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |
