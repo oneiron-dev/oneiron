@@ -1,5 +1,5 @@
-//! `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and
-//! `vault.mail.reply.approve` on a served vault
+//! `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search`,
+//! `vault.mail.reply.approve` and `vault.mail.export_request` on a served vault
 //! (FIX 12559): the owner installs the engine's own Mail & Calendar pack, and
 //! runs one import step of a source, under the proof `/v1/owner` takes from
 //! the request. The generated HTTP and MCP dispatchers both enter here; an
@@ -8,13 +8,15 @@
 use std::sync::Arc;
 
 use oneiron::mail_pack::{
-    MailReplyApproveRequest, MailReplyDraftView, MailSearchReport, MailSourceSearchRequest,
-    MailSourceSyncRequest, MailSyncReport,
+    MailExportRequest, MailExportRequestView, MailReplyApproveRequest, MailReplyDraftView,
+    MailSearchReport, MailSourceSearchRequest, MailSourceSyncRequest, MailSyncReport,
 };
 use oneiron::memory::MemoryResult;
+use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
+use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::support::{internal, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron_mail_pack::ext::MailPackPackVaultExt as _;
@@ -90,4 +92,29 @@ pub(crate) async fn vault_mail_reply_approve(
     })
     .await
     .map_err(|_| internal("vault.mail.reply.approve"))?
+}
+
+/// `vault.mail.export_request` (fix list row 15416): an Owner's request for
+/// another member's personal mailbox in their next whole-vault export, on
+/// the caller's own credential handle, under the Owner's own proof. The
+/// facade refuses a non-owner before any hook runs; the engine's writer
+/// checks the proof again, with the Owner's standing. The request is
+/// side-table state and the member's Ask a queue row, so the door lists no
+/// record.
+pub(crate) async fn vault_mail_export_request(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: MailExportRequest,
+) -> Listed<MailExportRequestView> {
+    const VERB: &str = "vault.mail.export_request";
+    let proof = match owner_proof(auth, server, VERB) {
+        Ok(proof) => proof,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.mail_export_request_as_owner(&proof, &input)
+    })
+    .await
 }
