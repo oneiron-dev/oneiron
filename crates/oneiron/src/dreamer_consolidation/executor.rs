@@ -17,6 +17,7 @@ mod root_bridge;
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
+pub use extraction::ExtractionPrompt;
 use merge_resolution::MergeResolution;
 
 use super::evidence::{
@@ -187,7 +188,7 @@ impl ConsolidationExecutor<'_> {
     /// output keeps the decisions that shaped it. `stages` takes the wall ms
     /// of the gap upsert.
     pub(super) async fn resolve_conflicts(
-        &mut self,
+        &self,
         candidates: Vec<ExtractedCandidate>,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
@@ -339,15 +340,8 @@ impl ConsolidationExecutor<'_> {
                 for member in members {
                     join_decisions(&mut decisions, &member.decisions);
                 }
-                super::open_conflict::park_open_conflict(
-                    ctx.vault,
-                    self.actor,
-                    attempt_id,
-                    conflict,
-                    members,
-                    &decisions,
-                    &resources.write_fence(),
-                    ctx.now_ms,
+                resources.park_open_conflict(
+                    ctx.vault, self.actor, attempt_id, conflict, members, &decisions, ctx.now_ms,
                 )?;
                 Err(error)
             }

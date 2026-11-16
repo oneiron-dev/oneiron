@@ -3,20 +3,26 @@
 
 mod cli_env;
 mod egress;
+mod guest_pids;
 mod host_net_floor;
 pub mod image_release;
 mod relay_protocol;
+mod runner_fence;
 mod transport;
 pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
     CredentialEgressRecord, CredentialEgressStatus, EgressRelay, HttpRequest, HttpResponse,
     LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason, PreparedDatagram,
 };
+pub use guest_pids::{
+    GuestPressure, HostPidSpace, TASK_KERNEL_MEMORY_FLOOR_BYTES, live_guests, physical_pids_limit,
+};
 pub use host_net_floor::{
     HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
     UnmeteredFloor, floor_saturated, known_floor, saturated_floor,
 };
 pub use relay_protocol::{RelayAnswer, RelayReply, RelayRequest, read_relay, write_relay};
+pub use runner_fence::{RunnerFence, RunnerFenceMechanism, RunnerFenceOutcome};
 pub use transport::{SessionLease, SessionTransport};
 #[cfg(target_os = "linux")]
 mod launcher;
@@ -118,6 +124,10 @@ pub enum GuestSeccomp {
     GuestSandbox,
     /// Engine Landlock and seccomp user-notification launcher.
     EngineFence,
+    /// No filter: a runner the daemon starts on the host, under the runner
+    /// fence alone ([`RunnerFence`]; canon `#runner-fence`: no seccomp
+    /// deny-list).
+    Unfiltered,
 }
 
 /// What one session runs.
@@ -152,6 +162,11 @@ pub struct SessionManifest {
     /// Absent from a record that predates it.
     #[serde(default)]
     pub image_release: image_release::ImageReleaseObservation,
+    /// Pressure the guest showed before its container went away (FIX 8013):
+    /// `None` where nothing was observed (predates it, unreadable, or a
+    /// backend whose pressure is counted elsewhere). Evidence only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_pressure: Option<GuestPressure>,
 }
 
 /// Evidence verified before a guest can make its first network call.
@@ -274,7 +289,9 @@ impl ContainerRuntime {
             fence_proof: None,
             fence_unproven: true,
             image_release,
+            guest_pressure: None,
         };
+        guest_pids::note_spawned();
         Ok(GuestSession {
             runtime: self.program.clone(),
             name,
@@ -292,6 +309,30 @@ impl ContainerRuntime {
         spec: &GuestSpec,
         command: &[OsString],
         relay: Arc<dyn EgressRelay>,
+    ) -> Result<GuestSession> {
+        self.start_fenced_with(spec, command, relay, false)
+    }
+
+    /// [`start_fenced`](Self::start_fenced) whose container outlives its
+    /// guest until the host closes the guest's stdin (FIX 8013), so the
+    /// host still reads its cgroup after the guest's last frame. When the
+    /// guest exits, its launcher ends what it left running and its stdout,
+    /// so the host's reader still sees the guest's end at once.
+    pub fn start_fenced_until_stdin_closes(
+        &self,
+        spec: &GuestSpec,
+        command: &[OsString],
+        relay: Arc<dyn EgressRelay>,
+    ) -> Result<GuestSession> {
+        self.start_fenced_with(spec, command, relay, true)
+    }
+
+    fn start_fenced_with(
+        &self,
+        spec: &GuestSpec,
+        command: &[OsString],
+        relay: Arc<dyn EgressRelay>,
+        hold_until_stdin_closes: bool,
     ) -> Result<GuestSession> {
         #[cfg(target_os = "linux")]
         {
@@ -330,6 +371,12 @@ impl ContainerRuntime {
                 &config.launcher,
                 Path::new("/run/oneiron-fence-launcher"),
             )?);
+            if hold_until_stdin_closes {
+                args.push(OsString::from(format!(
+                    "--env={}=1",
+                    launcher::HOLD_UNTIL_STDIN_CLOSES_ENV
+                )));
+            }
             args.extend([
                 OsString::from("--entrypoint=/run/oneiron-fence-launcher"),
                 spec.image.as_str().into(),
@@ -375,7 +422,9 @@ impl ContainerRuntime {
                 fence_proof: None,
                 fence_unproven: true,
                 image_release,
+                guest_pressure: None,
             };
+            guest_pids::note_spawned();
             let mut session = GuestSession {
                 runtime: self.program.clone(),
                 name: name.clone(),
@@ -396,7 +445,7 @@ impl ContainerRuntime {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (spec, command, relay);
+            let _ = (spec, command, relay, hold_until_stdin_closes);
             Err(Error::Fence(std::io::Error::other(
                 "Foreign/Untrusted containers require a proven Linux fence",
             )))
@@ -437,7 +486,15 @@ fn run_args(name: &str, spec: &GuestSpec) -> Result<Vec<OsString>> {
         format!("--memory={memory_mib}m"),
         format!("--memory-swap={memory_mib}m"),
         format!("--cpus={}.{:03}", cpu_millis / 1000, cpu_millis % 1000),
-        format!("--pids-limit={pids}"),
+        format!(
+            "--pids-limit={}",
+            guest_pids::physical_pids_limit(
+                pids,
+                memory_mib,
+                guest_pids::HostPidSpace::read(),
+                guest_pids::live_guests().saturating_add(1),
+            )
+        ),
         format!("--tmpfs=/tmp:rw,nosuid,nodev,size={tmpfs_mib}m"),
     ]
     .into_iter()
@@ -494,6 +551,38 @@ fn with_stderr_tail(error: Error, tail: &str) -> Error {
     }
 }
 
+/// The host cgroup directory holding `pids.events` for the container the
+/// inspect `evidence` names, if any. `CgroupPath` joined under
+/// `/sys/fs/cgroup` first, then as given, then the container pid's own
+/// `/proc/<pid>/cgroup` line. Fails soft to `None`.
+#[cfg(target_os = "linux")]
+fn pressure_cgroup_dir(evidence: &serde_json::Value) -> Option<PathBuf> {
+    if let Some(path) = supervisor::cgroup_path(evidence) {
+        let joined = PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+        if joined.join("pids.events").is_file() {
+            return Some(joined);
+        }
+        let given = PathBuf::from(path);
+        if given.is_absolute() && given.join("pids.events").is_file() {
+            return Some(given);
+        }
+    }
+    let pid = supervisor::host_pid(evidence)?;
+    let own = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    let relative = own
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))?
+        .trim_start_matches('/');
+    if relative
+        .split('/')
+        .any(|part| part == ".." || part.is_empty())
+    {
+        return None;
+    }
+    let dir = PathBuf::from("/sys/fs/cgroup").join(relative);
+    dir.join("pids.events").is_file().then_some(dir)
+}
+
 /// One running guest. Dropping it stops and removes the container.
 pub struct GuestSession {
     runtime: PathBuf,
@@ -527,6 +616,30 @@ impl GuestSession {
             .unwrap_or_default()
     }
 
+    /// Reads this session's cgroup `pids.events` while its container runs:
+    /// `Some` on a nonzero `max` count, else `None`. Best-effort, never an error.
+    pub fn observe_pressure(&self) -> Option<GuestPressure> {
+        #[cfg(target_os = "linux")]
+        {
+            let evidence = supervisor::inspect_value(&self.runtime, &self.name)?;
+            let dir = pressure_cgroup_dir(&evidence)?;
+            let text = std::fs::read_to_string(dir.join("pids.events")).ok()?;
+            guest_pids::parse_pids_events(&text).map(|hits| GuestPressure::Processes { hits })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    /// Stores what [`observe_pressure`](Self::observe_pressure) sees into
+    /// this session's manifest, when it sees anything. Never an error.
+    pub fn record_pressure(&mut self) {
+        if let Some(pressure) = self.observe_pressure() {
+            self.manifest.guest_pressure = Some(pressure);
+        }
+    }
+
     #[must_use]
     pub fn abandoned(&self) -> bool {
         #[cfg(target_os = "linux")]
@@ -549,6 +662,7 @@ impl GuestSession {
 
 impl Drop for GuestSession {
     fn drop(&mut self) {
+        guest_pids::note_dropped();
         #[cfg(target_os = "linux")]
         self.supervisor.take();
         drop(self.child.stdin.take());

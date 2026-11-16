@@ -33,16 +33,8 @@ pub struct SpawnSpend {
     pub scope: SpendScopeId,
 }
 
-/// One agent the launch starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LaunchRole {
-    Agent,
-    /// A saved workflow's leaf. The inert workflow wrapper is not an agent.
-    WorkflowLeaf {
-        ordinal: usize,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_dispatch::launch::LaunchRole;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchNode {

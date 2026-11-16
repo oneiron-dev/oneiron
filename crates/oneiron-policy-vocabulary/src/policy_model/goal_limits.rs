@@ -2,6 +2,7 @@
 //! against. None refuses (rule 5): past one, the intake raises its scan
 //! check and keeps the whole record. Reading a historical goal never counts
 //! it again.
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use crate::EntityId;
@@ -333,9 +334,7 @@ impl GoalLimits {
 /// `name`'s one value in `entries`: `Some(None)` when absent, `None` when
 /// named twice.
 fn field<'v>(entries: &'v [(Value, Value)], name: &str) -> Option<Option<&'v Value>> {
-    let mut rows = entries.iter().filter(|(k, _)| k.as_str() == Some(name));
-    let first = rows.next().map(|(_, v)| v);
-    rows.next().is_none().then_some(first)
+    msgpack::Entries::new(entries).get(name).ok()
 }
 
 fn canonical_id(value: &Value) -> Option<EntityId> {

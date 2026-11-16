@@ -1739,17 +1739,22 @@ model = "rerank:<the model your server loaded>"
 
 [models.recall]
 rerank_budget_units = 32000   # each recall's own line; the default
+rerank_pair_template_units = 16   # what the template adds to each pair; the default
 ```
 
 Each paid recall runs on a line of its own under the vault's budget policy,
 as a chat turn does. Before a call leaves it is priced on its words, a unit
-per byte of each document plus the query once per document, and 16 more
-per document for the marks a cross-encoder puts around each pair. A line
-that cannot cover that refuses the call unsent with `BUDGET_SPENT`. The
-default line covers 50 documents of 500 ASCII characters beside a query of
-about 120; longer documents, text outside ASCII (several bytes a
-character), or a model whose template wraps each pair in a longer prompt
-need a larger `rerank_budget_units`. Each rung of the `reranker` route the
+per byte of each document plus the query once per document, and
+`rerank_pair_template_units` more per document for what the reranker's
+template puts around each pair: 16 when unset, the marks a cross-encoder
+puts around a pair. A line that cannot cover that refuses the call unsent
+with `BUDGET_SPENT`. The default line covers 50 documents of 500 ASCII
+characters beside a query of about 120; longer documents or text outside
+ASCII (several bytes a character) need a larger `rerank_budget_units`. A
+model whose template wraps each pair in a longer prompt (an instruction-style
+reranker's template adds about a hundred tokens a pair) needs
+`rerank_pair_template_units` set to the most any rung's template adds, and a
+line to match; left at 16, its short documents can bill past the line. Each rung of the `reranker` route the
 call reaches is admitted on its own permit, reserving that price (at least
 one call's 8000 units, or the whole line if smaller), sent through the run's
 gate and settled: the tokens the reranker reports, or the reservation when
@@ -1761,10 +1766,12 @@ role picks the model, as for chat.
 
 The recall scores exactly the block it would rerank: the candidates the
 reader may read, with each one's text as the reader's own read serves it.
-A row with no revision that holds its words (a message whose words live in
-its document: a streamed message, the server's own chat replies among them,
-or an edited one; or a turn whose messages show none) is found but not
-reranked yet: it follows the reranked rows in its first-stage order. Each
+A message whose words live in its document (a streamed message, the
+server's own chat replies among them, or an edited one) is scored at the
+words its indexed revision holds. A row with no revision that holds its
+words (a message whose document head was written around the ledger, or a
+turn whose messages show none) is found but not reranked yet: it follows
+the reranked rows in its first-stage order. Each
 text is judged by the write door as it would leave, a turn's messages
 joined as the reranker would read them, and one the door refuses is sent
 empty. So is a row a device-only world keeps, at the revision scored: a
@@ -1822,7 +1829,7 @@ model = "house:qwen3.8-27b"
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
 max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
-think_threshold = 0.8                          # the ThinkThreshold row's start value
+think_threshold = 0.277                        # the ThinkThreshold row's start value (the default)
 ```
 
 The recipe is yours, not the server's (`format = 3`): it names the plain
@@ -1906,7 +1913,12 @@ reading is recorded on every receipt and routes nothing.
 
 `think_threshold` starts the ThinkThreshold row: a paired "does this need
 more thinking?" reading (Q2) at or above it lets the call step up a rung
-while its clock allows (`ReasoningCause::PairedHigh`). The house read
+while its clock allows (`ReasoningCause::PairedHigh`). It starts at 0.277,
+the p90 of the house read's Q2 over 1,000 BoolQ reads (FIX 22229), so about
+one read in ten steps up to the Big rung until the Coach tunes the row. Each
+read weighed against the row logs its route (direct, stepped up or step
+unfinished), its Q2 reading and the host's step-up rate so far, under the
+`oneiron::decision::think_route` log target. The house read
 measures Q2 jointly with each question's labels. A generated read (a
 caller's own model, `DecisionLadder::run_pack_generated`) asks the ladder's
 paired question, the recipe's `paired` wording, beside each of its questions
@@ -2871,11 +2883,25 @@ Answer with `POST /v1/ai/quota/{id}`
 A rung whose provider is down hands the call to the next rung, and its offer
 rests for its health in memory. A server error, a timeout, a cut stream and an
 empty answer all count as down. The rest is 5 s, doubling with each failure
-in a row up to 60 s, with jitter. A restart starts every offer healthy. While
+in a row up to 60 s, with jitter. `[models] health_rest_secs` sets the first
+rest, from 1 to 60 s. A restart starts every offer healthy. While
 every rung the call may use rests, the call waits for the first one back
 within the same wait budget as for limits, then tries the chain again. A call
 that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
+
+A durable model step (`ai.steps.submit`) names one exact model, so it waits
+for that offer instead of the next rung. A send it would make while the offer
+rests for its health, or while its probation request is out, is not sent and
+spends none of the step's `retry.max_attempts`: those count sends. The step
+waits for the offer back within the vault's longest wait, or within
+`[models] step_rest_wait_secs` when that is shorter. Past it, the receipt says
+`{"status": "parked", "until": <when the offer is back>, "sends": <sends made>}`
+and the step resumes on its own then, with the rest of its declared attempts.
+A restart drops that wait; a submission of the same `step_key` resumes the step.
+A send counts once it goes out: a step stopped while a send is out resumes with
+that send spent, and a resume that finds every declared attempt sent fails at
+once with an `io_after_send` cut, as the last reply was lost.
 
 When an offer's rest ends it is on probation: a failure rests it again with
 one more strike. On probation it takes one request at a time. The call that

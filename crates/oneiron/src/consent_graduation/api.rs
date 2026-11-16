@@ -47,16 +47,12 @@ pub struct GraduationScopeRequest {
     pub scope: GraduationScope,
 }
 
-/// Threshold and snooze knobs are policy inputs, never engine-default changes.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraduationPolicy {
-    pub scope_pattern: String,
-    pub required_streak: u32,
-    pub posterior_guard: f32,
-    /// First and second decline backoffs, in seconds. The third decline pins.
-    pub snooze_backoff_seconds: [u64; 2],
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::consent_graduation::api::{
+    GraduationAnswer, GraduationChanged, GraduationDemotionReason, GraduationMode,
+    GraduationOutcome, GraduationPolicies, GraduationPolicy, GraduationPolicyClearRequest,
+    GraduationPolicySetRequest, GraduationSnooze,
+};
 
 impl From<ThresholdRow> for GraduationPolicy {
     fn from(row: ThresholdRow) -> Self {
@@ -74,37 +70,6 @@ impl From<ThresholdRow> for GraduationPolicy {
 pub struct GraduationPolicyRequest {
     #[serde(default)]
     pub scope: Option<GraduationScope>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GraduationPolicies {
-    pub rows: Vec<GraduationPolicy>,
-    pub effective: Option<GraduationPolicy>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraduationPolicySetRequest {
-    pub policy: GraduationPolicy,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraduationPolicyClearRequest {
-    pub scope_pattern: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GraduationChanged {
-    pub changed: bool,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GraduationOutcome {
-    ApprovedUntouched,
-    ApprovedAmended,
-    Rejected,
 }
 
 impl From<GraduationOutcome> for ProposalOutcome {
@@ -125,16 +90,6 @@ impl From<ProposalOutcome> for GraduationOutcome {
             ProposalOutcome::Rejected => Self::Rejected,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum GraduationMode {
-    #[serde(rename = "propose")]
-    Propose,
-    #[serde(rename = "offered")]
-    Offered,
-    #[serde(rename = "auto")]
-    Auto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -171,14 +126,6 @@ impl From<ScopeOutcomeStats> for GraduationStats {
 pub struct GraduationOutcomeRequest {
     pub scope: GraduationScope,
     pub outcome: GraduationOutcome,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum GraduationSnooze {
-    None,
-    Snoozed { count: u8, next_eligible_at: u64 },
-    ManualPinned,
 }
 
 impl From<SnoozeState> for GraduationSnooze {
@@ -231,16 +178,6 @@ pub struct GraduationOffer {
     pub reach: crate::vault_shape::ShapePlanReach,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum GraduationAnswer {
-    #[serde(rename = "auto")]
-    Auto,
-    #[serde(rename = "not-now")]
-    NotNow,
-    #[serde(rename = "manual_pinned")]
-    ManualPinned,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraduationAnswerRequest {
@@ -254,14 +191,6 @@ pub struct GraduationAnswerReceipt {
     pub answer: GraduationAnswer,
     pub grant: Option<ConsentActReceipt>,
     pub snooze: GraduationSnooze,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GraduationDemotionReason {
-    Rejected,
-    Amended,
-    AgentJudgment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
