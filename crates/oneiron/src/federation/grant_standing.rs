@@ -341,6 +341,27 @@ pub(crate) fn grant_row_in_fold(
         return StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, now)
             .map(SharedGrantRow::Standing);
     }
+    unacted_row(fold, id, grant, terms_key, now)
+}
+
+/// A row no pass 28 step reads through an act yet (an own-device or engine-default Grant,
+/// read as derived in R4) reads from itself, unexpired, while no counted act names it. A row
+/// a counted act names stands only on that act's line, whatever its shape says now: a
+/// counted guest's row re-put as a member row, or a member row re-put in a steward's shape,
+/// keeps its line's terms and its end (review #8855 P1-1), and a line two families name, or
+/// only an end, gives it nothing.
+fn unacted_row(
+    fold: &AuthorityFold,
+    id: EntityId,
+    grant: FederationGrant,
+    terms_key: Option<GrantTermsKey>,
+    now: u64,
+) -> Option<SharedGrantRow> {
+    if let Some(line) = fold.grant_line(id) {
+        let family = line.family?;
+        return StandingGrant::decoded_in_fold(fold, id, grant, terms_key, &[family], now)
+            .map(SharedGrantRow::Standing);
+    }
     grant
         .expires_at
         .is_none_or(|expires_at| now < expires_at)
@@ -380,10 +401,7 @@ fn shared_grant_row_decoded(
     now: u64,
 ) -> Option<SharedGrantRow> {
     match shared_row_families(&grant) {
-        None => grant
-            .expires_at
-            .is_none_or(|expires_at| now < expires_at)
-            .then_some(SharedGrantRow::Unacted(id, grant)),
+        None => unacted_row(fold, id, grant, terms_key, now),
         Some(families) => StandingGrant::decoded_in_fold(fold, id, grant, terms_key, families, now)
             .map(SharedGrantRow::Standing),
     }
