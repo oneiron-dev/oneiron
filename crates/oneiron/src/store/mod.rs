@@ -518,6 +518,7 @@ pub(crate) use key_custody::{
 };
 pub(crate) use key_encoding::*;
 // KS-3: the known-value index's master and history in typed custody.
+pub(crate) use known_history::known_value_held_in_txn;
 pub(crate) use known_history::{
     KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, known_history_prefixes,
     read_back_known_history, require_known_history,

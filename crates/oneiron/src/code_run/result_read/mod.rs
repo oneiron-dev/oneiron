@@ -13,9 +13,11 @@
 //! stops at its live cutoff (FIX 8233; see `run_body`). A body a lease's
 //! secret tainted, or one the secret scan marked for a span a read places
 //! again, is read through its redacted view, each secret span blanked; one
-//! an erase or a withdrawal took, one marked for anything else, and one in
-//! which the scan still finds a secret once its spans are blanked, is
-//! withheld whole (ARCH-0069 `#result-bodies`, L6-31; see `redacted`).
+//! an erase or a withdrawal took, one marked for anything else, one tainted
+//! by a secret whose value an erase of its record took from the known-value
+//! index (no view can blank it), and one in which the scan still finds a
+//! secret once its spans are blanked, is withheld whole (ARCH-0069
+//! `#result-bodies`, L6-31; see `redacted`).
 
 mod arm;
 mod chunks;
@@ -151,6 +153,11 @@ pub(crate) struct ResultRead {
     range: Option<(u64, u64)>,
     state: ArtifactTaintState,
     secret: Option<String>,
+    /// Whether the known-value index still holds the value of every secret
+    /// a lease's taint ref of the occurrence names (KS-3), read with its
+    /// taint: the values its redacted view blanks. An erase of a holding
+    /// record takes them, and the body is then withheld whole.
+    taint_values_known: bool,
     /// Whether the read is for a caller other than `owner`: a delegated
     /// source keeps its caller's name, while an unnamed child finding uses
     /// its exact occurrence.
@@ -181,6 +188,8 @@ impl ResultRead {
             return Ok(Err(refused));
         }
         let (state, secret) = storage.code_run_result_taint(Some(owner), &output)?;
+        let taint_values_known =
+            storage.code_run_result_taint_values_known(Some(owner), &output)?;
         Ok(Ok(Self {
             owner,
             output,
@@ -188,6 +197,7 @@ impl ResultRead {
             range,
             state,
             secret,
+            taint_values_known,
             foreign,
             live_cutoff: None,
         }))
@@ -227,9 +237,13 @@ impl ResultRead {
     /// tainted by a lease's secret, or by a scan mark whose span a read
     /// places again. An erase or a withdrawal (`response_erased`) takes the
     /// content, not a span, and a mark no rule places names nothing to
-    /// blank, so either stays withheld whole.
+    /// blank, so either stays withheld whole. So does a body a lease's
+    /// secret tainted once an erase of its record took the value from the
+    /// known-value index: the view could not blank it (KS-3).
     fn redacts(&self) -> bool {
-        self.state.is_tainted() && self.secret.as_deref().is_none_or(span_placed_for)
+        self.state.is_tainted()
+            && self.taint_values_known
+            && self.secret.as_deref().is_none_or(span_placed_for)
     }
 
     /// Runs `read` over the body this read shows in `storage`, and whether
@@ -247,10 +261,17 @@ impl ResultRead {
             return read(&body, false);
         }
         let whole = RunBody::whole(self, storage);
-        match RedactedBody::of(&body, &whole, redacted::known_source(storage)?)? {
-            Some(view) => read(&view, true),
-            None => read(&body, false),
+        let Some(view) = RedactedBody::of(&body, &whole, redacted::known_source(storage)?)? else {
+            return read(&body, false);
+        };
+        // The view's pass blanked the values the index held when it read
+        // them. An erase that took one before that pass leaves it shown, so
+        // the values are read again after it: a value held now was held by
+        // the pass, as only an erase takes one (KS-3).
+        if !storage.code_run_result_taint_values_known(Some(self.owner), &self.output)? {
+            return read(&body, false);
         }
+        read(&view, true)
     }
 
     /// Whether this is a delegated source named in the caller's own run,

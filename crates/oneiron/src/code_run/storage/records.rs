@@ -409,6 +409,20 @@ impl Vault {
         Ok(self.result_marks_in_txn(&rtxn, owner, output)?.0)
     }
 
+    /// Whether the known-value index still holds the value of every secret
+    /// a taint ref of the occurrence of `output` that `owner` holds names,
+    /// at the generation it was read at (KS-3): the values the occurrence's
+    /// redacted view blanks. `true` with no ref.
+    pub(crate) fn code_run_raw_output_taint_values_known(
+        &self,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let (refs, _) = self.result_marks_in_txn(&rtxn, owner, output)?;
+        crate::secret_rotation::taint_values_known_in_txn(&self.store, &rtxn, &refs)
+    }
+
     /// The READ-TIME taint state of one raw output (ARCH-0069 S7, amended).
     ///
     /// Derived on every call from the sidecar refs and the custody records'

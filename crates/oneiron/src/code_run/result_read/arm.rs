@@ -93,6 +93,9 @@ impl ResultRead {
             range,
             state,
             secret,
+            // The arm makes no redacted view: it withholds every body that
+            // is not clean, so no value it shows waits on the index.
+            taint_values_known: true,
             foreign,
             // The arm reads for no scoped child: no live cutoff applies
             // (FIX 8233).

@@ -47,7 +47,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result, StoreError};
 use crate::overlay_db::OverlayDb;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable, SideTableDbs};
 use crate::store::key_custody::{
     CustodyBinding, CustodyId, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
     LocalCustody, Requirement, RetireCause, RetirementIntent, custody_present, retirement_in_txn,
@@ -640,6 +640,25 @@ fn known_retirement_ready(
         ));
     }
     Ok(true)
+}
+
+/// Whether `holder`'s committed known-value history holds the value it held
+/// at record generation `generation` (KS-3): the value a lease that read
+/// the record at that generation was handed. A rotation, a revocation and
+/// an archive keep a holder's history; only its erase takes it.
+///
+/// # Errors
+///
+/// Storage faults, and a damaged history row.
+pub(crate) fn known_value_held_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    holder: &EntityId,
+    generation: u32,
+) -> Result<bool> {
+    Ok(HISTORY
+        .get(dbs, txn, holder)?
+        .is_some_and(|refs| refs.0.iter().any(|held| held.generation == generation)))
 }
 
 /// The ids a stream's sweep reads known values through (KS-3): the history

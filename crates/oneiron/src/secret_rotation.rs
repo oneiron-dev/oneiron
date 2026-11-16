@@ -338,6 +338,32 @@ pub(crate) fn taint_state_for_refs_in_txn(
     Ok(ArtifactTaintState::TaintedLive)
 }
 
+/// Whether the known-value index still holds the value each of `refs` was
+/// read at, inside a txn the caller owns (KS-3): the ref's name resolves to
+/// a record whose history keeps the value it held at the ref's generation.
+/// That is the value a tainted body's redacted view blanks (ARCH-0069
+/// `#result-bodies`). An erase of the record takes its history (canon
+/// `#restore-masking`: an erased secret keeps no fingerprint), so a body
+/// read under it has no view and is withheld whole. Fail-closed: a name
+/// that resolves to no record, or to a record that took the name after the
+/// one read (its generations start above the name's high-water, FIX 5958),
+/// reads as not held. `true` for no refs.
+pub(crate) fn taint_values_known_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    refs: &[SecretTaintRef],
+) -> Result<bool> {
+    for r in refs {
+        let Some(id) = resolve_secret_ref_in_txn(store, txn, &r.secret_ref)? else {
+            return Ok(false);
+        };
+        if !crate::store::known_value_held_in_txn(store, txn, &id, r.generation)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Reads the FORWARD taint refs of one exhaust entity inside a txn.
 ///
 /// The refs ride replicated rows only: the pinned `secret_taint.refs` body

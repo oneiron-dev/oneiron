@@ -278,6 +278,25 @@ impl SessionBinding<'_> {
             })
         })
     }
+
+    /// Whether the known-value index still holds the value of every secret
+    /// a taint ref of the occurrence of a body that `owner` holds names, at
+    /// the generation it was read at (KS-3), from the room's sidecars in
+    /// one composed snapshot: the values its redacted view blanks.
+    fn result_taint_values_known(
+        &self,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<bool> {
+        let occurrence = ResultOccurrence::of(owner, output)?;
+        let key = occurrence.mark_key(&output.handle);
+        self.answered(|| {
+            self.session.read_composed(|view, txn| {
+                let refs = RAW_OUTPUT_TAINTS.get(view, txn, &key)?.unwrap_or_default();
+                crate::secret_rotation::taint_values_known_in_txn(view, txn, &refs)
+            })
+        })
+    }
 }
 
 /// Where one code run's storage lives: the canonical vault, or a live
@@ -736,6 +755,22 @@ impl<'a> ExecutorStorage<'a> {
                 vault.code_run_raw_output_secret(owner, output)?,
             )),
             Self::Session(binding) => binding.result_taint(owner, output),
+        }
+    }
+
+    /// Whether the known-value index still holds the value of every secret
+    /// a lease's taint ref of `owner`'s occurrence of `output` names, at the
+    /// generation it was read at (KS-3): the values its redacted view
+    /// blanks. An erase of a holding record takes them, so such a body has
+    /// no view and is withheld whole (canon ARCH-0069 `#restore-masking`).
+    pub(crate) fn code_run_result_taint_values_known(
+        &self,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<bool> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_raw_output_taint_values_known(owner, output),
+            Self::Session(binding) => binding.result_taint_values_known(owner, output),
         }
     }
 
