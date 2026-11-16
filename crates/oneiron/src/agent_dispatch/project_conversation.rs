@@ -185,6 +185,10 @@ impl AgentDispatcher<'_> {
         at: u64,
     ) -> Result<Option<LoadedSkillPack>> {
         let run = self.live_project_run(leased)?;
+        let skills = &ProjectConversationSkills {
+            goal_intake: self.goal_intake_skill_in_force(skills.goal_intake)?,
+            ..skills.clone()
+        };
         // Both project runs are roots, so the briefing their dispatch froze is
         // the one they run with. Any other run's briefing is not read here.
         let briefing = run
@@ -204,16 +208,18 @@ impl AgentDispatcher<'_> {
             }
             ProjectRunBriefing::GoalIntake(brief) => {
                 self.check_goal_intake_run(&run, &brief)?;
-                let goal_intake = self.goal_intake_skill_in_force(skills.goal_intake)?;
-                let record = self.vault.get_skill_record(&goal_intake)?.ok_or_else(|| {
-                    Error::InvalidConfig("the configured goal-intake skill is missing".into())
-                })?;
+                let record = self
+                    .vault
+                    .get_skill_record(&skills.goal_intake)?
+                    .ok_or_else(|| {
+                        Error::InvalidConfig("the configured goal-intake skill is missing".into())
+                    })?;
                 if record.skill_id != GOAL_INTAKE_SKILL {
                     return Err(Error::InvalidConfig(
                         "the configured goal-intake skill is another skill".into(),
                     ));
                 }
-                goal_intake
+                skills.goal_intake
             }
         };
         let loaded = self.vault.load_attempt_skill_pack(
