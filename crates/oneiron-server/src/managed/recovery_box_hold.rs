@@ -480,6 +480,11 @@ impl RecoveryBoxHold for HypnosRecoveryBoxHold {
         // The inherent method, which takes precedence over this one.
         HypnosRecoveryBoxHold::hold_kit_only(self, kit_only)
     }
+
+    fn report_recovery_wait(&self, wait: Duration) -> oneiron::Result<()> {
+        // The inherent method, as above: the relay call.
+        HypnosRecoveryBoxHold::report_recovery_wait(self, wait)
+    }
 }
 
 impl crate::server::SyncServer {

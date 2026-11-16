@@ -44,28 +44,39 @@ pub struct KitOnlyFact {
     pub entry: AuthorityEntryHash,
 }
 
-/// Reads the vault's latest kit-only fact. The watch and the boot heal rely
-/// on this contract:
-/// - `Ok(None)` only when the fold admitted no kit-only fact (the owner never
-///   switched). A failure to read is an `Err`, never `None`: on `None` the
-///   boot heal falls back to this install's own preset, which reads
-///   `Standard` on a node.
-/// - The fact is the latest in fold order that the fold admitted as the
-///   owner's: an entry the fold refuses (an agent's, or one signed by an
-///   owner key it had revoked) never counts.
-/// - `entry` is the hash of that admitted entry, so the watch sends one hold
-///   per fact.
-/// - A later read never answers an older fact than an earlier read did.
+/// Reads the vault's kit-only fact. The watch and the boot heal rely on this
+/// contract:
+/// - `Ok(None)` only when the fold holds no kit-only act in force: the owner
+///   never switched with an owner key's proof, or the live acts never agreed.
+///   A failure to read is an `Err`, never `None`: on `None` the boot heal
+///   falls back to this install's own preset, which reads `Standard` on a
+///   node.
+/// - The fact is the act in force that the fold counted as the owner's: one
+///   with no owner key's proof (an agent's, a carrier's alone, or one signed
+///   by an owner key the fold had revoked) never counts.
+/// - `entry` is the hash of that act in force, so the watch sends one hold per
+///   fact. The act in force may move back to an earlier act (a conflict
+///   settles on the live acts' common choice); the watch then sends that
+///   act's hold, as for any fact it has not acknowledged.
 pub type KitOnlyFactRead =
     Arc<dyn Fn(&oneiron::Vault) -> oneiron::Result<Option<KitOnlyFact>> + Send + Sync>;
 
-/// The fold's reader of the kit-only fact, which managed boot passes. The
-/// fact and its fold reader belong to the preset switch (OPUS-WAYBACK's fact
-/// PR). No switch writes the fact before that PR lands, so until then this
-/// answers `None` and the node sends no hold for a device's switch, as
-/// before.
+/// The fold's reader of the kit-only fact, which managed boot passes: the
+/// preset switch's act in force ([`oneiron::Vault::recovery_box_kit_only_fact`]).
+/// A vault that was already kit-only before the switch wrote the fact gets
+/// its first fact at its next switch (FIX
+/// RECOVERY-BOX-DEAD-RECORD-AFTER-DEVICE-SWITCH covers that gap).
 pub(crate) fn fold_kit_only_fact() -> KitOnlyFactRead {
-    Arc::new(|_vault: &oneiron::Vault| -> oneiron::Result<Option<KitOnlyFact>> { Ok(None) })
+    Arc::new(
+        |vault: &oneiron::Vault| -> oneiron::Result<Option<KitOnlyFact>> {
+            Ok(vault
+                .recovery_box_kit_only_fact()?
+                .map(|fact| KitOnlyFact {
+                    kit_only: fact.kit_only,
+                    entry: fact.entry,
+                }))
+        },
+    )
 }
 
 /// What the watch keeps between looks, in this process only: the fact the

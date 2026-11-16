@@ -84,6 +84,10 @@ impl RecoveryBoxHold for DiesAfterHolding {
         self.calls.lock().expect("calls").push(kit_only);
         panic!("the process dies after the box held");
     }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
 }
 
 /// The box holds but never releases.
@@ -99,6 +103,10 @@ impl RecoveryBoxHold for FailsToRelease {
             )))
         }
     }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
 }
 
 /// The box refuses a new hold but releases.
@@ -113,6 +121,10 @@ impl RecoveryBoxHold for RefusesToHold {
         } else {
             Ok(())
         }
+    }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
     }
 }
 

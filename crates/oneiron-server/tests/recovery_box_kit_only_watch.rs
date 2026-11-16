@@ -383,6 +383,10 @@ fn the_boot_heal_sends_the_facts_choice_over_this_installs_preset() {
         }
     }
 
+        fn report_recovery_wait(&self, _wait: Duration) -> oneiron::Result<()> {
+            Ok(())
+        }
+
     // this install's preset reads `Standard` with a marker left, as on a
     // managed node, whose own preset never leaves `Standard`
     let directory = tempfile::tempdir().expect("temp dir");
