@@ -10,12 +10,15 @@
 //! (another audit arch, or x32 on x86_64). `clone3`, whose flags the filter
 //! cannot read, answers ENOSYS, so the C library starts a thread with
 //! `clone`; `clone` is allowed for a thread, and for any process only on the
-//! probe's list. Three calls every organ makes can name another process by
-//! an argument, so the program checks that argument before the list
-//! ([`ARGUMENT_CHECKED`]): `tgkill` signals only the organ's own process,
-//! `prlimit64` reads or sets only its own limits, and `fcntl` never makes a
-//! descriptor signal its owner (`F_SETOWN`, `F_SETOWN_EX`, `F_SETSIG`), by
-//! which the kernel would signal a process the organ names. The calls the
+//! probe's list. Four calls an organ makes can reach past it by an
+//! argument, so the program checks that argument before the list
+//! ([`ARGUMENT_CHECKED`]): `tgkill` signals only the organ's own process;
+//! `prlimit64` only reads the organ's own limits, and setting one answers
+//! EPERM, so no organ lifts the limits its grant set; `fcntl` never makes a
+//! descriptor signal its owner, which the organ could make another process
+//! (`F_SETOWN`, `F_SETOWN_EX`, `F_SETSIG`), nor takes a lease that stalls
+//! another process's open (`F_SETLEASE`); `prctl` only names the calling
+//! thread or reads its name, as a thread pool's start does. The calls the
 //! deny-list of census L4-09 named ([`DENIED`]), and an organ's ways to a
 //! network or another process (`lists::NEVER`), are on no list: the crate
 //! does not compile if one is.
@@ -88,15 +91,23 @@ const JUMP_IF_BITS: u16 = (libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K) as u16;
 const RETURN: u16 = (libc::BPF_RET | libc::BPF_K) as u16;
 
 /// Where `struct seccomp_data` holds the low word of the call's first and
-/// second arguments (both tables here are little-endian). Each argument
+/// second arguments (both tables here are little-endian). Each of these
 /// checked here is a 32-bit `int` or `unsigned int` in the kernel, which
 /// reads only this word.
 const FIRST_ARGUMENT_OFFSET: u32 = std::mem::offset_of!(libc::seccomp_data, args) as u32;
 const SECOND_ARGUMENT_OFFSET: u32 = FIRST_ARGUMENT_OFFSET + 8;
+/// The low and high words of the call's third argument, a pointer.
+const THIRD_ARGUMENT_OFFSET: u32 = FIRST_ARGUMENT_OFFSET + 16;
+const THIRD_ARGUMENT_HIGH_OFFSET: u32 = THIRD_ARGUMENT_OFFSET + 4;
 
 /// The calls [`argument_rows`] checks before the list, each of which can
-/// name another process by an argument: no list names one.
-const ARGUMENT_CHECKED: &[libc::c_long] = &[libc::SYS_tgkill, libc::SYS_prlimit64, libc::SYS_fcntl];
+/// reach past the organ by an argument: no list names one.
+const ARGUMENT_CHECKED: &[libc::c_long] = &[
+    libc::SYS_tgkill,
+    libc::SYS_prlimit64,
+    libc::SYS_fcntl,
+    libc::SYS_prctl,
+];
 
 /// `fcntl` commands libc 0.2 does not name on Linux (uapi
 /// asm-generic/fcntl.h, which x86_64 and aarch64 both use): a descriptor's
@@ -144,9 +155,9 @@ impl SyscallFilter {
     /// table: a first-party image or seal organ, or the probe, under its own
     /// list; every other organ under the fixed tier list. A call under
     /// another audit arch, an x32 call, a `clone` that starts no thread
-    /// (save the probe's), a call aimed at another process
-    /// ([`argument_rows`]), or a call its list does not name kills the
-    /// process; `clone3` answers ENOSYS.
+    /// (save the probe's), a call whose arguments [`argument_rows`]
+    /// refuses, or a call its list does not name kills the process;
+    /// `clone3` answers ENOSYS, and a `prlimit64` that sets a limit EPERM.
     ///
     /// # Errors
     /// This build's architecture has no audit arch here, so no program can
@@ -329,16 +340,29 @@ fn clone_rows(forks: bool) -> Vec<libc::sock_filter> {
 /// The rows for [`ARGUMENT_CHECKED`], before the list's, and the indexes
 /// among them of the rows that compare an argument with the organ's own
 /// pid, which is not known before the fork (`SyscallFilter::install` writes
-/// it there). `tgkill` is allowed only at the organ's own process, the way
-/// `abort` signals its own thread; `prlimit64` only at itself, pid 0 (as the
-/// C library calls it) or its own pid; `fcntl` with every command but those
-/// that make a descriptor signal its owner when it is ready (`F_SETOWN`,
-/// `F_SETOWN_EX`, `F_SETSIG`), since the owner could be another process.
-/// Any other kills. Each loads an argument over the number, so both
-/// outcomes return here.
+/// it there):
+/// - `tgkill` only at the organ's own process, the way `abort` signals its
+///   own thread;
+/// - `prlimit64` only at itself, pid 0 (as the C library calls it) or its
+///   own pid, and only to read: one that sets a limit (a new limit that is
+///   not NULL) answers EPERM, since a first-party organ's hard limits are
+///   open and its grant is the soft one;
+/// - `fcntl` with every command but those that make a descriptor signal its
+///   owner when it is ready (`F_SETOWN`, `F_SETOWN_EX`, `F_SETSIG`), since
+///   the owner could be another process, and a lease (`F_SETLEASE`), which
+///   holds another process's open of the file;
+/// - `prctl` only to name the calling thread or read its name
+///   (`PR_SET_NAME`, `PR_GET_NAME`).
+///
+/// Any other kills. Each loads an argument over the number, so every
+/// outcome returns here.
 fn argument_rows() -> (Vec<libc::sock_filter>, [usize; 2]) {
     let allow = statement(RETURN, libc::SECCOMP_RET_ALLOW);
     let kill = statement(RETURN, libc::SECCOMP_RET_KILL_PROCESS);
+    let refuse = statement(
+        RETURN,
+        libc::SECCOMP_RET_ERRNO | (libc::EPERM as u32 & libc::SECCOMP_RET_DATA),
+    );
     // The organ's own pid, which `SyscallFilter::install` writes here.
     let own_pid = 0;
     let rows = vec![
@@ -348,19 +372,33 @@ fn argument_rows() -> (Vec<libc::sock_filter>, [usize; 2]) {
         jump(JUMP_IF_EQUAL, own_pid, 0, 1),
         allow,
         kill,
-        // 5: prlimit64(pid, ...) with pid 0 or the organ's own.
-        jump(JUMP_IF_EQUAL, libc::SYS_prlimit64 as u32, 0, 5),
+        // 5: prlimit64(pid, resource, new, old) with pid 0 or the organ's
+        // own, and new NULL (both words).
+        jump(JUMP_IF_EQUAL, libc::SYS_prlimit64 as u32, 0, 10),
         statement(LOAD_WORD, FIRST_ARGUMENT_OFFSET),
         jump(JUMP_IF_EQUAL, 0, 1, 0),
-        jump(JUMP_IF_EQUAL, own_pid, 0, 1),
+        jump(JUMP_IF_EQUAL, own_pid, 0, 6),
+        statement(LOAD_WORD, THIRD_ARGUMENT_OFFSET),
+        jump(JUMP_IF_EQUAL, 0, 0, 3),
+        statement(LOAD_WORD, THIRD_ARGUMENT_HIGH_OFFSET),
+        jump(JUMP_IF_EQUAL, 0, 0, 1),
+        allow,
+        refuse,
+        kill,
+        // 16: fcntl(fd, cmd, ...) with cmd no owner, signal or lease.
+        jump(JUMP_IF_EQUAL, libc::SYS_fcntl as u32, 0, 7),
+        statement(LOAD_WORD, SECOND_ARGUMENT_OFFSET),
+        jump(JUMP_IF_EQUAL, libc::F_SETOWN as u32, 4, 0),
+        jump(JUMP_IF_EQUAL, F_SETOWN_EX, 3, 0),
+        jump(JUMP_IF_EQUAL, F_SETSIG, 2, 0),
+        jump(JUMP_IF_EQUAL, libc::F_SETLEASE as u32, 1, 0),
         allow,
         kill,
-        // 11: fcntl(fd, cmd, ...) with cmd no owner or signal.
-        jump(JUMP_IF_EQUAL, libc::SYS_fcntl as u32, 0, 6),
-        statement(LOAD_WORD, SECOND_ARGUMENT_OFFSET),
-        jump(JUMP_IF_EQUAL, libc::F_SETOWN as u32, 3, 0),
-        jump(JUMP_IF_EQUAL, F_SETOWN_EX, 2, 0),
-        jump(JUMP_IF_EQUAL, F_SETSIG, 1, 0),
+        // 24: prctl(option, ...) with option a thread name's.
+        jump(JUMP_IF_EQUAL, libc::SYS_prctl as u32, 0, 5),
+        statement(LOAD_WORD, FIRST_ARGUMENT_OFFSET),
+        jump(JUMP_IF_EQUAL, libc::PR_SET_NAME as u32, 1, 0),
+        jump(JUMP_IF_EQUAL, libc::PR_GET_NAME as u32, 0, 1),
         allow,
         kill,
     ];

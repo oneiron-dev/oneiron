@@ -6,11 +6,11 @@
 //! sleeps, exit and exit_group. A call an organ never makes costs nothing on
 //! its list; a call it makes that its list misses kills it.
 //!
-//! `clone`, `clone3`, `tgkill`, `prlimit64` and `fcntl` are not on any list:
-//! the program checks them, and the arguments of the last three, before the
-//! list (`super::SyscallFilter::for_organ`). The legacy spellings x86_64
-//! keeps (`open`, `stat`, `poll`, ...) are in the `*_X86_64` lists; aarch64's
-//! table has only the modern ones.
+//! `clone`, `clone3`, `tgkill`, `prlimit64`, `fcntl` and `prctl` are not on
+//! any list: the program checks them, and the arguments of the last four,
+//! before the list (`super::SyscallFilter::for_organ`). The legacy spellings
+//! x86_64 keeps (`open`, `stat`, `poll`, ...) are in the `*_X86_64` lists;
+//! aarch64's table has only the modern ones.
 
 use libc::c_long;
 
@@ -18,7 +18,9 @@ use libc::c_long;
 /// loader and the C and Rust runtime start, the organ runtime's socket
 /// (fd 3), regions (memfd, maps; their seals are `fcntl`) and worker
 /// threads, time, random bytes and exit. A crash's signal to its own
-/// thread (`tgkill`) is checked before the list.
+/// thread (`tgkill`) is checked before the list. `restart_syscall` is how
+/// the kernel resumes a timed sleep or wait that a stop, a freeze or a
+/// trace interrupted.
 pub(super) const RUNTIME: &[c_long] = &[
     // The organ runtime's own: the protocol socket, its waits and regions.
     libc::SYS_futex,
@@ -50,6 +52,7 @@ pub(super) const RUNTIME: &[c_long] = &[
     libc::SYS_gettimeofday,
     libc::SYS_sched_yield,
     libc::SYS_sched_getaffinity,
+    libc::SYS_restart_syscall,
     // Thread start and exit.
     libc::SYS_set_robust_list,
     libc::SYS_rseq,
@@ -117,7 +120,11 @@ pub(super) const SEAL: &[c_long] = &[];
 /// pack build its operator trusts as first party, runs under [`RUNTIME`]
 /// and these, the file calls of reading the files its fence lets it read
 /// and of working in its scratch dir. No spec adds a call. It forks nothing,
-/// execs nothing after its own start, opens no socket and traces nothing.
+/// opens no socket and traces nothing; an exec it makes stays under this
+/// filter, its fence and `no_new_privs`. No call that changes a file's
+/// times or modes by path: Landlock does not fence those (`utimensat` with
+/// a path, `chmod`, `chown`, `setxattr`), and the organ's uid owns the
+/// engine's files.
 pub(super) const FENCED_FILES: &[c_long] = &[
     libc::SYS_readv,
     libc::SYS_pwrite64,
@@ -132,7 +139,6 @@ pub(super) const FENCED_FILES: &[c_long] = &[
     libc::SYS_fdatasync,
     libc::SYS_flock,
     libc::SYS_fstatfs,
-    libc::SYS_utimensat,
     libc::SYS_umask,
     libc::SYS_uname,
 ];
@@ -178,7 +184,6 @@ pub(super) const NEVER: &[c_long] = &[
     libc::SYS_process_mrelease,
     libc::SYS_kcmp,
     libc::SYS_seccomp,
-    libc::SYS_prctl,
     libc::SYS_unshare,
     libc::SYS_setns,
     libc::SYS_clone,
