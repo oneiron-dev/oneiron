@@ -3,8 +3,8 @@
 //!
 //! A Grant row confers nothing by itself: before R3d the selector door read the row alone,
 //! and the pact gate let every Grant no pact binds pass (the "Unpacted legacy-allow"). A
-//! member row no counted act gives, one put back after its counted end and one widened in
-//! place backed a selector export, and a Connect guest row widened in place under its Active
+//! member row no counted act gives, one whose line the fold ended and one widened in place
+//! backed a selector export, and a Connect guest row widened in place under its Active
 //! pact did too, since the pact never states the row's terms. The honest member's and the
 //! honest Connect guest's selectors stay authorized.
 //!
@@ -17,21 +17,28 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
+use oneiron::authority::{ActSurface, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::entity_id::LocalWorldId;
 use oneiron::federation::{
-    FederationDirectionScope, FederationGrant, FederationGrantRole as Role, FederationGrantScope,
-    InitialSharedMember, Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
-    decode_federation_grant_body, decode_federation_grant_body_keyed, selector_range_of,
+    FederationDirectionScope, FederationGrant, FederationGrantPreset, FederationGrantRole as Role,
+    FederationGrantScope, InitialSharedMember, Scope, ScopeAxis, ScopeId, Sensitivity,
+    SensitivityCeiling, decode_federation_grant_body, decode_federation_grant_body_keyed,
+    own_device_residence_scope, selector_range_of,
 };
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::{SyncSelector, SyncSelectorWorld, authorize_sync_selector};
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::grant_act::{put_keyed_member_grant, put_unkeyed_member_grant};
+use oneiron::test_doors::grant_act::{
+    end_member_grant, put_keyed_member_grant, put_unkeyed_member_grant,
+};
 use oneiron::test_doors::grant_standing::{grant_row, standing_member_grant_act};
 use oneiron::test_support::provision_act_carrier;
+use oneiron::verbs::{
+    AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
+    mint_agent_grant_as,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -180,41 +187,35 @@ fn a_bare_member_row_backs_no_selector() {
     );
 }
 
-/// Catches a removed member's row, put back after its counted end, backing a selector
-/// again: no selector reader read the line's end or the withdrawal marker.
+/// Catches a member row whose line the fold ended still backing a selector: no selector
+/// reader read the line's end. The counted end is appended with the row left live, as a
+/// machine holds it when the end reached its fold before the row's delete (a local removal
+/// also deletes the row, which the door's liveness read refuses already: review #8943 P1-4).
 #[test]
-fn a_removed_members_put_back_row_backs_no_selector() {
-    let (_dir, vault, issuer, owner) = carrier_vault();
+fn a_member_row_whose_line_is_ended_backs_no_selector() {
+    let (_dir, vault, _, owner) = carrier_vault();
     let member = EntityId::now();
     share_with(&vault, owner, member, Role::Member);
     let (grant, _) = member_row(&vault, member).expect("the member's grant");
-    let old_body = grant_row(&vault, grant)
-        .expect("row read")
-        .expect("the live Member row");
     assert!(
         authorizes(&vault, &member_selector(grant, member)),
-        "FIXTURE: the member's row backs its selector before the removal"
+        "FIXTURE: the member's row backs its selector before its end"
     );
 
-    vault
-        .remove_shared_member(&proof(&vault, owner), SHARED, member, Some(&issuer))
-        .expect("the owner removes the member");
+    end_member_grant(&vault, grant, owner).expect("a counted end, the row left in place");
     assert!(
-        member_row(&vault, member).is_none(),
-        "FIXTURE: the removal drops the member's row"
+        grant_row(&vault, grant).expect("row read").is_some(),
+        "FIXTURE: the ended Grant's row is still stored"
     );
-    let (old_grant, old_key) = decode_federation_grant_body_keyed(&old_body).expect("old body");
-    let old_key = old_key.expect("the Member row was keyed by its giving");
-    put_keyed_member_grant(&vault, grant, &old_grant, &old_key).expect("the old row put back");
     assert_eq!(
         standing(&vault, grant),
         None,
-        "FIXTURE: the put-back row stands for nothing"
+        "FIXTURE: the ended row stands for nothing"
     );
 
     assert!(
         !authorizes(&vault, &member_selector(grant, member)),
-        "a removed member's put-back row backs no selector"
+        "a member row whose line is ended backs no selector"
     );
 }
 
@@ -234,7 +235,10 @@ fn a_member_row_widened_in_place_backs_no_selector() {
         .expect("row read")
         .expect("the live Viewer row");
     let (mut wider, terms_key) = decode_federation_grant_body_keyed(&body).expect("decodes");
+    // Wider and still a valid row: a Viewer's ReadOnly preset permits no other role
+    // (review #8943 P1-3).
     wider.role = Role::Owner;
+    wider.preset = FederationGrantPreset::Owner;
     match terms_key {
         Some(key) => put_keyed_member_grant(&vault, grant, &wider, &key),
         None => put_unkeyed_member_grant(&vault, grant, &wider),
@@ -428,4 +432,118 @@ fn a_connect_grant_widened_in_place_under_its_pact_backs_no_selector() {
         authorize_sync_selector(&local.vault, scope, &selector).is_err(),
         "a Connect row widened in place backs no selector"
     );
+}
+
+/// The owner's agent `agent`, minted a read Grant on `vault`: the Grant's id.
+fn minted_agent_read_grant(vault: &Vault, owner: EntityId) -> (EntityId, EntityId) {
+    let owner = proof(vault, owner);
+    let agent = EntityId::now();
+    create_agent_definition_as(
+        vault,
+        &owner,
+        AgentDefinitionCreateRequest {
+            agent_def_ref: agent,
+            definition: serde_json::from_value(serde_json::json!({
+                "agent_id": "selector_grant_standing_agent",
+                "desc": "Selector grant standing agent",
+                "version": "1.0.0",
+                "ceiling": "auto",
+                "enabled": true,
+            }))
+            .expect("typed agent definition"),
+        },
+    )
+    .expect("the owner creates the agent");
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    let minted = mint_agent_grant_as(
+        vault,
+        &owner,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope: scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("the owner mints the agent a Grant");
+    assert!(minted.grant.confers, "FIXTURE: the minted Grant is live");
+    (minted.grant.grant_ref, agent)
+}
+
+/// Catches the owner's agent Grant re-put over another scope backing a selector there: no
+/// mint carries its row's residence, so the counted mint matched the row under whatever scope
+/// the row named (review #8943 P1-1).
+#[test]
+fn an_owner_agent_row_put_over_another_scope_backs_no_selector() {
+    let (_dir, vault, _, owner) = carrier_vault();
+    let (grant, agent) = minted_agent_read_grant(&vault, owner);
+    assert!(
+        authorize_sync_selector(
+            &vault,
+            own_device_residence_scope(),
+            &member_selector(grant, agent)
+        )
+        .is_ok(),
+        "FIXTURE: the minted Grant backs its agent's selector over the residence"
+    );
+    let body = grant_row(&vault, grant)
+        .expect("row read")
+        .expect("the live minted row");
+    let (mut moved, terms_key) = decode_federation_grant_body_keyed(&body).expect("decodes");
+    let elsewhere = FederationGrantScope::vault(99);
+    assert_ne!(
+        moved.scope, elsewhere,
+        "FIXTURE: the mint's row holds this vault's residence"
+    );
+    moved.scope = elsewhere;
+    match terms_key {
+        Some(key) => put_keyed_member_grant(&vault, grant, &moved, &key),
+        None => put_unkeyed_member_grant(&vault, grant, &moved),
+    }
+    .expect("the row is put over another scope");
+
+    assert!(
+        authorize_sync_selector(&vault, elsewhere, &member_selector(grant, agent)).is_err(),
+        "an owner's agent row put over another scope backs no selector"
+    );
+}
+
+/// Guard: a vault shared under the own-device residence's id keeps the own-device row of a
+/// device paired while it was personal; that row's selector stays authorized (review #8943
+/// P1-2: the row's scope is the shared scope, and the member read gave it nothing).
+#[test]
+fn an_own_device_row_on_a_vault_shared_under_the_residence_id_keeps_its_selector() {
+    let (_dir, vault, _, owner) = carrier_vault();
+    let residence = own_device_residence_scope();
+    let device_grant =
+        FederationGrant::new(residence, owner, Role::Owner, FederationGrantPreset::Owner);
+    let id = EntityId::now();
+    put_unkeyed_member_grant(&vault, id, &device_grant).expect("the own-device row lands");
+    assert!(
+        authorize_sync_selector(&vault, residence, &member_selector(id, owner)).is_ok(),
+        "FIXTURE: the own-device row backs its selector on the personal vault"
+    );
+    let FederationGrantScope::Vault { vault_id } = residence else {
+        panic!("FIXTURE: the own-device residence is a vault scope");
+    };
+    vault
+        .initialize_shared_vault(
+            &proof(&vault, owner),
+            vault_id,
+            None,
+            &[InitialSharedMember {
+                member_ref: owner,
+                role: Some(Role::Owner),
+            }],
+            vault.now_recorded_at(),
+        )
+        .expect("the vault is shared under the residence's id");
+
+    authorize_sync_selector(&vault, residence, &member_selector(id, owner))
+        .expect("the own-device row keeps its selector on the vault shared under its id");
 }
