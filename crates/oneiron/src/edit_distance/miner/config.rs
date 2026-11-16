@@ -96,13 +96,6 @@ pub(super) const PROVENANCE_KEY_UNATTRIBUTED: &str = "unattributed";
 /// hold), and the inbox group is the queue row's own run id.
 pub(super) const PAYLOAD_KEY_SESSION: &str = "session";
 
-/// The gate-decision outcome token the inbox reject door writes.
-///
-/// Mirrored rather than shared: the token is a pinned LEDGER string and the door
-/// that writes it lives in another module's write path. A reader of that ledger
-/// is entitled to name what it is looking for.
-pub(super) const GATE_OUTCOME_REJECTED: &str = "rejected";
-
 /// Pinned mint-mark kinds.
 pub(super) const MARK_KIND_PREFERENCE: &str = "preference_claim";
 

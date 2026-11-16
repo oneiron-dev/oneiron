@@ -38,7 +38,7 @@ pub(super) fn finish_promotion_in_txn(
             &prepared.claim_id,
             old_id,
             &prepared.envelope,
-            run.now_ms,
+            run.now_secs(),
         )?;
     }
     // Failed apply or stage rolls back the claim, binding and gate receipt.
@@ -97,7 +97,7 @@ pub(super) fn finish_promotion_in_txn(
                 wtxn,
                 prepared.claim_id,
                 subject,
-                run.now_ms,
+                run.now_secs(),
             )?;
         }
     }

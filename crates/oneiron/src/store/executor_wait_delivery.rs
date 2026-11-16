@@ -86,51 +86,8 @@ pub(crate) fn code_run_wait_index_accepts_masked(bytes: &[u8]) -> bool {
 pub(crate) const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
     SideTable::new(&side_table::CODE_RUN_WAIT_HOLDER);
 
-/// What one run holds of a wait's reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WaitHolder {
-    /// The reply, for `actor`'s run, when its run's stamps name one.
-    Kept { actor: Option<EntityId> },
-    /// A soft delete of `actor` took the reply (FIX 6591): it reads as
-    /// erased for good, as Erased, and no retry keeps it again. The actor
-    /// stays only so its later erase selects the membership; it is no live
-    /// hold and no authority.
-    Deleted { actor: EntityId },
-    /// Its run's actor was erased: the reply reads as erased for it, for
-    /// good.
-    Erased,
-}
-
-impl WaitHolder {
-    /// The actor whose erase selects this membership (FIX 6591): the one it
-    /// keeps the reply for, or the one a soft delete took it from.
-    pub(crate) const fn retirement_actor(self) -> Option<EntityId> {
-        match self {
-            Self::Kept { actor } => actor,
-            Self::Deleted { actor } => Some(actor),
-            Self::Erased => None,
-        }
-    }
-
-    /// Whether a delete or an erase took the reply.
-    pub(crate) const fn erased(self) -> bool {
-        !matches!(self, Self::Kept { .. })
-    }
-
-    /// The membership `prior` once a soft delete of `actor` takes it (FIX
-    /// 6591): an erased one stays erased, and one that names an actor keeps
-    /// naming it.
-    pub(crate) const fn deleted(prior: Option<Self>, actor: EntityId) -> Self {
-        match prior {
-            Some(Self::Erased) => Self::Erased,
-            Some(Self::Deleted { actor } | Self::Kept { actor: Some(actor) }) => {
-                Self::Deleted { actor }
-            }
-            Some(Self::Kept { actor: None }) | None => Self::Deleted { actor },
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::executor_wait_delivery::WaitHolder;
 
 /// The wait a settled row's full `vault_meta` key names: the wait index's
 /// `s` rows alone, never a waiter's.
