@@ -15,12 +15,20 @@
 //! is the end entity alone, and it fails validation (Good CA's key signed it).
 //! The valid path, `[EE, GoodCACert]` to the PKITS trust anchor, goes through
 //! the pool.
+//!
+//! The second test bounds the search past anchor matches: a pool in which
+//! every intermediate is named like one of two anchors gets at most 16 more
+//! validations than the first pass, not one per frame of the DFS budget.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
+use der::asn1::BitString;
 use der::Decode as _;
 use pkix_path::{DefaultVerifier, TrustAnchor, ValidationPolicy};
-use pkix_path_builder::{build_first_valid_path, build_path, CertPool};
+use pkix_path_builder::{build_first_valid_path, build_path, CertPool, Error};
+use x509_cert::name::Name;
+use x509_cert::serial_number::SerialNumber;
 use x509_cert::Certificate;
 
 /// PKITS validity window midpoint (2020-01-26 00:00:00 UTC).
@@ -65,4 +73,88 @@ fn an_anchor_named_like_the_issuing_intermediate_does_not_end_the_search() {
     let chain = build_first_valid_path(&ee, &pool, &anchors, &policy, &DefaultVerifier)
         .expect("the path through the pool's Good CA validates");
     assert_eq!(chain, vec![ee, good_ca]);
+}
+
+/// Counts its calls and rejects every signature.
+struct CountingRejectVerifier {
+    calls: Cell<usize>,
+}
+
+impl pkix_path::SignatureVerifier for CountingRejectVerifier {
+    fn verify_signature(
+        &self,
+        _algorithm: spki::AlgorithmIdentifierRef<'_>,
+        _issuer_spki: spki::SubjectPublicKeyInfoRef<'_>,
+        _message: &[u8],
+        _signature: &[u8],
+    ) -> Result<(), signature::Error> {
+        self.calls.set(self.calls.get() + 1);
+        Err(signature::Error::new())
+    }
+}
+
+/// `template` with a new subject, issuer and serial, and one byte inside its RSA
+/// modulus changed by `serial` (the key stays well-formed): each copy has its
+/// own issuer+serial and key, so neither the builder's repeated-key guard nor
+/// the validator's duplicate check stops a chain before its signature check.
+fn renamed_ca(template: &Certificate, subject: &Name, issuer: &Name, serial: u8) -> Certificate {
+    let mut cert = template.clone();
+    let tbs = &mut cert.tbs_certificate;
+    tbs.subject = subject.clone();
+    tbs.issuer = issuer.clone();
+    tbs.serial_number = SerialNumber::new(&[serial]).expect("serial number");
+    let mut key = tbs
+        .subject_public_key_info
+        .subject_public_key
+        .raw_bytes()
+        .to_vec();
+    // Byte 20 of the RSAPublicKey DER lies inside the modulus.
+    key[20] ^= serial;
+    tbs.subject_public_key_info.subject_public_key = BitString::from_bytes(&key).expect("key bits");
+    cert
+}
+
+#[test]
+fn a_pool_named_like_two_anchors_gets_at_most_sixteen_more_validations() {
+    let ee = pkits_cert("ValidCertificatePathTest1EE");
+    let good_ca = pkits_cert("GoodCACert");
+    let root = TrustAnchor::from(&pkits_cert("TrustAnchorRootCertificate"));
+    let a = good_ca.tbs_certificate.subject.clone();
+    let b = root.subject.clone();
+    // Anchor A is named like the end entity's issuer, under the root's key.
+    let anchors = vec![
+        TrustAnchor::new(a.clone(), root.subject_public_key_info.clone()),
+        root,
+    ];
+    // Five CAs named A issued by B and five named B issued by A: every frame of
+    // the search past the first anchor match matches an anchor again, so
+    // without a cap the second pass validates one chain per budget unit.
+    let pool: CertPool = (1..=10u8)
+        .map(|n| {
+            if n <= 5 {
+                renamed_ca(&good_ca, &a, &b, n)
+            } else {
+                renamed_ca(&good_ca, &b, &a, n)
+            }
+        })
+        .collect();
+    let policy = ValidationPolicy::new(PKITS_NOW);
+    let verifier = CountingRejectVerifier {
+        calls: Cell::new(0),
+    };
+
+    let result = build_first_valid_path(&ee, &pool, &anchors, &policy, &verifier);
+    assert!(
+        matches!(result, Err(Error::NoValidPath { tried: 1, .. })),
+        "the first pass's NoValidPath (one candidate, the end entity alone), got {result:?}"
+    );
+    let calls = verifier.calls.get();
+    assert!(
+        calls > 1,
+        "the second pass checks chains past the first anchor match (calls: {calls})"
+    );
+    assert!(
+        calls <= 1 + 16,
+        "one check in the first pass and at most 16 in the second (calls: {calls})"
+    );
 }
