@@ -98,7 +98,7 @@ fn mint(
         },
     )
     .expect("the owner mints the agent Grant");
-    EntityId::from_hex(&minted.grant.grant_ref).expect("Grant id hex")
+    minted.grant.grant_ref
 }
 
 /// The Grant row `id` as it is stored now.
