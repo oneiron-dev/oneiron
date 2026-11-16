@@ -51,11 +51,16 @@ pub(super) struct StoredRow {
 }
 
 impl StoredRow {
-    /// Whether the row is the owner's: set by the owner, or by the engine, which writes the
-    /// owner's answer or its own path's choice. A holder or a subject asks before it replaces
-    /// either, and a holder's value stays inside either.
+    /// Whether the row is the owner's: set by the owner; by the engine, which writes the owner's
+    /// answer or its own path's choice; or by an agent spending a check-in the owner approved,
+    /// whose effect digest named this row and this value, so the row is the owner's answer too.
+    /// A holder or a subject asks before it replaces any of them, and a holder's value stays
+    /// inside them.
     pub(super) const fn by_owner(&self) -> bool {
-        matches!(self.setter, Setter::Owner | Setter::Engine { .. })
+        matches!(
+            self.setter,
+            Setter::Owner | Setter::Engine { .. } | Setter::Approved { .. }
+        )
     }
 }
 

@@ -11,7 +11,9 @@
 //!   key's strictest value, never its default;
 //! - a subject tightens its own row and asks to loosen it;
 //! - changes made in one caller's write commit together or not at all, and an optional key's
-//!   `None` is a value a narrower row holds.
+//!   `None` is a value a narrower row holds;
+//! - an agent's change the owner approved reads as the owner's answer: not held inside the
+//!   owner's wider row or the catalogue default.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_primitive`.
 #![cfg(oneiron_test_support)]
@@ -686,4 +688,80 @@ fn changes_in_one_callers_write_commit_together_and_an_optional_none_is_a_value(
         json!(3),
         "the vault's row decides again"
     );
+}
+
+/// The owner's approval of the ask `pending` answered; its check-in handle.
+fn approve_ask(fx: &Fixture, pending: &Value) -> String {
+    let handle = pending["check_in"].as_str().expect("a handle").to_owned();
+    let id = EntityId::from_hex(&handle).expect("hex id");
+    let row = fx
+        .vault
+        .pending_check_in(&id)
+        .expect("read")
+        .expect("the pending check-in");
+    oneiron::test_doors::check_in::answer_verified(
+        &fx.vault,
+        &fx.owner_proof,
+        &id,
+        &row.effect_digest,
+        HolderAnswer::Approve,
+    )
+    .expect("the owner approves");
+    handle
+}
+
+#[test]
+fn an_agents_change_the_owner_approved_reads_as_the_owners_answer() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    // A subject's loosening of its own row, below the owner's tighter vault row.
+    let subject = fx.agent();
+    fx.grant(subject, &[SET, GET]);
+    let them = fx.as_agent(subject);
+    let quiet = "test.agent_quiet";
+    call(&me, SET, set(quiet, vault_scope(), json!(true)));
+    let ask = set(quiet, agent_scope(subject), json!(false));
+    let pending = call(&them, SET, ask.clone());
+    assert_eq!(
+        pending["status"],
+        json!("pending"),
+        "loosening asks: {pending}"
+    );
+    let mut spend = ask;
+    spend["check_in_ref"] = json!(approve_ask(&fx, &pending));
+    let applied = call(&them, SET, spend);
+    assert_eq!(applied["status"], json!("applied"), "{applied}");
+    let read = get(&them, quiet, json!([agent_scope(subject)]));
+    assert_eq!(
+        read["value"],
+        json!(false),
+        "the owner's yes is not held inside the owner's own vault row: {read}"
+    );
+
+    // A holder's value above the catalogue default, where the owner set no row.
+    let holder = fx.agent();
+    fx.grant(holder, &[SET, GET]);
+    fx.controls(holder, EngineControlClass::WorkBudget);
+    let them = fx.as_agent(holder);
+    let budget = "test.work_budget";
+    let place = EntityId::now();
+    let ask = set(budget, project(place), json!(12));
+    let pending = call(&them, SET, ask.clone());
+    assert_eq!(
+        pending["status"],
+        json!("pending"),
+        "above the default asks: {pending}"
+    );
+    let mut spend = ask;
+    spend["check_in_ref"] = json!(approve_ask(&fx, &pending));
+    let applied = call(&them, SET, spend);
+    assert_eq!(applied["status"], json!("applied"), "{applied}");
+    let read = get(&me, budget, json!([project(place)]));
+    assert_eq!(
+        read["value"],
+        json!(12),
+        "the owner's yes is not held inside the catalogue default: {read}"
+    );
+    assert_eq!(read["source"]["from"], json!("row"), "{read}");
 }
