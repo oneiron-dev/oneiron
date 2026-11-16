@@ -30,6 +30,9 @@ pub(crate) fn settle(
     let memory = vault
         .memory(end.bound_by.entity_ref(), end.bound_by.actor_class())
         .task_work_memory();
+    // A Done's escalation ask to guests gives their Grants in this writer (pass 28 R3c): this
+    // install's key loads before it opens, as every giving door's does (GRANT-ACT-FAILURE-POLICY = A).
+    vault.load_membership_carrier();
     let mut txn = vault.store.env.write_txn()?;
     let receipt = if owed_in(vault, &txn, end)? {
         // FIX 5291: a fence that refuses the binder for good, or a TASK no

@@ -254,17 +254,30 @@ pub(super) fn mint_guest_grants(
                 crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT,
                 &[group_ref.as_bytes(), person.as_bytes()],
             )?;
-            if let Some(raw) = vault.get_raw_in(txn, &grant_id)? {
-                // A replayed ask finds its own Grant: the same terms under the row's own key.
-                let stored = raw
-                    .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                    .and_then(|body| {
-                        crate::federation::decode_federation_grant_body_keyed(body).ok()
-                    });
-                if stored.is_none_or(|(stored, _)| stored != grant) {
-                    return Err(invalid());
+            let replayed = match vault.get_raw_in(txn, &grant_id)? {
+                Some(raw) => {
+                    // A replayed ask finds its own Grant: the same terms under the row's own key.
+                    let stored = raw
+                        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                        .and_then(|body| {
+                            crate::federation::decode_federation_grant_body_keyed(body).ok()
+                        });
+                    if stored.is_none_or(|(stored, _)| stored != grant) {
+                        return Err(invalid());
+                    }
+                    // A replay writes nothing only when the row stands on its counted giving:
+                    // equal terms alone prove no giving (a row synced ahead of its act, or put
+                    // back after its end). Otherwise the ask gives below, and an ended id
+                    // refuses there (REVIEW r3c P2-1, as the roster's member step).
+                    vault.grant_row_given_in_txn(
+                        txn,
+                        grant_id,
+                        crate::authority::GrantFamily::AskGuest,
+                    )?
                 }
-            } else {
+                None => false,
+            };
+            if !replayed {
                 let encoded = vault.give_grant_in_txn(
                     txn,
                     consent_owner,

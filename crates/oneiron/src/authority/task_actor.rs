@@ -93,13 +93,15 @@ pub struct AdmittedTaskGrant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskGrantStanding {
     /// The exact grant its ask recorded for its guest still proves the
-    /// call's actor: live, not withdrawn, naming it and conferring now.
+    /// call's actor: standing on its counted giving with no counted end
+    /// (pass 28 R3c), unexpired, naming it and conferring now.
     Proven(AdmittedTaskGrant),
     /// The grant names another member than the call's actor.
     OtherActor,
     /// The ask now records another grant for its guest, or none.
     AskChanged,
-    /// The grant is withdrawn, past its lifetime or gone.
+    /// The grant stands on no counted giving, its line ended (a revoke),
+    /// it is past its lifetime or gone.
     Lapsed,
 }
 

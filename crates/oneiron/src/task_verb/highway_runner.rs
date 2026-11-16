@@ -340,7 +340,8 @@ pub(super) fn runner_report_actor_in(
 /// its reporting actor's turn in the vault's line, read and waited for
 /// before the runner opens the writer it settles the try in, never inside
 /// it. `None`, with no wait, when the row owes its TASK no report. An
-/// operation that holds a turn already passes that one instead.
+/// operation that holds a turn already passes that one instead. A turn
+/// also loads this install's key first ([`report_turn`]).
 pub(crate) fn runner_report_turn(
     vault: &Vault,
     attempt: AttemptId,
@@ -352,7 +353,7 @@ pub(crate) fn runner_report_turn(
             None => None,
         }
     };
-    Ok(caller.map(|caller| Arc::new(vault.admit_task_work_blocking(caller))))
+    Ok(report_turn(vault, caller))
 }
 
 /// The task-work turn a withdrawn try's terminal report runs on (Rule 5):
@@ -384,7 +385,18 @@ pub(crate) fn queued_runner_report_turn(
             None => None,
         }
     };
-    Ok(caller.map(|caller| Arc::new(vault.admit_task_work_blocking(caller))))
+    Ok(report_turn(vault, caller))
+}
+
+/// `caller`'s task-work turn for a runner's report, after this install's key
+/// loads: a report's escalation or block ask to guests gives their Grants
+/// in the runner's writer (pass 28 R3c), and a key loads only outside every
+/// transaction, so it loads here, before that writer opens, as every giving
+/// door loads it (GRANT-ACT-FAILURE-POLICY = A). `None` for no caller.
+fn report_turn(vault: &Vault, caller: Option<EntityId>) -> Option<Arc<TaskWorkTurn>> {
+    let caller = caller?;
+    vault.load_membership_carrier();
+    Some(Arc::new(vault.admit_task_work_blocking(caller)))
 }
 
 pub(super) fn runner_refusal(error: MemoryError) -> Error {
