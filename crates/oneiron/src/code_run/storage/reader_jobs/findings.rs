@@ -8,7 +8,8 @@
 
 use super::{ReportOutcome, finding_key};
 use crate::code_run::{
-    ExecutorStorage, OriginsUnion, ReaderFindingRef, ReaderJobState, ResultOrigins,
+    CodeRunRawOutput, DelegatedSource, ExecutorStorage, OriginsUnion, ReaderFindingRef,
+    ReaderJobState, ResultOrigins,
 };
 use crate::{EntityId, Result};
 
@@ -73,6 +74,43 @@ impl ExecutorStorage<'_> {
             union.finish()
         });
         Ok((card, origins))
+    }
+
+    /// The committed output of each of `sources`, by the run that holds it,
+    /// in order: `None` once one is no longer in its owner's record.
+    fn recorded_sources(
+        &self,
+        sources: &[DelegatedSource],
+    ) -> Result<Option<Vec<(EntityId, CodeRunRawOutput)>>> {
+        let mut from = Vec::with_capacity(sources.len());
+        for source in sources {
+            let Some(held) = self.recorded(source.owner, &source.path, &source.handle)? else {
+                return Ok(None);
+            };
+            from.push((source.owner, held));
+        }
+        Ok(Some(from))
+    }
+
+    /// The card reader child `child`'s own result `output` reports as its
+    /// finding, or the refusal of the report: `finding_tainted` for a
+    /// result that is not clean, `finding_not_json` for one that is not a
+    /// stored JSON value. `lent` is every source the child was lent.
+    pub(crate) fn reader_finding_card(
+        &self,
+        child: EntityId,
+        output: &CodeRunRawOutput,
+        lent: &[DelegatedSource],
+    ) -> Result<std::result::Result<serde_json::Value, &'static str>> {
+        let _ = lent;
+        let card = crate::code_run::result_card(self, child, output, None)?;
+        if card["taint"]["state"] != "clean" {
+            return Ok(Err("finding_tainted"));
+        }
+        if card["shape"]["format"] != "json" {
+            return Ok(Err("finding_not_json"));
+        }
+        Ok(Ok(card))
     }
 
     /// A child's finding report, fenced by its generation: it replaces the
@@ -157,13 +195,9 @@ impl ExecutorStorage<'_> {
         // redacted view stays tainted (ARCH-0069 `#result-bodies`): a
         // member no longer in its owner's record refuses the summary
         // rather than leave its marks out.
-        let mut from = Vec::with_capacity(members.len());
-        for member in &members {
-            let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? else {
-                return Ok(Err("member_gone".to_owned()));
-            };
-            from.push((member.owner, held));
-        }
+        let Some(from) = self.recorded_sources(&members)? else {
+            return Ok(Err("member_gone".to_owned()));
+        };
         let ordinal = record.outputs.len();
         let mut sink = self.code_run_output_sink()?;
         sink.write(text.as_bytes())?;

@@ -119,6 +119,15 @@ impl ReaderChildBinding {
     fn scoped_inputs(&self) -> Option<&BTreeMap<String, DelegatedSource>> {
         self.scoped.as_ref().map(|spec| &spec.inputs)
     }
+
+    /// Every source this child was lent: its source, then a scoped child's
+    /// lent inputs. What the child reports is taken from them.
+    pub(crate) fn lent_sources(&self) -> Vec<DelegatedSource> {
+        std::iter::once(&self.source)
+            .chain(self.scoped_inputs().into_iter().flat_map(BTreeMap::values))
+            .cloned()
+            .collect()
+    }
 }
 
 impl HostSelfDispatcher<'_> {

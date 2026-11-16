@@ -260,7 +260,8 @@ impl RecordingJsHost<'_, '_> {
                 None,
             )
         };
-        if self.gated_write.reader_child().is_some() {
+        if let Some(child) = self.gated_write.reader_child() {
+            let lent = child.lent_sources();
             let storage = self.storage.ok_or(Error::InvalidConfig(
                 "executor result storage unavailable".into(),
             ))?;
@@ -271,12 +272,8 @@ impl RecordingJsHost<'_, '_> {
             else {
                 return Ok(failed("finding_not_own"));
             };
-            let card = result_card(storage, self.run_id, &output, None)?;
-            if card["taint"]["state"] != "clean" {
-                return Ok(failed("finding_tainted"));
-            }
-            if card["shape"]["format"] != "json" {
-                return Ok(failed("finding_not_json"));
+            if let Err(code) = storage.reader_finding_card(self.run_id, &output, &lent)? {
+                return Ok(failed(code));
             }
             report.bound = Some(ReaderFindingRef {
                 owner: self.run_id,

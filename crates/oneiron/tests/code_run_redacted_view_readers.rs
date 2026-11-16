@@ -3,11 +3,15 @@
 //! Readers that take a code-run result's bytes outside its `more` facets (a
 //! raw chunk, a summary member) read a tainted body through its redacted
 //! view, each secret span blanked, and refuse only a body no view shows
-//! (ARCH-0069 `#result-bodies`; READER-REDACTED-VIEW-SCOPE = A).
+//! (ARCH-0069 `#result-bodies`; READER-REDACTED-VIEW-SCOPE = A). A reader
+//! child's finding takes the marks of every source it was lent, so one made
+//! from a redacted view reads tainted, and it lands while its parent's reads
+//! show it.
 
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use oneiron::code_run::DelegatedSource;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
@@ -22,6 +26,8 @@ const PHRASE: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const CUSTODY_NAME: &str = "redacted-view-readers-fixture";
 const CUSTODY_VALUE: &str = "Q7m2R9v4L6n8C3x5B1z0D4f6H8j2K9p3";
+// A reader child's finding: a stored JSON value of its own run.
+const FINDING: &[u8] = br#"{"steps_ok": 512, "failed": []}"#;
 
 struct Fixture {
     vault: Vault,
@@ -234,4 +240,132 @@ fn a_lease_tainted_body_blanks_the_known_value_in_a_chunk_and_a_member() {
         .member(0, len)
         .expect("a lease-tainted member reads through its view");
     assert_eq!(member.as_bytes(), expected.as_slice());
+}
+
+impl Fixture {
+    /// The whole fixture result, as a reader child is lent it.
+    fn lent(&self) -> DelegatedSource {
+        doors::lent_result_source(&self.vault, self.run_id, self.occurrence)
+            .expect("lend the whole result")
+    }
+
+    /// `bytes` stored as `name`, a result of reader child run `child`: its
+    /// occurrence.
+    fn child_result(&self, child: EntityId, name: &str, bytes: &[u8]) -> EntityId {
+        doors::store_code_run_result_body(&self.vault, child, name, bytes)
+            .expect("store the child's own result")
+    }
+
+    /// The card `child`'s result `finding` reports as its finding, the child
+    /// lent `lent`, or the report's refusal.
+    fn finding_card(
+        &self,
+        child: EntityId,
+        finding: EntityId,
+        lent: &[DelegatedSource],
+    ) -> Result<serde_json::Value, String> {
+        doors::reader_finding_card(&self.vault, child, finding, lent)
+            .expect("admit the child's finding")
+    }
+
+    fn mark_of(&self, run_id: EntityId, occurrence: EntityId) -> Option<String> {
+        doors::stored_result_mark(&self.vault, run_id, occurrence)
+            .expect("read the occurrence's stored mark")
+    }
+}
+
+#[test]
+fn a_finding_from_a_marked_source_takes_its_mark_and_reads_through_its_view() {
+    let (fixture, _) = Fixture::with_phrase();
+    let child = EntityId::now();
+    let finding = fixture.child_result(child, "finding", FINDING);
+    assert!(
+        fixture.mark_of(child, finding).is_none(),
+        "the finding holds no secret"
+    );
+    let card = fixture
+        .finding_card(child, finding, &[fixture.lent()])
+        .expect("a finding made from a redacted view lands");
+    assert_ne!(
+        card["taint"]["state"], "clean",
+        "the finding reads tainted: {card}"
+    );
+    assert_eq!(card["redacted"], true, "its reads show its view: {card}");
+    assert_eq!(fixture.mark_of(child, finding), fixture.mark());
+    let shown = doors::shown_result_range(&fixture.vault, child, finding, 0, FINDING.len())
+        .expect("read the finding as its parent does");
+    assert_eq!(
+        shown.as_deref(),
+        Some(FINDING),
+        "its view blanks nothing of its own"
+    );
+}
+
+#[test]
+fn a_finding_that_holds_a_secret_lands_marked_and_reads_blanked() {
+    let fixture = Fixture::new(clean_lines().into_bytes());
+    let child = EntityId::now();
+    let body = format!(r#"{{"note": "{PHRASE}"}}"#).into_bytes();
+    let finding = fixture.child_result(child, "finding", &body);
+    assert!(
+        fixture.mark_of(child, finding).is_some(),
+        "the scan marked the phrase"
+    );
+    let card = fixture
+        .finding_card(child, finding, &[fixture.lent()])
+        .expect("a finding its redacted view shows lands");
+    assert_eq!(card["redacted"], true, "its reads show its view: {card}");
+    let shown = doors::shown_result_range(&fixture.vault, child, finding, 0, body.len())
+        .expect("read the finding as its parent does")
+        .expect("the finding's view shows it");
+    assert_no_phrase_word(&shown);
+}
+
+#[test]
+fn a_finding_from_a_source_no_view_shows_is_refused() {
+    let unplaced = Fixture::new(format!("{}{}", "[".repeat(200), "]".repeat(200)).into_bytes());
+    assert_eq!(
+        unplaced.mark().as_deref(),
+        Some("gate.secret_scan.json_depth_over_127")
+    );
+    let child = EntityId::now();
+    let finding = unplaced.child_result(child, "finding", FINDING);
+    assert_eq!(
+        unplaced.finding_card(child, finding, &[unplaced.lent()]),
+        Err("finding_tainted".to_owned())
+    );
+}
+
+#[test]
+fn a_finding_whose_lent_source_left_its_record_is_refused() {
+    let fixture = Fixture::new(clean_lines().into_bytes());
+    let child = EntityId::now();
+    let finding = fixture.child_result(child, "finding", FINDING);
+    let mut gone = fixture.lent();
+    gone.owner = EntityId::now();
+    assert_eq!(
+        fixture.finding_card(child, finding, &[fixture.lent(), gone]),
+        Err("finding_source_gone".to_owned())
+    );
+}
+
+#[test]
+fn a_finding_from_a_clean_source_lands_clean_and_a_non_json_one_does_not() {
+    let fixture = Fixture::new(clean_lines().into_bytes());
+    let child = EntityId::now();
+    let finding = fixture.child_result(child, "finding", FINDING);
+    let card = fixture
+        .finding_card(child, finding, &[fixture.lent()])
+        .expect("a clean finding lands");
+    assert_eq!(card["taint"]["state"], "clean");
+    assert!(
+        card.get("redacted").is_none(),
+        "a clean finding is read as stored: {card}"
+    );
+    assert!(fixture.mark_of(child, finding).is_none());
+    let text = fixture.child_result(child, "notes", b"three steps failed\n");
+    assert_eq!(
+        fixture.finding_card(child, text, &[fixture.lent()]),
+        Err("finding_not_json".to_owned())
+    );
 }
