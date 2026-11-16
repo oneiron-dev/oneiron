@@ -7,11 +7,12 @@
 //! otherwise it stays owed, value-free, under the Grant's id, and is carried by the next pass that
 //! can: the moment the install key loads, and the owner work pickup (Engine RULING
 //! GRANT-ACT-FAILURE-POLICY = A, 16 Nov 03:42). A batch delete, which runs below any vault door,
-//! owes the end of every Grant row it tears that an act may give; the pass then ends the line by
+//! owes the end of every Grant row it tears, whatever its body; the pass then ends the line by
 //! the line's own family, or drops the debt when a counted act already ended it (the writer's own
 //! end: a membership record, an owner's revoke, a slip revoke). A torn row whose giving has not
 //! reached this install yet stays owed until it does (Astra r1-r2d F3): no act naming the Grant
-//! here is no proof that none exists.
+//! here is no proof that none exists. So does a line two branches named in two families: no act
+//! of one family ends it, and the debt keeps the taking back on record.
 //!
 //! An owed end keeps the deciding person only until their erase: the erase rewrites it, and each
 //! owed membership record naming them, into a person-free end by rule.
@@ -46,13 +47,19 @@ pub(crate) enum GrantEndRecord {
     Signed,
     /// This install cannot carry it now; it stays owed.
     Owed,
-    /// Nothing is left to end: a counted act already ended the line, or it stands on no family.
+    /// Nothing is left to end: a counted act already ended the line.
     Settled,
 }
 
 /// A batch delete's debt, below any vault door: the FEDERATION_GRANT row `grant`, about to be
 /// torn in `wtxn`, is owed a counted end unless a writer already owes it a fuller one. Any other
-/// kind, no row, or a row no act may give ([`torn_row_takes_acts`]) owes nothing.
+/// kind, or no row, owes nothing.
+///
+/// The row's body decides nothing. A body that took another shape at the Grant's id (an
+/// own-device or engine-default Steward shape, or one that no longer decodes) is no proof that
+/// no counted act gives the Grant here or will: a newer replicated overwrite can land over a
+/// minted row before its tear (review #8982 P1-1). A debt no act can pay waits and holds the
+/// Grant back, as the withdrawal marker it replaces held it for any torn row (pass 28 R3e).
 ///
 /// # Errors
 /// The row read, or the debt's write.
@@ -61,12 +68,9 @@ pub(crate) fn owe_torn_grant_end_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     grant: EntityId,
 ) -> Result<()> {
-    let takes_acts = crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, &grant)?
-        .is_some_and(|row| {
-            row.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT
-                && torn_row_takes_acts(&row.body)
-        });
-    if !takes_acts || OWED_GRANT_END.get(store, wtxn, &HexId(grant))?.is_some() {
+    let grant_row = crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, &grant)?
+        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT);
+    if !grant_row || OWED_GRANT_END.get(store, wtxn, &HexId(grant))?.is_some() {
         return Ok(());
     }
     OWED_GRANT_END.put(
@@ -102,15 +106,43 @@ pub(crate) fn grant_end_owed_in_txn(store: &Store, txn: &heed::RoTxn<'_>, grant:
     }
 }
 
-/// Whether the torn Grant row `body` is of a kind an act may give. An own-device grant and a
-/// base agent's engine-default Steward grant have no act before their own pass 28 step (R4),
-/// and a body that does not decode never stands, so none of them owes an end: its debt would
-/// wait for a giving that never comes. A guest's Grant is given by its act since R3c, so a torn
-/// one owes its end like any other.
-fn torn_row_takes_acts(body: &[u8]) -> bool {
-    super::decode_federation_grant_body(body).is_ok_and(|grant| {
-        !super::is_own_device_grant(&grant) && !super::is_system_agent_steward_grant(&grant)
-    })
+/// What a carry pass can do with the end owed for one Grant, as the fold reads its line now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwedEndCarry {
+    /// Sign the end by this family: the line's one family, or its writer's family while no
+    /// counted act names the Grant here.
+    Sign(GrantFamily),
+    /// A counted act already ended the line: the debt clears with no act.
+    Settle,
+    /// No act can end the line yet, so the debt stays and holds the Grant back: no counted act
+    /// names the Grant here and its writer knew no family (a torn row whose giving has not
+    /// arrived, or a kind with no act before R4), or two branches named it in two families.
+    /// Clearing that last debt with no act would drop the taking back from the record while no
+    /// end counts (review #8982 P2-1).
+    Wait,
+}
+
+/// How a pass carries `owed` over the Grant's line as the fold holds it: `line` is whether a
+/// counted act ended it and its one family, `None` while no counted act names the Grant.
+fn owed_end_carry(line: Option<(bool, Option<GrantFamily>)>, owed: &OwedGrantEnd) -> OwedEndCarry {
+    let family = match line {
+        Some((true, _)) => return OwedEndCarry::Settle,
+        Some((false, family)) => family,
+        // No counted act names the Grant here yet: its writer's family ends it before its
+        // giving arrives. A torn row's debt knows no family, so it waits for the giving to
+        // name one (Astra r1-r2d F3).
+        None => owed.family,
+    };
+    family.map_or(OwedEndCarry::Wait, OwedEndCarry::Sign)
+}
+
+/// Whether a counted act ended the line `fold` holds for `grant`, and its one family; `None`
+/// while no counted act names the Grant.
+fn grant_line_state(
+    fold: &crate::authority::AuthorityView,
+    grant: EntityId,
+) -> Option<(bool, Option<GrantFamily>)> {
+    fold.grant_line(grant).map(|line| (line.ended, line.family))
 }
 
 impl Vault {
@@ -191,8 +223,9 @@ impl Vault {
 
     /// Signs the end owed for `grant` in `txn` and clears the debt there once the fold counted
     /// it, by the line's own family (a writer's family when no counted act names the Grant). A
-    /// debt with nothing left to end clears with no act. `None`, with nothing written, for no
-    /// debt, a torn row's debt whose giving has not arrived, or an install that cannot carry now.
+    /// debt whose line a counted act already ended clears with no act. `None`, with nothing
+    /// written, for no debt, a debt that waits ([`OwedEndCarry::Wait`]), or an install that
+    /// cannot carry now.
     fn carry_owed_grant_end_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -202,21 +235,13 @@ impl Vault {
             return Ok(None);
         };
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let family = match fold.grant_line(grant) {
-            Some(line) if line.ended => None,
-            // A line in no one family (two branches named it in two) stands on neither.
-            Some(line) => line.family,
-            // No counted act names the Grant here yet: its writer's family ends it before its
-            // giving arrives. A torn row's debt knows no family, so it waits for the giving to
-            // name one (Astra r1-r2d F3).
-            None => match owed.family {
-                Some(family) => Some(family),
-                None => return Ok(None),
-            },
-        };
-        let Some(family) = family else {
-            OWED_GRANT_END.delete(&self.store, txn, &HexId(grant))?;
-            return Ok(Some(GrantEndRecord::Settled));
+        let family = match owed_end_carry(grant_line_state(&fold, grant), &owed) {
+            OwedEndCarry::Sign(family) => family,
+            OwedEndCarry::Settle => {
+                OWED_GRANT_END.delete(&self.store, txn, &HexId(grant))?;
+                return Ok(Some(GrantEndRecord::Settled));
+            }
+            OwedEndCarry::Wait => return Ok(None),
         };
         if crate::identity::read_machine_id_in_txn(self, txn)?.is_none()
             || crate::identity::read_machine_signing_key_in_txn(self, txn)?.is_none()
@@ -237,17 +262,18 @@ impl Vault {
         Ok(Some(GrantEndRecord::Signed))
     }
 
-    /// Carries every Grant end this install still owes, each in a writer of its own. The caller
+    /// Carries every Grant end this install still owes and can sign or clear now, each in a
+    /// writer of its own; a debt that waits is left as it is, with no writer opened. The caller
     /// loads the install key first. Returns how many it settled, and the first carry that
     /// failed: the others are still tried, and each that failed stays owed.
     ///
     /// # Errors
     /// The read of the owed ends.
     fn carry_owed_grant_ends(&self) -> Result<(usize, Option<crate::error::Error>)> {
-        let owed = self.owed_grant_ends()?;
+        let owed = self.carriable_owed_grant_ends()?;
         let mut settled = 0;
         let mut failed = None;
-        for grant in owed {
+        for (grant, _) in owed {
             match self.with_write_txn(|txn| self.carry_owed_grant_end_in_txn(txn, grant)) {
                 Ok(Some(_)) => settled += 1,
                 Ok(None) => {}
@@ -283,12 +309,13 @@ impl Vault {
         }
     }
 
-    /// The owner work pickup's arm: with a Grant end owed, loads this install's key and carries
-    /// what it can. Nothing is read from the keystore while none is owed.
+    /// The owner work pickup's arm: with a Grant end owed that a pass can carry now, carries
+    /// it, and loads this install's key first when one is to be signed. Nothing is read from
+    /// the keystore while no owed end can be signed, as for a debt that waits.
     pub(crate) fn carry_owed_grant_ends_at_pickup(&self) {
-        match self.owed_grant_ends() {
+        let signs = match self.carriable_owed_grant_ends() {
             Ok(owed) if owed.is_empty() => return,
-            Ok(_) => {}
+            Ok(owed) => owed.iter().any(|(_, signs)| *signs),
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -296,20 +323,33 @@ impl Vault {
                 );
                 return;
             }
-        }
+        };
         // A key that loads now carries them as it loads; this pass carries them with a key
         // loaded before.
-        self.load_membership_carrier();
+        if signs {
+            self.load_membership_carrier();
+        }
         self.carry_owed_grant_ends_logged();
     }
 
-    /// The Grant ids whose end this install still owes.
-    fn owed_grant_ends(&self) -> Result<Vec<EntityId>> {
+    /// Each Grant whose owed end a pass can sign or clear now, with whether it is signed (it
+    /// needs this install's key); the debts that wait ([`OwedEndCarry::Wait`]) are left out.
+    fn carriable_owed_grant_ends(&self) -> Result<Vec<(EntityId, bool)>> {
         let txn = self.store.env.read_txn()?;
-        Ok(OWED_GRANT_END
-            .scan(&self.store, &txn)?
+        let owed = OWED_GRANT_END.scan(&self.store, &txn)?;
+        if owed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(owed
             .into_iter()
-            .map(|(HexId(grant), _)| grant)
+            .filter_map(|(HexId(grant), owed)| {
+                match owed_end_carry(grant_line_state(&fold, grant), &owed) {
+                    OwedEndCarry::Sign(_) => Some((grant, true)),
+                    OwedEndCarry::Settle => Some((grant, false)),
+                    OwedEndCarry::Wait => None,
+                }
+            })
             .collect())
     }
 
