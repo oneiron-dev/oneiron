@@ -25,6 +25,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::machine_standing::Revision;
@@ -115,7 +117,7 @@ pub(super) struct MachineChain {
     /// Every revision of the machine in this chain that this history holds.
     /// The race rule reads the whole set, so no merge order or grouping
     /// changes it.
-    pub(super) revisions: BTreeMap<AuthorityEntryHash, Arc<Revision>>,
+    pub(super) revisions: PersistentMap<AuthorityEntryHash, Arc<Revision>>,
 }
 
 /// One install key a revision named, and under whose authority.

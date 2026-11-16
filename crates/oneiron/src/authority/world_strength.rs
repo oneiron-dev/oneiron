@@ -80,9 +80,7 @@ impl<S: Clone + PartialEq> FrontierEdit<S> {
                         *admitter,
                         Mark {
                             entry: mark.entry.min(other.entry),
-                            prior: Arc::new(
-                                mark.prior.intersection(&other.prior).copied().collect(),
-                            ),
+                            prior: mark.prior.intersection(&other.prior).copied().collect(),
                         },
                     )
                 })
