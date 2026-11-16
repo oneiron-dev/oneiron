@@ -2,6 +2,7 @@ use super::*;
 
 mod agent_definition_doors;
 mod ai_chat;
+mod ai_chat_self_compaction;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
