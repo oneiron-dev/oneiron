@@ -17,8 +17,10 @@ use crate::entity_doc::DocActor;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::checkpoint_payload::rows::{OwnerRef, bad_part};
-use crate::sync::carrier_parts::is_part_key;
-use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified, ValueSplit};
+use crate::sync::carrier_parts::join_parts_from;
+use crate::sync::checkpoint_payload::{
+    Holder, KeyClass, PartLookup, Placement, SyncUnclassified, ValueSplit,
+};
 
 /// A whole pin that does not encode once its actor is out.
 const PIN_ACTOR: &str = "a document pin names its actor";
@@ -29,12 +31,10 @@ const PARTED_PIN: &str = "a parted document pin, read only once its parts join";
 /// The field a pin's actor fills.
 const ACTOR: &str = "actor";
 
-/// Where the value under `key` in the pin map goes.
+/// Where the value under `key` in the pin map goes (a part's, the map's
+/// row places).
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
-    if is_part_key(key) {
-        return Placement::Part;
-    }
     match decode_carried(value) {
         Ok(Carried::Whole(pin, message, citation))
             if carrier_key(message, citation, &pin).is_ok_and(|filed| filed == key) =>
@@ -67,10 +67,28 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     }
 }
 
+/// Whether the parted pin `value` under `key` is the pin its key names, its
+/// parts joined through `part` (UC-10 PR 1): `Some(true)` when the joined
+/// pin's carrier key is `key`, `Some(false)` when it is another pin's. `None`
+/// for a value that is no parted pin, for one whose parts do not all join,
+/// and for joined bytes that read as no pin. The codec's rules on how a pin
+/// is spelled in parts (no actor in a part; a pin that fits one part rides
+/// whole) say nothing about which pin it is, so they prove no mismatch: a
+/// scrub that erases a parted pin's actor can leave a joined pin that fits
+/// one part under its own key.
+pub(in crate::sync) fn bound(key: &str, value: &[u8], part: PartLookup<'_>) -> Option<bool> {
+    let Ok(Carried::Parted(parted)) = decode_carried(value) else {
+        return None;
+    };
+    let whole = join_parts_from(&parted.parts, part)?;
+    let (pin, message, citation) = decode_pin(&whole).ok()?;
+    Some(carrier_key(message, citation, &pin).ok()? == key)
+}
+
 /// What a pin map key spells: a pin's ids and a digest of the pin naming
-/// no one, or a part's digest.
+/// no one (a part's digest, the map's row reads).
 pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
-    if is_part_key(key) || key_ids(key).is_some() {
+    if key_ids(key).is_some() {
         KeyClass::Digest
     } else {
         KeyClass::Payload
