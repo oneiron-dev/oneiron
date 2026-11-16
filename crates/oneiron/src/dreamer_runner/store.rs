@@ -1312,16 +1312,7 @@ impl<'a> DreamerRunnerStore<'a> {
         record: &AttemptRecord,
         now: u64,
     ) -> Result<()> {
-        self.redrive_coach_issues_in_txn(wtxn, record, now)?;
         self.settle_ended_budget_in_txn(wtxn, record.id, now)?;
-        super::free_time::end_free_time_item_in_txn(
-            self.vault,
-            wtxn,
-            record,
-            super::FreeTimeItemOutcome::Cancelled,
-            None,
-            now,
-        )?;
         self.cleanup_step_receipts_in_txn(wtxn, record.id)
     }
 
