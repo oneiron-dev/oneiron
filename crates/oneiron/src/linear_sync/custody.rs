@@ -18,11 +18,6 @@ use crate::entity_id::EntityId;
 
 use super::model::LinearSyncResult;
 
-/// The domain of a body occurrence's id. Parts: the operation id, then the
-/// body's role.
-#[cfg(unix)]
-const BODY_OCCURRENCE: &[u8] = b"oneiron:linear-mirror-body:v1";
-
 /// Which frozen body of one operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinearBodyRole {
@@ -78,7 +73,10 @@ pub enum LinearFreeze {
 /// The occurrence one operation's body is kept under.
 #[cfg(unix)]
 fn occurrence(operation_id: &[u8; 32], role: LinearBodyRole) -> crate::error::Result<EntityId> {
-    EntityId::derive(BODY_OCCURRENCE, &[operation_id.as_slice(), role.tag()])
+    EntityId::derive(
+        oneiron_contracts::fingerprint::purposes::connector::LINEAR_MIRROR_BODY,
+        &[operation_id.as_slice(), role.tag()],
+    )
 }
 
 #[cfg(unix)]

@@ -18,6 +18,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::code_run::{
     CodeRunRawOutput, DelegatedSource, ReaderJob, ReaderJobs, ScopedChildPorts, TaskWaitPolicy,
     TaskWaitSet, TaskWaitSetResult, reader_wait_id, reduce_task_wait_set,
@@ -147,7 +149,7 @@ pub fn host_run_recorded(vault: &Vault, run: EntityId) -> Result<bool> {
 /// An id that derives to a reserved one.
 pub fn scoped_child_task(parent_run: EntityId, intent_key: &str) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron:code-scoped-child-task:v1",
+        purposes::code_run::SCOPED_CHILD_TASK,
         &[parent_run.as_bytes().as_slice(), intent_key.as_bytes()],
     )
 }

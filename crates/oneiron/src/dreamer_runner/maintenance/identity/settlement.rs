@@ -4,11 +4,13 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::super::applied::MaintenanceInverse;
 use super::{
-    ASK_ANSWER_CONTEXT, ASKS, Answer, IDENTITY_NOTIFICATION_PRODUCER, IDENTITY_RECHECK_FACET,
-    IS_PREFIX, IdentityAsk, MAX_CANDIDATES, ProvisionalInverse, SOMEONE_NEW, SOMEONE_NEW_RATIONALE,
-    erase, evidence, index, key_hex, put_hint_in_txn,
+    ASKS, Answer, IDENTITY_NOTIFICATION_PRODUCER, IDENTITY_RECHECK_FACET, IS_PREFIX, IdentityAsk,
+    MAX_CANDIDATES, ProvisionalInverse, SOMEONE_NEW, SOMEONE_NEW_RATIONALE, erase, evidence, index,
+    key_hex, put_hint_in_txn,
 };
 use crate::claim::ClaimSource;
 use crate::identity_topology::{
@@ -63,7 +65,7 @@ pub(super) fn listed_candidates(ask: &IdentityAsk) -> Vec<EntityId> {
 
 /// The id an owner's answer to ask `key` binds its topology decision to.
 pub(super) fn ask_answer_id(key: &[u8; 32]) -> Result<EntityId> {
-    EntityId::derive(ASK_ANSWER_CONTEXT, &[key])
+    EntityId::derive(purposes::identity::ASK_ANSWER, &[key])
 }
 
 /// The Dreamer's own topology decision: no owner answer, no Grant line.

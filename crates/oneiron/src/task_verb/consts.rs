@@ -53,6 +53,3 @@ pub(super) const TASK_POST_STAMP_KEY: &str = "post";
 /// (OF-220): its label text and the typed continuation the ask's settlement
 /// runs on the TASK.
 pub(super) const TASK_BLOCK_QUESTION_PREDICATE: &str = "tasks.block_question";
-/// Derived id of a blocked TASK's question CLAIM. Parts: the ask group, so a
-/// settlement finds its continuation from the group alone.
-pub(super) const TASK_BLOCK_QUESTION_ID_DOMAIN: &[u8] = b"oneiron.tasks.block_question.v1";

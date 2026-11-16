@@ -53,10 +53,9 @@ const PENDING_SOURCE_TRUST: &str = "gate.pending.source_trust";
 /// The shipped default policy pack, whose manifest a read grant is added to.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
 
-/// The landing writer's derivation domain, the engine's
-/// `derived_domains::SCOPE_SUMMARY_LANDING_ACTOR`, spelled out so the test
-/// also builds on the head before the fix (its red run) and pins the id.
-const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.actor.v1";
+// The landing writer's derivation purpose. Its bytes are pinned in
+// `crates/oneiron-contracts/tests/derive_registry_literals.rs`.
+use oneiron_contracts::entity_id::derived_domains::SCOPE_SUMMARY_LANDING_ACTOR;
 
 /// The landing writer's refusal of an append that is not a landing's reply.
 const NOT_A_LANDING: &str = "only a scope summary landing writes as its landing writer";

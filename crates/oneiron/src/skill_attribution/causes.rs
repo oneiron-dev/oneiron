@@ -10,16 +10,14 @@
 //! health reads it by the exact terminal pack receipt a finding's attempt
 //! sealed.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::judge_supersession::displacing_revision_in_txn;
 use super::types::{AttributionVerdict, OutcomeEvidence};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::skill_attribution_causes::{CAUSES, CauseRow};
-
-/// Domain of a cause's source id: one id per terminal receipt and evidence
-/// sequence.
-const SOURCE_DOMAIN: &[u8] = b"oneiron:skill-attribution-cause:v1";
 
 /// One label the judge settled on an attempt's terminal outcome evidence, as
 /// read back. A label is a fact about one evidence row: an `environment`
@@ -155,7 +153,7 @@ fn receipt_key(receipt: &str) -> [u8; 32] {
 
 fn source_id(receipt: &str, sequence: u64) -> Result<EntityId> {
     EntityId::derive(
-        SOURCE_DOMAIN,
+        purposes::learning::SKILL_ATTRIBUTION_CAUSE,
         &[receipt.as_bytes(), sequence.to_be_bytes().as_slice()],
     )
 }

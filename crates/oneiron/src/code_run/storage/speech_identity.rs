@@ -1,5 +1,7 @@
 //! Deterministic conversation, turn and message ids derived from a run's identity.
 
+use oneiron_contracts::fingerprint::Purpose;
+
 use crate::code_run::dispatcher::HostSelfDispatcher;
 use crate::code_run::types::SelfDispatchOutcome;
 use crate::lens::RecordRef;
@@ -137,10 +139,10 @@ impl HostSelfDispatcher<'_> {
 /// dispatchers reused a ref. The optional run id preserves the original
 /// run-ref-only identity for standalone dispatcher and witness APIs that have no
 /// durable executor config.
-const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: &[u8] =
+const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: Purpose =
     crate::entity_id::derived_domains::EXECUTOR_SPEECH_CONVERSATION;
 
-const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] =
+const EXECUTOR_SPEECH_MESSAGE_DOMAIN: Purpose =
     crate::entity_id::derived_domains::EXECUTOR_SPEECH_MESSAGE;
 /// The legacy standalone conversation identity. Runtime executor paths use
 /// [`canonical_speech_conversation_id_for_run`] with their durable run id.
