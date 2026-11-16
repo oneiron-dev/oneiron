@@ -2,8 +2,10 @@
 //! WAVE11-QUOTA-CANON 13:25 and ANSWER WAVE11-DUPLICATE-BUILDER 14:29): the
 //! owner, or the agent his key `models.quota.agent_may_answer` lets give that
 //! answer. The answer's row is written in the write that closes the question,
-//! beside the questions in the same table, so a closed question always has
-//! one. Question ids are offer ids, so the table keeps the last answer per
+//! beside the questions in the same table, so a question an answer closed
+//! always has one: its own answer, or the top-up that put its account back
+//! in rotation. A question that lapses at its reset was not answered and has
+//! none. Question ids are offer ids, so the table keeps the last answer per
 //! offer.
 
 use oneiron::{EntityId, Vault};

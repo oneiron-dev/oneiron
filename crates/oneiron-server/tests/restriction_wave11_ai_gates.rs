@@ -866,3 +866,80 @@ fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
         fixture.finish().await;
     });
 }
+
+/// Plants one open quota question for spent prepaid credit on `account`,
+/// as the runtime keeps one when a spent account parks all its offers.
+fn plant_account_question(fixture: &Fixture, id: &str, account: &str) {
+    let question = QuotaQuestion {
+        id: id.to_owned(),
+        asked_at: fixture.vault.now_recorded_at(),
+        provider: "fixture".to_owned(),
+        model: "fixture/model".to_owned(),
+        route: "fixture".to_owned(),
+        spent: SpentKind::Credit,
+        resets_at: None,
+        choices: vec![QuotaChoice::TopUp, QuotaChoice::AddAccount],
+        fallbacks: Vec::new(),
+        account: Some(account.to_owned()),
+    };
+    let bytes = rmp_serde::to_vec_named(&question).expect("encode the question");
+    fixture
+        .vault
+        .sync_state_put(&format!("models:offer-cooldown:v1:ask:{id}"), &bytes)
+        .expect("plant the question");
+}
+
+/// Whether the question `id` is still open.
+fn question_open(fixture: &Fixture, id: &str) -> bool {
+    fixture
+        .vault
+        .sync_state_get(&format!("models:offer-cooldown:v1:ask:{id}"))
+        .expect("read the question")
+        .is_some()
+}
+
+/// One top-up serves every offer billed to the account: the owner's answer
+/// to one question closes each question open under that account, and each
+/// one's answer row reads back the owner and the top-up. A question on
+/// another account stays open with no answer row.
+#[test]
+fn a_top_up_records_its_answerer_on_every_question_it_closes() {
+    run_on_engine_stack("wave11-quota-top-up-account", || async {
+        let (fixture, _a, _b) = setup().await;
+        let answered = offer_question_id(0xc3);
+        let sibling = offer_question_id(0xc4);
+        let other = offer_question_id(0xc5);
+        plant_account_question(&fixture, &answered, "account-one");
+        plant_account_question(&fixture, &sibling, "account-one");
+        plant_account_question(&fixture, &other, "account-two");
+
+        let (status, bytes) = post_bytes(
+            &fixture,
+            &format!("/v1/ai/quota/{answered}"),
+            &fixture.owner_token,
+            owner_binding(&fixture),
+            json!({"choice": "top_up"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "owner tops up: {bytes:?}");
+
+        for id in [&answered, &sibling] {
+            assert!(!question_open(&fixture, id), "the top-up closes {id}");
+            let record = QuotaAnswerRecord::read(&fixture.vault, id)
+                .expect("read the answer row")
+                .expect("the answer row is kept");
+            assert_eq!(record.question, *id);
+            assert_eq!(record.choice, QuotaChoice::TopUp);
+            assert_eq!(record.fallback, None);
+            assert_eq!(record.answered_by, QuotaAnswerer::Owner);
+        }
+        assert!(question_open(&fixture, &other), "another account's question stays open");
+        assert_eq!(
+            QuotaAnswerRecord::read(&fixture.vault, &other).expect("read the answer row"),
+            None,
+            "an unanswered question keeps no row"
+        );
+
+        fixture.finish().await;
+    });
+}

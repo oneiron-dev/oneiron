@@ -399,6 +399,10 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // question, this deployment's routing state under `models:offer-cooldown:v1:`
         // (split by #5763, #4160).
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/account_park.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &row, &bytes)".to_owned() }, 1),
+        // Restriction wave 11 (#8900): who answered a quota question, kept in the
+        // write that closes it.
+        (RawHit { path: "crates/oneiron-server/src/models/cooldown/offer_core.rs".to_owned(), ident: "try_with_write_txn_grouped".to_owned(), line: "vault.try_with_write_txn_grouped(|txn| {".to_owned() }, 1),
+        (RawHit { path: "crates/oneiron-server/src/models/cooldown/quota_answer.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &row(&self.question), &bytes)".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/offer_core.rs".to_owned(), ident: "try_with_write_txn_grouped".to_owned(), line: "let kept = vault.try_with_write_txn_grouped(|txn| {".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/offer_core.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &key, &bytes)?;".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/quota_queue.rs".to_owned(), ident: "try_with_write_txn_grouped".to_owned(), line: "vault.try_with_write_txn_grouped(|txn| {".to_owned() }, 1),

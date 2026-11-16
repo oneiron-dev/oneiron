@@ -472,10 +472,13 @@ impl OfferCooldowns {
     /// agent his key lets give it): it closes the question, a top-up or
     /// pay-as-you-go puts its offer back in rotation now, and `use_fallback`
     /// keeps `fallback` (one of the question's fallbacks) as where the
-    /// offer's calls go while it is parked. The write that closes the
-    /// question keeps who answered ([`QuotaAnswerRecord`]). `false` when no
-    /// such question is open, the choice is not one it offers, or a
-    /// `use_fallback` names no model it offers.
+    /// offer's calls go while it is parked. A top-up that puts an account
+    /// back in rotation also closes every other question open under that
+    /// account. One write closes each question it closes and keeps who
+    /// answered it ([`QuotaAnswerRecord`]), so a failure before that write
+    /// leaves every question open for a retry. `false` when no such question
+    /// is open, the choice is not one it offers, or a `use_fallback` names no
+    /// model it offers.
     pub fn answer(
         &self,
         id: &str,
@@ -506,22 +509,30 @@ impl OfferCooldowns {
         } else {
             None
         };
+        let mut closed = vec![question.id.clone()];
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
             if let Some(account) = &question.account {
-                account_park::unpark(vault, account)?;
+                for id in account_park::unpark(vault, account)? {
+                    if !closed.contains(&id) {
+                        closed.push(id);
+                    }
+                }
             }
         }
-        let record = QuotaAnswerRecord {
-            question: question.id.clone(),
-            choice,
-            fallback,
-            answered_by: answerer,
-            answered_at: vault.now_recorded_at(),
-        };
+        let answered_at = vault.now_recorded_at();
         vault.try_with_write_txn_grouped(|txn| {
-            record.put_in_txn(vault, txn)?;
-            vault.sync_state_delete_in_write_txn(txn, &question_key(&question.id))?;
+            for id in &closed {
+                let record = QuotaAnswerRecord {
+                    question: id.clone(),
+                    choice,
+                    fallback: fallback.clone(),
+                    answered_by: answerer,
+                    answered_at,
+                };
+                record.put_in_txn(vault, txn)?;
+                vault.sync_state_delete_in_write_txn(txn, &question_key(id))?;
+            }
             Ok::<_, oneiron::Error>(())
         })?;
         Ok(true)
