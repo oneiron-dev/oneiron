@@ -475,6 +475,10 @@ pub struct ServeConfig {
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
+    /// The `[phonetic_embedder]` section: the model behind the learned
+    /// phonetic rung, absent until the config file names it. Absent means
+    /// no model: names keep their codes alone.
+    pub phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// Operator-only enterprise/advanced checkpoint selection capability.
@@ -613,6 +617,7 @@ impl Default for ServeConfig {
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
+            phonetic_embedder: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -733,6 +738,10 @@ impl ServeConfig {
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
         config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
+        // `[import] storage_cap_bytes`: an archive an import unpacks stops at
+        // the room it leaves, in every door that unpacks one (ARCH-0027
+        // #archive-precheck).
+        config.storage_cap_bytes = self.import.storage_cap_bytes;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);

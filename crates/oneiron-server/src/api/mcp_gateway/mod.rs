@@ -42,6 +42,11 @@ pub(crate) use self::actor_dispatch::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_params, mcp_tool_validation_error,
     resolve_mcp_actor_for_auth, resolve_mcp_gateway_actor,
 };
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::actor_dispatch::mcp_host_verb_gate;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::admission::mcp_admit_host_verb;
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{
     mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
@@ -65,6 +70,9 @@ pub(crate) use self::code_mode_verbs::{
 pub(crate) use self::code_run_resume::{McpCodeRunContinuations, reenter_ready_mcp_code_runs};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
+// The integration tests' door to the composed code-mode call (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::code_mode_verbs::McpCodeModeVerbs;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::code_mode_verbs::draft_checked_span;
@@ -88,12 +96,19 @@ pub(crate) use self::owner_call::resolve_mcp_caller;
 pub(crate) use self::read_result::execute_mcp_read_result;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
+// The integration tests' door to the envelope-error count (FIX
+// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wire::count_parse_error_for_test;
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
 // but no production path does, so a plain `pub(crate)` re-export would warn as
 // unused in non-test builds.
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
 pub(crate) use self::facade_refusals::mcp_facade_error;
+// The integration tests' door to the facade refusal vocabulary (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade_refusals::mcp_refusal_for_test;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_agent_verb_input,
     mcp_api_error, mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,

@@ -289,7 +289,7 @@ pub(in crate::api::mcp_gateway) async fn call_tool_as(
         );
     // FIX 1085: the call counts once on the wire, under the caller
     // resolved above and the tool it names, before it is judged.
-    super::wire::observe_tool_call(server, mode, actor, &tool, anonymous);
+    super::wire::observe_tool_call(server, mode, actor, &tool, anonymous).await;
     // OF-568 L4: the attempt whose live run the call holds, as the
     // hold witnessed it.
     let (called, attempt): (Result<Value, McpGatewayError>, _) =
