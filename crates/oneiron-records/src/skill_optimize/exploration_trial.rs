@@ -16,8 +16,8 @@ pub enum ExplorationTrialClose {
     VerdictRecorded,
     /// The board declined a run past the goal's exploration slice.
     OverrunDeclined,
-    /// The overrun ask went unanswered at the top of its chain for
-    /// [`EXPLORATION_ASK_LAPSE_HOURS`].
+    /// The overrun ask went unanswered at the top of its chain for the
+    /// catalogue key `exploration.ask.lapse_hours`.
     OverrunLapsed,
     /// An offline floor regressed on the held-out set.
     FloorsRegressed,

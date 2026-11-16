@@ -239,7 +239,6 @@ fn g240_the_owner_pins_a_spawn_width() -> TestResult {
         LearningSettingPut {
             key: "width".to_owned(),
             mode: LearningSettingMode::Pin,
-            value: None,
             choice: Some(LearningChoiceValue::Width(3)),
             weight_runs: None,
             why: "two reviewers and a writer".to_owned(),

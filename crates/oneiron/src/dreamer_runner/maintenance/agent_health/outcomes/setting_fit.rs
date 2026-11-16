@@ -9,8 +9,9 @@ use crate::dreamer_runner::maintenance::agent_health::{
 };
 use crate::learning::{Anchor, LearningCell, LearningPredicate, TypeRef};
 use crate::learning_setting::{
-    SettingCheck, SettingSpec, global_setting_subject, record_setting_check_in_txn,
+    SettingCheck, global_setting_subject, knob_bounds, record_setting_check_in_txn,
 };
+use crate::setting::Setting;
 use crate::{Result, Vault};
 
 pub(super) fn project_in_txn(
@@ -19,16 +20,16 @@ pub(super) fn project_in_txn(
     held: &HealthReviewReceipt,
     now: u64,
 ) -> Result<()> {
-    let Some(spec) = threshold_spec(&held.reviewer) else {
+    let Some(knob) = threshold_spec(&held.reviewer) else {
         return Ok(());
     };
     let effect = review_effect(held.outcome, held.by_owner);
     if effect == Effect::Unscored {
         return Ok(());
     }
-    let subject = global_setting_subject(spec.key)?;
+    let subject = global_setting_subject(knob.spec.name)?;
     let observed = match effect {
-        Effect::Label(label) => target(spec, held.dial, held.measured, label),
+        Effect::Label(label) => target(knob, held.dial, held.measured, label),
         Effect::Withdraw | Effect::Unscored => None,
     };
     if let Some(observed) = observed {
@@ -38,7 +39,7 @@ pub(super) fn project_in_txn(
             &SettingCheck {
                 subject,
                 project: None,
-                key: spec.key.to_owned(),
+                key: knob.spec.name.to_owned(),
                 type_ref: TypeRef::root(0),
                 observed,
                 receipt: held.receipt.clone(),
@@ -49,7 +50,7 @@ pub(super) fn project_in_txn(
         )?;
     } else {
         let cell = LearningCell::new(LearningPredicate::Setting, subject)
-            .setting_key(spec.key)
+            .setting_key(knob.spec.name)
             .type_ref(TypeRef::root(0));
         crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &cell, &held.receipt, now)?;
     }
@@ -58,7 +59,7 @@ pub(super) fn project_in_txn(
 
 /// Only families whose card carries the exact integer `count >= dial`
 /// pair. Share and cost cards round away their native floating-point dials.
-fn threshold_spec(reviewer: &str) -> Option<&'static SettingSpec> {
+fn threshold_spec(reviewer: &str) -> Option<&'static Setting<f64>> {
     match reviewer {
         "coach.agent_health.loop.v1" => Some(&HEALTH_LOOP_REPEATS),
         "coach.agent_health.failed_check_repeat.v1" => Some(&HEALTH_CHECK_FAILS),
@@ -70,8 +71,8 @@ fn threshold_spec(reviewer: &str) -> Option<&'static SettingSpec> {
 /// Minimizes the change to the frozen integer dial subject to reproducing
 /// the owner's label on its count. A constant/non-knob dial (such as the
 /// misalignment confession's zero), or an impossible target, fits nothing.
-fn target(spec: &SettingSpec, dial: i64, measured: i64, confirmed: bool) -> Option<f64> {
-    if measured < dial || (dial as f64) < spec.min || (dial as f64) > spec.max {
+fn target(knob: &Setting<f64>, dial: i64, measured: i64, confirmed: bool) -> Option<f64> {
+    if measured < dial || !knob_bounds(knob).contains(dial as f64) {
         return None;
     }
     let observed = if confirmed {
@@ -79,7 +80,5 @@ fn target(spec: &SettingSpec, dial: i64, measured: i64, confirmed: bool) -> Opti
     } else {
         measured.checked_add(1)?
     } as f64;
-    (spec.min..=spec.max)
-        .contains(&observed)
-        .then_some(observed)
+    knob_bounds(knob).contains(observed).then_some(observed)
 }

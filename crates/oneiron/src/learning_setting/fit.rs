@@ -3,7 +3,7 @@
 //! a fit starts from. A fit is keyed by its project, its subject and its type
 //! node, so a project's fit is its own and never the vault's.
 
-use super::{SETTING, SettingMode, SettingSpec, invalid, scoped_row_key, setting_spec, subject};
+use super::{invalid, knob_bounds, learned_setting, subject};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -71,61 +71,6 @@ pub(super) fn parse_setting_fit_key(
     (!key.is_empty()).then_some(fit)
 }
 
-/// The cached fit for one scope, once it has own runs.
-pub(super) fn cached_fit(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    project: Option<EntityId>,
-    subject: Option<EntityId>,
-    type_node: Option<&str>,
-) -> Result<Option<f64>> {
-    Ok(crate::learning::project::SETTING_FIT
-        .get(
-            store,
-            txn,
-            &setting_fit_key(spec.key, project, subject, type_node),
-        )?
-        .filter(|fit| fit.runs > 0.0 && fit.value.is_finite())
-        // A fit never leaves the catalog's bounds, so it never widens a floor.
-        .map(|fit| fit.value.clamp(spec.min, spec.max)))
-}
-
-/// The owner's seed over `spec` and its weight in runs for `cell`, if one
-/// stands: the prior a `learning.setting` fit starts from. The cell's
-/// project names the scope, never its subject: the project's goal's seed
-/// comes first, then the project's, then a non-root type's, then the
-/// vault's.
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn owner_seed_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    cell: &LearningCell,
-) -> Result<Option<(f64, f64)>> {
-    let type_ref = cell
-        .type_ref
-        .as_ref()
-        .filter(|type_ref| !type_ref.is_root());
-    for scope in super::read_scopes_in_txn(vault, txn, cell.project, type_ref)? {
-        if let Some(seed) = SETTING
-            .get(
-                &vault.store,
-                txn,
-                &scoped_row_key(spec.key, SettingMode::Seed, &scope),
-            )?
-            .filter(|row| (spec.min..=spec.max).contains(&row.value))
-            .and_then(|row| row.weight_runs.map(|weight| (row.value, weight)))
-        {
-            return Ok(Some(seed));
-        }
-    }
-    Ok(None)
-}
-
 /// One check that fits a named knob: the value the check found best, on the
 /// receipt that ran it.
 #[derive(Debug, Clone, PartialEq)]
@@ -188,27 +133,28 @@ pub(crate) fn record_setting_check_in_txn(
     check: &SettingCheck,
     now: u64,
 ) -> Result<Option<crate::learning::Estimate>> {
-    let spec = setting_spec(&check.key).ok_or(invalid("no learned setting has this key"))?;
-    if !check.observed.is_finite() || check.observed < spec.min || check.observed > spec.max {
+    let knob = learned_setting(&check.key).ok_or(invalid("no learned setting has this key"))?;
+    let name = knob.spec.name;
+    if !check.observed.is_finite() || !knob_bounds(knob).contains(check.observed) {
         return Err(invalid(
             "a fitting check's value lies within its catalog bounds",
         ));
     }
     // A vault-wide fit is learned on its knob's ASSET (FIX 8079). One not
     // ready passes the check over, and the write that carries it goes on.
-    if check.subject == global_setting_subject(spec.key)?
+    if check.subject == global_setting_subject(name)?
         && let Err(reason) =
-            subject::ensure_global_setting_subject_in_txn(vault, wtxn, spec.key, &check.subject)
+            subject::ensure_global_setting_subject_in_txn(vault, wtxn, name, &check.subject)
     {
         tracing::warn!(
             ?reason,
-            key = spec.key,
+            key = name,
             "a vault-wide setting check was not recorded: its subject is not ready"
         );
         return Ok(None);
     }
     let cell = LearningCell::new(crate::learning::LearningPredicate::Setting, check.subject)
-        .setting_key(spec.key)
+        .setting_key(name)
         .type_ref(check.type_ref.clone())
         .project(check.project);
     let evidence = crate::learning::LearningEvidence::anchored(

@@ -1,10 +1,10 @@
-//! `/v1/owner/settings/learning`: the owner reads the learned-setting
-//! catalog and its own rows, and lays or clears a seed or a pin over a knob
-//! or a spawn choice at the vault, a project's goal, a project or a task
-//! type (`oneiron::learning_setting_doors`). The engine keeps the catalog
-//! bounds and the seed and pin rules. Each route runs its
-//! `vault.settings.learning*` row's verb hooks once around the call, as the
-//! owner in person (FIX 9479).
+//! `/v1/owner/settings/learning`: the owner reads its own spawn-choice
+//! rows, and lays or clears a seed or a pin over a spawn choice (`model`,
+//! `width`, `pattern`, `budget`) at the vault, a project's goal, a project or
+//! a task type (`oneiron::learning_setting_doors`). A learned knob is a
+//! setting key now, set with `settings.set`. The engine keeps the seed and
+//! pin rules. Each route runs its `vault.settings.learning*` row's verb hooks
+//! once around the call, as the owner in person (FIX 9479).
 
 use std::sync::Arc;
 
@@ -31,7 +31,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/settings/learning",
-                summary: "The catalog, each knob with the value the vault reads now, and the owner's rows.",
+                summary: "The owner's spawn-choice rows, each with what was learned under it.",
                 row: None,
                 shape: None,
             },
@@ -83,8 +83,8 @@ pub(crate) fn learning_settings_view_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingsView>()
 }
 
-/// `GET /v1/owner/settings/learning[?key=<key>]`: the catalog, each knob
-/// with the value the vault reads now, and the owner's rows.
+/// `GET /v1/owner/settings/learning[?key=<key>]`: the owner's spawn-choice
+/// rows, each with what was learned under it.
 async fn list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

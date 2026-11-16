@@ -82,9 +82,9 @@ pub(crate) fn erase_learning_scope_in_txn(
             }
         }
     }
-    // The owner's rows over the erased project or goal and every fit keyed
-    // by it go too, even where no cell is left.
-    crate::learning_setting::erase_setting_scope_in_txn(vault, wtxn, entity)?;
+    // Every fit keyed by the erased project or goal goes too, even where no
+    // cell is left; the setting rows over it go with the setting eraser.
+    crate::learning_setting::erase_setting_fits_in_txn(vault, wtxn, entity)?;
     crate::learning_setting_choice::erase_choice_scope_in_txn(vault, wtxn, entity)?;
     let named = entity.to_hex();
     clear_prior_provenance_in_txn(vault, wtxn, &named)?;

@@ -135,7 +135,7 @@ pub(crate) mod audit_rate;
 mod brief;
 mod decisions;
 mod dials;
-mod eval_set;
+pub(crate) mod eval_set;
 pub(crate) mod exploration_trial;
 mod gate;
 mod goal_axes;

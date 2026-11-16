@@ -108,7 +108,7 @@ fn a_positional_claim_value_written_before_named_fields_decodes_to_its_cell() {
         .type_ref(TypeRef::root(1))
         .axis("quality")
         .consent_scope("owner")
-        .setting_key("credit_decay")
+        .setting_key("credit.decay")
         .project(Some(EntityId::now()));
     // A vault cell with no consent scope: the shape written before cells had
     // a project, which skips the trailing qualifiers and has no project field.

@@ -60,7 +60,6 @@ pub mod inbox;
 pub mod inquiry;
 pub mod interlocutor;
 pub mod learning;
-pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod lens;
 pub mod linear_sync;

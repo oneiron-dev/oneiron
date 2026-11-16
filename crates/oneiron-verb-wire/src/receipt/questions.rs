@@ -19,8 +19,8 @@ use serde::Serialize;
 pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
 
 /// The shipped seed of the vault's question call budget
-/// ([`crate::llm::decision::questions::records::QUESTION_CALL_BUDGET_MS`]): an
-/// `ai.verdict` call's default.
+/// (the engine's learned key `question.call_budget_ms`): an `ai.verdict` call's
+/// default.
 pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = AI_VERDICT_DEADLINE_MS;
 
 /// A graph ask's type selection: the engine's by-type entry

@@ -2,6 +2,7 @@
 //! Entry functions: `queue_trial_ask`, `answer_in_txn`, `climb_stale_ask`.
 //! The trial, its state and its tables remain defined in `super`.
 
+use super::setting_keys::{EXPLORATION_ASK_CLIMB_HOURS, EXPLORATION_ASK_LAPSE_HOURS};
 use super::*;
 
 /// The trial state an answer to an overrun ask leaves: a yes covers

@@ -22,7 +22,9 @@ use super::ceremony::{sign, signed_event};
 use super::field_admission::{EventFields, InspectedPages, inspect_event_pages};
 use super::ledger::state_in;
 use super::model::*;
-use super::setting_keys::{ESIGN_HELD_SIGNING_OWNER_LAPSE, HeldSigningLapse};
+use super::setting_keys::{
+    ESIGN_ASK_CLIMB_HOURS, ESIGN_HELD_SIGNING_OWNER_LAPSE, HeldSigningLapse,
+};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::decision::DecisionAsk;
 use crate::model_decision::AnswerActor;
@@ -45,18 +47,6 @@ pub const HOLD_DECLINE: &str = "decline";
 /// act's ask lapses unanswered at the owners.
 pub const HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER: &str = "esign.held_signing_lapse";
 
-/// Hours a held sign act's unanswered ask waits on the person it went to
-/// before it climbs to the next role up its chain (CALLS "OF-415 held
-/// signing climb"). At the vault owners it does not climb: it waits for the
-/// vault's `esign.held_signing.owner_lapse`, then lapses unsigned. No
-/// unanswered ask signs.
-pub const ESIGN_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
-    crate::store::setting_seed::SettingSpec {
-        key: "esign.ask.climb_hours",
-        min: 1.0,
-        max: 720.0,
-        seed: 24.0,
-    };
 /// The most bytes of the document title the question quotes.
 const TITLE_MAX_BYTES: usize = 256;
 
