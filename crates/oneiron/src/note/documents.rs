@@ -491,11 +491,23 @@ pub(crate) fn load_doc(
 ) -> Result<Option<NoteDocument>> {
     super::verbs::note_core(vault, txn, note)?;
     super::ensure_citations_ready(&vault.store, txn, note)?;
-    let slot = crate::ports::DocumentSlot::of(head_in(&vault.store, txn, note)?.0);
-    if !crate::ports::DocumentRowStore::port_document_present(&vault.store, txn, slot)? {
+    if !head_document_held_in(&vault.store, txn, note)? {
         return Ok(None);
     }
     live_doc(vault, txn, note).map(Some)
+}
+
+/// Whether `store` holds any part of `note`'s head document: its snapshot
+/// or an update. A replica holds a NOTE's row before its authority sends
+/// that document ([`super::storage::stored_document`]); a slot with updates
+/// and no snapshot counts as held, so its strict load still refuses it.
+pub(crate) fn head_document_held_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<bool> {
+    let slot = crate::ports::DocumentSlot::of(head_in(store, txn, note)?.0);
+    crate::ports::DocumentRowStore::port_document_present(store, txn, slot)
 }
 
 pub(crate) fn live_doc(

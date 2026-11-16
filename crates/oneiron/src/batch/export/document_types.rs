@@ -59,6 +59,14 @@ pub struct WholeVaultDocumentManifest {
     /// and row counts; empty in a v5 archive and outside a whole-vault export.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub side_table_omissions: Vec<ArchiveSideTableOmission>,
+    /// L2-23: the exporting install's signature over this manifest, set last
+    /// (`super::archive_provenance`). `None` on an archive no loaded machine
+    /// key signed, which proves no provenance. The field is additive, so the
+    /// version stays: an archive written before L2-23 has no such key and
+    /// reads as an unsigned one, and an unsigned archive is written as before
+    /// (STORED-CHANGE-RULE keep: a vault holds archives for its removals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<super::ArchiveProvenance>,
 }
 
 /// One omitted side table: the whole-vault archive declares it with its reason and row count,
