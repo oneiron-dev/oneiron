@@ -12,8 +12,8 @@ use super::*;
 /// declares through its `[device_sync]` section instead.
 pub(super) fn served_without_dreamer(vault: &Vault, device: bool) {
     if !device {
-        crate::home_candidacy::declare(vault, true, false, false);
         crate::home_candidacy::declare_home_full_copy(vault);
+        crate::home_candidacy::declare(vault, true, false, false);
     }
 }
 

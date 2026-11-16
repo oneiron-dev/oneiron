@@ -450,8 +450,10 @@ fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
     let candidate = store.local_home_node_candidate(true, true, false)?;
     let node_id = candidate.node_id;
     if !device {
-        crate::home_candidacy::declare(vault, true, false, true);
+        // The mark first: an election between the two writes then never
+        // ranks a marked device over this home's own declaration.
         crate::home_candidacy::declare_home_full_copy(vault);
+        crate::home_candidacy::declare(vault, true, false, true);
         store.elect_home_node(&[candidate], now_ms() / 1_000)?;
     }
     Ok(node_id)
