@@ -28,6 +28,18 @@ use super::*;
 
 pub const OP_KIND_CONVERSATION_TRAINING: &str = "conversation_training";
 const CONVERSATION_TRAINING_KEYS: [&str; 4] = [OP_KEY_KIND, OP_KEY_ACT, "machine", "leave_out"];
+/// The same keys with the person's own proof (row
+/// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): a row whose person signed one
+/// carries exactly these five.
+const CONVERSATION_TRAINING_KEYS_WITH_PROOF: [&str; 5] = [
+    OP_KEY_KIND,
+    OP_KEY_ACT,
+    "machine",
+    "leave_out",
+    "person_proof",
+];
+/// The person's own proof, exactly these two keys.
+const PERSON_PROOF_KEYS: [&str; 2] = ["signature", "slip"];
 /// The domain of an opt-out act's `seen`, beside the home pick's
 /// ([`HOME_PICK_REVISION_CONTEXT`]): BLAKE3 over it and the person's sorted
 /// live choice hashes, in the `PolicyRevision` shape.
@@ -45,6 +57,9 @@ pub struct ConversationTrainingSet {
     pub machine: EntityId,
     /// Whether the person's own messages are left out.
     pub leave_out: bool,
+    /// The person's own proof (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF),
+    /// `None` when the person signed none.
+    pub person_proof: Option<PersonChoiceProof>,
 }
 
 impl ConversationTrainingSet {
@@ -69,7 +84,7 @@ impl ConversationTrainingSet {
 }
 
 pub(super) fn conversation_training_value(set: &ConversationTrainingSet) -> Value {
-    Value::Map(vec![
+    let mut fields = vec![
         (
             Value::from(OP_KEY_KIND),
             Value::from(OP_KIND_CONVERSATION_TRAINING),
@@ -80,12 +95,38 @@ pub(super) fn conversation_training_value(set: &ConversationTrainingSet) -> Valu
         ),
         (Value::from("machine"), Value::from(set.machine.to_hex())),
         (Value::from("leave_out"), Value::from(set.leave_out)),
-    ])
+    ];
+    // The proof rides only when the person signed one, so a choice without
+    // one keeps today's bytes exactly: old rows decode and re-encode
+    // unchanged, and the stored-change path is "keep".
+    if let Some(proof) = &set.person_proof {
+        fields.push((
+            Value::from("person_proof"),
+            Value::Map(vec![
+                (
+                    Value::from("signature"),
+                    Value::Binary(proof.signature.to_vec()),
+                ),
+                (Value::from("slip"), binary_value(proof.slip)),
+            ]),
+        ));
+    }
+    Value::Map(fields)
 }
 
-/// A boolean `leave_out`; nothing else.
+/// A boolean `leave_out`, and the person's own proof when they signed one:
+/// exactly the four keys of today, or the five with `person_proof`.
 pub(super) fn decode_conversation_training(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    validate_keys(entries, &CONVERSATION_TRAINING_KEYS)?;
+    // `validate_keys` takes exact key sets, so the list is picked by whether
+    // a `person_proof` key is present.
+    let has_proof = entries
+        .iter()
+        .any(|(key, _)| key.as_str() == Some("person_proof"));
+    if has_proof {
+        validate_keys(entries, &CONVERSATION_TRAINING_KEYS_WITH_PROOF)?;
+    } else {
+        validate_keys(entries, &CONVERSATION_TRAINING_KEYS)?;
+    }
     Ok(AuthorityOp::ConversationTrainingSet(
         ConversationTrainingSet {
             act: super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?)?,
@@ -93,6 +134,28 @@ pub(super) fn decode_conversation_training(entries: &[(Value, Value)]) -> Result
             leave_out: required(entries, "leave_out")?
                 .as_bool()
                 .ok_or_else(invalid_authority)?,
+            person_proof: if has_proof {
+                Some(decode_person_proof(required(entries, "person_proof")?)?)
+            } else {
+                None
+            },
         },
     ))
+}
+
+/// The person's own proof: exactly the two keys, exact lengths.
+fn decode_person_proof(value: &Value) -> Result<PersonChoiceProof> {
+    let inner = map_entries(value)?;
+    validate_keys(inner, &PERSON_PROOF_KEYS)?;
+    let signature: [u8; 64] = match required(inner, "signature")? {
+        Value::Binary(bytes) => bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid_authority())?,
+        _ => return Err(invalid_authority()),
+    };
+    Ok(PersonChoiceProof {
+        slip: decode_hash(required(inner, "slip")?)?,
+        signature,
+    })
 }
