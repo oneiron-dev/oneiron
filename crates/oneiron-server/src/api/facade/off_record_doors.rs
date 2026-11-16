@@ -29,6 +29,10 @@
 //!   anyone else's as its creator.
 //! - `vault.off_record.status`, `.witness` and `.discard` read it, speak in
 //!   it and close it; close without a save is the discard.
+//! - `vault.off_record.save_from_here` puts it on record from here on: the
+//!   owner's on their proof, its creator's on their own write slip while the
+//!   owner's setting `off_record.flip_alone.by_holder` is on (restriction
+//!   wave 7, C24), the solo twin of the room's save from here.
 //! - `vault.off_record.recall` reads the session's overlay with base, on the
 //!   caller's own credential handle (`Memory::recall_in_session`).
 //! - `vault.off_record.notes.create` and `.claims.upsert` write through the
@@ -487,6 +491,70 @@ pub(crate) async fn vault_off_record_discard(
         })
     })
     .await
+}
+
+/// `vault.off_record.save_from_here`: puts a stretch entered alone on record
+/// from here on, the solo twin of `vault.off_record.rooms.save_from_here`:
+/// the owner's on their proof, as `POST /v1/owner/off-record/mode` does; its
+/// creator's on their own live, unattenuated write slip, while the owner's
+/// setting `off_record.flip_alone.by_holder` is on (restriction wave 7, C24).
+/// It binds the stretch as every solo row does ([`managed_session`]), so a
+/// principal reaches only a stretch they entered, never the owner's or
+/// another creator's. The slip and the setting are checked again at the flip
+/// and at every landing; once either lapses, the saving stops.
+pub(crate) async fn vault_off_record_save_from_here(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OffRecordSessionRequest,
+) -> Listed<OffRecordSessionView> {
+    const VERB: &str = "vault.off_record.save_from_here";
+    as_caller_unlisted(server, auth, VERB, move |server, caller| {
+        let vault = server.vault();
+        let session_ref = &input.session_ref;
+        let session = managed_session(vault, caller, VERB, session_ref)?;
+        match caller {
+            Caller::Owner(owner) => session.flip_on_record_as(owner),
+            Caller::Principal { who, credential } => {
+                if !session.flip_alone_by_holder_admitted()? {
+                    return Err(flip_alone_off(VERB));
+                }
+                session.flip_on_record_by(who.actor, credential)
+            }
+        }
+        .map_err(|error| match error.kind() {
+            ErrorKind::OffRecordPromoteUnauthenticated => not_a_saver(VERB),
+            _ => session_refusal(error, session_ref),
+        })?;
+        let record = session
+            .record()
+            .map_err(|error| session_refusal(error, session_ref))?;
+        Ok(view(owner_off_record::Session::from(record)))
+    })
+    .await
+}
+
+/// A creator's save from here while the owner's setting is off.
+fn flip_alone_off(verb: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!(
+            "{verb}: the owner's setting off_record.flip_alone.by_holder is off, so only the \
+             vault's owner puts a stretch entered alone on record"
+        ),
+        &["Ask the owner to save it from here, or to turn on off_record.flip_alone.by_holder."],
+    )
+}
+
+/// A creator whose slip does not carry this vault's write grant.
+fn not_a_saver(verb: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!(
+            "{verb}: the slip presented does not carry this vault's write grant: a slip of your \
+             own, as minted, that writes over the whole vault"
+        ),
+        &["Call with your own unattenuated slip that writes, or ask the owner to save it."],
+    )
 }
 
 /// `vault.off_record.recall`: a light recall over the session's overlay
