@@ -430,6 +430,9 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             std::iter::empty::<String>(),
         ),
         OwnerError::NotFound(what, which) => ApiError::not_found(what, Some(&which)),
+        OwnerError::ConfirmRequired(refusal) => {
+            ApiError::owner_confirm_required(refusal.message, refusal.suggestions)
+        }
         OwnerError::Engine(error) => match error.kind() {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
             // FIX 5147: a stale seen revision (or a write that lost its race)

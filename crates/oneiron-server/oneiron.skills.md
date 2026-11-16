@@ -1666,6 +1666,7 @@ Codes the server's HTTP error type defines:
 - `OWNER_BINDING_REQUIRED`
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
+- `OWNER_CONFIRM_REQUIRED` (428): a one-way act's call carried no confirm, or one that is not the owner's live preview of it; preview it again and pass its confirm back.
 - `4001`
 - `4002`
 - `4003`

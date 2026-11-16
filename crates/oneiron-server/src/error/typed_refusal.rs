@@ -71,6 +71,16 @@ impl ApiError {
             ["Use a control credential that grants this operation."],
         )
     }
+
+    /// A one-way act's call carried no confirm, or one that is not the
+    /// owner's live preview of it, in the engine's words: a 428 under the
+    /// engine's own code, as the facade answers it.
+    pub(crate) fn owner_confirm_required(
+        message: impl Into<String>,
+        suggestions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::new(message, ApiErrorDetails::OwnerConfirmRequired, suggestions)
+    }
 }
 
 impl ApiError {

@@ -87,6 +87,11 @@ pub enum ErrorCode {
     /// operation it asked for.
     #[serde(rename = "CONTROL_SCOPE_DENIED")]
     ControlScopeDenied,
+    /// A one-way act's call carried no confirm, or one that is not the
+    /// owner's live preview of it: the engine's own refusal code, a 428 as
+    /// the facade answers it (DEC-0006 #undo-class).
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -128,6 +133,7 @@ impl ErrorCode {
         Self::OwnerBindingRequired,
         Self::CourtesyDeleteUnauthenticated,
         Self::ControlScopeDenied,
+        Self::OwnerConfirmRequired,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -165,6 +171,7 @@ impl ErrorCode {
             Self::OwnerBindingRequired => oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED,
             Self::CourtesyDeleteUnauthenticated => COURTESY_DELETE_REFUSAL_CODE,
             Self::ControlScopeDenied => CONTROL_SCOPE_REFUSAL_CODE,
+            Self::OwnerConfirmRequired => oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED,
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -202,6 +209,7 @@ impl ErrorCode {
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
             Self::CrdtFrameTooLarge | Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::OwnerConfirmRequired => StatusCode::PRECONDITION_REQUIRED,
         }
     }
 }
@@ -305,6 +313,8 @@ pub enum ApiErrorDetails {
     CourtesyDeleteUnauthenticated { required_scope: Option<String> },
     #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "camelCase")]
     ControlScopeDenied { required_scope: Option<String> },
+    #[serde(rename = "OWNER_CONFIRM_REQUIRED")]
+    OwnerConfirmRequired,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -354,6 +364,7 @@ impl ApiErrorDetails {
             Self::OwnerBindingRequired { .. } => ErrorCode::OwnerBindingRequired,
             Self::CourtesyDeleteUnauthenticated { .. } => ErrorCode::CourtesyDeleteUnauthenticated,
             Self::ControlScopeDenied { .. } => ErrorCode::ControlScopeDenied,
+            Self::OwnerConfirmRequired => ErrorCode::OwnerConfirmRequired,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,

@@ -39,6 +39,7 @@ fn refusal(verb: &str, error: OwnerError) -> MemoryError {
             MemoryError::new(MEMORY_CODE_INVALID_STATE, message, &[])
         }
         OwnerError::Engine(error) => MemoryError::from(*error),
+        OwnerError::ConfirmRequired(refusal) => *refusal,
         OwnerError::Host(_) => internal(verb),
     }
 }

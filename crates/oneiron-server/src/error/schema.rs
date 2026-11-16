@@ -202,6 +202,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         | ErrorCode::DeepRetrievalUnavailable
         | ErrorCode::EmbedderUnavailable
         | ErrorCode::SummaryWriterUnavailable
+        | ErrorCode::OwnerConfirmRequired
         | ErrorCode::CrdtAuthExpired
         | ErrorCode::CrdtDecodeError => {}
     }
