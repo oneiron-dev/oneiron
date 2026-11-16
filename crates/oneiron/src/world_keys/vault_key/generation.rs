@@ -91,6 +91,9 @@ pub struct DataKeyGenerationDraft<'v> {
     /// One sealed capsule of the next key per recipient machine, ascending
     /// by machine.
     capsules: Vec<(EntityId, Vec<u8>)>,
+    /// Each recipient machine and the encryption key its capsule is sealed
+    /// to, ascending by machine: the write refuses when either moved.
+    recipient_keys: Vec<(EntityId, oneiron_crypto::HybridPublicKey)>,
     /// This install's device wrap kind.
     device_kind: VaultKeyWrapKind,
     /// The new key's wraps, sealed before the write, by wrap id: this
@@ -294,6 +297,7 @@ impl Vault {
             authority_vault,
             generation,
             capsules,
+            recipient_keys: recipients,
             device_kind,
             envelopes,
             escrow_fingerprints,
@@ -505,7 +509,9 @@ impl Vault {
         // The delivery to the owner's other devices, in this same write: the
         // new commitment, the link, and one capsule per recipient, signed by
         // this install. A recipient set that moved since the prepare refuses:
-        // the draft's capsules would miss a device or name a removed one.
+        // the draft's capsules would miss a device or name a removed one. So
+        // does a recipient whose encryption key a profile revision replaced:
+        // its capsule would open only for the replaced key's holder.
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let machine = crate::identity::read_machine_id_in_txn(self, txn)?.ok_or_else(|| {
             refused("this install has no machine identity to sign the new generation")
@@ -515,12 +521,7 @@ impl Vault {
                 "the owner's devices changed during the act; start it again",
             ));
         }
-        let live: Vec<EntityId> = generation_recipients(&fold, machine)
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        let drafted: Vec<EntityId> = draft.capsules.iter().map(|(id, _)| *id).collect();
-        if live != drafted {
+        if generation_recipients(&fold, machine) != draft.recipient_keys {
             return Err(refused(
                 "the owner's devices changed during the act; start it again",
             ));

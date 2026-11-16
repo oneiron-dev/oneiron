@@ -202,6 +202,17 @@ impl Vault {
         Ok(DataKeyGenerationAdoption { adopted })
     }
 
+    /// Receives the data-key generations an ingest just committed
+    /// ([`Vault::adopt_data_key_generations`]), after its commit and outside
+    /// every transaction: the new key is adopted with no owner unlock. An
+    /// error is logged, never returned: the ingest stands, and the next one
+    /// retries.
+    pub(crate) fn adopt_data_key_generations_after_ingest(&self) {
+        if let Err(error) = self.adopt_data_key_generations() {
+            tracing::warn!(%error, "a received data-key generation was not adopted");
+        }
+    }
+
     /// The folded generation just above this replica's stored one, when it
     /// is eligible and carries a capsule for this machine. One read
     /// snapshot, no write: every authority ingest asks it.
