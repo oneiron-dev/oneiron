@@ -106,6 +106,8 @@ pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
 pub mod seat_park_model_step;
+#[cfg(feature = "sync")]
+pub mod secret_same_value;
 pub mod shared_act_family;
 pub mod skill_gate;
 pub mod skill_hub_restore;

@@ -20,6 +20,7 @@ mod pad_objects;
 mod pad_refill;
 mod pages;
 mod search;
+mod secret_same_value;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -509,6 +510,9 @@ pub(super) fn run(
             }
             "residence.authority.checkpoint.countersign" => {
                 checkpoint_roots::countersign(server, peer, request.params)
+            }
+            "residence.secret_same_value.exchange" => {
+                secret_same_value::exchange(server, auth, peer, request.params)
             }
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
