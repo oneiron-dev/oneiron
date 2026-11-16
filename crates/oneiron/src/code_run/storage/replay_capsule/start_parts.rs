@@ -21,6 +21,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{ExecutorStepStart, StepReplayCapsule, StepStartBody};
 use super::super::records::{
@@ -155,7 +157,7 @@ fn kept_start_in_txn(
     let Some(held) = start_bytes_in_txn(store, txn, scope, start)? else {
         return Ok(None);
     };
-    if *blake3::hash(&held).as_bytes() != start.digest {
+    if *ContentHash::of(&held).as_bytes() != start.digest {
         return Ok(None);
     }
     let mut row = CAPSULES.decl().prefix.to_vec();
@@ -360,7 +362,7 @@ fn take_row(rows: &mut Rows, key: &[u8]) -> Option<Vec<u8>> {
 fn inline_in_rows(rows: &Rows, piece: OutputRef) -> Option<Vec<u8>> {
     let at = place(rows, &code_run_body_row_key(&piece.hash)).ok()?;
     match RAW_OUTPUTS.decode_value(&rows[at].1).ok()? {
-        StoredBody::Inline { bytes, .. } if *blake3::hash(&bytes).as_bytes() == piece.hash => {
+        StoredBody::Inline { bytes, .. } if *ContentHash::of(&bytes).as_bytes() == piece.hash => {
             Some(bytes)
         }
         _ => None,
@@ -427,7 +429,7 @@ fn holds_bytes_in_rows(rows: &Rows, files: &BTreeSet<[u8; 32]>, digest: &[u8; 32
         return false;
     };
     match RAW_OUTPUTS.decode_value(&rows[at].1) {
-        Ok(StoredBody::Inline { bytes, .. }) => blake3::hash(&bytes).as_bytes() == digest,
+        Ok(StoredBody::Inline { bytes, .. }) => ContentHash::of(&bytes).as_bytes() == digest,
         Ok(StoredBody::File { .. }) => files.contains(digest),
         Err(_) => false,
     }
@@ -496,7 +498,7 @@ pub(crate) fn republish_step_start_in_rows(
         rested.insert(before);
     }
     landed.insert(output.raw_blake3);
-    let digest = *blake3::hash(bytes).as_bytes();
+    let digest = *ContentHash::of(bytes).as_bytes();
     capsule.start = Some(republished_step_start(start, output.output_ref(), digest));
     put_row(rows, row.to_vec(), CAPSULES.encode_value(&capsule)?);
     Ok(Some((rested, landed)))

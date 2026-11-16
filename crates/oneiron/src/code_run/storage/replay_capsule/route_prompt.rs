@@ -16,6 +16,7 @@
 //! it has no retention rule of its own.
 
 use heed::RwTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::super::super::replay_capsule::{
     CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule, StoredRungBinding,
@@ -119,7 +120,7 @@ fn store_prompt_in_txn(
     Ok(CapsuleRequest::Kept {
         body,
         path,
-        stored_hash: *blake3::hash(&admitted).as_bytes(),
+        stored_hash: *ContentHash::of(&admitted).as_bytes(),
         erased: false,
     })
 }
@@ -265,7 +266,7 @@ pub(crate) fn route_prompt_at(
     let Some(bytes) = held else {
         return Ok(Err(withheld("route_prompt_unreadable")));
     };
-    if blake3::hash(&bytes).as_bytes() != stored_hash {
+    if ContentHash::of(&bytes).as_bytes() != stored_hash {
         return Ok(Err(withheld("route_prompt_digest")));
     }
     Ok(serde_json::from_slice::<String>(&bytes)

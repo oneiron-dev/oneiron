@@ -11,6 +11,7 @@ use std::io::{self, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Map, Value};
 
 use super::{ActionVerbDefinition, MAX_ACTION_JSON_BYTES, invalid};
@@ -220,7 +221,7 @@ pub(crate) fn held_request_form(request: &rmpv::Value) -> Option<rmpv::Value> {
     let value: Value = serde_json::from_str(input).ok()?;
     Some(digest_request(
         verb,
-        blake3::hash(input.as_bytes()).as_bytes(),
+        ContentHash::of(input.as_bytes()).as_bytes(),
         &crate::receipt::call_json_digest(&value),
     ))
 }

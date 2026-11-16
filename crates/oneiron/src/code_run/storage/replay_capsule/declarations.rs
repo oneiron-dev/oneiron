@@ -19,6 +19,8 @@
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::llm::{ContentPart, LlmMessageRole, LlmRequest};
 use crate::{Error, Result};
 
@@ -90,14 +92,14 @@ fn request_as_sent(mut stored: LlmRequest) -> Option<LlmRequest> {
 /// A request that does not encode.
 pub(crate) fn stored_request_hash(stored: &LlmRequest, bytes: &[u8]) -> Result<[u8; 32]> {
     if !names_declarations(stored) {
-        return Ok(*blake3::hash(bytes).as_bytes());
+        return Ok(*ContentHash::of(bytes).as_bytes());
     }
     match request_as_sent(stored.clone()) {
         Some(sent) => sent
             .canonical_hash()
             .map_err(|error| Error::InvalidConfig(format!("capsule request: {error}"))),
         // Another build's declarations: no read puts them back.
-        None => Ok(*blake3::hash(bytes).as_bytes()),
+        None => Ok(*ContentHash::of(bytes).as_bytes()),
     }
 }
 
@@ -108,7 +110,7 @@ pub(crate) fn stored_request_hash(stored: &LlmRequest, bytes: &[u8]) -> Result<[
 pub(crate) fn read_stored_request(bytes: &[u8], stored_hash: &[u8; 32]) -> Option<LlmRequest> {
     let stored: LlmRequest = serde_json::from_slice(bytes).ok()?;
     if !names_declarations(&stored) {
-        return (blake3::hash(bytes).as_bytes() == stored_hash).then_some(stored);
+        return (ContentHash::of(bytes).as_bytes() == stored_hash).then_some(stored);
     }
     let sent = request_as_sent(stored)?;
     let hash = sent.canonical_hash().ok()?;

@@ -67,6 +67,8 @@ use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::source_admission::ContributionSourceAdmission;
 use super::super::{
     ContributionForkProgram, ContributionReplayUnavailable as Unavailable, ForkRows,
@@ -722,7 +724,7 @@ fn callable_source(vault: &Vault, callable: &CapturedCallable) -> Result<Option<
         .into_iter()
         .find(|file| {
             file.path == selected.reference
-                && *blake3::hash(&file.content).as_bytes() == selected.source_hash
+                && *ContentHash::of(&file.content).as_bytes() == selected.source_hash
         })
         .and_then(|file| String::from_utf8(file.content).ok()))
 }

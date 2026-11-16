@@ -31,6 +31,7 @@ mod source;
 mod takeover;
 mod unopened;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -354,7 +355,7 @@ impl CustodyLanding {
             anchor_read: admitted
                 .anchor
                 .as_deref()
-                .map(|record| *blake3::hash(record).as_bytes()),
+                .map(|record| *ContentHash::of(record).as_bytes()),
             anchor_advanced: None,
             retired_ids: admitted.retired.len() + admitted.retired_through.len(),
         })

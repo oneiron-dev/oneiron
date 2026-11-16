@@ -2,6 +2,7 @@
 
 mod erase;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
@@ -53,7 +54,7 @@ pub(crate) fn snapshot_live_in_txn(
     ) else {
         return Ok(false);
     };
-    if blake3::hash(raw).as_bytes() != hash {
+    if ContentHash::of(raw).as_bytes() != hash {
         return Ok(false);
     }
     let evidence: CentroidEvidence =

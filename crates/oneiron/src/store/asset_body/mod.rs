@@ -47,6 +47,7 @@ pub(crate) use stage::{StagedAssetBody, StagedHold};
 use std::io::{self, Read, Write};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{BodyDir, BodyFile, BodyKeyRow, ManifestDbs, Store, body_file_name};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -136,7 +137,7 @@ pub(crate) struct AssetBodyFacts {
 impl AssetBodyFacts {
     pub(crate) fn of(body: &[u8]) -> Self {
         Self {
-            blake3: *blake3::hash(body).as_bytes(),
+            blake3: *ContentHash::of(body).as_bytes(),
             len: body.len() as u64,
             xxh32: xxhash_rust::xxh32::xxh32(body, 0),
         }

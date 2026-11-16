@@ -9,6 +9,7 @@ use super::log::{Control, CustodyPosition, POSITION_LEN};
 use super::platform;
 use super::protocol::{AnchorAdvance, AnchorStore};
 use crate::error::{Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 use rand::RngCore;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -119,7 +120,7 @@ impl AnchorStore for FileAnchor {
         let current = read_whole(&root.join(&name))?;
         if current
             .as_deref()
-            .map(|current| *blake3::hash(current).as_bytes())
+            .map(|current| *ContentHash::of(current).as_bytes())
             != expected
         {
             return Ok(AnchorAdvance::Moved);

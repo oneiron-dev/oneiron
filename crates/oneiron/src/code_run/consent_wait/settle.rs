@@ -5,6 +5,8 @@
 //! run in one commit. The answer, the settlement and the run's consumption
 //! of the reply (1b) stay three separate facts.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::code_run::ConnectorCallReply;
 use crate::consent::{
@@ -707,7 +709,7 @@ pub(super) fn settle_with_reply_in_txn(
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
-    let reply_digest = *blake3::hash(delivered.as_bytes()).as_bytes();
+    let reply_digest = *ContentHash::of(delivered.as_bytes()).as_bytes();
     let external_reply = row.binding.pending.connector_call().is_some()
         && matches!(
             serde_json::from_str::<ConnectorCallReply>(&delivered),
