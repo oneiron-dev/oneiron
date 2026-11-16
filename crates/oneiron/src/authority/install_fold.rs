@@ -327,10 +327,7 @@ impl NoVouch {
                     .get(hash)
                     .zip(floors.get(hash))
                     .is_some_and(|(entry, floor)| {
-                        entry.seq() < *floor
-                            && !entry
-                                .op()
-                                .is_some_and(super::entry_transition::lands_restriction_only)
+                        entry.seq() < *floor && super::entry_transition::row_floor_refuses(entry)
                     })
             };
             observations.vouched.iter().any(refused) || (removal && floors.keys().any(refused))

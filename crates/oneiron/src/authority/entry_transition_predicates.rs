@@ -29,6 +29,72 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     )
 }
 
+/// A row that changes the roster: a genesis, an enrollment (an agent key or
+/// an owner's own signing key), a revocation, a rotation or a re-root, the
+/// ops whose `apply_op` arms write `FoldState::roster`. No arrival floor
+/// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]), and one vouches for
+/// every row of its own signer below it in its ancestry that a floor refuses
+/// (`floor_refuses`, `sequence_ancestry`), so arrival order alone does not
+/// change the roster, as a revocation's rule asks (ARCH-0040 ONE-REVOKE-D3).
+/// A restriction it names keeps its floor and lands restriction only there.
+/// Its signer's own order still binds it, on every install alike: a row at
+/// or below a sequence its signer reached in the row's own ancestry is
+/// refused (`fold_entry_state`, `state.seqs`). A parent of another signer
+/// that this install's floor refuses still holds it back (FIX
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
+pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::Genesis { .. }
+            | AuthorityOp::EnrollDevice { .. }
+            | AuthorityOp::OwnerKeyEnroll(_)
+            | AuthorityOp::RevokeDevice { .. }
+            | AuthorityOp::RotateKey { .. }
+            | AuthorityOp::ReRoot { .. }
+    )
+}
+
+/// Whether this install's sequence floor refuses a row of `op` that reaches
+/// it past the floor: every op but a roster change, which no floor refuses,
+/// and a restriction, which lands restriction only.
+pub(super) fn floor_refuses(op: &AuthorityOp) -> bool {
+    !changes_roster(op) && !lands_restriction_only(op)
+}
+
+/// [`changes_roster`] for a stored row. A row that passes through is one by
+/// its kind (a genesis, an enrollment, a rotation or a re-root), so no floor
+/// refuses it on an install its record has not reached either: a sealed row
+/// is judged as its open row is (census L5-22 1a-iii, RULING
+/// PLAN-L5-22-ERASED-ROWS = A).
+pub(super) fn row_changes_roster(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => changes_roster(&entry.op),
+        FoldRow::PassThrough(row) => standing_changes_roster(row.standing()),
+    }
+}
+
+/// [`floor_refuses`] for a stored row. No sealed kind lands restriction only,
+/// so a floor refuses a row that passes through unless its kind changes the
+/// roster.
+pub(super) fn row_floor_refuses(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => floor_refuses(&entry.op),
+        FoldRow::PassThrough(row) => !standing_changes_roster(row.standing()),
+    }
+}
+
+/// Whether a row that passes through changes the roster by its kind, as
+/// [`changes_roster`] says of its op.
+pub(super) fn standing_changes_roster(standing: &PublicStanding) -> bool {
+    matches!(
+        standing,
+        PublicStanding::Genesis { .. }
+            | PublicStanding::EnrollDevice { .. }
+            | PublicStanding::RotateKey { .. }
+            | PublicStanding::ReRoot { .. }
+    )
+}
+
 /// A device-key op the host-rooted redesign retired (identity canon,
 /// op-vocabulary amendment 2026-08-05): client enrollment is pairing-only,
 /// and `RotateKey` became the re-root. An agent-only enrollment is not one of
