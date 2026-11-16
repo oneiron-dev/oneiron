@@ -315,6 +315,16 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// [`PipelineBuilder::search_phonetic_vector`]: the phonetic channel's learned rung, with
+    /// the caller's vector of a name from model `model_id`.
+    pub fn search_phonetic_vector(mut self, model_id: &str, vector: &[f32], limit: usize) -> Self {
+        self.pipeline = self
+            .pipeline
+            .search_phonetic_vector(model_id, vector, limit);
+        self.signals_used.push(Signal::Phonetic);
+        self
+    }
+
     pub fn search_temporal(mut self, anchor_start: u64, anchor_end: u64, limit: usize) -> Self {
         self.pipeline = self
             .pipeline
