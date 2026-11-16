@@ -170,6 +170,54 @@ pub(crate) fn is_restrictive_comm_predicate(
         .is_some_and(|descriptor| descriptor.restrictive))
 }
 
+/// Every claim class the send gate consults (ARCH-0057 §3, the registry leg
+/// of the claims-read door), in predicate order: the compiled table's
+/// enforced rows, and every stored descriptor that is enforced here
+/// ([`ClaimClassDescriptor::enforced`]: an owner stamp over its semantics, or
+/// the build's own).
+///
+/// The compiled rows are the build's stamp for its own semantics, and the
+/// gate keeps its compiled policy: a synced or owner-revised row for one of
+/// them is read where the compiled row is not, but never removes the class
+/// from this set. A restriction only adds suppression. A stored row that does
+/// not decode, or that sits at another predicate's id, is skipped, as
+/// [`claim_class_descriptor_in_txn`] skips it.
+pub(crate) fn enforced_claim_classes_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<ClaimClassDescriptor>> {
+    let mut classes = std::collections::BTreeMap::new();
+    for row in claim_class_descriptors() {
+        if row.enforcement {
+            classes.insert(
+                row.predicate.to_owned(),
+                ClaimClassDescriptor::from_compiled(&row),
+            );
+        }
+    }
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, None)? {
+        let id = entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            continue;
+        };
+        if raw.entity_type != ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+            continue;
+        }
+        let Ok(descriptor) = decode_claim_class_descriptor(&raw.body) else {
+            continue;
+        };
+        if claim_class_descriptor_id(&descriptor.predicate).ok() != Some(id)
+            || !descriptor.enforced()
+        {
+            continue;
+        }
+        classes
+            .entry(descriptor.predicate.clone())
+            .or_insert(descriptor);
+    }
+    Ok(classes.into_values().collect())
+}
+
 /// Writes `descriptor` at `id` on the engine-owned setting, in the caller's
 /// transaction. `enforcement=true` is refused unless a stamp covers these
 /// semantics: the one the row carries, the stored row's stamp over the same

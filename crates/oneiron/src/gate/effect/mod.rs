@@ -19,7 +19,7 @@ pub(super) use self::effect_consent::{
     external_effect_consent_context, native_mail_cold_composed_effect,
 };
 pub(crate) use self::effect_contacts::{
-    counterparty_send_override_in_txn, hydrate_external_effect_contact,
+    CounterpartyHydration, counterparty_send_override_in_txn, hydrate_external_effect_contact,
     hydrate_external_effect_contact_at,
 };
 pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
