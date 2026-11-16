@@ -99,7 +99,9 @@ pub struct HeldAnswerListing {
     pub answers: Vec<ListedHeldAnswer>,
     /// Each owner choice that waits for his proof and still asks, by entry
     /// ([`AuthorityFold::waiting_owner_choices`]). He confirms one by making
-    /// the choice again on an owner device.
+    /// the choice again on an owner device. A person's own waiting choice
+    /// (their opt back in to conversation training) is listed too, and only
+    /// that person makes it again.
     pub waiting_choices: Vec<AuthorityEntryHash>,
     /// Whether this install holds an owner key, so a confirm here is proven.
     pub can_confirm: bool,

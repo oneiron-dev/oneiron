@@ -15,8 +15,11 @@
 //! `/machines/held` is the owner's list of the carried answers that wait for
 //! his confirm (row CARRIER-OWNER-PROOF): each needed an owner key's proof
 //! and carried none. He confirms the ones he names on an install that holds
-//! his key, and dismisses an ask on this install alone.
+//! his key, and dismisses an ask on this install alone. The list shows each
+//! machine's revision, and a confirm presents it back as that entry's
+//! `seen`, as the answer routes do.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
@@ -89,10 +92,10 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/machines/held/confirm",
-                summary: "The owner confirms the held machine answers he names, on an install that holds his key: all of them stand or nothing is written; a named entry that no longer asks is a conflict, and one that names other keys than its machine stands under is refused.",
+                summary: "The owner confirms the held machine answers he names, on an install that holds his key: all of them stand or nothing is written; a named entry that no longer asks or a stale seen is a conflict, and an entry that names other keys than its machine stands under is refused.",
                 row: None,
                 shape: Some(RestShape::json(
-                    held_entries_body_schema,
+                    held_confirm_body_schema,
                     held_answers_schema,
                 )),
             },
@@ -415,7 +418,52 @@ fn revoke_removed_mesh(server: &SyncServer, machine: oneiron::EntityId) {
     });
 }
 
-/// The held answers a confirm or a dismissal names.
+/// The held answers a confirm names, and the machine revisions the owner's
+/// surface presents back.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ConfirmHeldEntries {
+    /// The held answers' log entries as `GET /machines/held` listed them,
+    /// each as 64 hex.
+    entries: Vec<String>,
+    /// For any named entry (the key, as 64 hex), the `revision` the list
+    /// showed beside it, as 64 hex. An entry with none takes its machine's
+    /// current revision; a key that names no entry of `entries` is refused.
+    #[serde(default)]
+    seen: BTreeMap<String, String>,
+}
+
+impl ConfirmHeldEntries {
+    /// The entries as the log names them.
+    fn parsed(&self) -> OwnerResult<Vec<[u8; 32]>> {
+        self.entries
+            .iter()
+            .map(|entry| parse_revision("entries", entry))
+            .collect()
+    }
+
+    /// The presented revisions, by the entry each is for. A key that names
+    /// no entry of `entries` is a malformed request: the confirm door
+    /// refuses it too, and this answers it as one (400).
+    fn seen(&self) -> OwnerResult<BTreeMap<[u8; 32], [u8; 32]>> {
+        self.seen
+            .iter()
+            .map(|(entry, seen)| {
+                if !self.entries.contains(entry) {
+                    return Err(OwnerError::Invalid(
+                        "seen must name entries of this confirm".to_owned(),
+                    ));
+                }
+                Ok((
+                    parse_revision("seen", entry)?,
+                    parse_revision("seen", seen)?,
+                ))
+            })
+            .collect()
+    }
+}
+
+/// The held answers a dismissal names.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HeldEntries {
@@ -442,7 +490,9 @@ struct HeldAnswers {
     answers: Vec<ListedHeldAnswer>,
     /// Each owner choice that waits for his proof and still asks, by its
     /// log entry as 64 hex. He confirms one by making the choice again on an
-    /// owner device.
+    /// owner device. A person's own waiting choice (their opt back in to
+    /// conversation training) is listed too, and only that person makes it
+    /// again.
     waiting_choices: Vec<String>,
     /// Whether this install holds an owner key, so a confirm here is proven.
     /// Where it is false, the confirm route refuses: confirm on an owner
@@ -472,6 +522,10 @@ struct ListedHeldAnswer {
     replaces_keys: bool,
     /// The role the machine stands in now; none when no revision names it.
     standing: Option<&'static str>,
+    /// The machine's revision as this list read it, as 64 hex (all zero
+    /// when no revision names the machine): a confirm presents it back as
+    /// this entry's `seen`.
+    revision: String,
     /// The machine whose install key carried the answer, as hex.
     carrier: Option<String>,
     /// The role the carrier stands in; none when no revision names it.
@@ -497,6 +551,7 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 machine_key: revision_hex(&listed.answer.profile.machine_key),
                 replaces_keys: listed.replaces_keys,
                 standing: listed.standing.map(role_name),
+                revision: revision_hex(&listed.revision),
                 carrier: listed.answer.carrier().map(|carrier| carrier.to_hex()),
                 carrier_role: listed.carrier_role.map(role_name),
                 carrier_is_yours: listed.carrier_is_mine,
@@ -508,7 +563,12 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
     }
 }
 
-/// The OpenAPI schema of the held confirm and dismiss bodies: [`HeldEntries`].
+/// The OpenAPI schema of the held confirm body: [`ConfirmHeldEntries`].
+pub(crate) fn held_confirm_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConfirmHeldEntries>()
+}
+
+/// The OpenAPI schema of the held dismiss body: [`HeldEntries`].
 pub(crate) fn held_entries_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<HeldEntries>()
 }
@@ -538,15 +598,17 @@ async fn get_held(
 /// in one transaction. On an install that holds no owner key it refuses
 /// before it writes (409, state `owner_key_required`): a confirm promises a
 /// proven answer. An entry that names other keys than its machine stands
-/// under is refused: a confirm never replaces a machine's keys. A confirmed
-/// removal revokes the machine's mesh pairing and grants, as
-/// `/machines/remove` does.
+/// under is refused: a confirm never replaces a machine's keys. A `seen`
+/// that is no longer its machine's revision is a conflict (409): an answer
+/// about the machine landed after the list was read, and the confirm never
+/// writes over it unseen. A confirmed removal revokes the machine's mesh
+/// pairing and grants, as `/machines/remove` does.
 async fn confirm_held(
     auth: CoreAuth,
     headers: HeaderMap,
     extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<HeldEntries>,
+    payload: OwnerJsonBody<ConfirmHeldEntries>,
 ) -> OwnerReply<HeldAnswers> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
@@ -556,7 +618,7 @@ async fn confirm_held(
             &owner,
             surface,
             &request.parsed()?,
-            &std::collections::BTreeMap::new(),
+            &request.seen()?,
         )?;
         for machine in &confirmed.removed {
             revoke_removed_mesh(&server, *machine);
