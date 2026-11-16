@@ -501,7 +501,7 @@ pub fn training_signed_message<T: Serialize>(file_type: &str, body: &T) -> anyho
 /// Whether `text` is `chars` lower-case hex characters.
 #[must_use]
 pub fn is_lower_hex(text: &str, chars: usize) -> bool {
-    text.len() == chars && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    oneiron_hex::is_lower_hex(text, Some(chars))
 }
 
 /// An offer's manifest file, or `None` for an id that cannot name one.
