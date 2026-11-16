@@ -94,7 +94,29 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        Proof::Owner => {
+            // Restriction wave 7 (C28, C41): the run-review and hook-regen
+            // reads an agent's own Grant may open under the owner's Setting.
+            // An agent credential passes the preflight with its bound actor
+            // on these rows alone; the engine door judges its Grant and the
+            // key. Every other caller keeps the owner's proof.
+            if matches!(
+                verb,
+                "vault.runs.review"
+                    | "vault.runs.settlement"
+                    | "vault.runs.changes.get"
+                    | "vault.hooks.regen.due"
+                    | "vault.hooks.regen.get"
+                    | "vault.hooks.regen.adopt"
+            ) && auth.actor_class() == Some("agent")
+                && !auth.is_owner_grade()
+            {
+                return crate::api::facade::facade_actor(server, auth)
+                    .map(drop)
+                    .map_err(crate::api::facade::FacadeApiError::into_memory_error);
+            }
+            owner_proof(auth, server, verb).map(drop)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
