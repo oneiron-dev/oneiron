@@ -210,6 +210,52 @@ fn project_scoped_reader_reads_own_project_learning_cell() {
     assert_forbidden(cell(None), "the vault's cell");
 }
 
+/// A narrowed reader's cell keeps its type stamp as a key, and the read
+/// never looks the stamp up: the lookup walks the vault's kept tree
+/// revisions too, so a reading for one version and a refusal for another
+/// would say which revisions the vault keeps (REVIEW-8723 P1). A stamp at
+/// the seeded tree (version 1) and one at a version no tree records (99)
+/// both read as the empty cell, with one estimate. Red at 182f16b1b408:
+/// version 99 is refused there (InvalidClaimBody).
+#[test]
+fn project_scoped_reader_reads_a_cell_without_looking_up_its_type_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, _owner) = owned_vault(&dir);
+    let agent = define_agent(&vault).expect("an agent");
+    let project = EntityId::now();
+    stand_project_steward_grant(&vault, agent, &[STEWARD_READ_VERB], project)
+        .expect("a read grant narrowed to one project");
+    let read_at = |tree_version: u64| {
+        let input = json!({
+            "cell": {
+                "subject": agent.to_hex(),
+                "predicate": "learning.reliability",
+                "executor": "fresh",
+                "axis": "quality",
+                "typeRef": { "node_id": "root", "tree_version": tree_version },
+            },
+            "project_ref": project.to_hex(),
+        });
+        read(&vault, agent, "vault.learning.read", input).unwrap_or_else(|error| {
+            panic!(
+                "actor=agent {agent:?}, grant=project {project:?}, typeRef=root@{tree_version}; expected the empty cell, not a refusal; seen {error:?}"
+            )
+        })
+    };
+    let (seeded, unrecorded) = (read_at(1), read_at(99));
+    for view in [&seeded, &unrecorded] {
+        assert_eq!(
+            view["view"]["own"].as_bool(),
+            Some(false),
+            "actor=agent {agent:?}; expected an empty cell; seen view={view}"
+        );
+    }
+    assert_eq!(
+        seeded["view"]["estimate"], unrecorded["view"]["estimate"],
+        "actor=agent {agent:?}; expected one estimate whatever the stamp's tree version; seen seeded={seeded} unrecorded={unrecorded}"
+    );
+}
+
 /// A narrowed reader reads its own project's cell as the cell's own runs
 /// alone make it: over the pack's shipped prior, at the catalog's window,
 /// each judge's score as the judge gave it, citing its own evidence rows.

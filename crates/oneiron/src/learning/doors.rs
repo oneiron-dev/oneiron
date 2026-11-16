@@ -278,15 +278,17 @@ fn type_parents(vault: &Vault, cell: &LearningCell) -> Result<Vec<TypeRef>> {
 /// what lies outside the cell. Its provenance is the cell's own evidence
 /// rows and no head: a stored head is projected under the vault's window,
 /// the cell's stored prior and every judge conversion, and written again
-/// when one of them moves. The request is checked as [`read_learning`]
-/// checks it.
+/// when one of them moves. The request is checked as the cell's key alone
+/// ([`LearningCell::validate`]): its type stamp is never looked up, since
+/// that lookup walks the vault's kept tree revisions too, and its answer
+/// would say which revisions the vault keeps. The fold reads no ancestor,
+/// so a stamp no tree records reads as an empty cell at the catalog prior.
 fn read_learning_within_cell(
     vault: &Vault,
     input: &LearningReadRequest,
 ) -> Result<LearningCellView> {
     let cell = learning_read_cell(input)?;
     cell.validate()?;
-    type_parents(vault, &cell)?;
     let txn = vault.store.env.read_txn()?;
     let estimate =
         super::project::fold_cell_at_catalog_in_txn(vault, &txn, &cell, crate::unix_seconds_now())?;
