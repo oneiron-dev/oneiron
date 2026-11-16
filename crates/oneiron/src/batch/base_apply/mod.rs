@@ -233,6 +233,14 @@ struct BatchApplyState {
     pending_embedding_tokens_written: HashMap<EntityId, Vec<u8>>,
     #[cfg(feature = "sync")]
     pending_embedding_enqueue_priorities: HashMap<EntityId, u8>,
+    /// Each id this batch wrote a vector of the vault's index for, and whether that vector
+    /// completed its pending embedding: the tail drops the vector of a row a world's own
+    /// text space takes (DEC-0005 #private-world-vectors).
+    index_vectors_written: BTreeMap<EntityId, bool>,
+    /// The source of each world-carrying edge (InWorld, DerivedFrom) this batch wrote or
+    /// deleted: the tail moves its text vectors, and those of the rows that derive from it, to
+    /// the worlds that carry it now (DEC-0005 #private-world-vectors).
+    world_edge_sources: BTreeSet<EntityId>,
 }
 
 /// Applies a batch under an explicit [`BaseWriteOrigin`].
@@ -468,6 +476,8 @@ pub(super) fn apply_ops_with_authority_beside(
         pending_embedding_tokens_written,
         #[cfg(feature = "sync")]
         pending_embedding_enqueue_priorities,
+        index_vectors_written: BTreeMap::new(),
+        world_edge_sources: BTreeSet::new(),
     };
     let mut op_index = 0;
     while let Some(mut op) = iter.next() {
