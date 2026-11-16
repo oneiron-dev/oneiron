@@ -422,7 +422,7 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             Ok(DepositSettleStep::Failed(DepositProviderFailure::Pending(reason))) => {
                 tracing::debug!(%reason, "booking deposit move is pending at the provider");
                 settle.requeue(
-                    &bounded(&reason, MAX_FAILURE_BYTES),
+                    &requeue_reason(&reason),
                     now_utc.saturating_add(DEPOSIT_SETTLE_PENDING_RECHECK_SECONDS),
                 )?;
                 drain.pending += 1;
@@ -430,7 +430,7 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             Ok(DepositSettleStep::Failed(DepositProviderFailure::Transient(reason))) if prompt => {
                 tracing::debug!(%reason, "booking deposit move runs again later");
                 settle.requeue(
-                    &bounded(&reason, MAX_FAILURE_BYTES),
+                    &requeue_reason(&reason),
                     now_utc.saturating_add(DEPOSIT_SETTLE_RETRY_SECONDS),
                 )?;
                 drain.retrying += 1;
@@ -440,12 +440,8 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
                     reason = failure.reason(),
                     "booking deposit move is still owed and is asked again later"
                 );
-                // Never an empty reason: the queue refuses one, and the row
-                // would then stay leased.
-                let reason =
-                    attempt_failure_reason(&refused(bounded(failure.reason(), MAX_FAILURE_BYTES)));
                 settle.requeue(
-                    &reason,
+                    &requeue_reason(failure.reason()),
                     now_utc.saturating_add(DEPOSIT_SETTLE_OWED_RECHECK_SECONDS),
                 )?;
                 drain.still_owed += 1;
@@ -470,6 +466,18 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
         }
     }
     Ok(drain)
+}
+
+/// The reason a settle row is queued again under: the provider's own,
+/// bounded, and never empty, since the queue refuses an empty reason and the
+/// row would then stay leased.
+fn requeue_reason(reason: &str) -> String {
+    let reason = bounded(reason, MAX_FAILURE_BYTES);
+    if reason.is_empty() {
+        "the provider gave no reason".to_owned()
+    } else {
+        reason
+    }
 }
 
 fn settle_payload_key(record: &AttemptRecord) -> Result<[u8; 32], BookingError> {
