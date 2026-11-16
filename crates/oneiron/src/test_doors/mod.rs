@@ -36,6 +36,7 @@ pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_result_search;
 pub mod code_run_answer;
+pub mod code_run_claim_put;
 pub mod code_run_result_body;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
