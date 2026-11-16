@@ -452,7 +452,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/identity.rs` | src | s | 14 crate-vis | — | Who a facade call acts as: its actor, its invocation id and the owner's authorship |
 | `src/api/facade/identity_doors.rs` | src | s | 4 crate-vis | — | PERSON identity setup, look-before-mint and saved-mention provenance |
 | `src/api/facade/identity_topology_doors.rs` | src | s | 10 crate-vis | — | Typed identity-topology host doors under the caller's own owner proof |
-| `src/api/facade/image_edit_doors.rs` | src | s | 3 crate-vis | — | `vault.artifacts.image.edit` (L4-15; the Engine's rulings of 13 Nov 09:34 and 09:53): crops and resizes of… |
+| `src/api/facade/image_edit_doors.rs` | src | s | 4 crate-vis | — | `vault.artifacts.image.edit` (L4-15; the Engine's rulings of 13 Nov 09:34 and 09:53): crops and resizes of… |
 | `src/api/facade/inbox_group_doors.rs` | src | s | 3 crate-vis | — | The owner inbox's group doors over both group kinds (FIX 3024, 3026): the owner's answer to one group… |
 | `src/api/facade/inquiry_doors.rs` | src | s | 11 crate-vis | — | The host doors of the inquiry rows (INQUIRE-1 PR 5; federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2… |
 | `src/api/facade/invocations.rs` | src | m | 21 crate-vis | — | The facade's invocation claims: one call per client-named invocation id (OF-580) |
@@ -1338,7 +1338,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
 | `src/handler/window_sync.rs` | src | L | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/home_candidacy.rs` | src | s | 1 crate-vis | — | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
-| `src/hook_verdict.rs` | src | s | 3 crate-vis | — | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
+| `src/hook_decisions.rs` | src | s | 2 crate-vis | — | The hook `ai.verdict` decisions one thread collects while it runs its row's hooks (FIX 8042): a browser… |
+| `src/hook_verdict.rs` | src | s | 2 crate-vis | — | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
 | `src/http_listener.rs` | src | m | 13 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/body_revocation.rs` | src | s | 13 crate-vis | — | Explicit revocation of the credential accepted on one counted TCP body |
 | `src/http_listener/host_floor.rs` | src | s | 1 crate-vis | — | A vault server's host floor (FIX 5978, FIX 5979, FIX 6299), attached in the server's construction before any… |
