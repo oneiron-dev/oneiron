@@ -651,8 +651,15 @@ fn reaction_records(
     // A credential reads each reaction under its own key, as it reads the
     // record, and so does the dev mode, as the owner it acts as (FIX 2222),
     // each answer under its read's receipt; a managed vault's attested owner
-    // reads them all, under no scoped read and so with no receipt.
-    let (pills, narrowing) = if auth.verified_slip().is_some() || auth.is_local_dev_hatch() {
+    // reads them all, under no scoped read and so with no receipt. A caller
+    // that is not owner-grade and holds no slip, such as an account API key,
+    // reads on its own grant-bound lane too, as its signal feed does: it
+    // never takes the owner's whole-vault pills, and so never a reactor's id
+    // it may not read (Engine ANSWER REACTION-REACTOR-ID-SURFACES = A).
+    let (pills, narrowing) = if auth.verified_slip().is_some()
+        || auth.is_local_dev_hatch()
+        || !auth.is_owner_grade()
+    {
         let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?
             .reaction_pills(&targets, viewer)
             .map_err(|e| core_engine_error("reaction listing failed", e))?;
@@ -664,15 +671,19 @@ fn reaction_records(
             .map_err(|e| core_engine_error("reaction listing failed", e))?;
         // The owner reads every reactor, save a PERSON row a world keeps
         // from this read's destination (DEC-0005): a pill names no such
-        // reactor and still counts her (Engine ANSWER
+        // reactor and still counts the reaction (Engine ANSWER
         // REACTION-REACTOR-ID-SURFACES = A).
+        let mut readable = std::collections::BTreeMap::new();
         for pill in pills.values_mut().flatten() {
             let mut shown = Vec::with_capacity(pill.by.len());
             for person in std::mem::take(&mut pill.by) {
-                if auth
-                    .can_read_entity(&server.vault, &person)
-                    .map_err(|e| core_engine_error("reactor access failed", e))?
-                {
+                if let std::collections::btree_map::Entry::Vacant(entry) = readable.entry(person) {
+                    entry.insert(
+                        auth.can_read_entity(&server.vault, &person)
+                            .map_err(|e| core_engine_error("reactor access failed", e))?,
+                    );
+                }
+                if readable[&person] {
                     shown.push(person);
                 }
             }

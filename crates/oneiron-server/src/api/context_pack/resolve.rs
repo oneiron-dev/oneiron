@@ -659,6 +659,7 @@ fn read_reaction_signals(
     // REACTION-REACTOR-ID-SURFACES = A).
     let mut signals = Vec::with_capacity(page.signals.len());
     for signal in page.signals {
+        checkpoint()?;
         let by = if scoped {
             scoped_read
                 .reaction_signal_reactor_under(&signal, disclosure)

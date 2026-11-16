@@ -236,10 +236,7 @@ impl ScopedRead<'_> {
 
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
     /// messages this read reads get pills, and a pill counts only the
-    /// reactions it reads, each under its whole admission. A pill's `by`
-    /// lists only the reactors whose PERSON row this read admits, under the
-    /// same admission: another reactor still counts, with no id (Engine
-    /// ANSWER REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15). The pills come
+    /// reactions it reads, each under its whole admission. The pills come
     /// with the receipt of that read (FIX 8669). Like every read on this
     /// lane, an owner lane refuses once its binding is gone.
     pub fn reaction_pills(
@@ -257,26 +254,13 @@ impl ScopedRead<'_> {
                 readable.push(*message);
             }
         }
-        let mut value = self
+        let value = self
             .vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
                 self.row_admitted_in(&rtxn, &admission, &row.id)
             })?;
-        let mut reactors = BTreeMap::new();
-        for pill in value.values_mut().flatten() {
-            let mut shown = Vec::with_capacity(pill.by.len());
-            for person in std::mem::take(&mut pill.by) {
-                if let Entry::Vacant(entry) = reactors.entry(person) {
-                    entry.insert(self.row_admitted_in(&rtxn, &admission, &person)?);
-                }
-                if reactors[&person] {
-                    shown.push(person);
-                }
-            }
-            pill.by = shown;
-        }
         Ok(ScopedReadResult {
-            value,
+            value: self.pills_naming_readable_reactors_in(&rtxn, &admission, value)?,
             receipt: admission.receipt,
         })
     }
@@ -323,6 +307,32 @@ impl ScopedRead<'_> {
         Ok(self
             .row_admitted_in(&rtxn, &admission, &signal.by)?
             .then_some(signal.by))
+    }
+
+    /// `pills` with each pill's `by` cut to the reactors whose PERSON row
+    /// this read admits under `admission`, the admission of the reactions
+    /// they count; another reactor still counts, with no id (Engine ANSWER
+    /// REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15).
+    fn pills_naming_readable_reactors_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        admission: &ReactionAdmission<'_>,
+        mut pills: BTreeMap<EntityId, Vec<ReactionPill>>,
+    ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
+        let mut readable = BTreeMap::new();
+        for pill in pills.values_mut().flatten() {
+            let mut shown = Vec::with_capacity(pill.by.len());
+            for person in std::mem::take(&mut pill.by) {
+                if let Entry::Vacant(entry) = readable.entry(person) {
+                    entry.insert(self.row_admitted_in(rtxn, admission, &person)?);
+                }
+                if readable[&person] {
+                    shown.push(person);
+                }
+            }
+            pill.by = shown;
+        }
+        Ok(pills)
     }
 
     /// [`crate::Vault::reaction_history`] under this read, in one snapshot:

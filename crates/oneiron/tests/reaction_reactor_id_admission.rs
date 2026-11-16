@@ -115,7 +115,7 @@ struct Fixture {
 }
 
 /// Mirela confirmed from R’s words, then seated with the outsider and the member
-/// of R in an open room, where she reacts 👍 to the room’s open MESSAGE.
+/// of R in an open room, where Mirela reacts 👍 to the room’s open MESSAGE.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let outsider = EntityId::now();
@@ -327,9 +327,9 @@ impl Fixture {
     }
 }
 
-/// A pill counts a reactor outside the reader’s relationship but carries no id of hers.
+/// A pill counts a reactor outside the reader’s relationship but carries no id of theirs.
 #[test]
-fn a_pill_counts_a_reactor_the_reader_may_not_read_without_her_id() {
+fn a_pill_counts_a_reactor_the_reader_may_not_read_without_their_id() {
     let fixture = fixture();
     let pill = fixture.pill(fixture.outsider);
     assert_eq!(pill.count, 1, "the reaction still counts for the outsider");
@@ -343,7 +343,7 @@ fn a_pill_counts_a_reactor_the_reader_may_not_read_without_her_id() {
     );
 }
 
-/// A member of R reads the reactor, and the same pill lists her id.
+/// A member of R reads the reactor, and the same pill lists their id.
 #[test]
 fn a_relationship_member_sees_the_reactors_id_in_the_pill() {
     let fixture = fixture();
@@ -424,7 +424,7 @@ fn the_history_of_a_reactor_the_reader_may_not_read_is_withheld() {
     );
 }
 
-/// A member of R reads the reactor’s chain: her one 👍, by her id.
+/// A member of R reads the reactor’s chain: their one 👍, by their id.
 #[test]
 fn a_relationship_member_reads_the_reactors_history() {
     let fixture = fixture();
@@ -438,6 +438,6 @@ fn a_relationship_member_reads_the_reactors_history() {
     assert_eq!(
         ids,
         vec![(fixture.reaction, fixture.reactor)],
-        "the member of R reads the reactor’s 👍 by her id"
+        "the member of R reads the reactor’s 👍 by their id"
     );
 }
