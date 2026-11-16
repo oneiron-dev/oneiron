@@ -1,7 +1,7 @@
 //! The catalogue: every key the crate declares, assembled by the build script from each
 //! `setting_keys.rs`.
 
-use super::{SettingKey, SettingSpec};
+use super::SettingSpec;
 use crate::error::{Error, Result};
 
 include!(concat!(env!("OUT_DIR"), "/setting_catalogue.rs"));

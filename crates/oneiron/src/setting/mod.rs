@@ -83,6 +83,7 @@ pub(crate) use self::publish::settings_published_in_txn;
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
 pub(crate) use self::read::{SettingListFilter, SettingReader, reader_reads_key_in_txn};
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;

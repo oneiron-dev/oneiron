@@ -500,7 +500,9 @@ fn write_row_in_txn(
                 weight_runs: None,
             },
         )?,
-        None => table.delete(&vault.store, txn, &key)?,
+        None => {
+            table.delete(&vault.store, txn, &key)?;
+        }
     }
     if let Some(on_change) = spec.on_change {
         on_change(vault, txn, &recorded)?;
