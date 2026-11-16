@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -552,6 +553,36 @@ pub static TEST_REARM: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     run: run_rearm,
+};
+
+/// Whether [`TEST_WITHDRAWN`] is out of the job registry now.
+static WITHDRAWN: AtomicBool = AtomicBool::new(false);
+
+/// Takes [`TEST_WITHDRAWN`] out of the job registry (`true`), as a build that does not know the
+/// job reads its rows, or puts it back (`false`).
+pub fn withdraw_test_job(withdrawn: bool) {
+    WITHDRAWN.store(withdrawn, Ordering::SeqCst);
+}
+
+/// Whether the registry leaves the job `code` out for now ([`withdraw_test_job`]).
+pub(crate) fn withdrawn(code: &str) -> bool {
+    code == TEST_WITHDRAWN.code && WITHDRAWN.load(Ordering::SeqCst)
+}
+
+/// A job the engine arms that always fails, and that a test takes out of the job registry and
+/// puts back ([`withdraw_test_job`]): a row a newer build armed, read by a build that does not
+/// know its job (review of #8026 by OPUS-SETTING-SCHEDULE, 16 Nov 10:20, P2 on `run.rs`).
+pub static TEST_WITHDRAWN: JobSpec = JobSpec {
+    code: "test.withdrawn",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: false,
+    run: run_fail,
 };
 
 /// The engine arms `job` about `subject`, as its own doors do.
