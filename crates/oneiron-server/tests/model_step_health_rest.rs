@@ -341,7 +341,7 @@ fn a_parked_step_resumes_after_a_restart_with_no_submission() {
         host.shutdown().await;
         assert!(first_server.upgrade().is_none(), "the first server stopped");
         let (second, host) = server_over(&vault, &config).await;
-        oneiron_server::test_doors::model_step_boot::resume_parked_model_steps(&second);
+        oneiron_server::test_doors::parked_step_resume::resume_parked_model_steps(&second);
         let app = build_app(second);
         let done = settled(&app, &vault, "health-parks-restart", 20).await;
         assert_eq!(done["result"]["status"], "finished", "{done:#}");

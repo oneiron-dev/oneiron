@@ -148,9 +148,6 @@ pub(crate) use self::facade::{
 pub(crate) use self::facade::clock_ingress;
 // FIX 12323: a facade route's caller, as its receipt layer resolved it.
 pub(crate) use self::facade::resolved_facade_caller;
-// STEP-PARK-BOOT-RESUME: the owner's model steps parked before a restart
-// resume when serve starts.
-pub(crate) use self::facade::resume_parked_model_steps;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -198,6 +195,9 @@ pub(crate) use self::facade::{
     ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
+// STEP-PARK-BOOT-RESUME: the owner's model steps parked before a restart
+// resume when serve starts.
+pub(crate) use self::facade::resume_parked_model_steps;
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
