@@ -346,10 +346,19 @@ fn retained_hold_in_txn(
 /// approval or valid time. An Active correction head on a live identity
 /// still re-keys its slot (OF-272).
 ///
+/// The stored claim is read first, whatever the incoming predicate: a
+/// rewrite of a family head keeps its predicate and subject, so no put moves
+/// a head out of the family or onto another entity (REVIEW-7665 round 2 P1).
+/// A shape head names its identity row's own shape. The row is immutable,
+/// and the retained shape is what says whether a delete frees the address,
+/// so no generic edit can make a self-held identity read as delegated (round
+/// 2 P1); a closure keeps its value, so it names the row's shape too.
+///
 /// So a deleted identity's retained heads, whose subject is a header-only
 /// shell or gone, are out of every generic writer's reach: none re-points
-/// one at an address the identity never held (REVIEW-7665 P1), and none
-/// re-opens one to free the address it holds. No designed flow rewrites
+/// one at an address the identity never held (REVIEW-7665 P1), none moves
+/// one to another predicate or subject, and none re-opens one to free the
+/// address it holds. No designed flow rewrites
 /// them: the generic retraction and supersession take only an Active head,
 /// and the owner's value redaction drops keys of a map value while every
 /// value of this family is a scalar
@@ -365,6 +374,15 @@ pub(crate) fn guard_generic_claim_put_in_txn(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
+    let prior = stored_claim_body(store, txn, id)?;
+    if let Some(prior) = &prior
+        && is_channel_identity_claim_predicate(&prior.predicate)
+        && (prior.predicate != body.predicate || prior.subject != body.subject)
+    {
+        return Err(Error::InvalidClaimBody(
+            "a channel_identity claim's rewrite keeps its predicate and subject",
+        ));
+    }
     if !is_channel_identity_claim_predicate(&body.predicate) {
         return Ok(());
     }
@@ -374,16 +392,23 @@ pub(crate) fn guard_generic_claim_put_in_txn(
         ));
     };
     // A soft erase leaves a header-only shell, which is no live row.
-    if !store
+    let Some(row) = store
         .port_entity_record(txn, &subject)?
-        .is_some_and(|row| row.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY && !row.body.is_empty())
-    {
+        .filter(|row| row.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY && !row.body.is_empty())
+    else {
         return Err(Error::InvalidClaimBody(
             "a channel_identity claim must be about a live channel identity",
         ));
+    };
+    if body.predicate == PREDICATE_CHANNEL_IDENTITY_SHAPE
+        && body.value.as_str() != Some(decode_channel_identity_body(&row.body)?.shape().as_str())
+    {
+        return Err(Error::InvalidClaimBody(
+            "a channel_identity shape claim names its identity's own shape",
+        ));
     }
     if body.lifecycle == ClaimLifecycleStatus::Active
-        || stored_claim_body(store, txn, id)?.is_some_and(|prior| {
+        || prior.is_some_and(|prior| {
             prior.predicate == body.predicate
                 && prior.subject == body.subject
                 && prior.value == body.value

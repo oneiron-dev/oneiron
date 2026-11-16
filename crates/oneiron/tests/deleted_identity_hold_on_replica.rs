@@ -17,9 +17,11 @@
 //! (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22): at the local
 //! generic claim door a `channel_identity.*` claim is born Active, about a
 //! live CHANNEL_IDENTITY row, and a rewrite at a claim's own id that changes
-//! its value meets the same rules (REVIEW-7665 P1). A forged hold then
-//! cannot block the owner's own create, and a correction head on a live
-//! identity still re-keys it (OF-272).
+//! its value meets the same rules (REVIEW-7665 P1). A rewrite of a family
+//! head keeps its predicate and subject, and a shape head names the
+//! identity row's own shape (REVIEW-7665 round 2). A forged hold then
+//! cannot block the owner's own create, a retained hold cannot be freed,
+//! and a correction head on a live identity still re-keys it (OF-272).
 //!
 //! `cargo test --locked -p oneiron --all-features --test deleted_identity_hold_on_replica`.
 // MemoryKeystore needs test-support (it forwards oneiron-keystore/test-keystore).
@@ -561,6 +563,81 @@ fn a_retained_identity_head_cannot_be_reopened() -> TestResult {
         reopened.as_ref().err().map(oneiron::Error::kind),
         Some(ErrorKind::InvalidClaimBody),
         "a retained head must not be re-opened: {reopened:?}",
+    );
+    Ok(())
+}
+
+/// REVIEW-7665 round 2 P1: a retained head cannot leave the family either.
+/// Rewritten at its own id under another predicate, with its subject, value,
+/// Retracted lifecycle and Auto approval kept, it would no longer be an
+/// address head, so a replica that joins later would read no hold there and
+/// admit a fresh id at the address. The rewrite is refused.
+#[test]
+fn a_retained_identity_head_cannot_be_moved_to_another_predicate() -> TestResult {
+    let address = "moved@example.test";
+    let (_dir, vault) = open_vault()?;
+    let (id, head) = soft_deleted_identity_head(&vault, address)?;
+    let moved = put_generic_at(
+        &vault,
+        head,
+        &generic_head(id, "profile.note", address, ClaimLifecycleStatus::Retracted),
+    );
+    assert_eq!(
+        moved.as_ref().err().map(oneiron::Error::kind),
+        Some(ErrorKind::InvalidClaimBody),
+        "a retained address head must not be moved to another predicate: {moved:?}",
+    );
+    Ok(())
+}
+
+/// REVIEW-7665 round 2 P1: a shape head names its identity row's own shape.
+/// A live self-held identity's Active shape head, rewritten at its own id as
+/// `delegated_grant` with every other field kept, would make the heads its
+/// delete retains read as a delegated delete's, which frees the address: a
+/// replica that never held the row would admit a fresh id there. The rewrite
+/// is refused, so after the delete the replica still refuses the address.
+#[test]
+fn a_self_held_identity_shape_head_cannot_be_rewritten_as_delegated() -> TestResult {
+    let address = "shape-forge@example.test";
+    let id = EntityId::now();
+    let mut forged = None;
+    let replica = replica_after_delete(
+        id,
+        address,
+        |a| {
+            a.create_channel_identity(&id, &self_held(address))?;
+            let shape = active_head(a, id, PREDICATE_CHANNEL_IDENTITY_SHAPE)?;
+            forged = Some(put_generic_at(
+                a,
+                shape,
+                &generic_head(
+                    id,
+                    PREDICATE_CHANNEL_IDENTITY_SHAPE,
+                    "delegated_grant",
+                    ClaimLifecycleStatus::Active,
+                ),
+            ));
+            Ok(())
+        },
+        DeleteReason::UserDelete,
+    )?;
+    let on_b = replica
+        .b
+        .create_channel_identity(&EntityId::now(), &self_held(address));
+    assert_eq!(
+        (
+            forged
+                .as_ref()
+                .and_then(|put| put.as_ref().err())
+                .map(oneiron::Error::kind),
+            on_b.as_ref().err().map(oneiron::Error::kind),
+        ),
+        (
+            Some(ErrorKind::InvalidClaimBody),
+            Some(ErrorKind::ChannelIdentityAlreadyExists),
+        ),
+        "a self-held shape head rewritten as delegated must be refused (left), and the replica \
+         must keep the deleted address (right): {forged:?} / {on_b:?}",
     );
     Ok(())
 }
