@@ -57,8 +57,8 @@ const SEAM_STRUCTS: &[&str] = &[];
 
 /// The one path every typed decision takes.
 const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
-/// Adapter crates implement the raw seam; they never choose what to ask.
-const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
+/// The adapter family crate implements the raw seam; it never chooses what to ask.
+const ADAPTER_PREFIX: &str = "crates/oneiron-llm/";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
 const BYPASS_CEILING: usize = 0;

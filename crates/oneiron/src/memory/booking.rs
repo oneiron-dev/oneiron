@@ -3,21 +3,15 @@
 use super::{Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::booking::emergency_reschedule::{
-    self as emergency, EmergencyActionPolicy, EmergencyBatchPlan, EmergencyItem, EmergencyPlan,
+    self as emergency, EmergencyBatchPlan, EmergencyItem, EmergencyPlan,
     EmergencyRescheduleRequest, OwnerInstructionRecord,
 };
 use crate::booking::{BookingLifecycleConsumerInput, CalendarRevision, OpaqueLifecycleToken};
-use crate::calendar::query::{CalendarRangeDto, CalendarSel};
+use crate::calendar::query::CalendarSel;
 use crate::outbound::OutboundExecutionSink;
 
-/// The bound Memory actor is the owner; an input never names a replacement actor.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EmergencyInstructionInput {
-    pub affected_window: CalendarRangeDto,
-    pub reason: String,
-    pub action_policy: EmergencyActionPolicy,
-    pub recorded_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::booking::EmergencyInstructionInput;
 
 pub(crate) fn booking_error(error: crate::booking::BookingError) -> MemoryError {
     use crate::booking::BookingError;
