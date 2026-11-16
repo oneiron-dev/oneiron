@@ -146,9 +146,7 @@ async fn set(
     let request = payload.read(&server).await?;
     let scale = blocking(move || -> OwnerResult<PeerScale> {
         let peer = entity_id("peer", &request.peer)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
+        let now = oneiron_base::unix_seconds_now();
         let scale = server
             .vault()
             .set_federation_peer_confidence_as(&owner, &peer, request.scale, now)
@@ -260,9 +258,7 @@ async fn set_travel(
             .as_deref()
             .map(|seen| parse_revision("seen", seen))
             .transpose()?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
+        let now = oneiron_base::unix_seconds_now();
         let effective = server.vault().set_federation_grant_travel_as(
             &owner,
             surface,
