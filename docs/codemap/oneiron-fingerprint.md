@@ -16,6 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
+| `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
 | `src/purposes/policy_model.rs` | src | s | — | — | Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`) |
 | `src/purposes/restore.rs` | src | s | — | — | Purposes of the managed restore contract (`oneiron-vault-contract` `restore`) |
