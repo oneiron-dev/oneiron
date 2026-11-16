@@ -1427,6 +1427,133 @@ fn a_machine_whose_carrier_lost_its_removal_race_is_not_mine_again_without_proof
     );
 }
 
+/// FIX [ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION]: a re-key is a removal race
+/// too, and a later revision under the old key never undoes it. A node paired
+/// a machine with the owner key's proof; then the owner's laptop re-keyed the
+/// node by an answer that never saw the pairing, so the pairing stands on
+/// nothing. A branch that never saw the re-key then names the node's old key
+/// again at revisions 2 and 3: the higher revision wins the node's raw chain
+/// head, which names the key that signed the pairing, live and unconflicted
+/// (the old key's own answer at revision 3 makes the same head). Main: the
+/// pairing stands again on that head, and the machine is mine again.
+#[test]
+fn a_pairing_whose_carrier_was_re_keyed_unseen_stays_not_mine_under_its_old_key() {
+    /// The seed of the node's new install key.
+    const RE_KEYED_NODE_SEED: u8 = 69;
+    let mut beside = LaptopBesideNode::new();
+    let vault_id = beside.node.vault_id();
+    let paired = signing(PAIRED_SEED);
+    let paired_key = paired.verifying_key().to_bytes();
+    let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let pairing = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&beside.node.rows[2])],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            paired_machine,
+            &paired,
+            yours,
+            1,
+            Some((
+                beside.node.machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::Pairing,
+                    paired_machine,
+                    ActSurface::ThisInstall,
+                    [0; 32],
+                ),
+            )),
+        )),
+        &beside.node.node,
+        &[&beside.node.root],
+    );
+    let re_key = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&pairing)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &signing(RE_KEYED_NODE_SEED),
+            MachineRole::HostedNode,
+            2,
+            Some((
+                beside.laptop_machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::MachineAnswer,
+                    beside.node.machine,
+                    ActSurface::ThisInstall,
+                    machine_answer_revision([hash(&beside.node.rows[1])]),
+                ),
+            )),
+        )),
+        &beside.laptop,
+        &[],
+    );
+    let old_key_again = signed(
+        Some(vault_id),
+        3,
+        vec![hash(&pairing)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &beside.node.node,
+            MachineRole::HostedNode,
+            2,
+            None,
+        )),
+        &beside.node.root,
+        &[],
+    );
+    let old_key_higher = signed(
+        Some(vault_id),
+        4,
+        vec![hash(&old_key_again)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &beside.node.node,
+            MachineRole::HostedNode,
+            3,
+            None,
+        )),
+        &beside.node.root,
+        &[],
+    );
+    beside.node.rows.push(pairing);
+    let fold = beside.node.fold();
+    assert!(
+        mine(&fold, paired_machine, &paired_key),
+        "the proven pairing makes the machine mine: {:?}",
+        fold.issues
+    );
+    beside.node.rows.push(re_key);
+    let fold = beside.node.fold();
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "the pairing's carrier was re-keyed by an answer that never saw it, so the machine is not \
+         mine: {:?}",
+        fold.issues
+    );
+    let issues_before = fold.issues.clone();
+    beside.node.rows.push(old_key_again);
+    beside.node.rows.push(old_key_higher);
+    let fold = beside.node.fold();
+    assert_eq!(
+        fold.issues, issues_before,
+        "both old-key revisions fold, so the node's raw head is revision 3 under its old key"
+    );
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "a revision under the old key that never saw the re-key gives the pairing nothing: {:?}",
+        fold.issues
+    );
+}
+
 /// Guard (plan read F4, the strict cascade): a held machine carries nothing.
 /// Its own later answer is an invalid entry, not a second held answer, so
 /// the owner's confirm of the pairing is the only way in.
