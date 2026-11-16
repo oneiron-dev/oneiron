@@ -13,6 +13,7 @@ pub mod catch_all_status;
 pub mod coach_round;
 pub mod compaction_pass;
 pub mod connector_sends;
+pub mod history_import;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
