@@ -2,10 +2,13 @@
 //! (RAMP-SCOPE-ACTOR-ERASE, Engine RULING NEXT-ROW-18 = A1, 14 Nov), so the
 //! `ramp_scope_actor_erase` test proves that no row spells an erased actor's
 //! id after the erase. Read-only: each table's declared keyspace, its key and
-//! value bytes undecoded.
+//! value bytes undecoded. One writer: a streak-floor row in the layout written
+//! before a floor row carried its scope (RAMP-FLOOR-ORPHAN-ERASE), so the
+//! test proves such a row still reads.
 
-use crate::error::Result;
-use crate::side_table::{self, SideTableDbs, SideTableDecl};
+use crate::consent_graduation::RampScope;
+use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs, SideTableDecl};
 use crate::vault::Vault;
 
 /// One ramp table: how many rows it holds, and how many of them spell the
@@ -68,4 +71,37 @@ pub fn ramp_rows_spelling(vault: &Vault, text: &str) -> Result<Vec<RampTableRows
         tables.push(counted);
     }
     Ok(tables)
+}
+
+/// A streak floor in the layout written before a floor row carried its scope:
+/// four little-endian bytes and nothing after them.
+struct FourByteFloor(u32);
+
+impl RawValue for FourByteFloor {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_le_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let bytes: [u8; 4] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("ramp streak floor row"))?;
+        Ok(Self(u32::from_le_bytes(bytes)))
+    }
+}
+
+/// The streak-floor table, read and written in its four-byte layout.
+const FOUR_BYTE_FLOOR: SideTable<[u8; 16], FourByteFloor, Raw> =
+    SideTable::new(&side_table::RAMP_FLOOR);
+
+/// Writes `floor` as `scope`'s streak-floor row in the four-byte layout, which
+/// names no scope.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn put_four_byte_ramp_floor(vault: &Vault, scope: &RampScope, floor: u32) -> Result<()> {
+    vault.with_write_txn(|wtxn| {
+        FOUR_BYTE_FLOOR.put(&vault.store, wtxn, &scope.key(), &FourByteFloor(floor))
+    })
 }
