@@ -672,8 +672,9 @@ async function fed03Deliver(source: EngineFixture, recipient: EngineFixture, pac
     confidence: 0.9, source: "user_stated", sensitivity: 1, scope: { ...scope, world_id: world },
     occurred_at: FED03_LEARNED_AT, learned_at: FED03_LEARNED_AT,
   });
-  // A sensitivity-stamped claim requests Proposed (memory/support/wire.rs:59-71); it still syncs.
-  expect(written.approval).toBe("proposed");
+  // ARCH-0003's consent matrix routes on the sensitivity band: a user_stated claim with a private (1)
+  // stamp requests Auto (memory/support/wire.rs requested_approval); the imported copy lands Proposed.
+  expect(written.approval).toBe("auto");
   const delivery = await fed03ConnectSuccess("source vault.federation.connect.export", () => source.client.call("vault.federation.connect.export", {
     pact, window_key: `2026-10@${world}`, world_ref: world,
   }));
@@ -1538,8 +1539,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       occurred_at: FED07_ALLOW_TS,
       learned_at: FED07_ALLOW_TS,
     });
-    // Explicit sensitivity requests Proposed; the peer burst route is asserted by allowReceipt below.
-    expect(allowUpsert.approval).toBe("proposed");
+    // A private (1) stamp requests Auto (ARCH-0003's consent matrix, memory/support/wire.rs
+    // requested_approval); the peer burst route is asserted by allowReceipt below.
+    expect(allowUpsert.approval).toBe("auto");
     const allowDelivery = await fed07ConnectSuccess("allow vault.federation.connect.export", () => engine.client.call("vault.federation.connect.export", {
       pact: pact.pact,
       window_key: allowWindow,
