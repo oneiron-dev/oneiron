@@ -9,7 +9,7 @@ impl Vault {
     /// sheet, and the surface stays audit-only. The key is any key this
     /// install holds that may answer ([`answers_recovery_holds`]: a live
     /// owner device key, never an admin's or a host's), is the acting
-    /// owner's own ([`key_is_the_owners`]: a co-owner's key this install
+    /// owner's own (`key_is_the_owners`: a co-owner's key this install
     /// holds never answers for the actor), is not the hold's successor and
     /// is not the root's authority kind; R's held seed answers nothing.
     /// `ItIsMe` is the hold's owner's alone: another owner's is refused with
@@ -75,7 +75,7 @@ impl Vault {
                 .iter()
                 .find(|listed| AuthorityKey::Ed25519(listed.public_key) == *key)
                 .map(|listed| listed.owner);
-            key_is_the_owners(&fold, enrolled_owner, key, actor)
+            super::hold_view::key_is_the_owners(&fold, enrolled_owner, key, actor)
         };
         let answered = candidates.iter().find(|(key, _)| {
             *key != view.successor_key && !is_root_kind(key) && live_owner(key) && actors_own(key)
