@@ -122,6 +122,7 @@ pub(super) fn apply_policy_setting(
         context: POLICY_SETTING_REVISION_CONTEXT,
         persons_own_narrowing: false,
         owner_key_only: switches_back,
+        person_proved: false,
     };
     let landing = owner_choice_landing(
         state,
