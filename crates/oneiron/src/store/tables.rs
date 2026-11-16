@@ -562,6 +562,14 @@ crate::side_table::side_tables! {
     /// to the entity id it names, for lookup-before-mint resolution. Key: u8 + hash32 + id16.
     INGEST_IDENTITY_HINT: VaultMeta b"identity-hint:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Empty-marker index of the PERSONs whose synced body carries a `party_key`, under that
+    /// key, derived on each replica in the transaction that writes the body (L6-22). Key:
+    /// hash32 (sha256 of the exact party key) + id16.
+    PERSON_PARTY_KEY_INDEX: VaultMeta b"person-party-key:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the party-key index above (u64 version). Key: ().
+    PERSON_PARTY_KEY_INDEX_STATE: VaultMeta b"person-party-key-state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Canonical caller-supplied text fields backing one document's bm25 index, used to rebuild
     /// postings. Key: id16.
     INDEX_SOURCE_TEXT: VaultMeta b"index_source:text:v1:" Named
@@ -955,6 +963,11 @@ crate::side_table::side_tables! {
     /// binary = C2). Key: hash32 (blake3 of the stored bytes).
     SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named Custody
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner's answer whether one custody record is a payment credential, and the Gate
+    /// receipt of the act that set it (L8-60; CROSS-ARCH-0019 `#fence-unproven`). Absent, the
+    /// record's scan-kind label hint answers. Holds no value. Key: id16 (custody record id).
+    SECRET_PAYMENT_MARK: VaultMeta b"secret_payment:mark:v1:" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named

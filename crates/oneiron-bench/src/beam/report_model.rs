@@ -303,6 +303,9 @@ pub(super) struct ContextPackReport {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ScorerReport {
     pub(super) judge_instruction_sha256: Option<String>,
+    /// The `beam-replicate@3e12035` pass's judge prompt, when the run pinned it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) replicate_judge_instruction_sha256: Option<String>,
     pub(super) convention: String,
     pub(super) scorer_id: String,
     pub(super) version: String,
