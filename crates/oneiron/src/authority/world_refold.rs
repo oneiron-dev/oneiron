@@ -49,7 +49,7 @@ pub(super) fn refolds(
 /// it, as a root request does, so a giving or end above it there reads it: a
 /// stand-in built without it would leave a later giving on the same Grant
 /// beside it, unordered, and the Grant would stand on neither.
-fn on_grant_line(op: &AuthorityOp) -> bool {
+pub(super) fn on_grant_line(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::AgentGrantAct(_)
