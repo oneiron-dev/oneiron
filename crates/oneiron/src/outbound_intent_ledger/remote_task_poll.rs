@@ -76,11 +76,14 @@ pub(crate) static REMOTE_TASK_POLL_JOB: JobSpec = JobSpec {
     run: crate::schedule::host_takes_its_rows,
 };
 
-/// The schedule subject of row `intent`'s poll: the id's first 16 bytes.
-fn poll_subject(intent: &[u8; 32]) -> crate::Result<EntityId> {
+/// The schedule subject of row `intent`'s poll: the id's first 16 bytes, taken
+/// as an id from a raw digest prefix
+/// ([`crate::entity_id::entity_id_from_digest_prefix`]), so no intent id
+/// fails its poll's writes.
+fn poll_subject(intent: &[u8; 32]) -> EntityId {
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&intent[..16]);
-    EntityId::from_bytes(bytes)
+    crate::entity_id::entity_id_from_digest_prefix(bytes)
 }
 
 /// Arms row `intent`'s next poll at `at`, a second on the recording clock,
@@ -95,13 +98,16 @@ fn arm_poll_in_txn(
         &vault.store,
         wtxn,
         &REMOTE_TASK_POLL_JOB,
-        Some(poll_subject(intent)?),
+        Some(poll_subject(intent)),
         Trigger::At { at },
     )
 }
 
 /// Disarms row `intent`'s poll inside the `wtxn` that dropped its poll row,
-/// unless another poll row shares its subject.
+/// unless another poll row shares its subject. Every writer that deletes a
+/// poll row calls this in that same write: a schedule row left past due with
+/// no poll row keeps [`Vault::schedule_wake_at`] at "now", and no
+/// poll would ever clear it.
 fn disarm_poll_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -118,7 +124,7 @@ fn disarm_poll_in_txn(
         &vault.store,
         wtxn,
         REMOTE_TASK_POLL_JOB.code,
-        Some(poll_subject(intent)?),
+        Some(poll_subject(intent)),
     )
     .map(drop)
 }
@@ -136,7 +142,7 @@ fn poll_due_in_txn(
         &vault.store,
         txn,
         REMOTE_TASK_POLL_JOB.code,
-        Some(poll_subject(intent)?),
+        Some(poll_subject(intent)),
     )?
     .is_none_or(|due| due <= now))
 }
@@ -536,7 +542,7 @@ impl Vault {
                     &self.store,
                     txn,
                     &REMOTE_TASK_POLL_JOB,
-                    Some(poll_subject(intent)?),
+                    Some(poll_subject(intent)),
                     now,
                 )?;
             }

@@ -130,7 +130,10 @@ fn turns_run_here(vault: &Vault, _txn: &heed::RoTxn<'_>) -> Result<bool> {
 /// maybe left goes on at the next pass; one that took every due turn answers
 /// when the line next owes work, and with nothing waiting its row goes.
 fn run_paced_verb_line(vault: &Vault, _armed: &Armed, pass: &JobPass<'_>) -> Result<JobResult> {
-    if vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_RUN, pass.deadline)? {
+    let more = vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_RUN, pass.deadline)?;
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::schedule::hold_planted_paced_call(vault)?;
+    if more {
         return Ok(JobResult::of(Ran::More { cursor: Vec::new() }));
     }
     Ok(JobResult {

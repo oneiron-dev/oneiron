@@ -620,6 +620,45 @@ pub fn paced_verb_call_waits(vault: &Vault, key: [u8; 16]) -> Result<bool> {
     vault.paced_verb_call_waits(key)
 }
 
+/// A call the next run of the paced verb line holds while it runs, by vault: its actor, the
+/// opening of its window and its deadline.
+static PLANTED_PACED_HOLDS: Mutex<BTreeMap<PathBuf, (EntityId, u64, u64)>> =
+    Mutex::new(BTreeMap::new());
+
+/// The next run of the paced verb line in `vault` holds a call by `actor` once it took its
+/// turns and before it answers, its window opening at `next_eligible_at` and its deadline at
+/// `deadline`, through the hold's own write: a hold that lands during a line run (stage 5c-2).
+pub fn hold_during_next_line_run(
+    vault: &Vault,
+    actor: EntityId,
+    next_eligible_at: u64,
+    deadline: u64,
+) {
+    PLANTED_PACED_HOLDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(vault_of(vault), (actor, next_eligible_at, deadline));
+}
+
+/// The hook the paced verb line's run calls once it took its turns: it holds the call
+/// [`hold_during_next_line_run`] planted for this run, if any.
+///
+/// # Errors
+///
+/// As the hold.
+pub(crate) fn hold_planted_paced_call(vault: &Vault) -> Result<()> {
+    let planted = PLANTED_PACED_HOLDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&vault_of(vault));
+    match planted {
+        Some((actor, next_eligible_at, deadline)) => vault
+            .plant_paced_verb_call(actor, next_eligible_at, deadline)
+            .map(drop),
+        None => Ok(()),
+    }
+}
+
 /// The engine disarms `job` about `subject`, as its own doors do: `false` when it was not armed.
 ///
 /// # Errors

@@ -617,12 +617,13 @@ pub(crate) fn request_runs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result
 }
 
 /// The engine arms `spec` about `subject` due at `at` at the latest, inside the caller's write:
-/// a row not armed, or due later, or with a run in flight, is armed afresh at a time
-/// ([`Trigger::At`]), with no failure, cursor or request; one already due by `at` is left as it
-/// is. A row armed afresh while its run runs keeps the new arming when the run's result is
-/// written (no sooner than the run's first retry after its end), so work a write made due during
-/// a run is never lost. The door of a job whose one row stands for a line of work, due at its
-/// earliest item, which a new item may pull earlier.
+/// a row not armed, or due later, is armed afresh at a time ([`Trigger::At`]), with no failure,
+/// cursor or request; one already due by `at` is left as it is. A row with a run in flight is
+/// armed due now, so the run's end leaves it due at its first retry and the next run answers
+/// from the work: work a write made due during a run is never lost, and the run's own answer
+/// (more work, its next due time, its retries) is never pushed back to `at`. The door of a job
+/// whose one row stands for a line of work, due at its earliest item, which a new item may pull
+/// earlier.
 ///
 /// # Errors
 ///
@@ -643,6 +644,14 @@ pub(crate) fn arm_at_latest_in_txn(
         return Ok(());
     }
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
+    let at = if prior
+        .as_ref()
+        .is_some_and(|prior| prior.started_at.is_some())
+    {
+        at.min(now)
+    } else {
+        at
+    };
     let row = ScheduleRow::armed(Trigger::At { at }, None, prior.as_ref(), now)?;
     store_row_in_txn(store, txn, &key, prior.as_ref(), Some(&row))
 }

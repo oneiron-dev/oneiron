@@ -9,11 +9,15 @@
 //!   window;
 //! - a handle's first pass arms the row from the calls the vault holds, when it has none;
 //! - the settler's door runs the due row alone, not before it is due, and runs nothing while a
-//!   housekeeping pass holds the runner.
+//!   housekeeping pass holds the runner;
+//! - a call held while the line runs never pushes the line past the work its run left: the
+//!   line's next window and the turns a run stopped short of still run when they are due
+//!   (OPUS-SETTING's review of 5c-2, P2).
 //!
 //! Red before 5c-2: no row is ever armed, a housekeeping pass takes no turn, every process is
 //! woken for the line on the gate-decision sweep's carrier, and the settler takes the turns
-//! without the runner.
+//! without the runner. The two cases of a call held during a run are also red at the 5c-2 head
+//! before the P2 fix (e8186f4320b8), where such a hold moves the line to that call's window.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test paced_verb_line_due_jobs`.
 #![cfg(oneiron_test_support)]
@@ -23,8 +27,8 @@ use std::sync::Arc;
 
 use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::test_doors::schedule::{
-    PACED_VERB_LINE, due_at, paced_verb_call_waits, plant_paced_verb_call,
-    while_a_pass_holds_the_runner,
+    PACED_VERB_LINE, due_at, hold_during_next_line_run, paced_verb_call_waits,
+    plant_paced_verb_call, while_a_pass_holds_the_runner,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -206,4 +210,47 @@ fn the_settler_door_runs_the_due_line_alone_and_waits_while_a_pass_holds_the_run
     fx.vault.run_due_paced_verb_line().expect("door");
     assert!(!fx.waits(call), "the door took the turn");
     assert_eq!(fx.line_due(), None, "nothing waits: the row went");
+}
+
+#[test]
+fn a_call_held_while_the_line_runs_leaves_the_line_due_at_its_next_window() {
+    let fx = Fixture::open();
+    fx.vault.install_paced_verb_turn_runner();
+    let first = fx.hold(T0);
+    let second = fx.hold(T0 + 300);
+    hold_during_next_line_run(&fx.vault, fx.owner, T0 + 3_600, DEADLINE);
+    fx.pass();
+    assert!(!fx.waits(first), "the due turn ran");
+    assert!(fx.waits(second), "its window is not open");
+    assert!(
+        fx.line_due().is_some_and(|due| due <= T0 + 300),
+        "the call held during the run left the line due by the next window, not at its own: {:?}",
+        fx.line_due()
+    );
+    fx.at(T0 + 300);
+    fx.pass();
+    assert!(
+        !fx.waits(second),
+        "the turn whose window opened ran at its window"
+    );
+}
+
+#[test]
+fn a_call_held_while_a_run_stops_short_leaves_the_rest_of_the_line_due() {
+    let fx = Fixture::open();
+    fx.vault.install_paced_verb_turn_runner();
+    let calls: Vec<[u8; 16]> = (0..65).map(|_| fx.hold(T0)).collect();
+    hold_during_next_line_run(&fx.vault, fx.owner, T0 + 3_600, DEADLINE);
+    fx.pass();
+    assert_eq!(
+        calls.iter().filter(|call| fx.waits(**call)).count(),
+        1,
+        "a run takes 64 turns and stops"
+    );
+    fx.at(T0 + 10);
+    fx.pass();
+    assert!(
+        calls.iter().all(|call| !fx.waits(*call)),
+        "the next pass took the turn the run stopped short of"
+    );
 }
