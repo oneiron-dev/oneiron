@@ -18,6 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/restore.rs` | src | s | — | — | Purposes of the managed restore contract (`oneiron-vault-contract` `restore`) |
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
+| `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
 | `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |
 | `src/record.rs` | src | s | 1 enum · 2 fn | CanonicalBytesError | The one canonical byte form of a structured value (DESIGN section 1.5) |
 | `tests/fingerprint_rules.rs` | test | m | — | — | PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts |
