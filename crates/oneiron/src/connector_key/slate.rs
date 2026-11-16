@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use crate::skill_hub::pack_catalog::OwnerAcceptedScreen;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -124,6 +125,12 @@ pub struct SlateManifest {
     pub pack_source: Option<SlatePackSource>,
     pub tools: Vec<SlateToolManifest>,
     pub elicitation: Option<SlateElicitationManifest>,
+    /// The owner's "install it anyway" on declared tools the pack install
+    /// screen keeps out, by tool name (FIX SCREENING-PER-TOOL-SKIP, PR C).
+    /// Inside the manifest hash and owner stamp; absent on every slate
+    /// without one, so their bytes and hash are unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub owner_accepted: BTreeMap<String, OwnerAcceptedScreen>,
 }
 impl SlateManifest {
     /// `tools`, with the elicitation declaration admission makes when
@@ -135,7 +142,19 @@ impl SlateManifest {
             tools,
             elicitation,
             pack_source: None,
+            owner_accepted: BTreeMap::new(),
         }
+    }
+    /// The same manifest holding the owner's acceptances of its tools that
+    /// `accepted` names; an acceptance of a tool it does not declare is
+    /// left out.
+    pub fn with_owner_accepted(mut self, accepted: &BTreeMap<String, OwnerAcceptedScreen>) -> Self {
+        self.owner_accepted = accepted
+            .iter()
+            .filter(|(name, _)| self.tools.iter().any(|tool| &tool.name == *name))
+            .map(|(name, screen)| (name.clone(), screen.clone()))
+            .collect();
+        self
     }
 }
 
@@ -468,6 +487,15 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
             .iter()
             .any(|tool| tool.name.trim().is_empty() || tool.name == ELICITATION_ROW_KEY)
     {
+        return Err(invalid());
+    }
+    // An owner acceptance names a declared tool and only rules the owner may
+    // lift (FIX SCREENING-PER-TOOL-SKIP, PR C).
+    if manifest.owner_accepted.iter().any(|(name, accepted)| {
+        !tools.contains_key(name.as_str())
+            || accepted.rules.is_empty()
+            || accepted.rules.iter().any(|rule| !rule.owner_may_lift())
+    }) {
         return Err(invalid());
     }
     // Legacy asks fold into the one declaration, never beside it.

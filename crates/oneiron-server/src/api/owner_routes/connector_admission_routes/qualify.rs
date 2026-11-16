@@ -168,8 +168,16 @@ fn listed_as_stamped(
         None => slate_of(vault, &catalog.record)?.1,
     };
     // Only a listed tool outside the stamped slate is kept out: the slate's
-    // own tools are compared as before.
-    let screen = discovery.screen(vault, &catalog.name, &slate.tool_names())?;
+    // own tools are compared as before. A fault of the whole listing keeps
+    // every tool, as before the per-tool screen.
+    let choices = host::OwnerScreenChoices {
+        admitted: slate.tool_names(),
+        held: Some(&slate.slate_manifest().owner_accepted),
+        install_anyway: None,
+    };
+    let screen = discovery
+        .screen(vault, &catalog.name, &choices)?
+        .unwrap_or_default();
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let classes = slate
         .manifest()
