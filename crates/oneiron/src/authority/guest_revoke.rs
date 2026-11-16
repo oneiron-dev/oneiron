@@ -230,7 +230,7 @@ impl Vault {
             return Ok(None);
         }
         if grant.member_ref.to_hex() != claims.holder_ref
-            || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
+            || crate::federation::grant_end_owed_in_txn(&self.store, txn, grant_ref)
             || self.grant_line_ended_in_txn(txn, grant_ref)?
             || !grant.confers_at(self.instant_in_txn(txn)?.secs())
             || live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.live_type()
@@ -449,8 +449,8 @@ impl Vault {
                 membership_receipt: None,
             },
         )?;
-        // The withdrawal stays known here and reaches its peers, in this
-        // writer (FIX-LIST 5107, 10772).
+        // The withdrawal reaches its peers, in this writer (FIX-LIST 10772);
+        // the slip revoke above ends its line.
         super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
         apply_ops(
             &self.store,

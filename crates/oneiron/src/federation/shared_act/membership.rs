@@ -21,6 +21,7 @@ pub use invitation::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitat
 pub use owner_recovery::OwnerRecoveryAuthorization;
 
 pub(super) use pending_execution::UnsignedExecution;
+pub(crate) use pending_execution::membership_withdrawal_owed_in_txn;
 
 use super::{
     ChangeRecord, DetachOutcome, DetachReport, Effect, RemoveOwnerPlan, SharedActExecutionReceipt,
@@ -539,8 +540,8 @@ impl Vault {
             .into_iter()
             .map(|(id, grant)| (id, grant.is_git_push() || grant.owner_agent))
             .collect();
-        // Each withdrawal stays known here and reaches its peers, in this
-        // writer (FIX-LIST 5107, 10772).
+        // Each withdrawal reaches its peers, in this writer (FIX-LIST 10772);
+        // a signed withdrawal or the change's record ends each line.
         let mut unsigned = Vec::new();
         for (id, signed_mint) in &dropped {
             crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;

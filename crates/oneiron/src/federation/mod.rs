@@ -75,7 +75,7 @@ pub(crate) use queue_reconciliation::QueueReconciliationAdmission;
 pub(crate) mod grant_policy;
 #[cfg(feature = "sync")]
 mod grant_travel;
-pub(crate) use grant_ending::owe_torn_grant_end_in_txn;
+pub(crate) use grant_ending::{grant_end_owed_in_txn, owe_torn_grant_end_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use grant_travel::live_federation_grant_in;
 mod booking_payer;

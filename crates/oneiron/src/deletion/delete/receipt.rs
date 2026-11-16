@@ -212,12 +212,11 @@ impl Vault {
             window_label,
             &tombstone,
         )?);
-        // A FEDERATION_GRANT row erased here is marked withdrawn; this door's
-        // own `dt:` marker and tombstone carry its erasure (FIX 11779).
-        crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, &mut wtxn, *id)?;
-        // ... and its line ends by a counted act in this writer, or owed
-        // when this install cannot carry one now (pass 28 R2c; Engine RULING
-        // GRANT-ROW-DELETE-NO-END = A). An end never refuses the erase.
+        // A FEDERATION_GRANT row erased here: this door's own `dt:` marker
+        // and tombstone carry its erasure (FIX 11779), and its line ends by a
+        // counted act in this writer, or owed when this install cannot carry
+        // one now (pass 28 R2c; Engine RULING GRANT-ROW-DELETE-NO-END = A).
+        // An end never refuses the erase.
         self.end_erased_grant_in_txn(&mut wtxn, *id)?;
         let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,

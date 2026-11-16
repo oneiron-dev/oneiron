@@ -43,8 +43,8 @@ pub(super) fn apply_delete_arm(
     )?;
     // A pad row's key leaves custody with it (KS-5, FIX 7192).
     crate::world_keys::erase_batch_pad_row_in_txn(store, wtxn, &id, state.mutation_recorded_at)?;
-    // A FEDERATION_GRANT row torn here is withdrawn: marked, and its hard
-    // erasure staged for sync, since a batch delete stages none (FIX 11779).
+    // A FEDERATION_GRANT row torn here is withdrawn: its hard erasure staged
+    // for sync, since a batch delete stages none (FIX 11779).
     crate::authority::withdraw_grant_row_in_txn(store, wtxn, id)?;
     // Every taking back of a Grant is a counted end (pass 28 R2c; Engine
     // RULING GRANT-ROW-DELETE-NO-END = A): a delete below any vault door

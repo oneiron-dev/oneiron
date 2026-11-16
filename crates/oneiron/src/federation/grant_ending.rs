@@ -80,6 +80,28 @@ pub(crate) fn owe_torn_grant_end_in_txn(
     )
 }
 
+/// Whether this install still owes the counted end of the Grant `grant`: an end its writer
+/// filed and could not sign yet ([`OWED_GRANT_END`]), or the unsigned record of a membership
+/// change that withdrew it. Until that end counts here the Grant's line still reads as given,
+/// so a reader of a withdrawal asks this first: a row put back at its id in the meantime (a
+/// restore, or a peer the tombstone never reached) confers nothing. Once the end counts, the
+/// line's end answers and the debt is gone (pass 28 R3e: it replaces the permanent withdrawal
+/// marker, FIX-LIST 5107). A debt that cannot be read answers by
+/// [`crate::authority::ISOLATION_NEW_CHECK_ERROR_MODE`]: not known, as the marker's read did.
+pub(crate) fn grant_end_owed_in_txn(store: &Store, txn: &heed::RoTxn<'_>, grant: EntityId) -> bool {
+    let owed = OWED_GRANT_END
+        .contains(store, txn, &HexId(grant))
+        .and_then(|owed| {
+            Ok(owed || super::shared_act::membership_withdrawal_owed_in_txn(store, txn, grant)?)
+        });
+    match owed {
+        Ok(owed) => owed,
+        Err(_) => match crate::authority::ISOLATION_NEW_CHECK_ERROR_MODE {
+            crate::authority::NewCheckErrorMode::KeepExistingPath => false,
+        },
+    }
+}
+
 /// Whether the torn Grant row `body` is of a kind an act may give. An own-device grant and a
 /// base agent's engine-default Steward grant have no act before their own pass 28 step (R4),
 /// and a body that does not decode never stands, so none of them owes an end: its debt would

@@ -58,11 +58,11 @@ fn chain_revoked(fold: &AuthorityFold, slip: &[u8; 32]) -> bool {
         .any(|id| fold.slips.explicit_revoked.contains(id))
 }
 
-/// Whether `grant` is positively known withdrawn here: the FEDERATION_GRANT
-/// marker first, then a counted end of its line (a guest's revoke, pass 28
-/// R3c).
+/// Whether `grant` is positively known withdrawn here: an end of its line this
+/// install still owes first, then a counted end of its line (a guest's revoke,
+/// pass 28 R3c).
 fn grant_withdrawn_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, grant: EntityId) -> Result<bool> {
-    if crate::authority::grant_known_withdrawn_in_txn(&vault.store, txn, grant) {
+    if crate::federation::grant_end_owed_in_txn(&vault.store, txn, grant) {
         return Ok(true);
     }
     vault.grant_line_ended_in_txn(txn, grant)

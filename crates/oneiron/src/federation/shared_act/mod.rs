@@ -28,6 +28,7 @@ pub use member_ask::{
     SharedMemberChange,
 };
 pub(crate) use membership::SharedMemberDeparture;
+pub(crate) use membership::membership_withdrawal_owed_in_txn;
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
