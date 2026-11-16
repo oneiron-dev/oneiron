@@ -305,6 +305,50 @@ fn a_call_receipt_reads_for_a_live_audit_read_holder_only() -> TestResult {
 
 /// An audit_read grant with an end stops reading at the first read past it,
 /// with no write: the power is checked live, at the vault's clock.
+/// Sol review 8435 P1: the audit door rechecks the credential a holder's
+/// handle presents, in its own read. A holder whose credential is revoked,
+/// its power still live, reads no audit at the next read; a fresh credential
+/// of its own reads again; another person's live credential bound to the
+/// holder's handle reads nothing.
+#[test]
+fn a_revoked_holder_credential_reads_no_audit() -> TestResult {
+    let fixture = fixture()?;
+    let holder = person(&fixture, "an auditor")?;
+    let other = person(&fixture, "another person")?;
+    let first = credential(&fixture, holder)?;
+    let as_holder = bound(&fixture, holder, &first);
+    grant(&fixture, holder, None);
+    let page = call(&as_holder, "vault.authority.audit", json!({}));
+    assert!(page["rows"].is_array(), "the holder reads a page: {page}");
+
+    fixture
+        .vault
+        .revoke_capability_slip(&fixture.issuer, first.claims().slip_id)?;
+    assert_forbidden(
+        &refused(&as_holder, "vault.authority.audit", json!({})),
+        "the audit on the holder's revoked credential, its power still live",
+    );
+
+    let fresh = credential(&fixture, holder)?;
+    let page = call(
+        &bound(&fixture, holder, &fresh),
+        "vault.authority.audit",
+        json!({}),
+    );
+    assert!(
+        page["rows"].is_array(),
+        "the holder reads again on a live credential of its own: {page}"
+    );
+
+    let others = credential(&fixture, other)?;
+    refused(
+        &bound(&fixture, holder, &others),
+        "vault.authority.audit",
+        json!({}),
+    );
+    Ok(())
+}
+
 #[test]
 fn an_expired_audit_read_refuses_at_the_next_read() -> TestResult {
     let fixture = fixture()?;
