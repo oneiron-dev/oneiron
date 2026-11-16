@@ -67,8 +67,6 @@ pub(crate) enum ArchivedSideGroup {
     DreamerConsolidation,
     /// Projector wake policy.
     DreamerWake,
-    /// Description routing policy.
-    Llm,
     /// Dependent walk bounds.
     Ports,
     /// Passive housekeeping wake notes.
@@ -141,7 +139,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             Some(Group::DreamerConsolidation)
         }
         name if name == side_table::DREAMER_PROJECTOR_POLICY.name => Some(Group::DreamerWake),
-        name if name == side_table::LLM_DESCRIPTION_POLICY.name => Some(Group::Llm),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
@@ -219,9 +216,6 @@ pub(crate) fn land_archived_side_group_in_txn(
             crate::dreamer_wake::archive_restore::land_archived_dreamer_wake_rows_in_txn(
                 vault, txn, permit, rows,
             )
-        }
-        ArchivedSideGroup::Llm => {
-            crate::llm::archive_restore::land_archived_llm_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)

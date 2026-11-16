@@ -232,31 +232,6 @@ pub fn purpose_key(purpose: &CallPurpose) -> String {
             .to_owned(),
     }
 }
-
-/// Lands one archived LLM_DESCRIPTION_POLICY row live: the policy validates as the setter reads
-/// it, then installs through the archive seam without routing a seat.
-pub(super) fn land_archived_llm_description_policy_row_in_txn(
-    vault: &crate::Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &crate::batch::export::OwnerArchiveRestorePermit,
-    row: &crate::batch::export::ArchiveRetainedSideRow,
-) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
-    use crate::batch::export::RetainedSideHeldBackReason;
-    use crate::batch::export::archive_side_install::{
-        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-    };
-    let (key, value) = match decode_archived_row(&POLICY, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
-    };
-    if value.validate().is_err() {
-        return Ok(ArchivedSideRowOutcome::HeldBack(
-            RetainedSideHeldBackReason::InvalidValue,
-        ));
-    }
-    install_archived_row(&POLICY, vault, txn, permit, &key, row)
-}
-
 impl Vault {
     /// The vault's description policy, the key `models.description_policy`, or `None` while
     /// none is set. The owner sets it through `vault.settings.set`.
