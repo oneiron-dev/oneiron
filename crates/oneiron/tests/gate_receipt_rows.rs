@@ -1,4 +1,4 @@
-//! UC-03 PR 0 guard (fable/21 DESIGN §5): one Gate receipt writer from each of five stage-1
+//! UC-03 PR 0 guard (fable/21 DESIGN §5): one Gate receipt writer from each of six stage-1
 //! families, driven on a fresh vault, with each row's 15 fields other than its id and its time
 //! pinned. Stage 1 moves each literal onto the one draft and mint and must change none of these
 //! fields, so this file is green on main and stays green on every head through stage 3.
@@ -7,6 +7,8 @@
 //! - 1b consent, kept words: the owner revokes a contact's clearance (`consent/contact_clearance.rs`).
 //! - 1c the gate's own doors: the owner grants a foreign principal (`gate/foreign_agent.rs`).
 //! - 1e Dreamer: the facet admission receipt of an enqueued attempt (`dreamer_runner/authority.rs`).
+//! - 1g the rest: the booking guard parks a borderline submission (`booking/anti_abuse/quarantine.rs`;
+//!   added by UC-03 PR 1g, the one row here with a bound id and a bound time).
 //! - 1h the rest: the owner approves an agent's plan-doc (`note/plan_doc.rs`).
 //!
 //! The foreign grant and the plan-doc approval are two of the owner's yeses that D2 (UC-03 PR 5)
@@ -20,6 +22,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, AgentTier, MachineRole};
+use oneiron::booking::EventTypeKey;
+use oneiron::booking::anti_abuse::{
+    BookingRequestFacts, booking_ip_hash, quarantine_borderline_submission,
+};
 use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::counterparty_contact::CounterpartyContactRecord;
@@ -28,7 +34,7 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::federation::{Scope, ScopeId};
 use oneiron::note::{PlanDocProposeRequest, PlanDocVerdictRequest, approve_plan_doc_as};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::store::{
     GateDecisionContext, GateDecisionId, GateDecisionReadContext, GateDecisionRecord, GateLoopLink,
     GateLoopSource, GateSystemNoticeRecord,
@@ -36,6 +42,7 @@ use oneiron::store::{
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::test_doors::gate_receipt_rows as door;
 use oneiron::test_doors::payment_credential::register_bound_secret;
+use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
@@ -306,6 +313,95 @@ fn a_dreamer_facet_admission_row_keeps_its_fields() -> TestResult {
                 ),
                 Vec::<GateDecisionReadContext>::new(),
             ),
+            redacted_at: None,
+        }
+    );
+    Ok(())
+}
+
+/// Family 1g: the booking guard parks a borderline submission for the owner's review. The
+/// fixture is `tests/claim_facet_birth.rs`'s: a vault with the engine machines and a host-bound
+/// owner, and the booking page stored as an EVENT. The row takes the parked claim's id and the
+/// guard's time, so this pin also holds `decision_id` and `created_at`.
+#[test]
+fn a_booking_quarantine_row_keeps_its_fields() -> TestResult {
+    const SUBMITTED_AT: u64 = 1;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor()?;
+    bind_host_owner(&vault, &test_host_issuer(), owner).expect("owner host binding");
+    let page = EntityId::now();
+    vault.put_entity(
+        &page,
+        ENTITY_TYPE_EVENT,
+        TimeRange { start: 5, end: 5 },
+        5,
+        b"booking page",
+    )?;
+    let facts = BookingRequestFacts {
+        page_ref: page,
+        event_type: Some(EventTypeKey("intro-call".to_owned())),
+        ip_hash: booking_ip_hash("203.0.113.10"),
+        email_hash: None,
+        session_hash: None,
+        started_at_millis: 1_000_000,
+        submitted_at_millis: 1_005_000,
+        submission_fingerprint: [1; 32],
+        selected_slot_hash: [2; 32],
+        intake_content_hash: [3; 32],
+        honeypot_nonempty: false,
+        intake_chars: 40,
+        active_future_bookings_for_email: 0,
+        active_holds_for_session: 0,
+        email: None,
+    };
+
+    let receipt = quarantine_borderline_submission(&vault, &facts, "borderline", SUBMITTED_AT)
+        .expect("a borderline submission is quarantined");
+
+    let decision = GateDecisionId::from_bytes(receipt.decision_id);
+    assert_eq!(
+        decision,
+        GateDecisionId::from_bytes(receipt.claim_id),
+        "the row takes the parked claim's id"
+    );
+    let row = row(&vault, decision);
+    assert_eq!(row.decision_id, decision);
+    assert_eq!(
+        row.created_at, SUBMITTED_AT,
+        "the row keeps the guard's time"
+    );
+    let pending = vault
+        .pending_gate_consents(16)?
+        .into_iter()
+        .find(|pending| pending.claim_id == receipt.claim_id)
+        .expect("the guard parked the claim");
+    assert_eq!(pending.decision_id, decision);
+    assert_eq!(
+        pending.diff_handle.len(),
+        32,
+        "a digest of the parked claim"
+    );
+    let frontier = door::policy_frontier(&vault)?;
+    assert_eq!(pending.read_frontier_hash, frontier);
+    assert_eq!(
+        fields(&row),
+        Fields {
+            version: 0,
+            outcome: "pending".to_owned(),
+            reason_codes: strings(&["gate.pending.booking.anti_abuse.borderline"]),
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "booking.http_guard".to_owned(),
+            actor_ref: None,
+            content_kind: "booking.submission".to_owned(),
+            policy_manifest_version: "booking.anti_abuse.v1".to_owned(),
+            claim_id: Some(receipt.claim_id),
+            grant_ref: None,
+            diff_handle: pending.diff_handle.clone(),
+            read_frontier_hash: frontier,
+            context: GateDecisionContext::default(),
             redacted_at: None,
         }
     );

@@ -12,7 +12,10 @@ use crate::context_projection::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
+use crate::{EdgeActorClass, WriteActor};
+use oneiron_contracts::RecordedSeconds;
 
 use self::board_authority::BoardActor;
 use super::attenuation::source_content_fingerprint;
@@ -197,28 +200,19 @@ impl AgentDispatcher<'_> {
         )?;
         // Same decision ledger and exact consent digest as approve_once. The
         // suggested catastrophe bound can NEVER become a standing grant.
-        self.vault.store.append_gate_decision_in_txn(
-            wtxn,
-            &GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
-                created_at: input.now,
-                outcome: "pending".to_owned(),
-                reason_codes: vec!["gate.context.propose_widen".to_owned()],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: "agent".to_owned(),
-                actor_ref: Some(parent.target.agent_definition_ref()?.to_hex()),
-                content_kind: "consent_grant".to_owned(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: proposal.consent.effect_digest.as_bytes().to_vec(),
-                read_frontier_hash: [0; 32],
-                context: Default::default(),
-                redacted_at: None,
-            },
-        )?;
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Pending,
+            "consent_grant",
+            "gate.context.propose_widen",
+            ReceiptActor::Row(WriteActor::new(
+                parent.target.agent_definition_ref()?,
+                EdgeActorClass::Agent,
+            )),
+            proposal.consent.effect_digest.as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.decided_at = Some(RecordedSeconds::from_secs(input.now));
+        self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
         Ok(Some(AgentDispatchOutcome::ProposedWiden(Box::new(
             proposal,
         ))))

@@ -16,11 +16,14 @@ use crate::booking::lifecycle::{booking_writer, digest_with};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{
-    GateDecisionId, GateDecisionRecord, PENDING_GATE_CONSENT_VERSION, PendingGateConsentRecord,
+    GateDecisionId, GateEnginePart, GateReceipt, PENDING_GATE_CONSENT_VERSION,
+    PendingGateConsentRecord, PolicyBasis, ReceiptActor,
 };
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
+use oneiron_contracts::RecordedSeconds;
 
 // -------------------------------------------------------------------------
 // Quarantine (pending-review record through the gate's own ledger rows)
@@ -173,25 +176,17 @@ fn quarantine_borderline_submission_in_txn(
             created_at,
         )
         .map_err(|error| engine_failure("quarantine claim write", error))?;
-    let decision = GateDecisionRecord {
-        version: 0,
-        decision_id,
-        created_at,
-        outcome: "pending".to_owned(),
-        reason_codes: reason_codes.clone(),
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: "booking.http_guard".to_owned(),
-        actor_ref: None,
-        content_kind: "booking.submission".to_owned(),
-        policy_manifest_version: "booking.anti_abuse.v1".to_owned(),
-        claim_id: Some(claim_id),
-        grant_ref: None,
-        diff_handle: diff_handle.clone(),
-        read_frontier_hash,
-        context: Default::default(),
-        redacted_at: None,
-    };
+    let mut decision = GateReceipt::with_reasons(
+        GateReceiptOutcome::Pending,
+        "booking.submission",
+        reason_codes.clone(),
+        ReceiptActor::Part(GateEnginePart::BookingHttpGuard, None),
+        diff_handle.clone(),
+        PolicyBasis::versioned(read_frontier_hash, "booking.anti_abuse.v1"),
+    );
+    decision.about = Some(claim_ref);
+    decision.id = Some(decision_id);
+    decision.decided_at = Some(RecordedSeconds::from_secs(created_at));
     let pending = PendingGateConsentRecord {
         version: PENDING_GATE_CONSENT_VERSION,
         claim_id,
@@ -206,7 +201,7 @@ fn quarantine_borderline_submission_in_txn(
     };
     vault
         .store
-        .append_gate_decision_in_txn(wtxn, &decision)
+        .record_gate_receipt_in_txn(wtxn, decision)
         .map_err(|error| engine_failure("quarantine decision append", error))?;
     vault
         .store

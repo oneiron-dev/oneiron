@@ -50,10 +50,10 @@ use crate::run_tree::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_record::AttemptPause;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::scan_count::ScanCount;
-use crate::store::{EngineScan, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord};
+use crate::store::{EngineScan, GateReceipt, ReceiptActor};
 use crate::temporal::TimeRange;
-use crate::{EdgeActorClass, WriteActor};
 
 /// Each tree pause, by its id.
 const TREE_PAUSE: SideTable<EntityId, TreePauseRecord, Named> =
@@ -653,32 +653,17 @@ impl Vault {
             format!("running:{}", running.len()),
             format!("members_digest:{}", digest.to_hex()),
         ];
-        let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
-        let mut record = GateDecisionRecord {
-            version: crate::store::GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: GateSystemNoticeRecord::receipt_details(
-                TREE_PAUSE_CONTENT_KIND,
-                details,
-            ),
-            actor_class: actor.actor_class().gate_actor_class().to_owned(),
-            actor_ref: Some(actor.entity_ref().to_hex()),
-            content_kind: TREE_PAUSE_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(format!("agent_tree_pause:{}", pause.to_hex())),
-            diff_handle: digest.as_bytes().to_vec(),
-            read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, txn)?
-                .read_frontier_hash()?,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store
-            .append_fresh_gate_decision_in_txn(txn, &mut record)?;
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Allow,
+            TREE_PAUSE_CONTENT_KIND,
+            reason,
+            ReceiptActor::human(owner_id),
+            digest.as_bytes().to_vec(),
+            crate::gate::policy_basis_in_txn(&self.store, txn)?,
+        );
+        receipt.grant_ref = Some(format!("agent_tree_pause:{}", pause.to_hex()));
+        receipt.details = details;
+        let record = self.store.record_gate_receipt_in_txn(txn, receipt)?;
         Ok(format!("gate:{}", record.decision_id.to_hex()))
     }
 }
