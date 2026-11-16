@@ -163,7 +163,7 @@ fn join(
         let revision = rows::join_actors(RECORDS, value, parts, put_author)?;
         return RECORDS.encode_value(&revision).map(Some);
     }
-    if at.in_table(proposals::TABLE.decl()) {
+    if proposals::TABLE.holds(at) {
         return proposals::join(value, parts).map(Some);
     }
     Err(rows::bad_part())
