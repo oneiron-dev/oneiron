@@ -381,7 +381,9 @@ impl OneironClient {
     /// the device owner key once the owner enrolled it here, or the host
     /// root an open with `hold_checkpoint_root_signer` keeps. Where this
     /// install holds neither, every word the handle gives refuses
-    /// `owner_key_required`. An explicit opt-in: no other handle changes,
+    /// `owner_key_required`; where the handle's person is no live owner of
+    /// the vault, every word refuses `consent owner not authenticated`. An
+    /// explicit opt-in: no other handle changes,
     /// and no other verb of this one. No user presence is asked yet (FIX
     /// [OWNER-KEY-USER-PRESENCE]).
     ///

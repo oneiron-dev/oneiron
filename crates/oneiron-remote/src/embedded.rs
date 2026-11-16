@@ -574,8 +574,10 @@ impl EmbeddedClient {
     /// PR 2b): each ask word it gives carries the proof the owner key this
     /// install holds mints for that word
     /// ([`oneiron::Vault::authenticate_owner_device`]). A room turn's
-    /// handle and an agent's or system actor's refuse here; a person who is
-    /// no live owner of the vault gets no proof at the word.
+    /// handle and an agent's or system actor's refuse here. Each word of a
+    /// person who is no live owner of the vault refuses `consent owner not
+    /// authenticated`, as each word refuses `owner_key_required` where this
+    /// install holds no owner key.
     pub(crate) fn as_owner_device(&self) -> Result<Self, MemoryError> {
         self.ensure_dispatch_pid()?;
         if self.actor_class != EdgeActorClass::Human || self.room_turn.is_some() {
