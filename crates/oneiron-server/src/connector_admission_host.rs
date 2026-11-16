@@ -527,6 +527,11 @@ impl QualificationConnection for HttpQualificationConnection<'_> {
     }
 
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
+        // A tool the screen keeps out is outside the manifest the owner
+        // stamped: no probe calls it, whatever the plan names (review-1 F2).
+        if self.kept_out.contains(&request.name) {
+            return Err(QualificationFailure::Envelope);
+        }
         let body = json!({
             "jsonrpc": "2.0",
             "id": request.id,

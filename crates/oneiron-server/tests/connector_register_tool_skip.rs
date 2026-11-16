@@ -18,6 +18,8 @@
 //! it, and stamp plus attest admit it; once its schema changes, a refresh
 //! skips it again; a digest the owner did not see is refused. At PR B these
 //! three fail: the request field `install_anyway` is refused as unknown.
+//! PR C2 (review-1 F3): the refreshed slate view shows the acceptance; at
+//! PR C the install case fails there (no `owner_accepted` in the view).
 //!
 //! In-process vault and router (`oneshot`); the connector is an axum server
 //! on 127.0.0.1, the endpoint the register lists through.
@@ -458,6 +460,13 @@ fn install_anyway_at_the_seen_digest_installs_the_tool_and_attest_admits_it() {
         assert_eq!(refreshed["skipped"], json!([]), "{refreshed}");
         let accepted = &refreshed["accepted"]["docs_send"];
         assert_eq!(accepted["tool_digest"], digest.as_str(), "{refreshed}");
+        // The slate the owner reviews before his stamp shows the acceptance
+        // the stamp binds (review-1 F3; absent from the view at PR C).
+        assert_eq!(
+            refreshed["slate"]["owner_accepted"]["docs_send"]["tool_digest"],
+            digest.as_str(),
+            "{refreshed}"
+        );
         assert_eq!(
             accepted["rules"],
             json!(["parameter_injection"]),

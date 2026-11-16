@@ -234,6 +234,30 @@ fn a_held_acceptance_admits_the_unchanged_tool_and_not_a_changed_one() {
     assert_eq!(later.skipped[0].tool, "docs_send");
 }
 
+/// review-1 F1: a held acceptance naming a rule the table does not let the
+/// owner lift (a row kept from before the table turned the rule skip-only)
+/// covers nothing, so the tool is kept out again. Red at PR C (f5cf5d3018c5):
+/// `covers` read only the digest and the rule set.
+#[test]
+fn a_held_acceptance_of_a_skip_only_rule_covers_nothing() {
+    let (_dir, vault) = fixture();
+    let long = oversized("docs_long");
+    let mut screen = each(&vault, std::slice::from_ref(&long));
+    let skip = screen.skipped[0].clone();
+    assert!(skip.rules.contains(&ScreenRule::TextBound), "{skip:?}");
+    let held = BTreeMap::from([(
+        "docs_long".to_owned(),
+        OwnerAcceptedScreen {
+            tool_digest: skip.digest.clone(),
+            rules: skip.rules.clone(),
+        },
+    )]);
+    assert!(!held["docs_long"].covers(&skip));
+    screen.keep_owner_accepted(&held);
+    assert!(!screen.admits("docs_long"), "{screen:?}");
+    assert!(screen.accepted.is_empty());
+}
+
 #[test]
 fn the_digest_ignores_schema_key_order() {
     let mut reordered = clean("docs_read");

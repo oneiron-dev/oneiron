@@ -201,9 +201,12 @@ impl OwnerAcceptedScreen {
         })
     }
     /// This acceptance still covers `skipped`: the tool keeps the accepted
-    /// digest and trips no rule outside the accepted ones.
+    /// digest, trips no rule outside the accepted ones, and every accepted
+    /// rule is still one the owner may lift ([`SCREEN_RULES`]), so a rule the
+    /// table turns skip-only keeps the tool out again (review-1 F1).
     pub fn covers(&self, skipped: &SkippedConnectorTool) -> bool {
         self.tool_digest == skipped.digest
+            && self.rules.iter().all(|rule| rule.owner_may_lift())
             && skipped.rules.iter().all(|rule| self.rules.contains(rule))
     }
     /// The tool's stored strings are public, owner-accepted at install: the
