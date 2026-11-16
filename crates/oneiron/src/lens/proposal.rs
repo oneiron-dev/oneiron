@@ -26,6 +26,7 @@ use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
 use crate::receipt::{LensApproval, LensProposalReceipt};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{PackInstallReceipt, PackInstallStatus};
 use crate::{EntityId, Error, Result, Vault};
@@ -248,10 +249,9 @@ impl Memory<'_> {
         )?
         .get();
         let page_max = usize::try_from(page_max).unwrap_or(usize::MAX);
-        let limit = input
-            .limit
-            .map_or(page_max, |limit| limit as usize)
-            .clamp(1, page_max);
+        let limit =
+            page_limit_zero_as_one(input.limit.map(|limit| limit as usize), page_max, page_max)
+                .rows;
         let after = input
             .after
             .as_deref()

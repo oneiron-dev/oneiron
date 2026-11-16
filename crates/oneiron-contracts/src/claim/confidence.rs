@@ -3,6 +3,8 @@
 //! number stays the claim's one `conf`; the band and basis are kept beside
 //! it, so a reader compares bands and never derives one from a cutoff.
 
+use crate::register::Register;
+
 /// The hedge band a confidence is read in, lowest first.
 #[derive(
     Debug,
@@ -16,8 +18,10 @@
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("confidence.band")]
 pub enum ConfidenceBand {
     Low,
     Medium,
@@ -62,27 +66,10 @@ impl ConfidenceBand {
             .map_or(Self::Low, |(_, band)| *band)
     }
 
-    /// The pinned on-disk string for this band.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Certain => "certain",
-        }
-    }
-
     /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
     #[doc(hidden)]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "low" => Some(Self::Low),
-            "medium" => Some(Self::Medium),
-            "high" => Some(Self::High),
-            "certain" => Some(Self::Certain),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -97,8 +84,10 @@ impl ConfidenceBand {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("verdict.basis")]
 pub enum VerdictBasis {
     /// A calibrated decider gave the band with its number.
     CalibratedModel,
@@ -107,23 +96,10 @@ pub enum VerdictBasis {
 }
 
 impl VerdictBasis {
-    /// The pinned on-disk string for this basis.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CalibratedModel => "calibrated_model",
-            Self::DeterministicFallback => "deterministic_fallback",
-        }
-    }
-
     /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
     #[doc(hidden)]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "calibrated_model" => Some(Self::CalibratedModel),
-            "deterministic_fallback" => Some(Self::DeterministicFallback),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
