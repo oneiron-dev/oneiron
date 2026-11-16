@@ -167,6 +167,34 @@ pub(crate) fn ag_ui_captures_in_txn(
     Ok(captures)
 }
 
+/// The capture owner an Imported `ingest.ag_ui.file` claim names, for the
+/// repair-seed host doors: the stored file's `capture_actor_ref`, `None`
+/// where no such claim reads or its file does not decode. Fixed code's
+/// owner resolution only; the owner's scoped read then makes every
+/// binding and live-owner check.
+pub(crate) fn ag_ui_capture_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<Option<EntityId>> {
+    let body = match vault.get_claim_in_txn(txn, claim) {
+        Ok(body) => body,
+        // A row that is no claim decodes to no owner.
+        Err(Error::InvalidClaimBody(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some(body) = body else {
+        return Ok(None);
+    };
+    if body.predicate != AG_UI_FILE_PREDICATE || body.source != Some(ClaimSource::Imported) {
+        return Ok(None);
+    }
+    let Ok(file) = rmpv::ext::from_value::<StoredFile>(body.value.clone()) else {
+        return Ok(None);
+    };
+    Ok(EntityId::from_hex(&file.capture_actor_ref).ok())
+}
+
 /// Keeps the newest `limit` of `listed`, by claim time, then id.
 fn keep_newest(listed: &mut Vec<(u64, EntityId, EntityId, StoredFile)>, limit: usize) {
     listed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));

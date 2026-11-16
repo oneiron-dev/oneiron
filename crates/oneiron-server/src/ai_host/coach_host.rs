@@ -49,13 +49,13 @@ use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
     COACH_ATTRIBUTION_AUDITS_FACET, COACH_ATTRIBUTION_LABELS_FACET, COACH_BROWSER_PROGRAMS_FACET,
     COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET, COACH_EVAL_MEASUREMENT_FACET,
-    COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
-    COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
-    COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET, COACH_SITE_SKILLS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
-    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
-    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
-    ThinkThresholdPolicy,
+    COACH_EVAL_REPAIR_SEED_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
+    COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
+    COACH_SITE_SKILLS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_THINK_THRESHOLD_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
+    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
+    PersonThresholdPolicy, ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -336,6 +336,9 @@ pub(super) fn run_one(
         }
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
+        COACH_EVAL_REPAIR_SEED_FACET => {
+            super::eval_measurement::run_repair_seed(server, admitted, now)
+        }
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         // FIX 12569: a version a trainer returned is evaluated first (FIX
         // 14975), its held-out side read before the night's corpus sweep, and

@@ -246,14 +246,15 @@ most 64 skill revisions. A capture's events are matched to its mappings by name
 from one index, and its repair links resolve from one id index, so listing a
 capture takes time linear in its events and mappings.
 
+The measuring host runs each `Pending` seed through one `coach.eval_repair_seed` job per seed key, queued once, when the seed turns pending (a replayed proposal queues nothing, so no replay pays for a seed's legs again; an `awaiting_label` seed queues nothing until its label lands). A job that cannot run its legs (an arm this host does not serve exactly, a call with no answer) leaves the seed pending with no job. The host reads the seed key from its leased attempt, takes the seed's release, answers the released task under each arm, and settles through the capture owner's unchanged gate, which hands the host back only the seed's state. Each leg's receipt names the seed key, the leg and the content handle of the stored answer the gate graded. A tool call is read by its declared input schema (an object whose only property is `argument`); a call that breaks it leaves the leg no tool calls, so a tool world's answer fails. The release holds the seed key, seat, old and candidate arms, the leg input, the declared tools, the source rows, and whether the task moved; it never holds the expected answer, the grader, or any outcome text, and the task text is read only through the capture owner's own scoped read. A confirmed seed's case releases to a claimed measurement as `repair_response`, with the recompiled task's input (its `tools` field holding the declared tools), the capture fingerprint, and the seed's task hash, and with no label, since each label holds the outcome's digest; fixed code grades each leg's answer against the recompiled task exactly, with no judge call.
+
 ## Remaining feature work
 
 The capture path is a partial delivery of OF-582 / FIX3720; explicit response-task
 compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. Worlds beyond the
-explicit text-response and JSON-state-tools tasks, reuse, digest, released-task
-hydration of a seed's case, the measuring host's run of the gate and the cut-audit
+explicit text-response and JSON-state-tools tasks, reuse, digest and the cut-audit
 consumer are separate. Existing typed Repair case storage is unchanged. The
 file path adds no table, family ledger, migration, old-format reader, default
 cap or timer.
