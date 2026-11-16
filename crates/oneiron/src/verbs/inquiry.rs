@@ -361,6 +361,90 @@ fn sent_view(sent: &InquirySent) -> InquireAnswer {
     }
 }
 
+/// Whether `verb` names the `vault.inquire` row, under whatever prefix its
+/// door names it with.
+pub(crate) fn is_inquire_row(verb: &str) -> bool {
+    verb.rsplit('/').next() == Some(super::AgentVerb::VaultInquire.as_str())
+}
+
+/// What a record outside the task keeps of a `vault.inquire` answer
+/// (INQUIRE-SHAPE Q6 = A): an answer kept `task` with its statements
+/// replaced by an empty list and `statements_withheld`, so no run record,
+/// verb hook or saved retry holds the member's words past the task. A
+/// `copy` answer, a company record (federation.md #inquiry-keep), and an
+/// answer with no statements stay as they are.
+pub(crate) fn kept_inquiry_answer(output: &serde_json::Value) -> serde_json::Value {
+    let mut kept = output.clone();
+    if let Some(fields) = kept.as_object_mut()
+        && fields.get("keep").and_then(serde_json::Value::as_str) == Some("task")
+        && fields
+            .get("statements")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|statements| !statements.is_empty())
+    {
+        fields.insert(
+            "statements".to_owned(),
+            serde_json::Value::Array(Vec::new()),
+        );
+        fields.insert(
+            "statements_withheld".to_owned(),
+            serde_json::Value::Bool(true),
+        );
+    }
+    kept
+}
+
+/// A `vault.inquire` `answer` saved in its kept form
+/// ([`kept_inquiry_answer`]), with the statements put back that this vault
+/// still holds with the task for `actor`, the call's caller, who sent it
+/// with `args` (federation.md #inquiry-keep: "held with the task and bound
+/// to the asking actor"). So a retry that reads a saved answer reads the
+/// member's words while the task is open, in this process. Once the task
+/// has ended, its `valid_until` has come or the process restarted, the
+/// answer stays withheld, and the agent asks again.
+///
+/// # Errors
+///
+/// Storage errors while the holder reads the held tasks' state.
+pub(crate) fn restore_held_statements(
+    vault: &Vault,
+    actor: EntityId,
+    args: &serde_json::Value,
+    answer: &mut serde_json::Value,
+) -> crate::Result<()> {
+    let Some(fields) = answer.as_object_mut() else {
+        return Ok(());
+    };
+    if fields.get("statements_withheld") != Some(&serde_json::Value::Bool(true)) {
+        return Ok(());
+    }
+    let task = serde_json::from_value::<InquireRequest>(args.clone())
+        .ok()
+        .map(|request| request.task);
+    let inquiry = fields
+        .get("inquiry_id")
+        .and_then(|id| serde_json::from_value::<EntityId>(id.clone()).ok());
+    let (Some(task), Some(inquiry)) = (task, inquiry) else {
+        return Ok(());
+    };
+    let Some(statements) = vault.held_inquiry_answer(actor, task, inquiry)? else {
+        return Ok(());
+    };
+    let statements = statements
+        .iter()
+        .map(|statement| {
+            let view = statement_view(statement);
+            serde_json::json!({ "text": view.text, "source": view.source })
+        })
+        .collect();
+    fields.insert(
+        "statements".to_owned(),
+        serde_json::Value::Array(statements),
+    );
+    fields.remove("statements_withheld");
+    Ok(())
+}
+
 fn decider_token(decider: &InquiryDecider) -> &'static str {
     match decider {
         InquiryDecider::StandingRow { .. } => "standing_row",

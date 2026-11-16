@@ -418,7 +418,7 @@ impl HostSelfDispatcher<'_> {
                 Ok(answer)
             }
             Ok(mut answer) if verb == AgentVerb::VaultInquire => {
-                let kept = kept_inquiry_answer(&answer.output);
+                let kept = crate::verbs::kept_inquiry_answer(&answer.output);
                 if kept != answer.output {
                     let output = std::mem::replace(&mut answer.output, kept);
                     *self.hook_view.borrow_mut() = Some(serde_json::json!({ "output": output }));
@@ -610,26 +610,6 @@ pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
     if let Some(fields) = kept.as_object_mut() {
         fields.remove("value");
         fields.remove("value_base64");
-    }
-    kept
-}
-
-/// What a run's record keeps of a `vault.inquire` answer (INQUIRE-SHAPE Q6
-/// = A): an answer kept `task` with its statements replaced by an empty list
-/// and `statements_withheld`, so no run record holds the member's words
-/// past the task. A `copy` answer, a company record (federation.md
-/// #inquiry-keep), and an answer with no statements stay as they are.
-fn kept_inquiry_answer(output: &Value) -> Value {
-    let mut kept = output.clone();
-    if let Some(fields) = kept.as_object_mut()
-        && fields.get("keep").and_then(Value::as_str) == Some("task")
-        && fields
-            .get("statements")
-            .and_then(Value::as_array)
-            .is_some_and(|statements| !statements.is_empty())
-    {
-        fields.insert("statements".to_owned(), Value::Array(Vec::new()));
-        fields.insert("statements_withheld".to_owned(), Value::Bool(true));
     }
     kept
 }

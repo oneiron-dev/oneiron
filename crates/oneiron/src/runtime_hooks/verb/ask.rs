@@ -248,7 +248,17 @@ pub(super) fn retry(
     if row.state == VerbAskState::Consumed {
         if let Some(outcome) = &row.outcome {
             if same {
-                return Ok(Retry::Stop(completed(call.invocation, outcome)?));
+                let mut stop = completed(call.invocation, outcome)?;
+                // A task-kept inquiry answer was saved in its kept form: the
+                // caller reads its statements from its task while the task
+                // holds them (federation.md #inquiry-keep).
+                if let VerbHookStop::Completed { result, .. } = &mut stop
+                    && crate::verbs::is_inquire_row(&row.verb)
+                {
+                    let args = serde_json::from_str(&row.args).unwrap_or(Value::Null);
+                    crate::verbs::restore_held_statements(vault, row.actor, &args, result)?;
+                }
+                return Ok(Retry::Stop(stop));
             }
             return skipped(USED);
         }
