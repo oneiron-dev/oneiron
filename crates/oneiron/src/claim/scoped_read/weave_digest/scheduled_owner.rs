@@ -1,9 +1,10 @@
 //! FIX 1259: a due Owner schedule renders the Owner report with no present
-//! opener. The authority is the owner's own recorded schedule: its writer
-//! bound `Owner(id)` to his authenticated live Owner proof
-//! (`Vault::set_weave_digest_schedule`), and [`ScheduledOwner`] is made
-//! only from that persisted row. Each projection and the publication read
-//! the row again, byte for byte, with the live-owner census (a co-Owner as
+//! opener. The authority is the owner's own recorded schedule: his
+//! `weave.digest.owner_schedule` row at his person scope, which only his
+//! revalidated owner proof or the Coach's flow writes (its hook refuses any
+//! other owner's set), joined with his due row; [`ScheduledOwner`] is made
+//! only from that persisted snapshot. Each projection and the publication read
+//! the snapshot again, byte for byte, with the live-owner census (a co-Owner as
 //! well as the first, each a live PERSON) in their own transaction; the
 //! queued lens's model step reads the saved period as the owner's
 //! background lens does. A person's standing, a stored credential, an
@@ -23,8 +24,9 @@ use super::super::ScopedRead;
 use super::super::weave_lens::snapshot_still_served;
 use super::{SCHEDULE_PREFIX, StoredWeaveDigest};
 use super::{
-    WeaveDigestReader, WireDigest, WireSchedule, dependencies, digest_key, digest_row_in,
-    index_source_in_txn, invalid, put_digest_row_in_txn, sources_live_in_txn,
+    WeaveDigestReader, WireDigest, WireDue, WireSchedule, dependencies, digest_key, digest_row_in,
+    index_source_in_txn, invalid, put_digest_row_in_txn, put_due_in_txn, schedule_bytes_in_txn,
+    sources_live_in_txn,
 };
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
@@ -87,7 +89,7 @@ impl ScheduledOwner {
         txn: &heed::RoTxn<'_>,
     ) -> Result<EntityId> {
         if read.actor_key.actor_ref() != self.owner.to_hex()
-            || read.vault.store.vault_meta.get(txn, &self.key)?.as_deref()
+            || schedule_bytes_in_txn(&read.vault.store, txn, &self.key)?.as_deref()
                 != Some(self.schedule.as_slice())
             || !crate::policy_model::is_live_vault_owner_in_txn(read.vault, txn, &self.owner)?
         {
@@ -163,14 +165,14 @@ impl Vault {
         let mut published = WireDigest::from_report(now, &report)?;
         published.scheduled_basis = Some(basis);
         let bytes = serde_json::to_vec(&published).map_err(|_| invalid())?;
-        let next = serde_json::to_vec(&WireSchedule {
+        let next = WireDue {
             next_due_at,
-            ..WireSchedule::from_row(&row)
-        })
-        .map_err(|_| invalid())?;
+            held_until: None,
+            held_because: None,
+        };
         let digest_key = digest_key(reader, scheduled_for);
         let notice = self.with_write_txn_grouped(|txn| {
-            if self.store.vault_meta.get(&*txn, key)?.as_deref() != Some(saved) {
+            if schedule_bytes_in_txn(&self.store, txn, key)?.as_deref() != Some(saved) {
                 return Ok(None);
             }
             if !sources_live_in_txn(&self.store, txn, &report.value)? {
@@ -197,7 +199,7 @@ impl Vault {
                 index_source_in_txn(&self.store, txn, source, &digest_key, true)?;
             }
             put_digest_row_in_txn(&self.store, txn, &digest_key, &bytes)?;
-            self.store.vault_meta.put(txn, key, &next)?;
+            put_due_in_txn(&self.store, txn, key, &next)?;
             // The period's one due notice, in this same write: the owner
             // learns of it as he always has, and his open finds it saved.
             let notice =
@@ -266,10 +268,7 @@ impl Vault {
         let read = self.scoped_read(ScopedReadActorKey::vault_owner_by_census(owner));
         // Its grants judge at the refreshed persisted clock (FIX 8671).
         let txn = read.grant_read_txn()?;
-        let current = match self
-            .store
-            .vault_meta
-            .get(&txn, &reader.key(SCHEDULE_PREFIX))?
+        let current = match schedule_bytes_in_txn(&self.store, &txn, &reader.key(SCHEDULE_PREFIX))?
         {
             Some(bytes) => match serde_json::from_slice::<WireSchedule>(&bytes) {
                 Ok(wire) => Some(schedule_basis(&wire)?),
@@ -298,21 +297,20 @@ impl Vault {
         let wire: WireSchedule = serde_json::from_slice(saved).map_err(|_| invalid())?;
         let scheduled_for = wire.next_due_at;
         let cadence = wire.cadence;
-        let held = serde_json::to_vec(&WireSchedule {
+        let held = WireDue {
+            next_due_at: wire.next_due_at,
             held_until: Some(wire.next_boundary_after(now)?),
             held_because: None,
-            ..wire
-        })
-        .map_err(|_| invalid())?;
+        };
         let notice = self.with_write_txn_grouped(|txn| {
-            if self.store.vault_meta.get(&*txn, key)?.as_deref() != Some(saved) {
+            if schedule_bytes_in_txn(&self.store, txn, key)?.as_deref() != Some(saved) {
                 return Ok(None);
             }
             let notice = self.record_notification_in_txn(
                 txn,
                 &WeaveDigestReader::Owner(owner).notification(scheduled_for, now),
             )?;
-            self.store.vault_meta.put(txn, key, &held)?;
+            put_due_in_txn(&self.store, txn, key, &held)?;
             Ok(Some(notice))
         })?;
         // The owner's own exposure to the period, for the Coach (FIX 5495),

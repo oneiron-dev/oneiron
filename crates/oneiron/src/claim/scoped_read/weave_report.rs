@@ -462,5 +462,17 @@ pub(super) fn validate_weave_recipe(
     projection::validate_weave_recipe_for(policy, reader.role(), reader.id(vault, txn)?, recipe)
 }
 
+/// [`validate_weave_recipe`] for a scheduled reader named by its policy role and id, with no
+/// proof: the digest schedule keys' hook runs it in the write that sets one, where the setting
+/// door has already checked the setter (SETTING-KEYED-A K2b).
+pub(super) fn validate_weave_schedule_recipe(
+    policy: &crate::gate::PolicyManifestResolution,
+    role: &str,
+    id: EntityId,
+    recipe: &[WeaveSectionSpec],
+) -> Result<()> {
+    projection::validate_weave_recipe_for(policy, role, id, recipe)
+}
+
 #[cfg(test)]
 mod tests;

@@ -41,7 +41,8 @@ mod receipt;
 mod retrieval_visibility;
 mod served_forms;
 mod versions;
-mod weave_digest;
+// The setting catalogue names this module's `setting_keys` (DESIGN 15-setting-primitive, stage 4).
+pub(crate) mod weave_digest;
 pub use weave_digest::{
     StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER,
     WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveAdminKey, WeaveDigestCadence,

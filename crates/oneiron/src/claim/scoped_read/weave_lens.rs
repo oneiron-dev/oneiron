@@ -841,6 +841,22 @@ pub(crate) fn settle_weave_lens_axes(
     render: &WeaveLensRender,
     now: u64,
 ) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        settle_weave_lens_axes_in_txn(vault, txn, reader, scheduled_for, report, render, now)
+    })
+}
+
+/// [`settle_weave_lens_axes`] in the caller's write: a stopped digest settles in the write
+/// that stops it (SETTING-KEYED-A K2b: the stop is a setting change, and its hook runs here).
+pub(crate) fn settle_weave_lens_axes_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    reader: WeaveDigestReader,
+    scheduled_for: u64,
+    report: &WeaveReport,
+    render: &WeaveLensRender,
+    now: u64,
+) -> Result<()> {
     let skill = EntityId::from_hex(&render.skill_ref).map_err(|_| invalid("skill ref"))?;
     let id = reader.id();
     let source = reader.notification(scheduled_for, now).source;
@@ -851,48 +867,46 @@ pub(crate) fn settle_weave_lens_axes(
             .axis(axis)
     };
     let cards: Vec<String> = report_cards(report).collect();
-    vault.with_write_txn_grouped(|txn| {
-        let seen = vault.notification_seen_in_txn(txn, &source, &id)?;
-        if let Some(seen) = seen {
-            crate::learning::record_evidence_in_txn(
-                vault,
-                txn,
-                &cell(WEAVE_LENS_READ_RATE_AXIS),
-                &LearningEvidence::anchored(
-                    receipt.clone(),
-                    now,
-                    Anchor::WorldOutcome,
-                    Observation::Success(seen),
-                ),
-                now,
-            )?;
-        }
-        let corrected = corrected_since(
-            vault,
-            txn,
-            reader,
-            report_links(report),
-            report_items(report),
-            &cards,
-            render.rendered_at,
-        )?;
-        if !corrected && seen != Some(true) {
-            return Ok(());
-        }
+    let seen = vault.notification_seen_in_txn(txn, &source, &id)?;
+    if let Some(seen) = seen {
         crate::learning::record_evidence_in_txn(
             vault,
             txn,
-            &cell(WEAVE_LENS_CORRECTIONS_AXIS),
+            &cell(WEAVE_LENS_READ_RATE_AXIS),
             &LearningEvidence::anchored(
                 receipt.clone(),
                 now,
                 Anchor::WorldOutcome,
-                Observation::Success(!corrected),
+                Observation::Success(seen),
             ),
             now,
         )?;
-        Ok(())
-    })
+    }
+    let corrected = corrected_since(
+        vault,
+        txn,
+        reader,
+        report_links(report),
+        report_items(report),
+        &cards,
+        render.rendered_at,
+    )?;
+    if !corrected && seen != Some(true) {
+        return Ok(());
+    }
+    crate::learning::record_evidence_in_txn(
+        vault,
+        txn,
+        &cell(WEAVE_LENS_CORRECTIONS_AXIS),
+        &LearningEvidence::anchored(
+            receipt.clone(),
+            now,
+            Anchor::WorldOutcome,
+            Observation::Success(!corrected),
+        ),
+        now,
+    )?;
+    Ok(())
 }
 
 /// The generate step's attempt input: the period it renders, as

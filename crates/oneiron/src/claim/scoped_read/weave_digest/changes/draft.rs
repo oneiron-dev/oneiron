@@ -312,19 +312,20 @@ impl Vault {
             let Some(wire) = owner_wire_in_txn(&self.store, txn, owner)? else {
                 return Ok(false);
             };
-            self.file_coach_step_in_txn(txn, owner, settings.generation, wire, drafted, now)
+            self.file_coach_step_in_txn(txn, owner, wire, drafted, now)
         })
     }
 
     /// What one owner's filing checks again, read in `txn`.
     fn coach_basis_in_txn(&self, txn: &heed::RoTxn<'_>, owner: EntityId) -> Result<Basis> {
         let settings = settings_row_in_txn(&self.store, txn, owner)?;
-        let before = owner_wire_in_txn(&self.store, txn, owner)?
-            .as_ref()
-            .map(settings_of);
+        let wire = owner_wire_in_txn(&self.store, txn, owner)?;
+        // His settings' generation: his owner schedule row's revision, 0 with none.
+        let generation = wire.as_ref().map_or(0, |wire| wire.revision);
+        let before = wire.as_ref().map(settings_of);
         let changes = owner_changes_in_txn(&self.store, txn, owner)?;
         Ok(Basis {
-            generation: settings.generation,
+            generation,
             last_evaluated_at: settings.last_evaluated_at,
             before,
             pending: changes
@@ -332,7 +333,7 @@ impl Vault {
                 .any(|(_, change)| change.status == Status::Pending),
             refused: changes
                 .iter()
-                .filter(|(_, change)| refused_under(change, settings.generation))
+                .filter(|(_, change)| refused_under(change, generation))
                 .filter_map(|(_, change)| step_of(change))
                 .collect(),
             feedback: settings.feedback,

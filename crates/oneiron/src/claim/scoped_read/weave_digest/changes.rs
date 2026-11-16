@@ -10,10 +10,9 @@
 
 use super::coach::{CoachInput, CoachStep, PeriodRecord, weave_digest_coach_step};
 use super::settings::{
-    CHANGES, OWNER_TAG, SCHEDULES, SETTINGS, SettingsEdit, SettingsRow, StoredFeedback,
-    WeaveDigestFeedback, WeaveDigestSettingChange, WeaveDigestSettingChangeStatus as Status,
-    WeaveDigestSettings, owner_changes_in_txn, owner_periods_in_txn, owner_wire_in_txn,
-    settings_row_in_txn,
+    CHANGES, OWNER_TAG, SCHEDULES, SETTINGS, SettingsRow, StoredFeedback, WeaveDigestFeedback,
+    WeaveDigestSettingChange, WeaveDigestSettingChangeStatus as Status, WeaveDigestSettings,
+    owner_changes_in_txn, owner_periods_in_txn, owner_wire_in_txn, settings_row_in_txn,
 };
 use super::{WEAVE_DIGEST_NOTIFICATION_PRODUCER, WireSchedule, invalid};
 use crate::consent::AuthenticatedOwner;
@@ -200,7 +199,7 @@ impl Vault {
         let changes = owner_changes_in_txn(&self.store, txn, owner)?;
         let refused: Vec<CoachStep> = changes
             .iter()
-            .filter(|(_, change)| refused_under(change, settings.generation))
+            .filter(|(_, change)| refused_under(change, wire.revision))
             .filter_map(|(_, change)| step_of(change))
             .collect();
         let periods = self.owner_period_records_in_txn(txn, owner)?;
@@ -335,7 +334,7 @@ impl Vault {
             }
             let refused: Vec<CoachStep> = changes
                 .iter()
-                .filter(|(_, change)| refused_under(change, settings.generation))
+                .filter(|(_, change)| refused_under(change, wire.revision))
                 .filter_map(|(_, change)| step_of(change))
                 .collect();
             let periods = self.owner_period_records_in_txn(txn, owner)?;
@@ -350,12 +349,12 @@ impl Vault {
             }) else {
                 return Ok(false);
             };
-            self.file_coach_step_in_txn(txn, owner, settings.generation, wire, drafted, now)
+            self.file_coach_step_in_txn(txn, owner, wire, drafted, now)
         })
     }
 
-    /// Files the Coach's step and its reason on the owner's schedule row
-    /// `wire`, read in this write at settings `generation`, whether the rule
+    /// Files the Coach's step and its reason on the owner's schedule
+    /// `wire`, read in this write at its generation, whether the rule
     /// or the Coach's model chose it. With a live Grant of the Coach that
     /// names this owner's digest settings, the step applies, attributed to
     /// the Coach and the Grant, with the owner's notice and its undo in the
@@ -366,11 +365,11 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
-        generation: u64,
         wire: WireSchedule,
         (step, reason): (CoachStep, String),
         now: u64,
     ) -> Result<bool> {
+        let generation = wire.revision;
         let before = settings_of(&wire);
         let mut after_wire = wire;
         if !take_step(&mut after_wire, step) {
@@ -413,13 +412,14 @@ impl Vault {
                 return Ok(false);
             }
         };
-        let bytes = serde_json::to_vec(&after_wire).map_err(|_| invalid())?;
-        let after = self.put_owner_weave_digest_schedule_in_txn(
+        let after = self.put_owner_weave_digest_setup_in_txn(
             txn,
             owner,
-            &bytes,
-            SettingsEdit::Change,
-            now,
+            &after_wire,
+            format!(
+                "the Coach applied digest settings change {}",
+                change.change_ref
+            ),
         )?;
         change.status = Status::Applied;
         change.grant_ref = Some(grant.to_hex());
@@ -599,9 +599,8 @@ impl Vault {
         match stored.status {
             Status::Pending => Ok(Some(Status::Pending)),
             Status::Applied | Status::Accepted => {
-                let generation = settings_row_in_txn(&self.store, txn, owner)?.generation;
                 let current = owner_wire_in_txn(&self.store, txn, owner)?.is_some_and(|wire| {
-                    stored.after_generation == Some(generation)
+                    stored.after_generation == Some(wire.revision)
                         && settings_of(&wire) == stored.after
                 });
                 Ok(current.then_some(stored.status))
@@ -663,9 +662,8 @@ impl Vault {
                     self.retire_answered_feedback_in_txn(txn, actor, &stored)?;
                     return Ok((Ok(stored), false));
                 }
-                let generation = settings_row_in_txn(&self.store, txn, actor)?.generation;
                 let current = owner_wire_in_txn(&self.store, txn, actor)?.filter(|wire| {
-                    generation == stored.base_generation && settings_of(wire) == stored.before
+                    wire.revision == stored.base_generation && settings_of(wire) == stored.before
                 });
                 let step = step_of(&stored);
                 let (Some(mut wire), Some(step)) = (current, step) else {
@@ -678,13 +676,14 @@ impl Vault {
                 if !take_step(&mut wire, step) {
                     return Err(invalid());
                 }
-                let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
-                let after = self.put_owner_weave_digest_schedule_in_txn(
+                let after = self.put_owner_weave_digest_setup_in_txn(
                     txn,
                     actor,
-                    &bytes,
-                    SettingsEdit::Change,
-                    now,
+                    &wire,
+                    format!(
+                        "the owner accepted digest settings change {}",
+                        stored.change_ref
+                    ),
                 )?;
                 stored.status = Status::Accepted;
                 stored.after_generation = Some(after);
@@ -736,20 +735,20 @@ impl Vault {
                     return Err(Error::InvalidConfig(NOT_UNDOABLE.to_owned()));
                 }
             }
-            let generation = settings_row_in_txn(&self.store, txn, actor)?.generation;
             let Some(mut wire) = owner_wire_in_txn(&self.store, txn, actor)?.filter(|wire| {
-                stored.after_generation == Some(generation) && settings_of(wire) == stored.after
+                stored.after_generation == Some(wire.revision) && settings_of(wire) == stored.after
             }) else {
                 return Err(Error::InvalidConfig(STALE_UNDO.to_owned()));
             };
             restore(&mut wire, &stored.before)?;
-            let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
-            let after = self.put_owner_weave_digest_schedule_in_txn(
+            let after = self.put_owner_weave_digest_setup_in_txn(
                 txn,
                 actor,
-                &bytes,
-                SettingsEdit::Change,
-                now,
+                &wire,
+                format!(
+                    "the owner undid digest settings change {}",
+                    stored.change_ref
+                ),
             )?;
             stored.status = Status::Undone;
             stored.undone_generation = Some(after);
@@ -791,7 +790,7 @@ impl Vault {
                 lead_section: feedback.lead_section,
                 keep_current: feedback.keep_current,
                 given_at: now,
-                generation: settings.generation,
+                generation: wire.revision,
             });
             SETTINGS.put(&self.store, txn, &actor, &settings)?;
             Ok(feedback.clone())
