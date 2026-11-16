@@ -180,7 +180,7 @@ pub(crate) fn enroll_receipt_schema() -> serde_json::Value {
 /// digits of a proof, one raw Ed25519 signature.
 const PROOF_HEX_DIGITS: usize = 2 * OWNER_KEY_POSSESSION_PROOF_LEN;
 
-pub(super) fn hex(bytes: &[u8]) -> String {
+fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
