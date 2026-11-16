@@ -428,15 +428,16 @@ impl<'a> StructureBuilder<'a> {
     /// Takes a machine revision's install key when a slip issuer or an
     /// owner anchor signed it, as a stranger's when that anchor is not this
     /// install's own, or files it under its signer. An owner answer is
-    /// taken when its carrier's install key signed it alone, as its
-    /// carrier's key stands: own, or a stranger's (mesh PR1b).
+    /// taken when its carrier's install key signed it, alone or beside one
+    /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
+    /// its carrier's key stands: own, or a stranger's (mesh PR1b).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
         };
         let signer = entry.signer_key();
         let (own, stranger) = match profile.carrier {
-            Some(_) if !entry.cosigns.is_empty() => return,
+            Some(_) if entry.cosigns.len() > 1 => return,
             Some(carrier) => {
                 let key = (carrier, signer.clone());
                 (
@@ -508,6 +509,7 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingSet(set) => install_key(set.machine),
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
+            AuthorityOp::FullCopyMark(mark) => install_key(mark.machine),
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
             AuthorityOp::MembershipExecution(record) => install_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
@@ -542,9 +544,11 @@ impl AuthorityStructure {
                 None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
             },
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
-            // An owner answer: its carrier's install key, alone (mesh PR1b).
+            // An owner answer: its carrier's install key, alone or beside one
+            // owner key's proof, which the fold judges (mesh PR1b, row
+            // CARRIER-OWNER-PROOF).
             AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
-                entry.cosigns.is_empty() && profile.carrier.is_some_and(install_key)
+                entry.cosigns.len() <= 1 && profile.carrier.is_some_and(install_key)
             }
             AuthorityOp::MachineProfile(_)
                 if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
@@ -593,6 +597,7 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingSet(set) => machine_key(set.machine),
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
+            AuthorityOp::FullCopyMark(mark) => machine_key(mark.machine),
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
             AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),

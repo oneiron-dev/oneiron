@@ -201,7 +201,11 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
         setup(
             credential,
             "cursor-epoch-moved",
-            json!({ "limit": whole.len(), "cursor": retained_cursor.clone() }),
+            json!({
+                "limit": whole.len(),
+                "forceful_override": true,
+                "cursor": retained_cursor.clone(),
+            }),
         ),
     )
     .await;
