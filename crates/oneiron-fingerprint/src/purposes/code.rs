@@ -64,8 +64,9 @@ legacy_purposes! {
     BUNDLE_FILE_OPERATION = (Blake3, HashedFirst, "oneiron:repo-bundle-file-op:v1");
 
     /// A queue conflict's resolution
-    /// (`repo_mutation::conflict::queue::record_queue_repo_conflict_resolution`). Parts: the open
-    /// conflict's claim, the key, the batch.
+    /// (`repo_mutation::conflict::queue::queue_conflict_resolution_id`, for
+    /// `record_queue_repo_conflict_resolution` and `queue_conflict_closing_resolution`). Parts:
+    /// the open conflict's claim, the key, the batch.
     QUEUE_CONFLICT_RESOLUTION = (Blake3, HashedFirst, "oneiron:repo-queue-conflict-resolution:v1");
 
     /// An external import (`repo_mutation::external_import::source::source_id`). Parts: labelled
