@@ -88,6 +88,12 @@ mod pending_restore;
 mod reveal;
 pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
+mod same_value;
+pub use self::same_value::SameValueStatement;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::same_value::{
+    same_value_statement_held_in_txn, same_value_statement_signed_by,
+};
 pub(crate) mod setting_keys;
 mod sighted_file;
 mod storage_seal;
