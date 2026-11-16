@@ -8,7 +8,7 @@
 //! materializer lock, and still takes the attachments out.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
-//! --all-features --test note_scrub_lock_order`.
+//! --all-features --test live_window_note_scrub`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::test_doors::note_scrub_lock_order::note_scrub_beside_replacement;
+use oneiron::test_doors::live_window_note_scrub::note_scrub_beside_replacement;
 use oneiron::{HnswConfig, Vault, VaultConfig};
 
 fn config() -> VaultConfig {
