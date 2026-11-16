@@ -170,10 +170,11 @@ fn minted_agent_grant() -> MintedAgent {
 /// The verb an agent Grant names for the agent's free-time policy act.
 const FREE_TIME_POLICY_SET_VERB: &str = "free_time_policy_set";
 
-/// The owner mints his agent a Grant naming the one verb `verb`.
+/// The owner mints his agent a Grant naming `read` and the verb `verb`: a Grant confers only
+/// when its verbs hold `read`, and names an act only when it confers.
 fn minted_agent_grant_naming(verb: &str) -> MintedAgent {
     let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([verb.to_owned()]));
+    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), verb.to_owned()]));
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
