@@ -201,6 +201,19 @@ pub struct LimitsConfig {
     /// How long, in milliseconds, an address must make no pairing
     /// redemption before its failures are forgotten.
     pub pairing_redeem_quiet_ms: u64,
+    /// How long, in seconds, the single-use exchange a signing link's page
+    /// is answered at `POST /sign/exchange` may wait to be consumed at
+    /// `POST /sign/session` (ARCH-0064a §6: "minutes"). The emailed link
+    /// stays reusable past it.
+    pub esign_exchange_seconds: u64,
+    /// How long, in seconds, a signing session may go unused before it ends.
+    /// Unset by default: canon settles no number, and the link's own signing
+    /// window and token cap still bound every call. Ending a session never
+    /// ends the link; the signer reopens it for a new one.
+    pub esign_session_idle_seconds: Option<u64>,
+    /// How long, in seconds, a signing session lives from its opening,
+    /// however busy. Unset by default, as `esign_session_idle_seconds`.
+    pub esign_session_absolute_seconds: Option<u64>,
     /// The engine's rows (`oneiron::limit_ask`), which the vault opens with:
     /// work past one is served whole, and the row asks.
     pub engine: EngineLimits,
@@ -250,6 +263,9 @@ impl Default for LimitsConfig {
             pairing_redeem_free_failures: 5,
             pairing_redeem_wait_ceiling_ms: 3_600_000,
             pairing_redeem_quiet_ms: 3_600_000,
+            esign_exchange_seconds: 120,
+            esign_session_idle_seconds: None,
+            esign_session_absolute_seconds: None,
             engine: EngineLimits::default(),
         }
     }
@@ -310,6 +326,9 @@ impl LimitsConfig {
             pairing_redeem_free_failures,
             pairing_redeem_wait_ceiling_ms,
             pairing_redeem_quiet_ms,
+            esign_exchange_seconds,
+            esign_session_idle_seconds,
+            esign_session_absolute_seconds,
             keyed_filter_json_bytes,
             keyed_namespace_segments,
             keyed_namespace_bytes,
@@ -475,6 +494,7 @@ impl LimitsConfig {
             context_edge_hops,
             context_neighbors,
             context_selected_edges,
+            actor_exposed_records,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -523,6 +543,13 @@ impl LimitsConfig {
             pairing_redeem_wait_ceiling_ms,
         );
         set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
+        set(&mut self.esign_exchange_seconds, esign_exchange_seconds);
+        if esign_session_idle_seconds.is_some() {
+            self.esign_session_idle_seconds = esign_session_idle_seconds;
+        }
+        if esign_session_absolute_seconds.is_some() {
+            self.esign_session_absolute_seconds = esign_session_absolute_seconds;
+        }
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
             (
@@ -794,6 +821,7 @@ impl LimitsConfig {
             (EngineLimit::ContextEdgeHops, context_edge_hops),
             (EngineLimit::ContextNeighbors, context_neighbors),
             (EngineLimit::ContextSelectedEdges, context_selected_edges),
+            (EngineLimit::ActorExposedRecords, actor_exposed_records),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -845,6 +873,15 @@ impl LimitsConfig {
                 self.pairing_redeem_wait_ceiling_ms,
             ),
             ("pairing_redeem_quiet_ms", self.pairing_redeem_quiet_ms),
+            ("esign_exchange_seconds", self.esign_exchange_seconds),
+            (
+                "esign_session_idle_seconds",
+                self.esign_session_idle_seconds.unwrap_or(1),
+            ),
+            (
+                "esign_session_absolute_seconds",
+                self.esign_session_absolute_seconds.unwrap_or(1),
+            ),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");

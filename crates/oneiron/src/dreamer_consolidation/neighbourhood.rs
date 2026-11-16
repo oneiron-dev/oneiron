@@ -16,7 +16,9 @@
 //! Extraction children group the queued turns by the known entities they name,
 //! and the nightly plan groups the rest by the unknown names they share
 //! (`dreamer_wake::nightly`'s topics). JointIE and typed supersede or merge
-//! questions are separate jobs.
+//! questions are separate jobs: a slice the tagger's saved relations cover
+//! is extracted from them (`relation_extraction`), and its subjects bind
+//! through this listing as a model's do.
 //!
 //! The listing is whole (Rule 5, FIX 7580): every entity the passage names,
 //! a nightly child's thing first, and every head about each that the branch

@@ -1,14 +1,26 @@
 //! Moved from `crates/oneiron/src/store/agent_refusal.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// One position on the dial, weakest to strongest.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("refusal.level")]
 pub enum RefusalLevel {
     /// She proceeds silently; nothing is recorded.
     None,
@@ -26,24 +38,8 @@ pub const REFUSAL_DIAL_KEYS: [&str; 2] = ["bond", "logistics"];
 
 impl RefusalLevel {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Voice => "voice",
-            Self::Veto => "veto",
-            Self::Full => "full",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "none" => Some(Self::None),
-            "voice" => Some(Self::Voice),
-            "veto" => Some(Self::Veto),
-            "full" => Some(Self::Full),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

@@ -17,6 +17,10 @@ use serde::Serialize;
 pub struct RecallTelemetry {
     #[serde(default)]
     pub capture_trace: bool,
+    /// The host turn this recall serves. Stamp `episode_id` with the
+    /// conversation's id and `turn_id` with the TURN's id (the convention on
+    /// [`RetrievalTurn`]) so the engine can label the run from the user's
+    /// later words in that conversation; a recall without it earns no label.
     #[serde(default)]
     pub turn: Option<RetrievalTurn>,
 }
