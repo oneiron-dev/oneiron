@@ -23,6 +23,7 @@ use super::space::{
     put_media_refusal_in_txn, put_media_vector_in_txn, text_hash,
 };
 use super::space_move::space_fill_kinds_in_txn;
+use super::world_space::{TextDocumentRoute, WorldTextSpaces};
 use super::{EgressDecision, EgressPredicate, EmbedderLocality, EmbeddingProvenance};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -178,7 +179,8 @@ impl Vault {
                     got: embedder.dimensions(),
                 });
             }
-            let kinds = space_fill_kinds_in_txn(&self.store, &rtxn, &space)?;
+            let mut kinds = space_fill_kinds_in_txn(&self.store, &rtxn, &space)?;
+            WorldTextSpaces::read_in(self, &rtxn)?.add_world_text(&space, &mut kinds);
             if kinds.is_empty() {
                 return Err(Error::InvalidConfig(format!(
                     "no kind slot is bound or moving to embedding space {space_id}"
@@ -214,12 +216,18 @@ impl Vault {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        // The bindings and moves may have changed while the model ran; land only what this
-        // space still fills.
-        let fills = space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
+        // The bindings, moves and world orders may have changed while the model ran; land
+        // only what this space still fills, and a text only where its worlds still send it.
+        let text_route = TextDocumentRoute::read_in(self, &wtxn, &space)?;
+        let mut fills = space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
+        text_route.add_world_text(&space, &mut fills);
         let at = self.store.clock.now_recorded_at();
         for (item, outcome) in pending.iter().zip(outcomes) {
-            if !kinds.contains(&item.kind) || !fills.contains(&item.kind) {
+            if !kinds.contains(&item.kind)
+                || !fills.contains(&item.kind)
+                || (item.kind == InputKind::Text
+                    && !text_route.takes(&self.store, &wtxn, &item.id)?)
+            {
                 report.unbound += 1;
                 continue;
             }
@@ -306,9 +314,17 @@ impl Vault {
         let mut held = 0;
         let mut refused = 0;
         let mut withheld = 0;
+        let text_route = TextDocumentRoute::read_in(self, rtxn, space)?;
         self.scan_documents_in_txn(rtxn, kinds, report, |document| {
             if pending.len() >= max_items {
                 return Ok(false);
+            }
+            // A text a world with its own text space carries goes to that space alone
+            // (DEC-0005 #private-world-vectors); any other text to the space its slot binds.
+            if document.kind == InputKind::Text
+                && !text_route.takes(&self.store, rtxn, &document.id)?
+            {
+                return Ok(true);
             }
             if media_held_in(&self.store, rtxn, space, &document)? {
                 held += 1;
