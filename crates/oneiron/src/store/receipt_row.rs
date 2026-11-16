@@ -184,6 +184,7 @@ pub(crate) const FIELD_PREFILTER_SKIPPED: &str = "skipped";
 /// filter that could not show its savings would be asking to be believed.
 pub(crate) const FIELD_PREFILTER_TOKENS_SAVED: &str = "tokens_saved";
 
+use crate::store::gate_reason::GateReceiptOutcome;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -361,6 +362,19 @@ pub struct ReceiptRecord {
 }
 
 impl ReceiptRecord {
+    /// The outcome a Gate receipt records, read through the one table by its
+    /// `content_kind` field, as `GateDecisionRecord::gate_outcome` reads the
+    /// ledger row it projects. `None` for a receipt of another family, and for
+    /// a word in neither table.
+    #[must_use]
+    pub fn gate_outcome(&self) -> Option<GateReceiptOutcome> {
+        if self.receipt_kind != ReceiptKind::Gate {
+            return None;
+        }
+        let content_kind = self.fields.get("content_kind").map_or("", String::as_str);
+        GateReceiptOutcome::from_stored(&self.outcome, content_kind)
+    }
+
     /// This receipt's free text as the side-row wall keeps it (OF-067), read in
     /// the caller's transaction for the row at `at` (its place and key); `true`
     /// when the wall placed a handle.
