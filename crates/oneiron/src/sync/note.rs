@@ -33,7 +33,7 @@ const FORMAT: &[u8] = b"proposal-values-v3";
 #[doc(hidden)]
 use oneiron_records::sync::note::REDACTED;
 
-const MAPS: [&str; 5] = [
+pub(in crate::sync) const MAPS: [&str; 5] = [
     "documents",
     "document_heads",
     "head_move_receipts",
