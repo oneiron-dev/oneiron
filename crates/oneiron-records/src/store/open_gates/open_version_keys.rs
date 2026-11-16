@@ -3,6 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v29 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, device revocation): stored
+/// authority-log rows keep their bytes and change meaning. A `RevokeDevice`
+/// proved on its own signed branch now holds as a revoke fact when a
+/// confirmation collision drops the branch it sits on, so the key it revoked
+/// stays revoked. A stored checkpoint image written before it lacks those
+/// facts and no longer decodes (the authority fold schema moves with it). No
+/// old-meaning reader or migration is provided (the lead's M-1 stored-change
+/// rule, path "loud").
+///
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
 /// verb-hook pause from a person's pause and the other engine holds. The
 /// hook invocation is retained on the pause; only that hold can auto-resume.
@@ -131,7 +140,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 28;
+pub const STORAGE_ABI_VERSION: u16 = 29;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

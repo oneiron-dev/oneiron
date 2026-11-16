@@ -6,7 +6,8 @@
 //! - With `--prompt` it shows the device's unlock prompt and prints the
 //!   answer, asks again at once (which must show no prompt), then has the
 //!   person lock and unlock the screen and asks once more (which must show
-//!   the prompt again: the lock ended the window).
+//!   the prompt again: the lock ended the window). The prompt is the macOS
+//!   unlock sheet, or the Windows Hello dialog.
 //!
 //! `cargo run -p oneiron-keystore --example user_presence_probe -- --prompt`
 //!
@@ -44,6 +45,9 @@ fn print_device(gate: &PresenceGate) {
     );
     match gate.capability() {
         PresenceCapability::DevicePrompt => println!("capability: this device shows a prompt"),
+        PresenceCapability::DevicePin { set } => {
+            println!("capability: this device asks for its device PIN (one is set: {set})");
+        }
         PresenceCapability::NoPrompt(reason) => println!("capability: no prompt ({reason})"),
     }
     println!(
