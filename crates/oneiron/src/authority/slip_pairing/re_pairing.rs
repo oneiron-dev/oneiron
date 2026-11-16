@@ -41,7 +41,10 @@ pub fn machine_possession_transcript(
 /// class-only revision, FIX 3835). The checks are a class-only revision's: a
 /// live machine under the same id and both the same keys, in the role the
 /// link answers; a removed or conflicted machine never comes back. Its
-/// machine key must have signed `possession` over this redemption.
+/// machine key must have signed `possession` over this redemption. The
+/// machine's role, class and keys are read from the heads it stands under
+/// here ([`FoldedMachine::standing_heads`]), as the class revision reads
+/// them: the mark of an anchor this install does not pin is no part of them.
 pub(super) fn re_paired_standing(
     fold: &AuthorityFold,
     request: &MachineEnrolmentRequest,
@@ -55,7 +58,7 @@ pub(super) fn re_paired_standing(
     else {
         return Ok(None);
     };
-    let mut heads: Vec<_> = folded.chains().map(|(_, head)| head).collect();
+    let mut heads = folded.standing_heads(fold.pinned_root.as_ref());
     heads.sort_by_key(|head| head.profile.revision);
     let current = heads.last().ok_or_else(invalid_authority)?;
     if current.profile.device_class != request.device_class {
@@ -97,8 +100,10 @@ pub(super) fn re_paired_standing(
 /// deterministic, so a class the machine signed before has its proof in the
 /// log, and anyone holding a link could replay it to take a credential as
 /// that machine. A machine the roster does not hold joins on its enrolment
-/// proof as before. The key checked is the one the roster holds; the
-/// revision's own checks (same keys, live, role) stay the enrolment's.
+/// proof as before. The key checked is the one the newest head the machine
+/// stands under here names ([`FoldedMachine::standing_heads`]: the roster's,
+/// or the pinned anchor's); the revision's own checks (same keys, live,
+/// role) stay the enrolment's.
 pub(super) fn held_machine_possession(
     fold: &AuthorityFold,
     request: &MachineEnrolmentRequest,
@@ -113,7 +118,7 @@ pub(super) fn held_machine_possession(
     let Some((proof, binding_transcript)) = possession else {
         return Err(invalid_authority());
     };
-    let mut heads: Vec<_> = folded.chains().map(|(_, head)| head).collect();
+    let mut heads = folded.standing_heads(fold.pinned_root.as_ref());
     heads.sort_by_key(|head| head.profile.revision);
     let current = heads.last().ok_or_else(invalid_authority)?;
     let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;

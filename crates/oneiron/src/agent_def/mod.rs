@@ -90,8 +90,8 @@ pub(crate) use self::codec::{
 pub(crate) use self::id_pin::validate_put_at_seeded_id;
 pub(crate) use self::id_pin::{
     AgentIdAnswer, BornLineage, agent_id_answer_in_txn, agent_id_pin_for_put_in_txn,
-    agent_ids_in_txn, bind_delegation_parent_in_txn, born_lineage_in_txn, delegation_parent_in_txn,
-    is_agent_id_in_txn, pin_stored_row_in_txn, pin_stored_rows_in_txn,
+    agent_id_pinned_in_txn, agent_ids_in_txn, bind_delegation_parent_in_txn, born_lineage_in_txn,
+    delegation_parent_in_txn, is_agent_id_in_txn, pin_stored_row_in_txn, pin_stored_rows_in_txn,
     refuse_agent_id_retype_in_txn, refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
 };
 pub(crate) use self::manifest::{
