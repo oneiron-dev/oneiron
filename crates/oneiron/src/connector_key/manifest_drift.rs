@@ -26,8 +26,8 @@ pub struct ResolvedConnectorManifest {
     /// C2). Each names the digest of the tool's row as accepted
     /// ([`public_row_digest`]); a row that no longer matches it is not public,
     /// so a changed schema drops the mark. The secret lift census reads it
-    /// ([`Self::public_strings`]). Absent on every manifest without one, so
-    /// their bytes and hash are unchanged.
+    /// ([`Self::public_secret_shape_tools`]). Absent on every manifest
+    /// without one, so their bytes and hash are unchanged.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     public_secret_shape: BTreeMap<String, String>,
 }
@@ -96,17 +96,6 @@ impl ResolvedConnectorManifest {
                 .is_some_and(|digest| *digest == public_row_digest(row))
         })
     }
-    /// Every string of the public rows ([`Self::public_secret_shape_tools`]):
-    /// each tool's name and each key and string value of its input schema,
-    /// the texts the pack install screen read when the owner accepted it.
-    pub fn public_strings(&self) -> BTreeSet<String> {
-        let mut strings = BTreeSet::new();
-        for row in self.public_secret_shape_tools() {
-            strings.insert(row.name.clone());
-            schema_strings(&row.input_schema, &mut strings);
-        }
-        strings
-    }
     /// The same snapshot, declaring elicitation or not.
     #[must_use]
     pub fn with_elicitation(mut self, declared: bool) -> Self {
@@ -174,27 +163,6 @@ impl ResolvedConnectorManifest {
 fn public_row_digest(row: &ConnectorToolSchema) -> String {
     let bytes = serde_json::to_vec(row).unwrap_or_default();
     blake3::hash(&bytes).to_hex().to_string()
-}
-
-/// Each object key and string value in `schema`, at any depth.
-fn schema_strings(schema: &serde_json::Value, strings: &mut BTreeSet<String>) {
-    match schema {
-        serde_json::Value::String(text) => {
-            strings.insert(text.clone());
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                schema_strings(item, strings);
-            }
-        }
-        serde_json::Value::Object(entries) => {
-            for (key, value) in entries {
-                strings.insert(key.clone());
-                schema_strings(value, strings);
-            }
-        }
-        _ => {}
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

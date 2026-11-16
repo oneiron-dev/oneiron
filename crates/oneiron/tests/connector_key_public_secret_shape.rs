@@ -12,8 +12,8 @@
 //! lifted.
 //!
 //! At PR C (2e746276611a) this file does not compile:
-//! `with_public_secret_shape`, `public_secret_shape_tools`, `public_strings`
-//! and the door `test_doors::secret_lift_census` are new (E0599 / E0432).
+//! `with_public_secret_shape`, `public_secret_shape_tools` and the door
+//! `test_doors::secret_lift_census` are new (E0599 / E0432).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test connector_key_public_secret_shape`.
@@ -92,10 +92,6 @@ fn a_key_whose_tool_the_owner_accepted_is_not_lifted() {
         .map(|tool| tool.name.as_str())
         .collect();
     assert_eq!(public, ["docs_token"]);
-    let strings = marked.public_strings();
-    assert!(strings.contains("docs_token"), "{strings:?}");
-    assert!(strings.contains(ACCEPTED), "{strings:?}");
-    assert!(!strings.contains("docs_read"), "{strings:?}");
     assert_eq!(census(&vault, marked), None);
 }
 
@@ -111,7 +107,6 @@ fn a_changed_row_drops_the_mark_and_the_census_lifts_it_again() {
     let changed: ResolvedConnectorManifest =
         serde_json::from_value(stored).expect("changed manifest");
     assert_eq!(changed.public_secret_shape_tools().count(), 0);
-    assert!(changed.public_strings().is_empty());
     assert!(census(&vault, changed).is_some());
 }
 
