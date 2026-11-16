@@ -3,14 +3,14 @@
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PendingGateConsentRecord, PolicyBasis, ReceiptActor, Store};
 
 use super::ceiling::PolicyCriticality;
 use super::confirm::{
     GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM, pending_row_holds_critical_confirm,
 };
-use super::constants::POLICY_SCHEMA_VERSION;
-use super::decision::{GateOutcome, GateReasonCode};
+use super::decision::GateReasonCode;
 use super::doors::GateConsentBinding;
 use super::input::GateContentKind;
 use super::resolution::{GateRetentionContext, resolve_policy_manifest};
@@ -85,27 +85,17 @@ pub(super) fn put_critical_confirm_item_in_txn(
     binding: GateConsentBinding,
     reason: &str,
 ) -> Result<PendingGateConsentRecord> {
-    let mut decision = GateDecisionRecord {
-        version: 0,
-        decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
-        created_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
+    let mut receipt = GateReceipt::new(
         // This records B's outstanding verdict, not permission to act on Auto.
-        outcome: GateOutcome::Pending.as_str().to_owned(),
-        reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str().to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: "system".to_owned(),
-        actor_ref: None,
-        content_kind: GateContentKind::Claim.as_str().to_owned(),
-        policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*claim_id.as_bytes()),
-        grant_ref: None,
-        diff_handle: binding.diff_handle,
-        read_frontier_hash: binding.read_frontier_hash,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    store.append_fresh_gate_decision_in_txn(wtxn, &mut decision)?;
+        GateReceiptOutcome::Pending,
+        GateContentKind::Claim.as_str(),
+        GateReasonCode::PendingCriticalityFloor.as_str(),
+        ReceiptActor::Engine,
+        binding.diff_handle,
+        PolicyBasis::frontier(binding.read_frontier_hash),
+    );
+    receipt.about = Some(*claim_id);
+    let decision = store.record_gate_receipt_in_txn(wtxn, receipt)?;
     store.stamp_claim_gate_retention_context_in_txn(
         wtxn,
         decision.decision_id,
