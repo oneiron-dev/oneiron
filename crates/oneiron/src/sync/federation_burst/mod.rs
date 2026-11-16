@@ -163,17 +163,7 @@ impl FederationPeer {
         let fold = vault.authority_view_readonly_in_txn(txn)?;
         let mut hash = blake3::Hasher::new();
         hash.update(&raw);
-        for (id, pact) in fold
-            .federation_pacts
-            .iter()
-            .filter(|(_, pact)| pact.grant_ref == self.grant())
-        {
-            hash.update(id);
-            hash.update(&pact.pact_epoch.to_be_bytes());
-            let scope = rmp_serde::to_vec_named(&(&pact.effective_scope, &pact.pact_scope))
-                .map_err(|_| corrupt())?;
-            hash.update(&scope);
-        }
+        hash_grant_pacts(&mut hash, &fold, self.grant())?;
         Ok(*hash.finalize().as_bytes())
     }
 
@@ -433,6 +423,28 @@ pub(in crate::sync) fn record_outcome(
     structural_failure: bool,
 ) -> Result<()> {
     observations::record_outcome(vault, peer, structural_failure)
+}
+
+/// Hashes into `hash` each pact that binds `grant`: its id, epoch and
+/// scopes, in id order. A held batch's authority digest covers them, so a
+/// pact that moves ends the batch `StaleAuthority` (FIX 7999).
+fn hash_grant_pacts(
+    hash: &mut blake3::Hasher,
+    fold: &crate::authority::AuthorityFold,
+    grant: EntityId,
+) -> Result<()> {
+    for (id, pact) in fold
+        .federation_pacts
+        .iter()
+        .filter(|(_, pact)| pact.grant_ref == grant)
+    {
+        hash.update(id);
+        hash.update(&pact.pact_epoch.to_be_bytes());
+        let scope = rmp_serde::to_vec_named(&(&pact.effective_scope, &pact.pact_scope))
+            .map_err(|_| corrupt())?;
+        hash.update(&scope);
+    }
+    Ok(())
 }
 
 fn corrupt() -> Error {

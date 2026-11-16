@@ -4,14 +4,17 @@
 //! isolate-and-propose or defer, against the peer's own baseline and the
 //! vault's size; never a plain block, never a pause for a human).
 
+use std::collections::BTreeSet;
+
 use loro::LoroDoc;
 
 use super::{
     BurstPeer, DeferredWork, FederationBurstDecision, FederationBurstPeerRef, WorkKind, admit_work,
-    corrupt,
+    corrupt, hash_grant_pacts,
 };
-use crate::authority::PeerMachine;
+use crate::authority::{PeerMachine, WorldPrivacyView};
 use crate::sync::WindowKey;
+use crate::vault::live_entity_row_in_txn;
 use crate::{EntityId, Error, Result, Vault};
 
 /// An own device as its connection proved it, in the order its home reads
@@ -127,11 +130,14 @@ impl DevicePeer {
     /// What its retained work is held under: whether it still stands here as
     /// its connection proved it (a machine on the same proof key, and the
     /// slip of its Write credential standing as the home's persist recheck
-    /// reads one: unexpired, unrevoked, its grant and member scope standing).
-    /// A machine removed or proving another key since, or a slip that has
-    /// expired or been revoked since, ends that work `StaleAuthority`
-    /// (FIX 7999). The UPDATE arm held it only past that same credential's
-    /// live check.
+    /// reads one: unexpired, unrevoked, its grant and member scope standing),
+    /// and, under a slip, the write authority the home's residence arm
+    /// admitted its update under ([`Self::hash_write_authority_in`]). A
+    /// machine removed or proving another key since, a slip that has expired
+    /// or been revoked since (FIX 7999), and any change of that write
+    /// authority since (BURST-REPLAY-SKIPS-ROW-ADMISSION) end that work
+    /// `StaleAuthority`. The UPDATE arm held it only past that same
+    /// credential's live check and that same row admission.
     pub(super) fn authority_digest_in_txn(
         &self,
         vault: &Vault,
@@ -153,10 +159,82 @@ impl DevicePeer {
             None => true,
         };
         let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron/device-peer-authority/v1");
+        hash.update(b"oneiron/device-peer-authority/v2");
         hash.update(&self.encode());
         hash.update(&[u8::from(machine_stands), u8::from(slip_stands)]);
+        if let Some(slip) = slip {
+            self.hash_write_authority_in(&mut hash, vault, txn, slip)?;
+        }
         Ok(*hash.finalize().as_bytes())
+    }
+
+    /// Hashes into `hash` the write authority the home's residence arm
+    /// admitted an update of this device's under, the slip `slip` bound to
+    /// its connection: the live row of each grant the arm may have judged it
+    /// under (the slip's own grant, and every grant of the slip's holder
+    /// under the residence selector's scope, which the selector names), with
+    /// the pacts that bind each, and the worlds kept off the device's
+    /// machine. The held work keeps no selector, so the drain cannot judge
+    /// its rows again; any edit of one of these since, a narrowing in place
+    /// included, ends the work `StaleAuthority` before it lands. A widening
+    /// ends it too, and the device sends its update again.
+    fn hash_write_authority_in(
+        &self,
+        hash: &mut blake3::Hasher,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        slip: &[u8; 32],
+    ) -> Result<()> {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let Some(mint) = fold.slips.mints.get(slip) else {
+            hash.update(b"no-mint");
+            return Ok(());
+        };
+        let claims = &mint.action.claims;
+        let mut grants = vault
+            .residence_scope_grants_in_txn(txn, &claims.holder_ref)?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        match claims.grant_ref.as_deref().map(EntityId::from_hex) {
+            Some(Ok(grant)) => {
+                grants.insert(grant);
+            }
+            Some(Err(_)) => {
+                hash.update(b"unreadable-grant-ref");
+            }
+            None => {}
+        }
+        hash.update(b"grants");
+        hash.update(&(grants.len() as u64).to_be_bytes());
+        for grant in grants {
+            hash.update(grant.as_bytes());
+            let live = live_entity_row_in_txn(&vault.store, txn, &grant)?.is_live();
+            match vault.get_raw_in(txn, &grant)?.filter(|_| live) {
+                Some(raw) => {
+                    hash.update(b"live");
+                    hash.update(&(raw.len() as u64).to_be_bytes());
+                    hash.update(&raw);
+                }
+                None => {
+                    hash.update(b"gone");
+                }
+            }
+            hash_grant_pacts(hash, &fold, grant)?;
+        }
+        match WorldPrivacyView::load_unless_conflicted_in(vault, txn)? {
+            Some(view) => {
+                let withheld = view.withheld_for_peer(self.machine())?;
+                hash.update(b"withheld");
+                hash.update(&(withheld.len() as u64).to_be_bytes());
+                for world in withheld {
+                    hash.update(world.as_bytes());
+                }
+            }
+            None => {
+                hash.update(b"conflicted");
+            }
+        }
+        Ok(())
     }
 
     /// The device as its receipts name it.
