@@ -98,6 +98,7 @@ impl Vault {
             person_credential: None,
             request_credential: None,
             host_action: None,
+            owner_key: None,
         })
     }
 
@@ -130,7 +131,70 @@ impl Vault {
             person_credential: None,
             request_credential: None,
             host_action: Some(Box::new(action.guard().clone())),
+            owner_key: None,
         };
+        self.recheck_owner(&owner)?;
+        Ok(owner)
+    }
+
+    /// Produces an [`AuthenticatedOwner`] for one ask word `actor` gives in
+    /// person on this install, proved by the owner key this install holds
+    /// (UC-05 PR 2b; Engine RULING UC05-2B-PRESENCE = A). The key
+    /// [`Vault::owner_proof_signer`] picks, the one the authority fold trusts
+    /// as the owner's, signs a fresh transcript in
+    /// [`crate::authority::ASK_WORD_PROOF_DOMAIN`], and the signature must
+    /// verify under that key. The proof then carries the key, so every
+    /// revalidation also requires the fold to still trust it, and `actor`
+    /// to be a live owner of this vault.
+    ///
+    /// This is the one call that mints an owner key's proof for an ask word:
+    /// the owner confirm sheet (FREE-ROWS OWNER-CONFIRM-SHEET) wraps it.
+    /// Until that row lands it asks for no user presence, the same as the
+    /// choice doors and machine answers that use this key.
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::OwnerKeyRequired`](crate::error::RecordError::OwnerKeyRequired)
+    /// when this install holds no key the fold trusts as the owner's (none
+    /// enrolled here, or the owner's key held on another install);
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the signature does not verify or `actor` is no live owner of
+    /// this vault; the key's own refusal to sign.
+    pub fn authenticate_owner_device(
+        &self,
+        actor: EntityId,
+        decision_id: GateDecisionId,
+    ) -> Result<AuthenticatedOwner> {
+        // The read transaction ends before the key signs: the signer reads
+        // the roster from the fold it was picked on and opens none.
+        let (fold, signer) = {
+            let txn = self.store.env.read_txn()?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            let signer = self.owner_proof_signer(&fold);
+            (fold, signer)
+        };
+        let signer = signer.ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
+        let key = signer.key();
+        let decision = decision_id.as_bytes();
+        let parts: [&[u8]; 4] = [
+            crate::authority::ASK_WORD_PROOF_DOMAIN,
+            &self.store.open_nonce,
+            actor.as_bytes(),
+            &decision,
+        ];
+        let transcript = parts.concat();
+        let signature = crate::authority::AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: signer.sign_ask_word(&fold, &transcript)?,
+        };
+        if !crate::authority::verify_authority_signature(&signature, &transcript) {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the owner key's proof of the ask word did not verify",
+            )));
+        }
+        let mut owner = self.authenticate_owner(actor, &actor.to_hex(), true, decision_id)?;
+        owner.owner_key = Some(key);
         self.recheck_owner(&owner)?;
         Ok(owner)
     }

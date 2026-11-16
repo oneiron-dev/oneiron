@@ -86,6 +86,13 @@ impl RootCheckpointAuthority {
     }
 }
 
+/// The domain of an owner key's proof that the owner gives one ask word in
+/// person (UC-05 PR 2b, [`Vault::authenticate_owner_device`]): the bytes
+/// [`CheckpointRootSigner::sign_ask_word_proof`] signs start with it. No
+/// checkpoint statement and no authority transcript does, so neither
+/// signature ever stands for the other.
+pub const ASK_WORD_PROOF_DOMAIN: &[u8] = b"oneiron/tasks/ask-word-owner-proof/v1";
+
 /// A root of the policy a vault counts, as a checkpoint signer: the root's
 /// raw signature over a checkpoint statement, a key binding's or an
 /// attestation's, and, as an owner key's proof, over the transcript of an
@@ -140,6 +147,21 @@ pub trait CheckpointRootSigner: Send + Sync {
         let _ = (vault, fold);
         true
     }
+    /// The root's raw signature over `transcript`, an owner key's proof that
+    /// the owner gives one ask word in person on the install that holds it
+    /// (UC-05 PR 2b), made on `vault`. Refused for any bytes outside
+    /// [`ASK_WORD_PROOF_DOMAIN`], so it signs no checkpoint statement and no
+    /// authority transcript. A root whose right to sign can end refuses it
+    /// wherever it refuses an owner act's proof ([`Self::sign_owner_proof`]),
+    /// checked at this call with the roster read from `fold`: a key that
+    /// rests under a device PIN proves an ask word only inside the window a
+    /// right PIN opened.
+    fn sign_ask_word_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>>;
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -164,6 +186,21 @@ impl CheckpointRootSigner for HostSlipIssuer {
     ) -> Result<Vec<u8>> {
         let _ = (vault, fold);
         if !transcript.starts_with(super::AUTHORITY_TRANSCRIPT_DOMAIN) {
+            return Err(super::invalid_authority());
+        }
+        Ok(self.sign_slip(transcript))
+    }
+
+    /// A host's root proves an ask word whenever it is asked, as it proves
+    /// an owner act.
+    fn sign_ask_word_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        let _ = (vault, fold);
+        if !transcript.starts_with(ASK_WORD_PROOF_DOMAIN) {
             return Err(super::invalid_authority());
         }
         Ok(self.sign_slip(transcript))

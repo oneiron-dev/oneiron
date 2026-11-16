@@ -150,8 +150,9 @@ impl PinBoundOwnerSigner {
     }
 
     /// One signature of the key, which `sign` makes with it: a checkpoint
-    /// statement's, or an owner act's proof. Both are made here, under the
-    /// same checks, and the key is dropped inside the call.
+    /// statement's, an owner act's proof, or an ask word's proof. Each is
+    /// made here, under the same checks, and the key is dropped inside the
+    /// call.
     ///
     /// # Errors
     /// [`crate::error::DevicePinRefusal::Required`] outside a window; the refusals of
@@ -209,6 +210,16 @@ impl CheckpointRootSigner for PinBoundOwnerSigner {
 
     fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
         self.pin.window_is_open() && self.refusal(vault, Some(fold)).is_none()
+    }
+
+    /// Only inside the window a right PIN opened, as an owner act's proof.
+    fn sign_ask_word_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.sign(vault, Some(fold), |key| key.sign_ask_word(transcript))
     }
 }
 

@@ -326,6 +326,22 @@ impl OwnerProofSigner<'_> {
     ) -> crate::error::Result<Vec<u8>> {
         self.signer.sign_owner_proof(self.vault, fold, transcript)
     }
+
+    /// The key's signature over `transcript`, the owner's proof that he
+    /// gives one ask word in person (UC-05 PR 2b), by the roster of `fold`,
+    /// the view the key was picked on.
+    ///
+    /// # Errors
+    /// The signer's refusal, as [`Self::sign`] answers it: a key that rests
+    /// under a device PIN proves an ask word only inside its window.
+    pub(crate) fn sign_ask_word(
+        &self,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> crate::error::Result<Vec<u8>> {
+        self.signer
+            .sign_ask_word_proof(self.vault, fold, transcript)
+    }
 }
 
 impl crate::Vault {

@@ -161,6 +161,16 @@ impl OwnerRootSigner {
         Ok(self.signing.sign(transcript).to_bytes().to_vec())
     }
 
+    /// The key's raw signature over `transcript` as the owner's proof of
+    /// one ask word (UC-05 PR 2b), for a caller that has checked the key
+    /// signs now. Refused for any bytes outside the ask word proof domain.
+    pub(super) fn sign_ask_word(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(crate::authority::ASK_WORD_PROOF_DOMAIN) {
+            return Err(invalid_authority());
+        }
+        Ok(self.signing.sign(transcript).to_bytes().to_vec())
+    }
+
     /// Why the key does not sign on `vault` now; `None` when it does. A key
     /// read from a slot signs on that slot's vault alone, and stops once a
     /// device PIN is set on its keystore: from then on the key signs from
@@ -241,6 +251,20 @@ impl CheckpointRootSigner for OwnerRootSigner {
 
     fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
         self.refusal(vault, Some(fold)).is_none()
+    }
+
+    /// Refused for any bytes outside the ask word proof domain, and wherever
+    /// [`Self::sign_owner_proof`] refuses. Each is checked at this call.
+    fn sign_ask_word_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        match self.refusal(vault, Some(fold)) {
+            Some(refusal) => Err(refusal),
+            None => self.sign_ask_word(transcript),
+        }
     }
 }
 
