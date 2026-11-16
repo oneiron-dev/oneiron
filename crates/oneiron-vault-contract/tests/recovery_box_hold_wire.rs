@@ -4,8 +4,10 @@
 //! supervisor built before the op answers a ledger ack, which is not one.
 
 use oneiron_vault_contract::{
-    RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_REFUSAL_MAX, RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck,
-    TOKEN_LEN, TokenHex, valid_recovery_box_refusal_code,
+    RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_REFUSAL_MAX,
+    RECOVERY_BOX_WAIT_MAX_SECS, RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck,
+    RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, RecoveryBoxWait, TOKEN_LEN, TokenHex,
+    valid_recovery_box_refusal_code,
 };
 
 fn request(kit_only: bool) -> RecoveryBoxKitOnly {
@@ -76,4 +78,83 @@ fn recovery_box_kit_only_ack_shapes() {
     );
     let long = "a".repeat(RECOVERY_BOX_REFUSAL_MAX + 1);
     assert!(!valid_recovery_box_refusal_code(&long));
+}
+
+#[test]
+fn recovery_box_wait_and_cancel_wires_are_exact() {
+    let wait = RecoveryBoxWait {
+        op: RECOVERY_BOX_WAIT_OP.to_owned(),
+        vault: "vault-7".to_owned(),
+        token: TokenHex::new("ab".repeat(TOKEN_LEN)),
+        wait_secs: 86_400,
+    };
+    wait.validate().unwrap();
+    assert_eq!(
+        serde_json::to_string(&wait).unwrap(),
+        format!(
+            r#"{{"op":"recovery_box_wait","vault":"vault-7","token":"{}","wait_secs":86400}}"#,
+            "ab".repeat(TOKEN_LEN)
+        )
+    );
+    let wait_line = serde_json::to_string(&wait).unwrap();
+    let smuggled = wait_line.replace("\"wait_secs\"", "\"kit_only\":true,\"wait_secs\"");
+    assert!(serde_json::from_str::<RecoveryBoxWait>(&smuggled).is_err());
+    assert!(!format!("{wait:?}").contains(&"ab".repeat(TOKEN_LEN)));
+    let mut over = wait.clone();
+    over.wait_secs = RECOVERY_BOX_WAIT_MAX_SECS + 1;
+    assert!(over.validate().is_err());
+    let mut wrong_op = wait.clone();
+    wrong_op.op = RECOVERY_BOX_KIT_ONLY_OP.to_owned();
+    assert!(wrong_op.validate().is_err());
+
+    let cancel = RecoveryBoxCancel {
+        op: RECOVERY_BOX_CANCEL_OP.to_owned(),
+        vault: "vault-7".to_owned(),
+        token: TokenHex::new("ab".repeat(TOKEN_LEN)),
+    };
+    cancel.validate().unwrap();
+    let line = serde_json::to_string(&cancel).unwrap();
+    assert_eq!(
+        line,
+        format!(
+            r#"{{"op":"recovery_box_cancel","vault":"vault-7","token":"{}"}}"#,
+            "ab".repeat(TOKEN_LEN)
+        )
+    );
+    let with_wait = line.replace("\"}", "\",\"wait_secs\":0}");
+    assert!(serde_json::from_str::<RecoveryBoxCancel>(&with_wait).is_err());
+    let mut bad_vault = cancel.clone();
+    bad_vault.vault = "Vault_7".to_owned();
+    assert!(bad_vault.validate().is_err());
+    assert!(!format!("{cancel:?}").contains(&"ab".repeat(TOKEN_LEN)));
+}
+
+#[test]
+fn recovery_box_cancel_ack_shapes() {
+    for (line, cancelled) in [
+        (r#"{"held":true,"cancelled":true}"#, true),
+        (r#"{"held":true,"cancelled":false}"#, false),
+    ] {
+        let ack: RecoveryBoxCancelAck = serde_json::from_str(line).unwrap();
+        assert!(ack.well_formed(), "{line}");
+        assert_eq!(ack.cancelled, Some(cancelled));
+        assert_eq!(serde_json::to_string(&ack).unwrap(), line);
+    }
+    let refused: RecoveryBoxCancelAck =
+        serde_json::from_str(r#"{"held":false,"error":"wrong_node"}"#).unwrap();
+    assert!(refused.well_formed());
+    for line in [
+        r#"{"held":true}"#,
+        r#"{"held":false}"#,
+        r#"{"held":true,"cancelled":true,"error":"refused"}"#,
+        r#"{"held":false,"cancelled":false,"error":"refused"}"#,
+        r#"{"held":false,"error":"Not A Code"}"#,
+    ] {
+        let ack: RecoveryBoxCancelAck = serde_json::from_str(line).unwrap();
+        assert!(!ack.well_formed(), "{line}");
+    }
+    assert!(
+        serde_json::from_str::<RecoveryBoxCancelAck>(r#"{"held":true,"cancelled":true,"x":1}"#)
+            .is_err()
+    );
 }
