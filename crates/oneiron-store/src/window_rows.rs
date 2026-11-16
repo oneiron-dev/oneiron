@@ -25,11 +25,8 @@ impl SideKey for HexSeqKey {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 8 {
-            return None;
-        }
-        let seq = u32::from_str_radix(std::str::from_utf8(bytes).ok()?, 16).ok()?;
-        Some(Self(seq))
+        let seq = oneiron_hex::decode::<4>(std::str::from_utf8(bytes).ok()?)?;
+        Some(Self(u32::from_be_bytes(seq)))
     }
 }
 
@@ -56,8 +53,10 @@ impl SideKey for WindowEntityHexKey {
         let window = head.strip_suffix(b":")?;
         Some(Self {
             window: String::from_utf8(window.to_vec()).ok()?,
-            id: oneiron_contracts::entity_id::EntityId::from_hex(std::str::from_utf8(hex).ok()?)
-                .ok()?,
+            id: oneiron_contracts::entity_id::EntityId::from_lower_hex(
+                std::str::from_utf8(hex).ok()?,
+            )
+            .ok()?,
         })
     }
 }
@@ -81,7 +80,7 @@ impl SideKey for WindowEntityKey {
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let (window, hex) = text.rsplit_once(':')?;
-        let entity = oneiron_contracts::entity_id::EntityId::from_hex(hex).ok()?;
+        let entity = oneiron_contracts::entity_id::EntityId::from_lower_hex(hex).ok()?;
         Some(Self {
             window: window.to_owned(),
             entity,
@@ -109,13 +108,9 @@ impl SideKey for WindowUpdateKey {
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let (window, seq_hex) = text.rsplit_once(':')?;
-        if seq_hex.len() != 16 {
-            return None;
-        }
-        let seq = u64::from_str_radix(seq_hex, 16).ok()?;
         Some(Self {
             window: window.to_owned(),
-            seq,
+            seq: u64::from_be_bytes(oneiron_hex::decode::<8>(seq_hex)?),
         })
     }
 }
