@@ -140,6 +140,11 @@ struct ImportedArchive {
     /// Archived `regenerates` links whose restored MESSAGE pair does not
     /// prove what the stream proved: left out, not restored.
     skipped_unproven_regenerates_edges: usize,
+    /// Merged and split rows whose merges and splits stayed in the archive:
+    /// each is back as a separate row.
+    unrestored_identity_topology_shells: usize,
+    /// The owner's line for those rows, when there are any.
+    identity_topology_status: Option<String>,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
     /// Secrets the archive could not carry even as a handle, by id: each
@@ -176,6 +181,17 @@ struct ImportedEmbeddingSetup {
 /// The archive import's embedding setup status: the setup came in, its
 /// vectors did not.
 const EMBEDDING_SETUP_IMPORTED: &str = "setup imported; vectors pending recompute";
+
+/// The owner's line for the merged and split rows an archive import brought
+/// back as separate rows (OWNEDGES-SHELL-RESTORE = A), when there are any.
+fn identity_topology_status(rows: usize) -> Option<String> {
+    (rows > 0).then(|| {
+        format!(
+            "{rows} merged or split rows came back as separate rows: their merges and splits \
+             were not restored"
+        )
+    })
+}
 
 /// Re-imports a whole-vault archive through the vault's import doors.
 fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
@@ -238,6 +254,10 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         unchanged_secrets: receipt.unchanged_secrets,
         skipped_revoked_secrets: receipt.skipped_revoked_secrets,
         skipped_unproven_regenerates_edges: receipt.skipped_unproven_regenerates_edges,
+        unrestored_identity_topology_shells: receipt.unrestored_identity_topology_shells,
+        identity_topology_status: identity_topology_status(
+            receipt.unrestored_identity_topology_shells,
+        ),
         missing_secrets: receipt
             .missing_secrets
             .into_iter()

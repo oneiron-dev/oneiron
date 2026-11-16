@@ -29,6 +29,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
+use oneiron::batch::export::WholeVaultImportReceipt;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeKind;
 use oneiron::identity_topology::{
@@ -162,14 +163,24 @@ fn assert_back_separate(dest: &Vault, restored: &Merged) {
     }
 }
 
+/// The import's receipt counts the one merged row back separate.
+fn assert_counted(receipt: &WholeVaultImportReceipt) {
+    assert_eq!(
+        receipt.unrestored_identity_topology_shells, 1,
+        "the receipt counts the merged row back separate"
+    );
+}
+
 #[test]
 fn owner_restore_brings_the_merged_row_back_separate() {
     let restored = merged_archive();
     let (_dir, dest) = open_later_vault();
     let owner = owner_proof(&dest);
-    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&restored.archive), &owner)
         .expect("the owner's restore completes");
     assert_back_separate(&dest, &restored);
+    assert_counted(&receipt);
 }
 
 #[test]
@@ -177,22 +188,28 @@ fn actor_import_brings_the_merged_row_back_separate() {
     let restored = merged_archive();
     let (_dir, dest) = open_later_vault();
     let owner = dest.ensure_embedded_owner_actor().expect("embedded owner");
-    dest.import_whole_vault_archive_with_actor(
-        &restored.archive,
-        &WriteActor::new(owner, EdgeActorClass::Human),
-    )
-    .expect("the actor import completes");
+    let receipt = dest
+        .import_whole_vault_archive_with_actor(
+            &restored.archive,
+            &WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .expect("the actor import completes");
     assert_back_separate(&dest, &restored);
+    assert_counted(&receipt);
 }
 
 #[test]
 fn actorless_import_again_counts_the_merged_row_again() {
     let restored = merged_archive();
     let (_dir, dest) = open_later_vault();
-    dest.import_whole_vault_archive_from(Cursor::new(&restored.archive))
+    let receipt = dest
+        .import_whole_vault_archive_from(Cursor::new(&restored.archive))
         .expect("the actorless import completes");
     assert_back_separate(&dest, &restored);
-    dest.import_whole_vault_archive_from(Cursor::new(&restored.archive))
+    assert_counted(&receipt);
+    let again = dest
+        .import_whole_vault_archive_from(Cursor::new(&restored.archive))
         .expect("the same archive again completes");
     assert_back_separate(&dest, &restored);
+    assert_counted(&again);
 }

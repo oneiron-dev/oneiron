@@ -676,6 +676,7 @@ impl Vault {
         // their restored `supersedes` chain, so it lands after the plain
         // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES).
         let mut skipped_unproven_regenerates_edges = 0;
+        let mut unrestored_identity_topology_shells = BTreeSet::new();
         for pass in [
             ArchiveEdgePass::Plain,
             ArchiveEdgePass::ConversationDag,
@@ -710,8 +711,12 @@ impl Vault {
                 }
                 let landed =
                     import_edge_with_seeds(self, &mut wtxn, &edge, &archive.index, Some(&seeds))?;
-                if landed == EdgeImport::UnprovenRegenerates {
-                    skipped_unproven_regenerates_edges += 1;
+                match landed {
+                    EdgeImport::Landed => {}
+                    EdgeImport::UnprovenRegenerates => skipped_unproven_regenerates_edges += 1,
+                    EdgeImport::IdentityTopologyLeftOut => {
+                        unrestored_identity_topology_shells.insert(parse_id(&edge.source)?);
+                    }
                 }
             }
         }
@@ -789,6 +794,7 @@ impl Vault {
             unchanged_secrets,
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
+            unrestored_identity_topology_shells: unrestored_identity_topology_shells.len(),
             missing_secrets,
             owed_secrets,
             embedding_setup,
@@ -2036,6 +2042,10 @@ pub(super) enum EdgeImport {
     /// An archived `regenerates` link its restored pair does not prove,
     /// left out (FIX 5972); the import's last edge pass counts it (FIX 6206).
     UnprovenRegenerates,
+    /// An archived `merged_into` or `split_into` link this vault does not
+    /// hold, left out: the type-76 events such a link follows stay archive
+    /// data (OWNEDGES-SHELL-RESTORE = A); the edge passes count its source.
+    IdentityTopologyLeftOut,
 }
 
 /// Writes one archived edge; `inserted` names the rows this import put in or
@@ -2061,6 +2071,21 @@ fn import_edge_with_seeds(
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
+    // OWNEDGES-SHELL-RESTORE = A: a merged_into or split_into link moves only
+    // with a validated type-76 event (ARCH-0055), and the archived events
+    // stay archive data (`LocalHistoryNotRestored`), so the link stays out
+    // and its merged or split row is back here as a separate row. A link this
+    // vault's own events already drew is left as it is.
+    if matches!(kind, EdgeKind::MergedInto | EdgeKind::SplitInto) {
+        let held =
+            crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+                .is_some();
+        return Ok(if held {
+            EdgeImport::Landed
+        } else {
+            EdgeImport::IdentityTopologyLeftOut
+        });
+    }
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {
