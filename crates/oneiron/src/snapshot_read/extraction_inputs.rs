@@ -1,7 +1,8 @@
 //! Bounded pages of one queued extraction attempt's reachable TURNs and effective policy.
 //!
 //! Rows follow the payload's part and TURN order. Unread TURNs or partition entities
-//! are absent whole, counted nowhere and never named by a cursor. Words read only
+//! are absent whole, counted nowhere and never named by a cursor; a cursor naming
+//! one is refused as one naming a TURN the attempt does not hold. Words read only
 //! through `vault.evidence.spans`, using the source versions served here.
 
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,11 @@ pub struct ExtractionTurn {
 /// The byte bound counts encoded TURN rows, not the envelope. A TURN too large
 /// for an empty page is refused rather than served partially.
 ///
+/// A base agent with no standing Steward row is refused: its manifest rows
+/// never stand in for the grant here. A cursor is valid only while this page
+/// would serve its TURN to the caller, so a caller whose reach left that TURN
+/// starts again from the first page.
+///
 /// # Errors
 ///
 /// No owner proof or live Steward read grant, an invalid attempt or cursor,
@@ -163,11 +169,29 @@ fn bound_extraction_inputs_page(
             })
             .collect();
         let start = match after {
-            Some(after) => queued
-                .iter()
-                .position(|(_, turn)| *turn == after)
-                .map(|position| position + 1)
-                .ok_or_else(|| MemoryError::bad_request("invalid extraction TURN cursor"))?,
+            Some(after) => {
+                let (position, (key, turn)) = queued
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (_, turn))| *turn == after)
+                    .ok_or_else(invalid_extraction_cursor)?;
+                // An anchor the caller does not read is refused as one the
+                // attempt does not hold: a cursor never tells membership.
+                if extraction_turn_in_txn(
+                    vault,
+                    txn,
+                    &read,
+                    reader_scope.as_ref(),
+                    scope,
+                    key,
+                    *turn,
+                )?
+                .is_none()
+                {
+                    return Err(invalid_extraction_cursor());
+                }
+                position + 1
+            }
             None => 0,
         };
         let policy = ExtractionPolicy {
@@ -249,9 +273,12 @@ pub(crate) fn extraction_reader_scope_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(None);
     }
+    // The helper answers the whole vault (`Some(None)`) for a base agent with
+    // no standing row, whose manifest rows read the sibling pages. This page
+    // serves a live grant only, so that answer is no reach here.
     match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
-        Some(scope) => Ok(scope),
-        None => Err(MemoryError::new(
+        Some(Some(scope)) => Ok(Some(scope)),
+        Some(None) | None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "extraction inputs read for the owner under its proof or a live Steward reader",
             &[],
@@ -355,17 +382,22 @@ fn extraction_turn_cursor(turn: EntityId) -> String {
     format!("{EXTRACTION_TURNS_CURSOR_PREFIX}{}", turn.to_hex())
 }
 
+/// Returns the same bad request for a malformed cursor, one naming a TURN the
+/// attempt does not hold and one naming a TURN the caller does not read.
+fn invalid_extraction_cursor() -> MemoryError {
+    MemoryError::bad_request("invalid extraction TURN cursor")
+}
+
 /// Decodes a cursor naming one queued TURN in its lowercase hexadecimal spelling.
 fn extraction_turn_cursor_key(cursor: Option<&str>) -> MemoryResult<Option<EntityId>> {
     cursor
         .map(|cursor| {
             let hex = cursor
                 .strip_prefix(EXTRACTION_TURNS_CURSOR_PREFIX)
-                .ok_or_else(|| MemoryError::bad_request("invalid extraction TURN cursor"))?;
-            let turn = EntityId::from_hex(hex)
-                .map_err(|_| MemoryError::bad_request("invalid extraction TURN cursor"))?;
+                .ok_or_else(invalid_extraction_cursor)?;
+            let turn = EntityId::from_hex(hex).map_err(|_| invalid_extraction_cursor())?;
             if turn.to_hex() != hex {
-                return Err(MemoryError::bad_request("invalid extraction TURN cursor"));
+                return Err(invalid_extraction_cursor());
             }
             Ok(turn)
         })
