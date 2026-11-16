@@ -399,6 +399,7 @@ fn answer_in_txn(
             part: ConsentPart::Admission,
             grant: request.action == OfferAnswer::Join,
             spend_scope: None,
+            check_in_ref: None,
         },
         caller,
         now,

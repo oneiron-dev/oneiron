@@ -52,7 +52,7 @@ const THREAD_JOIN_APPROVE_VERB: &str = "vault.rooms.thread_join.approve";
 /// What an answer's writer did: the answer and whom to tell, or an
 /// approval that waits on its pending check-in, the writer's one write.
 enum JoinAnswer {
-    Done(ThreadJoinRequestView, Option<(EntityId, EntityId)>),
+    Done(Box<ThreadJoinRequestView>, Option<(EntityId, EntityId)>),
     Waits(EntityId),
 }
 
@@ -308,7 +308,7 @@ impl Memory<'_> {
             let requester = asked.person.live().ok_or_else(unknown_request)?;
             if asked.settled.is_some() {
                 let view = view_in(vault, txn, root, asked)?.ok_or_else(unknown_request)?;
-                return Ok(JoinAnswer::Done(view, None));
+                return Ok(JoinAnswer::Done(Box::new(view), None));
             }
             let (op, history, state) = match answer {
                 JoinSettlement::Approved => {
@@ -372,10 +372,10 @@ impl Memory<'_> {
             view.state = state;
             view.decision_ref = Some(event.to_hex());
             view.check_in = check_in;
-            Ok(JoinAnswer::Done(view, Some((event, requester))))
+            Ok(JoinAnswer::Done(Box::new(view), Some((event, requester))))
         })?;
         let (view, told) = match answered {
-            JoinAnswer::Done(view, told) => (view, told),
+            JoinAnswer::Done(view, told) => (*view, told),
             JoinAnswer::Waits(id) => return Err(Error::CheckInPending(id.to_hex()).into()),
         };
         if let Some((event, requester)) = told {

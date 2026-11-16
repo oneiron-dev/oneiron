@@ -133,7 +133,7 @@ const THREAD_AUDIENCE_ADD_VERB: &str = "vault.rooms.thread_audience.add";
 /// What an audience edit's writer did: the edit, or an add of someone else
 /// that waits on its pending check-in, the writer's one write.
 enum AudienceEdit {
-    Done(ThreadAudienceReceipt, Option<ThreadNotice>),
+    Done(Box<ThreadAudienceReceipt>, Option<ThreadNotice>),
     Waits(EntityId),
 }
 
@@ -541,10 +541,10 @@ impl Memory<'_> {
             let named = (event.op != AudienceOp::Remove).then_some(person);
             let mut receipt = receipt_in(vault, txn, &thread.binding, id, named);
             receipt.check_in = check_in;
-            Ok(AudienceEdit::Done(receipt, notice))
+            Ok(AudienceEdit::Done(Box::new(receipt), notice))
         })?;
         let (receipt, notice) = match edit {
-            AudienceEdit::Done(receipt, notice) => (receipt, notice),
+            AudienceEdit::Done(receipt, notice) => (*receipt, notice),
             AudienceEdit::Waits(id) => return Err(Error::CheckInPending(id.to_hex()).into()),
         };
         if let Some(notice) = notice {
