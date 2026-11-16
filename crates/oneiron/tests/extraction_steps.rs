@@ -302,6 +302,64 @@ fn a_bound_step_without_a_loan_refuses() -> ExtractionStepTestResult<()> {
     Ok(())
 }
 
+/// A saved step's receipt answers while the Dreamer's live read serves the attempt's queued TURN.
+/// Once the grant narrows away from that TURN's project, with `read` and the binding still
+/// standing, the same key answers as a key the attempt never ran: the same code and message, and
+/// no generation.
+#[test]
+fn a_bound_receipt_withholds_a_step_once_its_source_leaves_the_grant()
+-> ExtractionStepTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_step_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea"])?;
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(
+        &vault,
+        &[witnessed.turns[0], witnessed.messages[0]],
+        project,
+    )?;
+    let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let fixture = ExtractionStepFixture::new(backend.clone())?;
+    let binding = attach_extraction_step_lender(bind_extraction(&vault, &admitted)?, &fixture);
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 1, "the whole grant serves the project's TURN");
+    let request = extraction_step_request(json!([extraction_step_evidence(
+        &turns[0].0,
+        turns[0].1.clone(),
+        None,
+    )]));
+    let submit = invoke_bound_step(&binding, request).expect("the served step finishes");
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    let step_ref = submit["step_ref"]
+        .as_str()
+        .expect("the submit answers its step ref")
+        .to_owned();
+    let unknown_key = if step_ref == "0".repeat(64) {
+        "f".repeat(64)
+    } else {
+        "0".repeat(64)
+    };
+    let served = invoke_bound_step_receipt(&binding, &step_ref)
+        .expect("the receipt answers while the queued TURN is served");
+    assert_eq!(served["result"]["response"], submit["result"]["response"]);
+    narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
+    let Err(withheld) = invoke_bound_step_receipt(&binding, &step_ref) else {
+        panic!("a receipt over a TURN outside the live grant is withheld");
+    };
+    let Err(unknown) = invoke_bound_step_receipt(&binding, &unknown_key) else {
+        panic!("a key the attempt never ran answers not-found");
+    };
+    assert_eq!(withheld.code, MEMORY_CODE_NOT_FOUND);
+    assert_eq!(withheld.code, unknown.code);
+    assert_eq!(withheld.message, unknown.message);
+    assert_eq!(backend.call_count(), 1);
+    Ok(())
+}
+
 /// Strength and conflict-settlement bindings refuse both step verbs below any check: each answers
 /// forbidden naming its own facet.
 #[test]

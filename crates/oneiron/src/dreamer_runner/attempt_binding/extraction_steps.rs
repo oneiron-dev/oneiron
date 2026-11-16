@@ -101,7 +101,13 @@ impl DreamerAttemptBinding {
         let vault = &*self.vault;
         let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
         let read = memory.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let turn_read = crate::snapshot_read::extraction_turn_read(&read, None)?;
         let _pins = read.prepare_point_read::<MemoryError>()?;
+        let _turn_pins = turn_read
+            .as_ref()
+            .map(crate::claim::ScopedRead::prepare_point_read::<MemoryError>)
+            .transpose()?;
+        let turn_read = turn_read.as_ref().unwrap_or(&read);
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         self.check_in_txn(&txn)?;
         if input.live_run.is_some() {
@@ -114,7 +120,8 @@ impl DreamerAttemptBinding {
         let reader_scope =
             crate::snapshot_read::extraction_reader_scope_in_txn(&memory, &txn, None)?;
         let receipt = read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-            if !self.serves_every_queued_turn_in_txn(txn, &read, reader_scope.as_ref())? {
+            let reads = (&read, turn_read);
+            if !self.serves_every_queued_turn_in_txn(txn, reads, reader_scope.as_ref())? {
                 return Err(MemoryError::from(crate::Error::EntityNotFound));
             }
             crate::llm::request_hash_step_receipt_in_txn(vault, txn, self.lease.attempt(), &hash)
@@ -131,7 +138,7 @@ impl DreamerAttemptBinding {
     fn serves_every_queued_turn_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &crate::claim::ScopedRead<'_>,
+        reads: (&crate::claim::ScopedRead<'_>, &crate::claim::ScopedRead<'_>),
         reader_scope: Option<&crate::federation::Scope>,
     ) -> MemoryResult<bool> {
         let vault = &*self.vault;
@@ -143,7 +150,7 @@ impl DreamerAttemptBinding {
                 let served = crate::snapshot_read::extraction_turn_in_txn(
                     vault,
                     txn,
-                    read,
+                    reads,
                     reader_scope,
                     scope,
                     &key,
