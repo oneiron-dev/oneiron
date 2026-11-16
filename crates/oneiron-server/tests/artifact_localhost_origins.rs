@@ -441,8 +441,9 @@ fn the_vault_name_localhost_is_refused() {
 
 /// The host serve's start line names is the one the listener serves: the
 /// vault's artifacts there by path, and each app on its own host. It names
-/// none on a managed vault, with no vault name, or for a name that is no app
-/// label, which the listener never serves.
+/// none on a managed vault, with no vault name, for a name that is no app
+/// label, or when a configured artifact domain claims the host first: the
+/// listener serves none of those there.
 #[test]
 fn the_start_line_names_the_served_localhost_host() {
     let named = |name: Option<&str>| SyncServerConfig {
@@ -456,6 +457,19 @@ fn the_start_line_names_the_served_localhost_host() {
         ..named(Some("quarry"))
     };
     assert_eq!(managed.local_artifact_vault_host(), None);
+    let claimed = SyncServerConfig {
+        artifact_domains: vec!["quarry.localhost".to_owned()],
+        ..named(Some("quarry"))
+    };
+    assert_eq!(claimed.local_artifact_vault_host(), None);
+    let beside = SyncServerConfig {
+        artifact_domains: vec!["oneiron.page".to_owned()],
+        ..named(Some("quarry"))
+    };
+    assert_eq!(
+        beside.local_artifact_vault_host().as_deref(),
+        Some("quarry.localhost")
+    );
     let host = named(Some("Quarry"))
         .local_artifact_vault_host()
         .expect("a served name has a host");
