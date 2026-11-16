@@ -96,7 +96,8 @@ pub use scratchpad::{
     ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine,
 };
 pub(crate) use scratchpad::{
-    erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists, seal_session_pad_in_txn,
+    erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists, seal_run_pads_in_txn,
+    seal_session_pad_in_txn,
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
