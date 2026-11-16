@@ -15,36 +15,8 @@ use crate::store::Store;
 const COUNTS: SideTable<Vec<u8>, Contribution, Named> =
     SideTable::new(&side_table::SECRET_LIFT_CONTRIBUTION);
 
-#[derive(Clone, Serialize, Deserialize)]
-pub(super) enum Source {
-    Unmapped,
-    Entity(EntityId),
-    Multi(Vec<EntityId>),
-}
-
-impl Source {
-    pub(super) fn of_set(mut ids: Vec<EntityId>) -> Self {
-        ids.sort_unstable();
-        ids.dedup();
-        match ids.len() {
-            0 => Self::Unmapped,
-            1 => Self::Entity(ids[0]),
-            _ => Self::Multi(ids),
-        }
-    }
-
-    pub(super) fn entities(&self) -> &[EntityId] {
-        match self {
-            Self::Unmapped => &[],
-            Self::Entity(id) => std::slice::from_ref(id),
-            Self::Multi(ids) => ids,
-        }
-    }
-
-    pub(super) fn kept_by(&self, keep: &dyn Fn(EntityId) -> bool) -> bool {
-        self.entities().iter().all(|id| keep(*id))
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::batch::secret_scan::lift_history::accounting::Source;
 
 #[derive(Serialize, Deserialize)]
 struct Contribution {
