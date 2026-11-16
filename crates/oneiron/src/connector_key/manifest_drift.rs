@@ -20,6 +20,16 @@ pub struct ResolvedConnectorManifest {
     /// refutes it: MCP admission declares it for every connector it admits.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     elicitation: bool,
+    /// The tools whose stored strings are public, owner-accepted at install:
+    /// the owner's "install it anyway" lifted a secret-shaped string in them
+    /// (RULING SCREENING-SECRET-OVERRIDE = B; FIX SCREENING-PER-TOOL-SKIP, PR
+    /// C2). Each names the digest of the tool's row as accepted
+    /// ([`public_row_digest`]); a row that no longer matches it is not public,
+    /// so a changed schema drops the mark. The secret lift census reads it
+    /// ([`Self::public_secret_shape_tools`]). Absent on every manifest
+    /// without one, so their bytes and hash are unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    public_secret_shape: BTreeMap<String, String>,
 }
 impl ResolvedConnectorManifest {
     /// Resolve local references and composition before any comparison or
@@ -58,7 +68,70 @@ impl ResolvedConnectorManifest {
         Ok(Self {
             tools,
             elicitation: false,
+            public_secret_shape: BTreeMap::new(),
         })
+    }
+    /// The same snapshot marking each tool `tools` names as public,
+    /// owner-accepted at install, bound to its row as it stands. A name the
+    /// manifest does not declare is left out.
+    #[must_use]
+    pub fn with_public_secret_shape<'n>(
+        mut self,
+        tools: impl IntoIterator<Item = &'n str>,
+    ) -> Self {
+        for name in tools {
+            if let Some(row) = self.tools.iter().find(|row| row.name == name) {
+                self.public_secret_shape
+                    .insert(row.name.clone(), public_row_digest(row));
+            }
+        }
+        self
+    }
+    /// The rows whose strings are public, owner-accepted at install: each
+    /// marked tool whose row still matches the digest it was accepted at.
+    pub fn public_secret_shape_tools(&self) -> impl Iterator<Item = &ConnectorToolSchema> {
+        self.tools.iter().filter(|row| {
+            self.public_secret_shape
+                .get(&row.name)
+                .is_some_and(|digest| *digest == public_row_digest(row))
+        })
+    }
+    /// The snapshot as a connector declares it: its rows and its elicitation
+    /// declaration, without the public marks, which are the owner's
+    /// acceptance and no connector declares (review-c2 F2). A probe listing
+    /// compares against this.
+    #[must_use]
+    pub(crate) fn declared(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+            elicitation: self.elicitation,
+            public_secret_shape: BTreeMap::new(),
+        }
+    }
+    /// The snapshot as the secret lift census reads it: each public row
+    /// ([`Self::public_secret_shape_tools`]) and its mark left out. A mark
+    /// whose row changed since stays, as that row does.
+    #[must_use]
+    pub(crate) fn without_public_secret_shape_rows(&self) -> Self {
+        let public: BTreeSet<&str> = self
+            .public_secret_shape_tools()
+            .map(|row| row.name.as_str())
+            .collect();
+        Self {
+            tools: self
+                .tools
+                .iter()
+                .filter(|row| !public.contains(row.name.as_str()))
+                .cloned()
+                .collect(),
+            elicitation: self.elicitation,
+            public_secret_shape: self
+                .public_secret_shape
+                .iter()
+                .filter(|(name, _)| !public.contains(name.as_str()))
+                .map(|(name, digest)| (name.clone(), digest.clone()))
+                .collect(),
+        }
     }
     /// The same snapshot, declaring elicitation or not.
     #[must_use]
@@ -106,12 +179,27 @@ impl ResolvedConnectorManifest {
         Ok(*blake3::hash(&serde_json::to_vec(self).map_err(|_| invalid())?).as_bytes())
     }
     pub(crate) fn validate_snapshot(&self) -> Result<()> {
-        let resolved = Self::resolve(self.tools.clone())?.with_elicitation(self.elicitation);
+        let mut resolved = Self::resolve(self.tools.clone())?.with_elicitation(self.elicitation);
+        // A public mark names a declared tool; its digest is read where it
+        // is used, so a row that drifted from it reads as not public.
+        resolved.public_secret_shape = self
+            .public_secret_shape
+            .iter()
+            .filter(|(name, _)| resolved.tools.iter().any(|row| &row.name == *name))
+            .map(|(name, digest)| (name.clone(), digest.clone()))
+            .collect();
         if resolved != *self {
             return Err(invalid());
         }
         Ok(())
     }
+}
+
+/// The digest a public mark binds: blake3 of the resolved row's JSON, as 64
+/// hex.
+fn public_row_digest(row: &ConnectorToolSchema) -> String {
+    let bytes = serde_json::to_vec(row).unwrap_or_default();
+    blake3::hash(&bytes).to_hex().to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

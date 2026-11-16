@@ -57,18 +57,20 @@ pub struct ScreenRuleRow {
 
 /// Every screen rule, its reason and whether the owner may lift it on one
 /// tool. The one table a later ruling changes: every instruction and
-/// deception rule may be lifted (SCREENING-SKIP-OVERRIDE-SCOPE = A); an
+/// deception rule and the secret-shaped string may be lifted
+/// (SCREENING-SKIP-OVERRIDE-SCOPE = A, SCREENING-SECRET-OVERRIDE = B); an
 /// unresolved schema cannot install, and the text bound is a size limit
-/// that becomes an owner Setting rather than a per-tool lift. The
-/// secret-shaped string (SCREENING-SECRET-OVERRIDE = B) turns liftable with
-/// the readers that honour [`OwnerAcceptedScreen::public_secret_shape`]:
-/// the secret lift census and the redacted export read the key record's
-/// manifest copy of the schema, not the slate.
+/// that becomes an owner Setting rather than a per-tool lift. A lifted
+/// secret-shaped string ([`OwnerAcceptedScreen::public_secret_shape`]) marks
+/// the tool's row in the key's resolved manifest public, owner-accepted at
+/// install, and the secret lift census reads the key without its strings
+/// (PR C2). A redacted export still nulls it, as every secret-shaped string
+/// (SCREENING-C2-EXPORT-SCOPE = B).
 pub const SCREEN_RULES: [ScreenRuleRow; 9] = [
     ScreenRuleRow {
         rule: ScreenRule::SecretShapedString,
         reason: "secret-shaped string",
-        owner_may_lift: false,
+        owner_may_lift: true,
     },
     ScreenRuleRow {
         rule: ScreenRule::TextBound,
@@ -201,15 +203,20 @@ impl OwnerAcceptedScreen {
         })
     }
     /// This acceptance still covers `skipped`: the tool keeps the accepted
-    /// digest and trips no rule outside the accepted ones.
+    /// digest, trips no rule outside the accepted ones, and every accepted
+    /// rule is still one the owner may lift ([`SCREEN_RULES`]), so a rule the
+    /// table turns skip-only keeps the tool out again (review-1 F1).
     pub fn covers(&self, skipped: &SkippedConnectorTool) -> bool {
         self.tool_digest == skipped.digest
+            && self.rules.iter().all(|rule| rule.owner_may_lift())
             && skipped.rules.iter().all(|rule| self.rules.contains(rule))
     }
     /// The tool's stored strings are public, owner-accepted at install: the
-    /// owner accepted a secret-shaped string in them, so a secret scanner or
-    /// an export redaction does not raise them again as a leak (RULING
-    /// SCREENING-SECRET-OVERRIDE = B).
+    /// owner accepted a secret-shaped string in them, so the admission host
+    /// marks the tool's manifest row public and the secret lift census does
+    /// not raise them again as a leak (RULING SCREENING-SECRET-OVERRIDE = B;
+    /// PR C2). A redacted export still nulls them (SCREENING-C2-EXPORT-SCOPE
+    /// = B).
     pub fn public_secret_shape(&self) -> bool {
         self.rules.contains(&ScreenRule::SecretShapedString)
     }

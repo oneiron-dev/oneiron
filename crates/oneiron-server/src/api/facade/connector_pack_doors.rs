@@ -180,7 +180,8 @@ fn observed(
     if let Some(reason) = server.vault().screen_connector_tools(&screened, &name)? {
         return Err(invalid(&reason));
     }
-    let resolved = host::resolve(&discovery.tools)?;
+    // The pack doors screen whole: no tool is accepted, none is marked public.
+    let resolved = host::resolve(&discovery.tools, &std::collections::BTreeMap::new())?;
     let classes = declared
         .tools
         .iter()
@@ -460,7 +461,8 @@ pub(crate) async fn vault_packs_connector_qualify(
                         auth,
                         Some(&input.basis.protocol_revision),
                     )?;
-                    let manifest = host::resolve(&discovery.tools)?;
+                    let manifest =
+                        host::resolve(&discovery.tools, &std::collections::BTreeMap::new())?;
                     let connector = host::HttpQualificationConnector::new(
                         &client,
                         &endpoint,

@@ -136,6 +136,7 @@ pub mod run_lifecycle;
 pub mod scope_summary;
 pub mod scratchpad_wake;
 pub mod seat_park_model_step;
+pub mod secret_lift_census;
 pub mod setting;
 pub mod setting_keys;
 pub mod shared_act_family;

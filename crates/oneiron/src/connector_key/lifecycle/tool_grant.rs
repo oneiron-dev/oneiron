@@ -131,6 +131,10 @@ struct AdmittedCatalog {
     revision: String,
     report_hash: String,
     slate: ConnectorGrantSlate,
+    /// The catalog's approved rows the owner accepted as public at install
+    /// ([`ResolvedConnectorManifest::public_secret_shape_tools`]), without
+    /// their permissions: the shape a per-grant key's row takes.
+    public_rows: Vec<ConnectorToolSchema>,
 }
 
 impl Vault {
@@ -183,7 +187,7 @@ impl Vault {
             {
                 return Err(invalid("the slate allows no such tool"));
             }
-            let manifest = tool_snapshot(&admitted.slate, &row.tool)?;
+            let manifest = derived_snapshot(&admitted, &row.tool)?;
             let mut endpoints =
                 self.live_endpoint_union_in_txn(wtxn, &principal_ref, &admitted.server, &row.tool)?;
             endpoints.insert(consent.endpoint.clone());
@@ -313,7 +317,11 @@ impl Vault {
                     .slate
                     .row(&entry.name)
                     .is_some_and(|row| row.enabled())
-                    && tool_snapshot(&admitted.slate, &entry.name).ok().as_ref() == Some(snapshot)
+                    // A public mark is the owner's acceptance, not the
+                    // tool: a key minted before or after it is still the
+                    // tool's key.
+                    && derived_snapshot(admitted, &entry.name)
+                        .is_ok_and(|ours| ours.declared() == snapshot.declared())
                     && approved_manifest_pins(catalog, &admitted.slate, &entry.name))
                 .then(|| (admitted, entry.name.clone()))
             });
@@ -332,7 +340,7 @@ impl Vault {
             let mut next = if current {
                 record
             } else {
-                derived_admission(record, tool_snapshot(&admitted.slate, &tool)?, admitted, at)?
+                derived_admission(record, derived_snapshot(admitted, &tool)?, admitted, at)?
             };
             // A staged change to the key's tool is mirrored onto the key, so
             // its calls confirm first as the catalog's own do; the key is
@@ -622,6 +630,32 @@ fn admitted_from_record(
         revision,
         report_hash: receipt.report_hash.clone(),
         slate,
+        public_rows: record
+            .retained_manifest
+            .iter()
+            .flat_map(ResolvedConnectorManifest::public_secret_shape_tools)
+            .map(|row| ConnectorToolSchema {
+                permissions: BTreeSet::new(),
+                ..row.clone()
+            })
+            .collect(),
+    })
+}
+
+/// A per-grant key's one-tool manifest ([`tool_snapshot`]), its row marked
+/// public, owner-accepted at install, when it is the catalog's public row of
+/// the tool without its permissions: every string of it is one the owner
+/// accepted (review-c2 F3). The mark binds this row.
+fn derived_snapshot(admitted: &AdmittedCatalog, tool: &str) -> Result<ResolvedConnectorManifest> {
+    let snapshot = tool_snapshot(&admitted.slate, tool)?;
+    let accepted = snapshot
+        .tools()
+        .iter()
+        .all(|row| admitted.public_rows.contains(row));
+    Ok(if accepted {
+        snapshot.with_public_secret_shape([tool])
+    } else {
+        snapshot
     })
 }
 

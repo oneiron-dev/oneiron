@@ -42,6 +42,8 @@ pub(crate) use self::frontier::{propose_typed_body_at_in_txn, typed_body_at_prop
 pub use self::projection::secret_lift_as_owner_toward;
 /// A masked repo read checks a blob's own record as the sweep does (FIX 8966).
 pub(in crate::batch::secret_scan) use self::proposals::owner_kept_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::records::census_hit_in_txn;
 pub(crate) use self::sync_text::propose_sync_text_in_txn;
 
 use std::borrow::Cow;

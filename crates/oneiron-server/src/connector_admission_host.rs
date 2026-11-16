@@ -306,12 +306,15 @@ impl Discovery {
         if let Some(reason) = screen.refused.take() {
             return Ok(Err(reason));
         }
-        screen
-            .skipped
-            .retain(|skip| !choices.admitted.contains(skip.tool.as_str()));
+        // A held acceptance is read first, so an admitted tool it still
+        // covers is named in `accepted` too and its manifest row marked
+        // public where the acceptance lifted a secret-shaped string (PR C2).
         if let Some(held) = choices.held {
             screen.keep_owner_accepted(held);
         }
+        screen
+            .skipped
+            .retain(|skip| !choices.admitted.contains(skip.tool.as_str()));
         for (tool, seen) in choices.install_anyway.into_iter().flatten() {
             if let Err(reason) = screen.accept_owner(tool, seen) {
                 return Ok(Err(reason));
@@ -356,9 +359,26 @@ pub(crate) fn discover(
 /// admits (ARCH-0072). Elicitation is a client capability: `initialize`
 /// carries no server flag for it, and the call host decides per revision
 /// whether to declare it on the wire.
-pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnectorManifest> {
-    ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect())
-        .map(|manifest| manifest.with_elicitation(true))
+///
+/// Each tool `accepted` names whose acceptance lifted a secret-shaped string
+/// is marked public, owner-accepted at install, at its row as resolved
+/// (RULING SCREENING-SECRET-OVERRIDE = B; PR C2): the secret lift census
+/// does not raise those strings again. `accepted` is a screen's answer, so
+/// it names only tools the owner accepted at the digest listed now.
+pub(crate) fn resolve(
+    tools: &[ListedTool],
+    accepted: &BTreeMap<String, OwnerAcceptedScreen>,
+) -> oneiron::Result<ResolvedConnectorManifest> {
+    ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect()).map(
+        |manifest| {
+            manifest.with_elicitation(true).with_public_secret_shape(
+                accepted
+                    .iter()
+                    .filter(|(_, acceptance)| acceptance.public_secret_shape())
+                    .map(|(tool, _)| tool.as_str()),
+            )
+        },
+    )
 }
 
 /// What the owner names for one tool at registration. MCP declares none of it.
@@ -527,6 +547,11 @@ impl QualificationConnection for HttpQualificationConnection<'_> {
     }
 
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
+        // A tool the screen keeps out is outside the manifest the owner
+        // stamped: no probe calls it, whatever the plan names (review-1 F2).
+        if self.kept_out.contains(&request.name) {
+            return Err(QualificationFailure::Envelope);
+        }
         let body = json!({
             "jsonrpc": "2.0",
             "id": request.id,

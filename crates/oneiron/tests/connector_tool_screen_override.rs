@@ -4,9 +4,10 @@
 //! Nov). A skipped tool names every rule it trips and its digest; the owner's
 //! acceptance at that digest admits it while every rule it trips may be
 //! lifted; the acceptance keeps admitting it only while the tool is
-//! unchanged; an unresolved schema and the text bound stay skip-only, and
-//! the secret-shaped string too until the readers that honour its flag
-//! land.
+//! unchanged; an unresolved schema and the text bound stay skip-only. The
+//! secret-shaped string turned liftable in PR C2, with the census reader
+//! that honours its flag (tests/connector_key_public_secret_shape.rs); at
+//! PR C the secret case and the rule-table case fail.
 //!
 //! At the base (PR B) this file does not compile: `rules`, `digest`,
 //! `owner_may_install`, `accepted`, `accept_owner`, `keep_owner_accepted` and
@@ -163,7 +164,7 @@ fn an_acceptance_at_another_digest_is_refused() {
 }
 
 #[test]
-fn a_secret_shaped_string_is_named_and_stays_skip_only_for_now() {
+fn a_secret_shaped_string_may_be_accepted_and_marks_the_tool_public() {
     let (_dir, vault) = fixture();
     let mut screen = each(&vault, &[secret_shaped("docs_token")]);
     let skip = screen.skipped[0].clone();
@@ -171,17 +172,12 @@ fn a_secret_shaped_string_is_named_and_stays_skip_only_for_now() {
         skip.rules.contains(&ScreenRule::SecretShapedString),
         "{skip:?}"
     );
-    assert!(!skip.owner_may_install);
-    let refused = screen
+    assert!(skip.owner_may_install);
+    screen
         .accept_owner("docs_token", &skip.digest)
-        .expect_err("skip-only until the readers honour the flag");
-    assert!(refused.contains("cannot be installed anyway"), "{refused}");
-    // The flag the readers will read.
-    let accepted = OwnerAcceptedScreen {
-        tool_digest: skip.digest,
-        rules: skip.rules,
-    };
-    assert!(accepted.public_secret_shape());
+        .expect("SCREENING-SECRET-OVERRIDE = B: the owner may lift it");
+    assert!(screen.admits("docs_token"));
+    assert!(screen.accepted["docs_token"].public_secret_shape());
 }
 
 #[test]
@@ -234,6 +230,30 @@ fn a_held_acceptance_admits_the_unchanged_tool_and_not_a_changed_one() {
     assert_eq!(later.skipped[0].tool, "docs_send");
 }
 
+/// review-1 F1: a held acceptance naming a rule the table does not let the
+/// owner lift (a row kept from before the table turned the rule skip-only)
+/// covers nothing, so the tool is kept out again. Red at PR C (f5cf5d3018c5):
+/// `covers` read only the digest and the rule set.
+#[test]
+fn a_held_acceptance_of_a_skip_only_rule_covers_nothing() {
+    let (_dir, vault) = fixture();
+    let long = oversized("docs_long");
+    let mut screen = each(&vault, std::slice::from_ref(&long));
+    let skip = screen.skipped[0].clone();
+    assert!(skip.rules.contains(&ScreenRule::TextBound), "{skip:?}");
+    let held = BTreeMap::from([(
+        "docs_long".to_owned(),
+        OwnerAcceptedScreen {
+            tool_digest: skip.digest.clone(),
+            rules: skip.rules.clone(),
+        },
+    )]);
+    assert!(!held["docs_long"].covers(&skip));
+    screen.keep_owner_accepted(&held);
+    assert!(!screen.admits("docs_long"), "{screen:?}");
+    assert!(screen.accepted.is_empty());
+}
+
 #[test]
 fn the_digest_ignores_schema_key_order() {
     let mut reordered = clean("docs_read");
@@ -266,10 +286,6 @@ fn the_rule_table_lists_every_rule_once() {
         .collect();
     assert_eq!(
         skip_only,
-        [
-            ScreenRule::SecretShapedString,
-            ScreenRule::TextBound,
-            ScreenRule::UnresolvedSchema
-        ]
+        [ScreenRule::TextBound, ScreenRule::UnresolvedSchema]
     );
 }

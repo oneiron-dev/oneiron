@@ -5,6 +5,7 @@ use crate::connector_key::qualification::ConnectorQualificationReceipt;
 use crate::connector_key::{
     ConnectorGrantSlate, ConnectorIssuerHaltView, ConnectorKeyRecord, SlateRow, SlateToolManifest,
 };
+use crate::skill_hub::pack_catalog::OwnerAcceptedScreen;
 use crate::vault_shape::ShapePlanReach;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,12 @@ pub struct ConnectorSlateView {
     pub stamped: bool,
     pub facet_limit: Option<Vec<String>>,
     pub manifest: Vec<SlateToolManifest>,
+    /// The owner's "install it anyway" the slate holds, by tool: the digest
+    /// he saw and the rules he lifted. The stamp binds them with the
+    /// manifest, so the review shows them (FIX SCREENING-PER-TOOL-SKIP,
+    /// review-1 F3). Absent when the slate holds none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub owner_accepted: BTreeMap<String, OwnerAcceptedScreen>,
     pub rows: Vec<SlateRow>,
     /// What every actor can send now, and once a stamp of these rows lands
     /// and its keys qualify (ARCH-0070 `shape:reach-line`). It informs the
@@ -80,6 +87,7 @@ impl ConnectorSlateView {
                 .facet_limit()
                 .map(|facets| facets.iter().map(EntityId::to_hex).collect()),
             manifest: slate.manifest().to_vec(),
+            owner_accepted: slate.slate_manifest().owner_accepted.clone(),
             rows: slate.rows().to_vec(),
             reach,
         }
