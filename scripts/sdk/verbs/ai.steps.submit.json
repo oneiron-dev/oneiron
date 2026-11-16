@@ -2,7 +2,7 @@
   "name": "ai.steps.submit",
   "description": "Submit or resume one durable step, the owner's own or with live_run an agent's live run's: a model request with declared attempts, fallback and a schema-validated JSON result, or a run's typed decision answered by the ladder.",
   "input": "crate::llm::model_step::ModelStepSubmitRequest",
-  "output": "crate::llm::model_step::ModelStepReceipt",
+  "output": "crate::llm::model_step::StepSubmitAnswer",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.submit\", &input)?",
   "host_door": true,
   "host_door_lists": true,

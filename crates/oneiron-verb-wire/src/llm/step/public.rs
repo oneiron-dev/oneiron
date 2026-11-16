@@ -131,9 +131,25 @@ pub struct ModelStepReceipt {
     pub progression: Option<StepProgression>,
     /// None while an admitted request is running or recovering.
     pub result: Option<ModelStepResult>,
-    /// A decision step's typed answer, as the ladder read the step's
-    /// generation: on the submit that asked it, and on each retry of its
-    /// key. A receipt read alone carries none.
+}
+
+/// What `ai.steps.submit` answers: the step's receipt, and beside it a
+/// decision step's typed answer, as the ladder read the step's generation
+/// on the submit that asked it or on a retry of its key. A model step names
+/// no decision; `ai.steps.receipt` reads the receipt alone.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StepSubmitAnswer {
+    #[serde(flatten)]
+    pub receipt: ModelStepReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<oneiron_wake_contract::llm::decision::types::TypedDecision>,
+}
+
+impl From<ModelStepReceipt> for StepSubmitAnswer {
+    fn from(receipt: ModelStepReceipt) -> Self {
+        Self {
+            receipt,
+            decision: None,
+        }
+    }
 }

@@ -24,7 +24,7 @@ use oneiron::llm::decision::{
     Reversibility, SubmittedRead,
 };
 use oneiron::llm::model_step::{
-    DecisionStepSubmit, ModelStepReceipt, ModelStepResult, ModelStepSubmit,
+    DecisionStepSubmit, ModelStepReceipt, ModelStepResult, ModelStepSubmit, StepSubmitAnswer,
 };
 use oneiron::llm::{DurableStepError, Scope};
 use oneiron::memory::{MemoryError, MemoryResult};
@@ -53,7 +53,7 @@ pub(super) async fn decide_on_run(
     session: Option<EntityId>,
     handle: &str,
     input: DecisionStepSubmit,
-) -> MemoryResult<ModelStepReceipt> {
+) -> MemoryResult<StepSubmitAnswer> {
     let step = RunStep::hold(server, auth, session, handle).await?;
     let runtime = tokio::runtime::Handle::current();
     super::super::clock_ingress::run_blocking(move || step.decide(&runtime, input))
@@ -63,15 +63,15 @@ pub(super) async fn decide_on_run(
 
 impl RunStep {
     /// The run's typed question through the host's ladder, its one generation
-    /// the run's own step `input.step_key`: that step's receipt, with the
-    /// typed answer when the step kept a reply. A step that kept none (a
+    /// the run's own step `input.step_key`: that step's receipt, and the
+    /// typed answer beside it when the step kept a reply. A step that kept none (a
     /// budget trap, a park, a failure) answers its receipt alone, and a
     /// refusal of the step is the call's.
     fn decide(
         self,
         runtime: &tokio::runtime::Handle,
         input: DecisionStepSubmit,
-    ) -> MemoryResult<ModelStepReceipt> {
+    ) -> MemoryResult<StepSubmitAnswer> {
         let DecisionStepSubmit {
             step_key,
             decision,
@@ -175,7 +175,9 @@ impl RunStep {
             Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
             // The step kept no reply: its receipt, or its refusal, says why.
             Ok(GeneratedDecisions::Trapped) => {
-                return kept.unwrap_or_else(|| Err(internal("ai.steps.submit")));
+                return kept
+                    .unwrap_or_else(|| Err(internal("ai.steps.submit")))
+                    .map(StepSubmitAnswer::from);
             }
             Ok(GeneratedDecisions::Unread(_)) => return Err(internal("ai.steps.submit")),
             Err(DurableStepError::Engine(error)) => return Err(error.into()),
@@ -186,9 +188,11 @@ impl RunStep {
                 ));
             }
         };
-        let mut receipt = kept.ok_or_else(|| internal("ai.steps.submit"))??;
-        receipt.decision = decisions.into_iter().next();
-        Ok(receipt)
+        let receipt = kept.ok_or_else(|| internal("ai.steps.submit"))??;
+        Ok(StepSubmitAnswer {
+            receipt,
+            decision: decisions.into_iter().next(),
+        })
     }
 }
 
