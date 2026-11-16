@@ -158,8 +158,10 @@ pub fn cancel_root_request_as(
 /// request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no
 /// `carrier_role` the machine id is the request's word alone, and a surface
 /// names no machine by it.
+///
+/// An answer, so a reader built before a field was added still reads it: it
+/// refuses no field it does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,

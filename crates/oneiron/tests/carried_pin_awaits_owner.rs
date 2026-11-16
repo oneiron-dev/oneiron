@@ -37,8 +37,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AwaitedRoot, HostSlipIssuer, MachineDeviceClass, MachineOwnership, MachineRole,
-    OwnerRootView, RecoveryRootId, RootChange,
+    ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole, OwnerRootView,
+    RecoveryRootId, RootChange,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -334,7 +334,7 @@ fn a_hosts_pin_request_lists_the_host_as_its_carrier_and_never_as_the_owners_mac
         oneiron::authority::CarrierReading {
             machine: host_machine,
             role: Some(MachineRole::HostedNode),
-            device_class: Some(MachineDeviceClass::Computer),
+            device_class: Some(oneiron::authority::MachineDeviceClass::Computer),
             is_mine: false,
         },
         "the device's own records name the carrier: the vault's host, not his machine"
@@ -383,7 +383,7 @@ fn a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_
         oneiron::authority::CarrierReading {
             machine: device.machine,
             role: Some(MachineRole::Owned(MachineOwnership::Yours)),
-            device_class: Some(MachineDeviceClass::Computer),
+            device_class: Some(oneiron::authority::MachineDeviceClass::Computer),
             is_mine: true,
         },
         "an act the device's own key signed reads as his machine's"
