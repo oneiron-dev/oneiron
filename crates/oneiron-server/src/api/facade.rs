@@ -104,6 +104,7 @@ mod embedding_space_doors;
 // Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
 mod engine_control_doors;
 mod errors;
+mod esign_rules_doors;
 mod eval_doors;
 pub(super) mod export_transfer;
 mod extraction_doors;
@@ -289,6 +290,7 @@ pub(crate) use host_doors::{
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;
+pub(crate) use model_step_doors::resume_parked_model_steps;
 pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
