@@ -15,12 +15,55 @@ pub struct HookArgs {
     pub event: HookEvent,
 }
 
+/// The harness whose hook runs (`docs/ops/client-session-hooks.md`). Every
+/// host's event is read for the same fields; the host decides how a reply
+/// is printed and which `oneiron import` reads its session log.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum HookHost {
+    /// Claude Code (`plugins/claude-code/hooks/hooks.json`): plain text on
+    /// stdout joins the session's context; its logs are Claude Code sessions.
     ClaudeCode,
+    /// OpenAI Codex (`plugins/agent-plugins/com.openai/hooks/hooks.json`):
+    /// plain text on stdout joins the session's context, as for Claude Code;
+    /// its logs are Codex rollouts.
+    Codex,
+    /// Cursor (`plugins/cursor/hooks/hooks.json`): it reads one JSON object
+    /// with `additional_context`; its logs are hook transcripts.
+    Cursor,
+    /// GitHub Copilot in VS Code and the Copilot CLI
+    /// (`plugins/agent-plugins/com.github.copilot/hooks/hooks.json`): it
+    /// reads one JSON object with `additionalContext`; its logs are hook
+    /// transcripts.
+    Copilot,
     /// Hermes Agent's memory-provider plugin (`packages/oneiron-hermes`). It
     /// asks only `bind`, and reads and writes through the Python SDK.
     Hermes,
+}
+
+impl HookHost {
+    /// The name `--host` takes.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::Cursor => "cursor",
+            Self::Copilot => "copilot",
+            Self::Hermes => "hermes",
+        }
+    }
+
+    /// The harness's own name, as a person reads it.
+    #[must_use]
+    pub const fn product_name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Claude Code",
+            Self::Codex => "Codex",
+            Self::Cursor => "Cursor",
+            Self::Copilot => "GitHub Copilot",
+            Self::Hermes => "Hermes Agent",
+        }
+    }
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -32,7 +75,8 @@ pub enum HookEvent {
     /// the hook is set up). Never starts a server.
     Prompt(HookRecallArgs),
     /// Queue the session's log for the running `serve` to import
-    /// (`PreCompact`, `Stop`, `SessionEnd`).
+    /// (`PreCompact`, `Stop`, `SessionEnd`), by the import that reads the
+    /// host's logs.
     HandOver(HookHandOverArgs),
     /// Bind a vault for a session, in the same order as `session-start`, and
     /// print `{"url", "lines"}` as one JSON line: a plugin that runs in its
