@@ -300,7 +300,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
             .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
         {
             Some((_, home_door)) => format!(
-                "{home_door}(actor.actor_ref, actor.actor_class, proof, actor.destination(), None, input, actor.home_caller())"
+                "{home_door}(actor.actor_ref, actor.actor_class, proof, actor.destination(), None, input, actor.home_caller(), server.vault().model_call_keeps_no_record_for(actor.off_record_session.as_deref(), crate::api::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref)))"
             ),
             None => format!(
                 "{}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)",
