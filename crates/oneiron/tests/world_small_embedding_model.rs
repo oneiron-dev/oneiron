@@ -21,8 +21,8 @@ use oneiron::embed::{
     payload_text,
 };
 use oneiron::memory::{
-    AllRelationships, AssetIngestRequest, ClaimRelationships, ClaimScope, IndexedRevisionEmbedder,
-    IndexedRevisionInput, ScopedClaimInput,
+    AllRelationships, AssetIngestRequest, ClaimInput, ClaimRelationships, ClaimScope,
+    IndexedRevisionEmbedder, IndexedRevisionInput, ScopedClaimInput,
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use oneiron::store::GateDecisionId;
@@ -1441,6 +1441,78 @@ fn joining_a_world_drops_the_vault_index_vector() {
             .expect("world-space vector read")
             .is_some(),
         "W's asset gets its vector in S after the media pass",
+    );
+}
+
+/// Pipeline review round 2 of #8280 (P1, world_space.rs:288): a claim a model wrote from a
+/// prompt that carried a row carries that row's worlds (FIX 8192), so when the row joins a world
+/// with its own text space by an edge alone, the claim's vault-index vector goes too.
+#[test]
+fn a_claim_prompted_by_a_row_that_joins_a_world_drops_the_vault_index_vector() {
+    let fixture = world_space_fixture();
+    let asset = ingest_text_asset(
+        &fixture,
+        EntityId::now(),
+        "YSB0ZXh0IGFzc2V0IGEgbW9kZWwgcHJvbXB0IGNhcnJpZWQ=",
+    );
+    let person = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let claim = EntityId::now();
+    let text = "a model's words from a prompt that carried the unscoped asset";
+    fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner)
+        .claim_propose_prompted(
+            &ClaimInput {
+                id: Some(claim.to_hex()),
+                predicate: "profile.preference".to_owned(),
+                subject_ref: person.to_hex(),
+                value: json!(text),
+                confidence: 1.0,
+                source: "tool_output".to_owned(),
+                world_ref: None,
+                relationship_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: None,
+                learned_at: None,
+                salience: None,
+                confidence_details: None,
+            },
+            "test.prompted_claim",
+            &[asset],
+            &[b"a text asset a model prompt carried"],
+        )
+        .expect("a base claim whose birth names the asset as a prompt input");
+    fixture
+        .vault
+        .put_vector(&claim, &text_vector(text.as_bytes()))
+        .expect("owner writes a vector for the prompted claim");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&claim)
+            .expect("claim vector read")
+            .is_some(),
+        "C holds a vault-index vector while its prompt input is unscoped",
+    );
+    fixture
+        .vault
+        .batch()
+        .edge(&asset, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner moves the prompt input into W");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&claim)
+            .expect("claim vector read after its prompt input joined W")
+            .is_none(),
+        "a claim whose prompt carried a row that joins a world with its own text space keeps no vault-index vector",
     );
 }
 
