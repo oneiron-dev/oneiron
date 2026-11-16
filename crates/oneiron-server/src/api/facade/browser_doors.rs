@@ -550,17 +550,62 @@ pub(crate) async fn self_browser_handover(
 
 /// FIX 7664: the HTTP status of a typed browser refusal, so a press the owner
 /// owes or a page that did not answer in time does not read as this server's
-/// fault. The codes are `oneiron_browser::BrowserError::code`'s; `None` leaves
-/// every other code to the facade's own mapping.
+/// fault. The codes are `oneiron_browser::BrowserError::code`'s and the run
+/// guest's admission codes (`RunGuests::guest_admits`); each has its status
+/// (BROWSER-REFUSAL-STATUS-GAP). `None` leaves every other code to the
+/// facade's own mapping: `browser_library_failed`, the workflow library's
+/// own failure, stays this server's.
 pub(super) fn browser_refusal_status(code: &str) -> Option<StatusCode> {
     Some(match code {
-        "needs_press" => StatusCode::CONFLICT,
+        // The state of the page, the run's guest or its routine stands in
+        // the call's way, and the refusal names what changes it: a press the
+        // owner owes, a person holding the browser or the desktop, a ref, an
+        // image or a site skill's seed the page has since changed under, a
+        // target another element covers, a tree walk that never reached the
+        // row, a routine step handed up to its planner.
+        "needs_press"
+        | "browser_taken_over"
+        | "desktop_taken_over"
+        | "browser_stale_ref"
+        | "browser_stale_image"
+        | "browser_covered"
+        | "desktop_tree_cut"
+        | "routine_ask_up"
+        | "browser_site_skill" => StatusCode::CONFLICT,
+        // The vault's own setup of the browser: its connector pack is not
+        // installed, or its guest connection not checked. The owner's setup
+        // changes it; a call again before that meets it again.
+        "browser_pack_not_installed" | "browser_connection_unchecked" => StatusCode::CONFLICT,
         "browser_timeout" => StatusCode::GATEWAY_TIMEOUT,
-        "browser_url_refused" | "browser_destination_refused" => StatusCode::FORBIDDEN,
-        "browser_input_invalid" => StatusCode::UNPROCESSABLE_ENTITY,
-        // The host refused the secret a call named (FIX 8341).
-        "browser_secret_refused" => StatusCode::FORBIDDEN,
-        "browser_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+        // The host refused the destination or the secret a call named (FIX
+        // 8341).
+        "browser_url_refused" | "browser_destination_refused" | "browser_secret_refused" => {
+            StatusCode::FORBIDDEN
+        }
+        // The call's own input does not fit: malformed, an option the field
+        // does not hold, text a fill step could not resolve, or an act this
+        // engine does not serve (its words name the verb that does).
+        "browser_input_invalid"
+        | "browser_no_option"
+        | "browser_field_text"
+        | "browser_unsupported" => StatusCode::UNPROCESSABLE_ENTITY,
+        // An image handle or a workflow the call names that is not there.
+        "browser_no_image" | "browser_no_workflow" => StatusCode::NOT_FOUND,
+        // The workflow was retired, as the library's record proves.
+        "workflow_retired" => StatusCode::GONE,
+        // This host serves the run no browser now: none is configured, the
+        // guest would not start or is gone, or the host's memory floor admits
+        // no more live handles.
+        "browser_unbound"
+        | "browser_unavailable"
+        | "browser_guest_lost"
+        | "browser_guest_abandoned"
+        | "browser_memory_floor" => StatusCode::SERVICE_UNAVAILABLE,
+        // The page, the browser or the routine's decider answered with a
+        // failure of its own.
+        "browser_navigation_failed" | "browser_protocol" | "routine_decider_failed" => {
+            StatusCode::BAD_GATEWAY
+        }
         _ => return None,
     })
 }
