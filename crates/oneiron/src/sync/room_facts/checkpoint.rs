@@ -12,8 +12,8 @@ use super::erased::decode_held;
 use super::{carrier_key, decode, named};
 use crate::room_codec::offer_parts::{self, OfferManifest};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::{is_part_key, join_parts_from};
-use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified};
+use crate::sync::carrier_parts::join_parts_from;
+use crate::sync::checkpoint_payload::{Holder, PartLookup, Placement, SyncUnclassified};
 use crate::workspace_roster::RoomSideRow;
 
 /// A side row's actors and handles.
@@ -21,12 +21,9 @@ const SIDE_ROW_ACTORS: &str = "a room side row names actors or a platform handle
 
 /// Where the side row under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
-    // FIX 11790: a part goes with the manifest that lists it, and a manifest
-    // as its joined row goes, under the entity its key names: every key
-    // spells that entity second.
-    if is_part_key(key) {
-        return Placement::Part;
-    }
+    // FIX 11790: a manifest goes as its joined row goes, under the entity
+    // its key names: every key spells that entity second (a part, with the
+    // manifest that lists it: the map's row places it).
     if let Some(parts) = crate::sync::room_parts::manifest(value) {
         return match key.split('/').nth(1).and_then(named) {
             Some(rides) => Placement::Manifest {
@@ -62,11 +59,7 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
 /// `Some(false)` when it is another row. `None` for a value that is no
 /// manifest, for one whose parts do not all join, and for joined bytes
 /// that read as no side row: they prove no other row.
-pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
-    key: &str,
-    value: &[u8],
-    part: impl FnMut(&str) -> Option<B>,
-) -> Option<bool> {
+pub(in crate::sync) fn bound(key: &str, value: &[u8], part: PartLookup<'_>) -> Option<bool> {
     let joined = if offer_parts::is_manifest(value) {
         OfferManifest::parse(value)?.joined_from(part)?
     } else {

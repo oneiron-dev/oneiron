@@ -211,7 +211,7 @@ impl<'vault> OffRecordSession<'vault> {
         // this is the next landing's to find.
         recheck()?;
         let was = state.record.mode;
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
@@ -229,7 +229,8 @@ impl<'vault> OffRecordSession<'vault> {
             );
             self.entry.publish_state(&state);
         }
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// The route a write lands by now and, while the stretch is on record,
@@ -316,7 +317,7 @@ impl<'vault> OffRecordSession<'vault> {
         {
             return Ok(());
         }
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
@@ -330,7 +331,8 @@ impl<'vault> OffRecordSession<'vault> {
             hearing,
         );
         self.entry.publish_state(&state);
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// Stops the saving when this stretch is on record and its saver no

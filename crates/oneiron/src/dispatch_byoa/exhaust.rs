@@ -111,6 +111,11 @@ pub struct ByoaExhaust {
     /// The secrets injected while this output was produced. Empty is
     /// untainted.
     pub secret_taint_refs: Vec<SecretTaintRef>,
+    /// The session-manifest receipt of the runner that produced this output
+    /// on the host (canon `#runner-fence`): the runner fence's ruleset hash
+    /// where it was proven, `fence_unproven` where it was not. `None` for an
+    /// executor that starts no runner on the host.
+    pub session_manifest: Option<oneiron_container::SessionManifest>,
 }
 
 impl ByoaExhaust {
@@ -152,6 +157,7 @@ impl ByoaExhaust {
                 .transpose()?,
             checkpoint_frontier: self.checkpoint_frontier.clone(),
             secret_taint_refs: self.secret_taint_refs.clone(),
+            session_manifest: self.session_manifest.clone(),
         })
     }
 }
@@ -264,6 +270,10 @@ pub(super) struct ByoaExhaustWire {
     /// Empty is untainted and is not serialized.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     secret_taint_refs: Vec<SecretTaintRef>,
+    /// Absent for an executor that starts no runner on the host, and from a
+    /// capture written before runners carried one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_manifest: Option<oneiron_container::SessionManifest>,
 }
 
 impl ByoaExhaustWire {
@@ -284,6 +294,7 @@ impl ByoaExhaustWire {
             };
         Ok(self.checkpoint_frontier == exhaust.checkpoint_frontier
             && self.secret_taint_refs == exhaust.secret_taint_refs
+            && self.session_manifest == exhaust.session_manifest
             && matches(self.transcript.as_ref(), exhaust.transcript.as_ref())?
             && matches(Some(&self.stdout), Some(&exhaust.stdout))?
             && matches(Some(&self.stderr), Some(&exhaust.stderr))?
@@ -305,6 +316,7 @@ impl ByoaExhaustWire {
             diff_bundle: self.diff_bundle.map(resolve).transpose()?,
             checkpoint_frontier: self.checkpoint_frontier,
             secret_taint_refs: self.secret_taint_refs,
+            session_manifest: self.session_manifest,
         })
     }
 }

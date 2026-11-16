@@ -1,5 +1,9 @@
-//! Whom `oneiron mcp`'s requests run as (FIX 5540): a paired slip, or the
-//! vault's owner himself by the sign-in an authenticated surface issued.
+//! Whom `oneiron mcp`'s requests run as (FIX 5540): a paired slip, the
+//! vault's owner himself by the sign-in an authenticated surface issued, or
+//! the OAuth sign-in `oneiron hosted login` made there as a native app
+//! ([`crate::commands::oauth_sign_in`]), whose access token goes over HTTP
+//! alone: the server's socket upgrade takes a slip or the owner's sign-in,
+//! never an OAuth token.
 //!
 //! Owner mode reads that sign-in from an owner-only file: one JSON object of
 //! header names to text values, which the socket's upgrade carries in place
@@ -21,6 +25,7 @@ use std::path::{Path, PathBuf};
 use tokio_tungstenite::tungstenite::http::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::cli::{McpArgs, McpAuthMode, McpTransport};
+use crate::commands::oauth_sign_in::OAuthSession;
 use crate::commands::{api, credential_file};
 use oneiron_vault_contract::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
 
@@ -31,6 +36,9 @@ pub(super) enum Auth {
     Slip { token: String, seed: String },
     /// The vault's owner, by the upgrade headers this file holds.
     Owner { headers_file: PathBuf },
+    /// An OAuth agent of the vault, by the sign-in this session reads and
+    /// refreshes.
+    OAuth { session: OAuthSession },
 }
 
 impl Auth {
@@ -42,7 +50,31 @@ impl Auth {
         match args.auth_mode {
             McpAuthMode::Slip => Self::slip(args),
             McpAuthMode::Owner => Self::owner(args),
+            McpAuthMode::OAuth => Self::oauth(args),
         }
+    }
+
+    /// Whether this credential goes over HTTP alone.
+    pub(super) const fn http_only(&self) -> bool {
+        matches!(self, Self::OAuth { .. })
+    }
+
+    fn oauth(args: &McpArgs) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            args.credential_file.is_none() && args.owner_upgrade_headers_file.is_none(),
+            "oauth mode runs as the OAuth sign-in in --oauth-token-file alone; drop \
+             --credential-file and --owner-upgrade-headers-file, or pass the --auth-mode \
+             they belong to"
+        );
+        let path = args.oauth_token_file.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "oauth mode needs --oauth-token-file: the sign-in `oneiron hosted login \
+                 --origin <url>` wrote for this vault"
+            )
+        })?;
+        // Read once now, so a file that is not admitted fails at spawn.
+        let session = OAuthSession::open(path, tokio::runtime::Handle::try_current()?)?;
+        Ok(Self::OAuth { session })
     }
 
     fn slip(args: &McpArgs) -> anyhow::Result<Self> {
@@ -50,6 +82,11 @@ impl Auth {
             args.owner_upgrade_headers_file.is_none(),
             "--owner-upgrade-headers-file is the owner's sign-in, which slip mode does not \
              read; pass --auth-mode owner with it"
+        );
+        anyhow::ensure!(
+            args.oauth_token_file.is_none(),
+            "--oauth-token-file is an OAuth sign-in, which slip mode does not read; pass \
+             --auth-mode oauth with it"
         );
         let (token, seed) = match &args.credential_file {
             Some(path) => {
@@ -78,6 +115,11 @@ impl Auth {
             args.credential_file.is_none(),
             "--credential-file names a paired slip, and owner mode runs as the vault's owner \
              with no slip; drop it, or pass --auth-mode slip"
+        );
+        anyhow::ensure!(
+            args.oauth_token_file.is_none(),
+            "--oauth-token-file is an OAuth sign-in, and owner mode runs as the vault's owner \
+             by his own; drop it, or pass --auth-mode oauth"
         );
         for name in [&args.secret_env, &args.binding_key_env] {
             anyhow::ensure!(
@@ -112,6 +154,9 @@ impl Auth {
             }
             Self::Owner { .. } => {
                 "the server refused the owner's sign-in before MCP; check --url names the vault it was issued for. If it expired or was signed out, sign in again on the surface that wrote --owner-upgrade-headers-file, so it rewrites that file (owner-only); a later request opens a fresh socket with it"
+            }
+            Self::OAuth { .. } => {
+                "the server refused the OAuth sign-in before MCP, after one refresh; check --url names the vault it was made at. If the owner revoked it in his consent registry, or it lapsed, sign in again with `oneiron hosted login --origin <url>`, which rewrites --oauth-token-file"
             }
         }
     }
