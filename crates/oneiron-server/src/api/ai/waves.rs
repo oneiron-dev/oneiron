@@ -281,7 +281,7 @@ pub(super) async fn status(
     match AttemptQueue::new(server.vault()).get(id) {
         Ok(Some(attempt)) if attempt.kind == WAVE_PLAN_ATTEMPT_KIND => {
             // The agent reads a wave whose epic it can read.
-            if let Some(agent) = agent {
+            if agent.is_some() {
                 let readable = wave_epic(&attempt)
                     .and_then(|epic| auth.can_read_entity(server.vault(), &epic).ok())
                     .unwrap_or(false);
