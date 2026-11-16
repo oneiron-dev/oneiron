@@ -19,6 +19,8 @@ pub(crate) struct TranscriptRetainedCaller {
     run_origin: Option<StoredRunOrigin>,
     transport: bool,
     credential: bool,
+    #[serde(default)]
+    handed_on_credential: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,6 +54,7 @@ struct StoredRunOrigin {
 
 impl Memory<'_> {
     pub(crate) fn retain_transcript_caller(&self) -> MemoryResult<TranscriptRetainedCaller> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let room = self.room_turn.as_ref().map(|turn| {
             let terms = turn.terms.get();
             StoredRoom {
@@ -106,6 +109,7 @@ impl Memory<'_> {
             run_origin,
             transport: self.transport_invocation,
             credential: self.credential,
+            handed_on_credential: self.handed_on_credential,
         })
     }
 }
@@ -117,8 +121,10 @@ impl TranscriptRetainedCaller {
         actor: EntityId,
         class: crate::edge::EdgeActorClass,
     ) -> MemoryResult<Memory<'v>> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let mut memory = vault.memory(actor, class);
         memory.read_proof = self.read_proof.as_ref().map(StoredReadProof::restore);
+        memory.handed_on_credential = self.handed_on_credential;
         if let Some(action) = &self.host_action {
             memory = memory.with_host_action_authority(&action.restore())?;
         }

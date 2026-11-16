@@ -157,9 +157,11 @@ pub struct EsignDispatchView {
 
 impl Memory<'_> {
     fn signing_caller(&self) -> super::SigningCaller {
-        match self.actor_class() {
-            crate::edge::EdgeActorClass::Human => super::SigningCaller::Person,
-            _ => super::SigningCaller::Agent,
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.acts_as_own_person() {
+            super::SigningCaller::Person
+        } else {
+            super::SigningCaller::Agent
         }
     }
 

@@ -276,7 +276,8 @@ fn asker_in_txn(
     {
         return Err(refused("the caller's credential is no longer live"));
     }
-    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, class)? {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if memory.is_vault_owner_in_txn(txn)? {
         if !crate::consent::person_is_live_in_txn(vault, txn, &actor)? {
             return Err(refused("the vault owner is not a live person"));
         }

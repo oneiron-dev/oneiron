@@ -54,7 +54,8 @@ impl ClaimSettler<'_> {
                 })
             }
             Self::Grant(grant_ref) => {
-                let actor = WriteActor::new(memory.actor, memory.actor_class);
+                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                let actor = memory.bound_write_actor();
                 verify_live_actor(memory.vault, txn, actor)?;
                 match memory.presented_credential() {
                     Some(proof) => {

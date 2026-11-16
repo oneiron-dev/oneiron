@@ -205,9 +205,10 @@ pub(super) fn distill_session(
 /// The birth `writer` stamps on a note it distilled at `at` (FIX 329): a
 /// conclusion made from the turns the note cites.
 fn distill_birth(writer: WriteActor, turns: &[EntityId], at: u64) -> Option<RowBirth> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     RowBirth::written(
         writer,
-        MadeByClass::of_writer(writer.actor_class()),
+        MadeByClass::of_write_actor(writer),
         DISTILL_BIRTH_DOOR,
         turns,
         &[],

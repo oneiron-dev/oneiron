@@ -5,7 +5,6 @@
 use base64::Engine as _;
 
 use super::{ArtifactView, BlobArtifactBody, BlobBodyFile, BlobVersionProvenance};
-use crate::edge::EdgeActorClass;
 use crate::memory::Memory;
 use crate::temporal::TimeRange;
 use crate::write_envelope::provenance::made_by::MadeBy;
@@ -66,13 +65,12 @@ impl Memory<'_> {
             .transpose()
             .map_err(|_| MemoryError::bad_request("made_by is not a made_by envelope"))?;
         let actor = self.write_actor();
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let provenance = match &input.run_ref {
             Some(run_ref) => BlobVersionProvenance::AgentRun {
                 run_ref: run_ref.clone(),
             },
-            None if actor.actor_class() == EdgeActorClass::Human => {
-                BlobVersionProvenance::UserUpload
-            }
+            None if actor.acts_as_own_person() => BlobVersionProvenance::UserUpload,
             None => {
                 return Err(MemoryError::bad_request(
                     "an agent's version names its run_ref",

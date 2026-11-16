@@ -99,7 +99,8 @@ pub(crate) fn is_steward_in_txn(
 }
 
 fn caller_of(memory: &Memory<'_>) -> WriteActor {
-    WriteActor::new(memory.actor(), memory.actor_class())
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    memory.bound_write_actor()
 }
 
 pub(crate) fn not_the_callers(verb: &str) -> MemoryError {

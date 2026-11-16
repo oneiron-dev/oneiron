@@ -464,7 +464,8 @@ fn caller_proof(memory: &Memory<'_>, verb: &str) -> MemoryResult<AuthenticatedOw
         .map_err(|_| refused())?;
     match memory.presented_credential() {
         Some(slip) => Ok(vault.bind_person_credential(person, slip.clone())?),
-        None if memory.native_invocation() => Ok(person),
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        None if memory.native_invocation() && memory.acts_as_own_person() => Ok(person),
         None => Err(refused()),
     }
 }

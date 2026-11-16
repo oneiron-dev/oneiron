@@ -117,7 +117,8 @@ pub(super) fn private_thread_delete_in(
             ThreadDelete::Admin
         }
     };
-    if actor.actor_class() != crate::EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if !actor.acts_as_own_person() {
         return Ok(None);
     }
     authorize(vault, txn, actor)?;

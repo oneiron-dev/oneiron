@@ -15,10 +15,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::conversation::RoomRole;
 use crate::error::{ClaimError, Error};
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::{EdgeActorClass, EntityId};
 
 const ROLE_BY_PERSON: &str = "a person sets a member's room role, never an agent";
 
@@ -58,7 +58,8 @@ impl Memory<'_> {
     ) -> MemoryResult<RoomMemberRoleReceipt> {
         let vault = self.vault();
         let caller = self.write_actor();
-        if caller.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !caller.acts_as_own_person() {
             return Err(MemoryError::from(Error::Claim(
                 ClaimError::ActorLacksClaimAuthority {
                     reason: ROLE_BY_PERSON,

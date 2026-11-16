@@ -139,14 +139,14 @@ pub fn non_base_world_claim_fraction_as_holder(
 pub fn read_non_base_world_claim_fraction(
     memory: &Memory<'_>,
 ) -> MemoryResult<NonBaseWorldClaimFraction> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner(READ_VERB) {
         Ok(owner) => Ok(memory
             .vault()
             .non_base_world_claim_fraction_as_owner(&owner)?),
-        Err(_) => non_base_world_claim_fraction_as_holder(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-        ),
+        Err(_) => {
+            non_base_world_claim_fraction_as_holder(memory.vault(), memory.bound_write_actor())
+        }
     }
 }
 

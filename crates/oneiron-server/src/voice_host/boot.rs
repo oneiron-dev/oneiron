@@ -56,7 +56,7 @@ use oneiron::voice_cascade::{
     VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
 };
 use oneiron::workspace_roster::RoomWork;
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault};
 use oneiron_vault_contract::{MANAGED_VOICE_NONCE_BYTES, ManagedOwnerAction};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -484,6 +484,7 @@ pub(super) fn prepare_call(
     let host_action = crate::api::host_action::host_action_of(vault, auth)
         .transpose()
         .map_err(|_| refused(Refusal::Owner))?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let payer = match &host_action {
         Some(action) => action.actor(),
         None => {
@@ -491,7 +492,7 @@ pub(super) fn prepare_call(
                 .principal_ref()
                 .and_then(|principal| EntityId::from_hex(principal).ok())
                 .ok_or_else(|| refused(Refusal::Principal))?;
-            WriteActor::new(actor, EdgeActorClass::Human)
+            auth.write_actor(actor, EdgeActorClass::Human)
         }
     };
     let actor = payer.entity_ref();

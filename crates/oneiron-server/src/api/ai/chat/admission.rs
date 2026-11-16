@@ -7,11 +7,11 @@ use super::{
     HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage, LlmMessageRole,
     MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started, StatusCode,
     StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall, WITNESS_ROW,
-    WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant, begin_sourced_answer,
-    compaction, credential_memory, hook_ask, hook_stopped, invocation, keepalive_every,
-    mark_history_end, principal, recall, refused, resolve_entity_ref, room_launch_funding,
-    segments, sitting, sources, text_message, turn_generate_pre, verb_hook_boundary,
-    witness_through_row, witness_turn,
+    WakeTurnSubject, WitnessAuthor, after_turn, assistant, begin_sourced_answer, compaction,
+    credential_memory, hook_ask, hook_stopped, invocation, keepalive_every, mark_history_end,
+    principal, recall, refused, resolve_entity_ref, room_launch_funding, segments, sitting,
+    sources, text_message, turn_generate_pre, verb_hook_boundary, witness_through_row,
+    witness_turn,
 };
 use crate::api::ai::room_place::{reply_place, stamp_reply};
 
@@ -585,6 +585,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
     if session_binding.is_none() {
         reply_rows.push(turn);
     }
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     let answering = begin_sourced_answer(
         &server.ai,
         Answer {
@@ -605,7 +607,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             },
             mode,
             admitted,
-            payer: WriteActor::new(actor, class),
+            payer: writer,
             funding,
             budget_units: settings.turn_budget_units,
             credential: credential.clone(),
@@ -617,7 +619,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             // FIX 5033: its seed binds the user turn this request answers,
             // by the TURN and MESSAGE rows the witness above wrote.
             breakpoint: self_chat.map(|chat| {
-                let reader = WriteActor::new(actor, class);
+                let reader = writer;
                 let answered = written_turn.zip(written.clone()).map(|(turn, messages)| {
                     oneiron::conversation::ChatBreakpointUserTurn { turn, messages }
                 });
@@ -646,7 +648,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         context,
         turn,
         agent,
-        WriteActor::new(actor, class),
+        writer,
         session_key,
         answering,
     );

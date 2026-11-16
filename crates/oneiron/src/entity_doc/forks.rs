@@ -304,9 +304,10 @@ pub(super) fn covered(
 ) -> Result<bool> {
     validate_actor(vault, txn, actor)?;
     match auth {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         DocAuthorization::Owner(owner) => Ok(owner_in_txn(vault, txn, owner)?
             == actor.entity_ref()
-            && actor.actor_class() == crate::edge::EdgeActorClass::Human),
+            && actor.acts_as_own_person()),
         DocAuthorization::ProposeOnly => Ok(false),
         DocAuthorization::StandingGrant => {
             let target = format!("entity:{}", entity.to_hex());
@@ -470,6 +471,7 @@ pub(super) fn open_proposal_in_txn(
     sources: &[EntityId],
     delta_receipt: Option<&str>,
 ) -> Result<(ProposalBundle, Vec<LandedProse>)> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     // No count bounds a proposal or its operations (FIX 9844): the whole
     // ordered set lands or retains in this one transaction.
     if requests.is_empty() {
@@ -509,7 +511,7 @@ pub(super) fn open_proposal_in_txn(
         if let Some(text) = &req.rewrite {
             let text = admitted_text_in_txn(vault, txn, req.entity, text, &lifted, &mut plan)?;
             let base = fork.text();
-            fork.edit_with(stamp, at, sources, |body| {
+            fork.edit_with(stamp, req.actor, at, sources, |body| {
                 body.delete(0, body.len_unicode())
                     .map_err(|_| invalid("fork rewrite delete"))?;
                 body.insert(0, &text.stored)

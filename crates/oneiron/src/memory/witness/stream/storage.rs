@@ -104,6 +104,10 @@ pub(super) struct Seed {
     /// seed writes the field, so a stored seed without it does not decode.
     #[serde(deserialize_with = "required_read_proof")]
     pub read_proof: Option<crate::authority::StoredReadProof>,
+    /// Whether the opener acted as a handed-on credential's holder: the terminal reads as it
+    /// did. Old seeds without the field decode as false.
+    #[serde(default)]
+    pub handed_on_credential: bool,
 }
 /// Decodes [`Seed::read_proof`] whether it holds a proof or `None`; a seed
 /// missing the field is refused, never read as an opener with no proof.

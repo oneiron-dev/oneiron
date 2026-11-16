@@ -21,7 +21,6 @@ use crate::federation::{
     ArchiveDeleteRole, DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget,
 };
 use crate::secret_custody::EraseOwnerAct;
-use crate::write_envelope::WriteActor;
 use crate::{Vault, check_in};
 
 /// The saved verb a delete by reason is: the verb its check-in names (2k5).
@@ -558,7 +557,8 @@ impl Memory<'_> {
             self.verify_own_deletion_authority_in(&txn)?;
             preview.check_before_unshare(self.vault, &txn)?;
         }
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let actor = self.write_actor();
         for (share_id, _) in preview.shared_with() {
             self.vault
                 .revoke_share(share_id, &actor, self.vault.store.clock.now_recorded_at())?;

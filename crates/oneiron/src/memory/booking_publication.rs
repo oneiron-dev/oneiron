@@ -101,7 +101,8 @@ impl Memory<'_> {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> MemoryResult<()> {
-        if self.actor_class != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.acts_as_own_person() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "booking publication is an owner write",

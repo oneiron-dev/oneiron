@@ -273,9 +273,9 @@ pub(crate) fn validate_ruling_claim(
     // Replay stores data; only the fold grants it administrative effect, once
     // referenced grants are present. Local authoring must bind a real envelope.
     let receipt = admitted_ruling(store, txn, id, body, learned_at)?.ok_or_else(invalid)?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     if !envelope.is_some_and(|e| {
-        e.actor().actor_class() == crate::EdgeActorClass::Human
-            && e.actor().entity_ref().to_hex() == receipt.ruling.holder
+        e.actor().acts_as_own_person() && e.actor().entity_ref().to_hex() == receipt.ruling.holder
     }) {
         return Err(invalid());
     }

@@ -415,7 +415,8 @@ pub fn dispatch_workflow_bound_as_member(
     let person = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
     let person = match memory.presented_credential() {
         Some(slip) => vault.bind_person_credential(person, slip.clone())?,
-        None if memory.native_invocation() => person,
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        None if memory.native_invocation() && memory.acts_as_own_person() => person,
         None => return Err(refused()),
     };
     dispatch_workflow_bound_as_person(memory, &person, input)

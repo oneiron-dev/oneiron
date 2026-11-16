@@ -88,9 +88,10 @@ impl Memory<'_> {
                             )
                             .made_by(
                                 &asset,
+                                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
                                 RowBirth::written(
                                     writer,
-                                    MadeByClass::of_writer(self.actor_class),
+                                    MadeByClass::of_write_actor(self.bound_write_actor()),
                                     "web-fetch",
                                     &[],
                                     &[page.markdown().as_bytes()],
@@ -176,7 +177,7 @@ impl Memory<'_> {
                                 &chunk,
                                 RowBirth::written(
                                     writer,
-                                    MadeByClass::of_writer(self.actor_class),
+                                    MadeByClass::of_write_actor(self.bound_write_actor()),
                                     "web-fetch.chunk",
                                     &[asset],
                                     &[segment.text.as_bytes()],

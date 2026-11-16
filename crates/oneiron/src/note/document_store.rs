@@ -18,7 +18,7 @@ use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
-use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
+use crate::{EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
 /// The snapshot row's key, for a test that plants one by hand.
 #[cfg(test)]
@@ -642,6 +642,7 @@ impl Memory<'_> {
 /// A brief is made from the claims and NOTEs its pins cite, read as their
 /// quoted text. An agent's brief that cites nothing has no birth to name.
 fn brief_birth(actor: WriteActor, pins: &[NotePin], at: u64) -> Option<RowBirth> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let cited: Vec<EntityId> = pins
         .iter()
         .flat_map(|pin| [pin.claim, pin.document])
@@ -649,7 +650,7 @@ fn brief_birth(actor: WriteActor, pins: &[NotePin], at: u64) -> Option<RowBirth>
     let quotes: Vec<&[u8]> = pins.iter().map(|pin| pin.quote_text.as_bytes()).collect();
     RowBirth::written(
         actor,
-        MadeByClass::of_writer(actor.actor_class()),
+        MadeByClass::of_write_actor(actor),
         "note.author_brief",
         &cited,
         &quotes,
@@ -693,7 +694,8 @@ pub(super) fn require_note_writer(
     if !body.author_ref.is(memory.actor())
         && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
-        if memory.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !memory.acts_as_own_person() {
             return Err(MemoryError::bad_request_with(
                 "NOTE edit requires its author or a bound owner",
                 &[],

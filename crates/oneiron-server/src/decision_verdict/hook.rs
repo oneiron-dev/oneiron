@@ -17,7 +17,7 @@ use oneiron::runtime_hooks::{
     HookGrant, HookSettledCallRef, HookVerdictContext, hook_evidence_views,
 };
 use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest};
-use oneiron::{BudgetGuard, EntityId};
+use oneiron::{BudgetGuard, EntityId, WriteActor};
 
 use super::{VERDICT_SPEND_CHECK_UNITS, answer_verdict, on_caller_meter, on_caller_payer};
 use crate::server::SyncServer;
@@ -51,10 +51,10 @@ pub(crate) fn run_hook_verdict(
             on_hook_grant(&context.grant, || {
                 on_caller_meter(line, || {
                     on_caller_payer(None, || {
+                        // The grant's reader, a stored binding: no live credential, so no mark.
                         answer_verdict(
                             server,
-                            principal,
-                            class,
+                            WriteActor::new(principal, class),
                             reader,
                             None,
                             None,

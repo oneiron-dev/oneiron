@@ -31,9 +31,8 @@ pub(in crate::workspace_roster) fn admission_party_in_txn(
     room: EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
-    if actor.actor_class() == EdgeActorClass::Human
-        && room_host_in_txn(vault, txn, room, actor)?.is_some()
-    {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.acts_as_own_person() && room_host_in_txn(vault, txn, room, actor)?.is_some() {
         return Ok(true);
     }
     if actor.actor_class() == EdgeActorClass::System

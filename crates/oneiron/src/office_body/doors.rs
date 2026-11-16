@@ -257,7 +257,8 @@ impl Vault {
         admit: impl FnOnce(&LoroDoc, &LoroDoc) -> Result<()>,
         edit: impl FnOnce(&LoroDoc) -> Result<Vec<String>>,
     ) -> Result<OfficeBodyEdit> {
-        if actor.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(invalid("machine work edits a fork, not the live body"));
         }
         // FIX 596: a live DOCX/XLSX edit is the vault owner's freely, else a
@@ -554,7 +555,8 @@ impl Vault {
                 record: None,
             });
         };
-        let provenance = if request.actor.actor_class() == EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let provenance = if request.actor.acts_as_own_person() {
             BlobVersionProvenance::UserUpload
         } else {
             BlobVersionProvenance::AgentRun {

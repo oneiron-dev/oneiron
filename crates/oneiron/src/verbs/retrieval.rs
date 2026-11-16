@@ -128,9 +128,10 @@ pub fn retrieval_runs_as_reader(
     memory: &Memory<'_>,
     input: RetrievalRunsRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     crate::federation::admit_substrate_read_by(
         memory.vault(),
-        crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        memory.bound_write_actor(),
         "vault.retrieval.runs",
         crate::federation::SubstrateRead::Evidence,
     )?;

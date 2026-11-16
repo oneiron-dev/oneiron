@@ -1,6 +1,7 @@
 //! Skill calls on the caller's attached run and owner-anchored pack outcomes.
 use std::sync::Arc;
 
+use oneiron::ModelId;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::live_run::LiveRunCredential;
 use oneiron::code_run::{
@@ -16,7 +17,6 @@ use oneiron::task_verb::sdk::{
     self, LiveRunRequest, SkillPackCreditRequest, SkillPackOutcomeRequest, SkillPackReceipt,
     SkillPackReceiptRequest,
 };
-use oneiron::{ModelId, WriteActor};
 
 use super::host_doors::support::{
     Listed, MaybeListed, internal, owner_proof, refused, with_calling_origin,
@@ -79,7 +79,8 @@ async fn skills_call(
         .vault()
         .credential_read_key(proof)?
         .ok_or_else(credential_required)?;
-    let writer = WriteActor::new(actor, class);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     let run = server
         .live_runs
         .resolve(

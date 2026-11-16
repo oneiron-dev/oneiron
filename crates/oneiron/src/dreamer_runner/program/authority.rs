@@ -41,6 +41,12 @@ pub(crate) struct TurnProgramAuthority {
     actor: EntityId,
     actor_class: u8,
     proof: Proof,
+    /// Whether the waking credential was handed on to another key: the
+    /// program runs as its key's holder, never as the person
+    /// (HANDED-ON-SLIP-PERSON). An unmarked authority leaves it out, so its
+    /// rows encode as they did before the field existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    handed_on_credential: bool,
 }
 
 impl TurnProgramAuthority {
@@ -140,6 +146,7 @@ impl TurnProgramAuthority {
                 instrument: Some(instrument.clone()),
                 rebound_from: Vec::new(),
             },
+            handed_on_credential: false,
         })
     }
 
@@ -171,7 +178,9 @@ impl TurnProgramAuthority {
         else {
             return None;
         };
-        let mut rebound = Self::slip(self.actor, self.class().ok()?, proof, successor)?;
+        // The successor slip keeps the handed-on mark (HANDED-ON-SLIP-PERSON).
+        let mut rebound = Self::slip(self.actor, self.class().ok()?, proof, successor)?
+            .with_handed_on_credential(self.handed_on_credential);
         if let Proof::Slip {
             rebound_from: lineage,
             ..
@@ -194,6 +203,7 @@ impl TurnProgramAuthority {
             actor,
             actor_class: class as u8,
             proof: Proof::HostAction { root },
+            handed_on_credential: false,
         }
     }
 
@@ -203,6 +213,7 @@ impl TurnProgramAuthority {
             actor,
             actor_class: class as u8,
             proof: Proof::Native,
+            handed_on_credential: false,
         }
     }
 
@@ -212,7 +223,24 @@ impl TurnProgramAuthority {
             actor: holder,
             actor_class: EdgeActorClass::Human as u8,
             proof: Proof::AttestedOwner { holder },
+            handed_on_credential: false,
         }
+    }
+
+    /// Marks this sealed authority as woken under a credential handed on to
+    /// another key: the program runs as its key's holder, never as the person
+    /// (HANDED-ON-SLIP-PERSON).
+    #[must_use]
+    pub(crate) fn with_handed_on_credential(mut self, handed_on: bool) -> Self {
+        self.handed_on_credential = handed_on;
+        self
+    }
+
+    /// Whether the waking credential was handed on to another key
+    /// ([`Self::with_handed_on_credential`]).
+    #[must_use]
+    pub(crate) const fn carries_handed_on_credential(&self) -> bool {
+        self.handed_on_credential
     }
 
     pub(crate) fn actor(&self) -> EntityId {
@@ -637,8 +665,13 @@ impl Vault {
         if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
             return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
         }
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let mut actor = WriteActor::new(stamp.actor, row.wake.authority.class()?);
+        if row.wake.authority.carries_handed_on_credential() {
+            actor = actor.with_handed_on_credential();
+        }
         Ok(TurnProgramBound::Bound(TurnProgramBinding {
-            actor: WriteActor::new(stamp.actor, row.wake.authority.class()?),
+            actor,
             admission: stamp.admission,
             code_run: super::run::turn_program_code_run(&stamp.admission)?,
             pin,
@@ -721,18 +754,42 @@ pub(crate) fn program_actor_for_attempt_in_txn(
     Some(WriteActor::new(stamp.actor, class))
 }
 
-/// The actor `id`'s stamp names, in `txn`.
+/// The actor `id`'s stamp names, in `txn`, marked as the binding marks it
+/// when the admission it names sealed a handed-on credential
+/// ([`TurnProgramAuthority::carries_handed_on_credential`]; Astra delta-2 on
+/// #8562, finding 1). A stamp whose admission is gone binds no milestone.
 fn stamped_actor_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<WriteActor> {
-    vault
+    let actor = vault
         .program_actor_for_attempt_in_txn(txn, id)?
-        .ok_or_else(invalid)
+        .ok_or_else(invalid)?;
+    let stamp = ATTEMPT.get(vault, txn, &id)?.ok_or_else(invalid)?;
+    let row = ADMISSION
+        .get(vault, txn, &stamp.admission)?
+        .ok_or_else(invalid)?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    Ok(if row.wake.authority.carries_handed_on_credential() {
+        actor.with_handed_on_credential()
+    } else {
+        actor
+    })
 }
 
-/// `envelope` as `actor` wrote it: the same source, provenance and approval.
+/// `envelope` as `actor` wrote it: the same provenance and approval, and the
+/// same source but for a Human credential handed on to another key, whose
+/// UserStated writes Generated (HANDED-ON-SLIP-PERSON Q1 = A).
 fn as_actor(envelope: &WriteEnvelope, actor: WriteActor) -> WriteEnvelope {
+    let source = match envelope.source() {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        crate::claim::ClaimSource::UserStated
+            if actor.actor_class() == EdgeActorClass::Human && !actor.acts_as_own_person() =>
+        {
+            crate::claim::ClaimSource::Generated
+        }
+        source => source,
+    };
     WriteEnvelope::new(
         actor,
-        envelope.source(),
+        source,
         envelope.provenance().clone(),
         envelope.approval(),
     )

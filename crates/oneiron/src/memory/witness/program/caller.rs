@@ -251,7 +251,8 @@ impl<'v> SessionWitnessContext<'v> {
         let mut value = serde_json::Value::String(text.to_owned());
         let masked = match (&self.caller.host_action, &self.caller.read_proof) {
             (None, Some(proof)) => {
-                let owner = self.caller.is_vault_owner_in_txn(&txn)?;
+                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                let owner = self.caller.reads_as_vault_owner_in_txn(&txn)?;
                 self.caller
                     .vault
                     .credential_read_key_in_txn(&txn, proof, self.caller.actor, owner)?

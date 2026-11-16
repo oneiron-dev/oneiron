@@ -56,10 +56,11 @@ pub(super) const ROW_BIRTH_RESTATED: &str = "oneiron.entity_doc.v1 row_birth";
 /// render parameters, so its parameter hash is the empty input's. It is the
 /// operation that wrote the change, not a model. Its actor is the writer's
 /// stamp token (FIX 10930).
-fn engine_process(stamp: ActorStamp, verb: &str) -> MadeByProcess {
+fn engine_process(stamp: ActorStamp, actor: WriteActor, verb: &str) -> MadeByProcess {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     MadeByProcess {
         actor: stamp.token,
-        class: MadeByClass::of_writer(stamp.class),
+        class: MadeByClass::of_write_actor(actor),
         identity: format!("oneiron.entity_doc.{verb}"),
         version: "1".to_owned(),
         params_hash: format!("{:x}", Sha256::digest([])),
@@ -72,10 +73,12 @@ fn engine_process(stamp: ActorStamp, verb: &str) -> MadeByProcess {
 pub(super) fn receipted(
     stamped: &str,
     stamp: ActorStamp,
+    actor: WriteActor,
     at: u64,
     verb: &str,
     sources: &[EntityId],
 ) -> Result<String> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let made_by = MadeBy {
         inputs: sources
             .iter()
@@ -84,7 +87,7 @@ pub(super) fn receipted(
                 role: MadeByInputRole::Input,
             })
             .collect(),
-        process: engine_process(stamp, verb),
+        process: engine_process(stamp, actor, verb),
         at,
         trigger: None,
     };

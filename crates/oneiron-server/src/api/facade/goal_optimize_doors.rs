@@ -261,11 +261,12 @@ pub(super) enum Picker {
 }
 
 pub(super) fn picker(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Picker> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     super::owner_binding::facade_owner(server, auth, verb)
         .map(Picker::Owner)
         .or_else(|refusal| match super::facade_actor(server, auth) {
             Ok((actor, class @ (EdgeActorClass::Human | EdgeActorClass::Agent))) => {
-                Ok(Picker::Holder(oneiron::WriteActor::new(actor, class)))
+                Ok(Picker::Holder(auth.write_actor(actor, class)))
             }
             _ => Err(refusal),
         })

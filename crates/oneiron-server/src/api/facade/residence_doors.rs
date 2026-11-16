@@ -172,9 +172,10 @@ async fn residence_open(
     } else {
         oneiron::note::NoteReadSource::Home
     };
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let mut note = connection.opened_note_view(
         &opened,
-        oneiron::WriteActor::new(actor, class),
+        auth.write_actor(actor, class),
         auth.verified_slip(),
         &auth.destination(),
         input.reason.as_deref(),

@@ -364,8 +364,9 @@ impl<'a> HostSelfDispatcher<'a> {
                 "a batch requires canonical live-run storage",
             ));
         };
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         vault
-            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .memory_for_writer(self.actor)
             .with_read_proof(proof)
             .at(locality)
             .with_task_host(binding)

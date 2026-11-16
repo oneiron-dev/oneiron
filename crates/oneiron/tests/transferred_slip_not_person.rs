@@ -20,7 +20,8 @@ use oneiron::authority::{HostSlipIssuer, SlipCaveat, VerifiedSlip};
 use oneiron::code_run::GatedActorWrite;
 use oneiron::memory::{
     CanAnswer, CanVerbGate, ClaimDemoteActionInput, ClaimDemoteRequest, ClaimInput,
-    ExpressionPreferenceInput, MEMORY_CODE_FORBIDDEN, SafeDeleteReason, resolve_entity_ref,
+    ExpressionPreferenceInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, SafeDeleteReason,
+    resolve_entity_ref,
 };
 use oneiron::note::TakeTarget;
 use oneiron::off_record::{OffRecordBackendClass, OffRecordSession};
@@ -49,8 +50,6 @@ const DELIVERY_WINDOW_CONTEXT: &str = "delivery_window.context";
 /// The refusal of a write over a restricting claim by no live owner in
 /// person (`memory::authorship::guard_existing_claim_in_txn`).
 const LIFTS_A_RESTRICTION: &str = "a claim that restricts someone's access";
-/// The self-grant refusal an override by no owner keeps.
-const CONFLICT_REVIEW: &str = "ask for conflict review";
 /// A `can` verb whose row takes a person's proof.
 const PERSON_VERB: &str = "vault.members.remove";
 
@@ -524,12 +523,12 @@ fn a_handed_on_owner_slip_never_overrides_anothers_preference_at_once() {
         .expect_err("no override at once");
 
     assert!(
-        refused.contains(MEMORY_CODE_FORBIDDEN),
-        "forbidden: {refused}"
+        refused.contains(MEMORY_CODE_BAD_REQUEST),
+        "bad request: {refused}"
     );
     assert!(
-        refused.contains(CONFLICT_REVIEW),
-        "it keeps the review path: {refused}"
+        refused.contains("requires a human actor"),
+        "it fails at the person gate: {refused}"
     );
     assert_eq!(
         f.stored(agents).lifecycle,

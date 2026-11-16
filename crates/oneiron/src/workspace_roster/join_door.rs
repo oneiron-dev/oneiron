@@ -35,7 +35,7 @@ use crate::memory::{
 };
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::workspace_roster::spend_scope::SpendState;
-use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
+use crate::{EntityId, Vault, WriteActor};
 
 mod authority;
 mod publish;
@@ -397,7 +397,8 @@ fn may_invite_into_room_in_txn(
     room: EntityId,
     caller: WriteActor,
 ) -> Result<bool> {
-    if caller.actor_class() != EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if !caller.acts_as_own_person()
         || vault.verify_write_actor_in_txn(txn, &caller).is_err()
         || crate::memory::verify_owner_actor_binding_in_txn(vault, txn, caller.entity_ref())
             .is_err()

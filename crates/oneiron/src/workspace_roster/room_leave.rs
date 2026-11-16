@@ -15,7 +15,7 @@
 use super::JoinSubject;
 use crate::error::{ClaimError, Error};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::{EdgeActorClass, Vault, WriteActor};
+use crate::{Vault, WriteActor};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::room_leave::RoomLeaveRequest;
@@ -59,6 +59,7 @@ impl Memory<'_> {
 /// Whether `caller` is the vault's owner: a Human actor the authority log
 /// binds as owner, who removes anyone from a room.
 fn owner_removes_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, caller: WriteActor) -> bool {
-    caller.actor_class() == EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    caller.acts_as_own_person()
         && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, caller.entity_ref()).is_ok()
 }

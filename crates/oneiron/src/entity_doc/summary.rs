@@ -190,6 +190,7 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<()> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, summary, actor)?;
             self.authorize_shared_content_write_in_txn(txn, *summary, &actor)?;
@@ -210,7 +211,7 @@ impl Vault {
             // The memo's commit names the actor's stamp token (FIX 10930).
             let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
             map_insert_bytes(&doc.doc.get_map("meta"), "keep", &keep)?;
-            super::document::stamp(&doc.doc, stamp, at, "summary_keep")?;
+            super::document::stamp(&doc.doc, stamp, actor, at, "summary_keep")?;
             storage::persist(self, txn, summary, &mut head, &doc, Some(&before))
         })
     }

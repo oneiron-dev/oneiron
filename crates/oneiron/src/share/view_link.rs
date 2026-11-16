@@ -2,7 +2,6 @@
 
 use super::{Share, read_share_in_txn, verify_share_actor};
 use crate::access_grant::AccessGrantStatus;
-use crate::edge::EdgeActorClass;
 use crate::error::{Error, RecordError, Result};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -49,7 +48,8 @@ pub(crate) fn authorize_share_link_in_txn(
     })?;
     if Some(*actor) != admission.issuer {
         let fold = vault.authority_fold_readonly_in_txn(txn)?;
-        if actor.actor_class() != EdgeActorClass::Human
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person()
             || fold.vault_root_is_conflicted()
             || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
         {

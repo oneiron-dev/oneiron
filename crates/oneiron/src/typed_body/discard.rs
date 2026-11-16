@@ -98,6 +98,7 @@ fn discard_open_fork_in_txn(
 /// Whether `actor` is the vault's owner: a person the authority log binds
 /// as it, as the owner verbs judge it.
 fn is_vault_owner(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> bool {
-    actor.actor_class() == crate::EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    actor.acts_as_own_person()
         && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
 }

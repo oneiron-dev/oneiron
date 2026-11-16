@@ -435,8 +435,10 @@ fn requester_read_in<'v>(
 ) -> Result<ScopedRead<'v>> {
     let actor = requester.entity_ref();
     let class = requester.actor_class();
-    let owner = crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, class)
-        .map_err(|_| invalid("summary requester does not resolve"))?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let owner = requester.acts_as_own_person()
+        && crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, class)
+            .map_err(|_| invalid("summary requester does not resolve"))?;
     let key = if owner && matches!(basis, RequesterReadBasis::Principal) {
         ScopedReadActorKey::vault_owner(actor)
     } else {

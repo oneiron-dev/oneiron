@@ -284,6 +284,7 @@ fn stale_owner_payer(server: &SyncServer, auth: &CoreAuth, holder: EntityId) -> 
 
 /// An ordinary credential's own principal, as its actor class names it.
 fn credential_principal(auth: &CoreAuth) -> Option<WriteActor> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let class = match auth.actor_class() {
         Some("agent") => EdgeActorClass::Agent,
         Some("system") => EdgeActorClass::System,
@@ -291,5 +292,5 @@ fn credential_principal(auth: &CoreAuth) -> Option<WriteActor> {
     };
     auth.principal_ref()
         .and_then(|reference| EntityId::from_hex(reference).ok())
-        .map(|actor| WriteActor::new(actor, class))
+        .map(|actor| auth.write_actor(actor, class))
 }

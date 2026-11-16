@@ -88,10 +88,11 @@ pub(crate) async fn vault_conversations_records_append(
         Err(refusal) => return refused(refusal.into_memory_error()),
     };
     let producers = ProducerRows::default();
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let answer = write_dag_record_listing(
         server,
         auth,
-        WriteActor::new(actor, class),
+        auth.write_actor(actor, class),
         &input,
         Some(&producers),
     );
@@ -165,9 +166,10 @@ pub(crate) async fn vault_batch(
 /// The write actor `auth` binds, when it binds one. A credential that binds
 /// none writes as before.
 pub(crate) fn credential_writer(server: &SyncServer, auth: &CoreAuth) -> Option<WriteActor> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     super::facade_actor(server, auth)
         .ok()
-        .map(|(actor, class)| WriteActor::new(actor, class))
+        .map(|(actor, class)| auth.write_actor(actor, class))
 }
 
 /// One atomic batch, committed at owner grade only when `auth` carries it,

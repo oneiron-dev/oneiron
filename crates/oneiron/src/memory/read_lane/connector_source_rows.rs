@@ -57,8 +57,9 @@ impl Memory<'_> {
                     .vault()
                     .connector_call_state_in_txn(txn, call_ref)?
                     .ok_or_else(not_found)?;
+                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
                 if state.principal_ref != self.actor().to_hex()
-                    && !self.is_vault_owner_in_txn(txn)?
+                    && !self.reads_as_vault_owner_in_txn(txn)?
                 {
                     return Err(not_found());
                 }

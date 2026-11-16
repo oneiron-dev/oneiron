@@ -6,7 +6,6 @@ use super::documents::{
 };
 use super::side_keys::HexPair;
 use super::sync_rows::SYNC_DS_E;
-use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
@@ -396,7 +395,8 @@ pub(super) fn grant_allows(
     note: EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
-    if actor.actor_class() == EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.acts_as_own_person()
         && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
     {
         return Ok(true);
@@ -717,10 +717,11 @@ pub(super) fn land(
         }
         NoteVerdict::Switch | NoteVerdict::Reject => None,
     };
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let native_receipt = if verdict == NoteVerdict::Merge && fork.recovery_merge.is_none() {
         Some(
             vault
-                .memory(actor.entity_ref(), actor.actor_class())
+                .memory_for_writer(actor)
                 .apply_native_note_fork_in_txn(txn, fork.fork)
                 .map_err(|_| invalid("canonical NOTE proposal admission failed"))?,
         )
@@ -741,7 +742,7 @@ pub(super) fn land(
             },
         };
         let receipt = vault
-            .memory(actor.entity_ref(), actor.actor_class())
+            .memory_for_writer(actor)
             .apply_note_operation_in_txn(txn, fork.note, &operation, None)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
         if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {

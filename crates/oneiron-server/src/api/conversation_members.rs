@@ -49,7 +49,8 @@ pub(super) fn actor(auth: &CoreAuth, requested: Option<EntityId>) -> Result<Writ
         Some("agent") => EdgeActorClass::Agent,
         _ => return Err(ApiError::forbidden_scope("human_or_agent")),
     };
-    Ok(WriteActor::new(id, class))
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    Ok(auth.write_actor(id, class))
 }
 #[derive(Deserialize)]
 pub(super) struct MemberWrite {

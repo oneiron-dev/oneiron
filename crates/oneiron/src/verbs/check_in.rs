@@ -347,7 +347,8 @@ pub fn check_in_answer(
         .map_err(|_| not_a_person())?;
     let person = match memory.presented_credential() {
         Some(slip) => vault.bind_person_credential(person, slip.clone())?,
-        None if memory.native_invocation() => person,
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        None if memory.native_invocation() && memory.acts_as_own_person() => person,
         None => return Err(not_a_person()),
     };
     check_in_answer_as_person(vault, &person, input)

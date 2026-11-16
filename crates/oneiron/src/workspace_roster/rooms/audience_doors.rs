@@ -54,7 +54,6 @@ use super::audience_events::{
 };
 use super::audience_notices::{ThreadNotice, tell_thread_members};
 use super::*;
-use crate::EdgeActorClass;
 use crate::memory::MEMORY_CODE_INVALID_STATE;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::settings::room_threads::{
@@ -384,7 +383,8 @@ impl Memory<'_> {
                 == Some(person);
         let entering = !thread.folded.current().contains(&person);
         // The verified class of this write's actor, never a caller's flag.
-        let human = self.actor_class() == EdgeActorClass::Human;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let human = self.acts_as_own_person();
         if own && entering && !human {
             return Err(agent_walk_in_forbidden());
         }

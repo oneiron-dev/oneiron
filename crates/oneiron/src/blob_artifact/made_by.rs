@@ -8,7 +8,6 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::batch::secret_scan;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::write_envelope::WriteActor;
@@ -22,11 +21,12 @@ use super::provenance::BlobVersionProvenance;
 /// Queue-check exhaust concludes its run (like an agent run), even though
 /// its author data is the original Human approver (FIX 7227).
 fn version_process_class(actor: &WriteActor, provenance: &BlobVersionProvenance) -> MadeByClass {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match provenance {
         BlobVersionProvenance::AgentRun { .. }
         | BlobVersionProvenance::SealJob { .. }
         | BlobVersionProvenance::QueueCheck { .. } => MadeByClass::Concluded,
-        _ if actor.actor_class() == EdgeActorClass::Human => MadeByClass::Stated,
+        _ if actor.acts_as_own_person() => MadeByClass::Stated,
         _ => MadeByClass::Concluded,
     }
 }

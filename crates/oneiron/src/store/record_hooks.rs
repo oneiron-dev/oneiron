@@ -28,11 +28,11 @@ pub trait StoreRecordHooks: Send + Sync {
     ) -> Result<crate::memory::campaign_records::CampaignRecord>;
 
     /// The engine's `campaign::surface::launch_campaign`.
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     fn launch_campaign(
         &self,
         vault: &crate::Vault,
-        authenticated_principal: EntityId,
-        actor_class: crate::edge::EdgeActorClass,
+        caller: WriteActor,
         campaign_ref: EntityId,
         expected_definition_version: u64,
         now: u64,

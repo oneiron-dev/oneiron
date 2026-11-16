@@ -208,6 +208,10 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         key: Option<&ScopedReadActorKey>,
     ) -> MemoryResult<bool> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.acts_as_own_person() {
+            return Ok(false);
+        }
         Ok(match (key, self.presented_credential()) {
             (Some(key), _) => key.facets_owner_exempt_in(self.vault(), txn)?,
             (None, Some(slip)) => self.slip_is_owner_in(txn, slip)?,

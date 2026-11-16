@@ -71,9 +71,10 @@ impl LensArtifacts<'_> {
         ))?;
         // The proposer wrote the tree from the prompt; nothing else was read.
         let trigger = self.trigger;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let birth = RowBirth::prompted(
             writer,
-            MadeByClass::of_writer(writer.actor_class()),
+            MadeByClass::of_write_actor(writer),
             LENS_PROPOSE_PROCESS,
             &[self.prompt_ref],
             &[self.prompt.as_bytes()],

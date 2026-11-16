@@ -37,8 +37,9 @@ impl Memory<'_> {
             return Ok(None);
         };
         let own = launch.actor.is(self.actor()) && launch.actor_class == self.actor_class() as u8;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if !own
-            && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?
+            && !self.is_vault_owner_in_txn(txn)?
             && !launch_role_is_held_in(
                 vault,
                 &txn,
@@ -520,7 +521,8 @@ impl Memory<'_> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let owner = self.is_vault_owner_in_txn(&txn)?;
         let mut pending = Vec::new();
         for (_, launch) in FANOUT_LAUNCHES.scan(&vault.store, &txn)? {
             let own =

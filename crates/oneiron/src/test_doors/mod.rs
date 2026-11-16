@@ -30,6 +30,7 @@ pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod code_run_claim_put;
+pub mod code_run_dispatch;
 pub mod code_run_result_body;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
@@ -72,6 +73,7 @@ pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
+pub mod handed_on_no_proof;
 pub mod held_answer_confirm;
 pub mod history_import_rows;
 #[cfg(feature = "sync")]
@@ -114,6 +116,7 @@ pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod own_device_message_replay;
+pub mod owner_write_actor;
 pub mod owner_key_release;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;

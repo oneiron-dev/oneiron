@@ -13,7 +13,6 @@ use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::{
     BlobArtifactVersion, BlobVersionProvenance, hash_hex, read_blob_artifact_head_in_txn,
 };
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::provenance::made_by::{
@@ -102,7 +101,8 @@ impl Vault {
             let bytes = self
                 .read_blob_artifact_version_in_txn(wtxn, artifact_id, restored)?
                 .ok_or(Error::EntityNotFound)?;
-            let human = actor.actor_class() == EdgeActorClass::Human;
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let human = actor.acts_as_own_person();
             let provenance = if human {
                 BlobVersionProvenance::UserUpload
             } else {
@@ -221,7 +221,8 @@ impl Vault {
             let bytes = self
                 .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
                 .ok_or(Error::EntityNotFound)?;
-            let human = actor.actor_class() == EdgeActorClass::Human;
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let human = actor.acts_as_own_person();
             let key = hash_hex(blake3::hash(&version.to_be_bytes()).as_bytes());
             let provenance = if human {
                 BlobVersionProvenance::UserUpload

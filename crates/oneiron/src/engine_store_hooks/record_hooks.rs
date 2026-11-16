@@ -14,16 +14,15 @@ impl StoreRecordHooks for EngineRecordHooks {
     fn launch_campaign(
         &self,
         vault: &crate::Vault,
-        authenticated_principal: EntityId,
-        actor_class: crate::edge::EdgeActorClass,
+        caller: WriteActor,
         campaign_ref: EntityId,
         expected_definition_version: u64,
         now: u64,
     ) -> Result<crate::memory::campaign_records::CampaignRecord> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         crate::campaign::surface::launch_campaign(
             vault,
-            authenticated_principal,
-            actor_class,
+            caller,
             campaign_ref,
             expected_definition_version,
             now,

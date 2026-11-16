@@ -453,8 +453,9 @@ impl<'a> HostSelfDispatcher<'a> {
                 call.task_ref = Some(task);
             }
         }
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let mut memory = vault
-            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .memory_for_writer(self.actor)
             .with_task_work_turn(turn);
         // The run's leased try is the ask's fan-out caller (OF-393): the ask
         // states the count, expected spend and cap of that agent's spend
@@ -575,7 +576,8 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         // A lease lost while the refs were read lands nothing.
         self.task_host_binding()?.ok_or_else(invalid)?;
-        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let memory = vault.memory_for_writer(self.actor);
         match memory.consult_assignee_park(task) {
             Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
             Ok(None) => {}

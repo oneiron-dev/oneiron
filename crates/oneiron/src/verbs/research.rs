@@ -129,8 +129,8 @@ pub(super) fn controller_in_txn(
     root: Option<AttemptId>,
 ) -> MemoryResult<Caller> {
     let vault = memory.vault();
-    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
-    {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if memory.is_vault_owner_in_txn(txn)? {
         return Ok(Caller::Owner);
     }
     let refused = || {

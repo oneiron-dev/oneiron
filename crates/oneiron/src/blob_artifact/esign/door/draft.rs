@@ -117,17 +117,13 @@ impl Memory<'_> {
     /// credential it presented, if any, is the owner's own, live and still
     /// held by the owner (as [`crate::Vault::credential_owner_held`] judges).
     /// An owner credential handed to another key (`attenuate_to`) keeps the
-    /// owner's holder and class, so the owner check alone admits it.
+    /// owner's holder and class, but the owner check refuses it all the same.
     /// # Errors
     /// The refusal for any other caller, or the store's failure.
     fn admit_qr_pdf_download_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
         let vault = self.vault();
-        let owner = crate::memory::actor_is_vault_owner_in_txn(
-            vault,
-            txn,
-            self.actor(),
-            self.actor_class(),
-        )?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let owner = self.is_vault_owner_in_txn(txn)?;
         let held = match self.presented_credential() {
             None => true,
             Some(proof) => {

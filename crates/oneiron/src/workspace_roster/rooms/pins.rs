@@ -12,7 +12,6 @@
 //! ([`crate::conversation::PIN_UPDATES`]). A pin moves its target into the
 //! PINNED tier of the boards that work in the room; it grants no read.
 use super::*;
-use crate::EdgeActorClass;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::conversation::{ConversationBody, PIN_UPDATES, RoomPin, RoomPinPolicy, RoomRole};
 use crate::error::ClaimError;
@@ -189,7 +188,8 @@ fn pin_writer_in(
     {
         return Err(lacks(NOT_MEMBER));
     }
-    let human = agent.is_some() || caller.actor_class() == EdgeActorClass::Human;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let human = agent.is_some() || caller.acts_as_own_person();
     if body.policy() == RoomPinPolicy::Managers
         && !manager_in(vault, txn, room, person, human, body.home())?
     {
@@ -207,7 +207,8 @@ fn policy_setter_in(
     room: EntityId,
     caller: WriteActor,
 ) -> Result<PinnedBody> {
-    if caller.actor_class() != EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if !caller.acts_as_own_person() {
         return Err(lacks(POLICY_BY_PERSON));
     }
     let body = PinnedBody::read_in(vault, txn, room)?;

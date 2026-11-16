@@ -10,7 +10,7 @@ use super::*;
 use crate::Vault;
 use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, GateError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
@@ -153,10 +153,11 @@ impl Vault {
         learned_at: u64,
         permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<ExpressionPreferenceWriteResult> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if matches!(
             change.origin,
             ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
-        ) && !matches!(actor.actor_class(), EdgeActorClass::Human)
+        ) && !actor.acts_as_own_person()
         {
             return Err(Error::InvalidClaimBody(
                 "explicit expression preference requires a human actor",
@@ -253,10 +254,11 @@ impl Vault {
         learned_at: u64,
         permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<ExpressionPreferenceWriteResult> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if let Some(permit) = permit
             && (change.origin != ExpressionWriteOrigin::Imported
                 || actor.entity_ref() != permit.owner()
-                || actor.actor_class() != EdgeActorClass::Human)
+                || !actor.acts_as_own_person())
         {
             return Err(Error::InvariantViolation(
                 "owner archive restore permit does not match imported expression actor",
@@ -531,7 +533,8 @@ impl Vault {
         if session_claim_producer(head) == Some(actor.entity_ref()) {
             return Ok(());
         }
-        if actor.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "an expression preference is retracted by the actor that wrote it",
             }));

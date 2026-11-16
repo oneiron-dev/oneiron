@@ -117,7 +117,8 @@ pub fn project_goal_get_as_reader(
     project: EntityId,
 ) -> MemoryResult<ProjectGoalView> {
     let vault = memory.vault();
-    let reader = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let reader = memory.bound_write_actor();
     crate::federation::admit_substrate_read_by(
         vault,
         reader,

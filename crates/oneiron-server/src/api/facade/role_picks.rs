@@ -16,7 +16,7 @@ use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL};
 use oneiron::skill_optimize::{
     SkillTradeoffAsk, TradeoffChoice, settle_skill_tradeoff_ask_as, skill_tradeoff_asks_for,
 };
-use oneiron::{EdgeActorClass, EntityId, WriteActor};
+use oneiron::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
@@ -108,10 +108,12 @@ async fn pick(
         )
     })?;
     let vault = Arc::clone(&server.vault);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     let verdict = super::clock_ingress::run_blocking(move || {
         settle_skill_tradeoff_ask_as(
             &vault,
-            &WriteActor::new(actor, class),
+            &writer,
             &proposal,
             &request.question_digest,
             request.choice,

@@ -130,6 +130,7 @@ pub(crate) fn edit_sync_text_in_txn(
     entity: &EntityId,
     edit: &SyncEdit<'_>,
 ) -> Result<SyncEdited> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let actor = edit.actor;
     super::forks::validate_actor(vault, txn, actor)?;
     // A shared vault's role and record scope (FIX 9846).
@@ -154,7 +155,7 @@ pub(crate) fn edit_sync_text_in_txn(
     // The edit's commit names the actor's stamp token (FIX 10930).
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let (start, delete) = (edit.start, edit.delete);
-    doc.edit_with(stamp, edit.at, &[], |body| {
+    doc.edit_with(stamp, actor, edit.at, &[], |body| {
         body.delete(start, delete)
             .map_err(|_| invalid("sync text delete"))?;
         body.insert(start, &text.stored)
@@ -475,6 +476,7 @@ fn edit_sequence_rows_in_txn(
     entity: &EntityId,
     edit: &SyncEdit<'_>,
 ) -> Result<SyncEdited> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let doc = sequence_rows::load(vault, txn, *entity)?;
     let before = doc.oplog_vv();
     let lifted = if LiftedKeys::names_a_handle(edit.insert) {
@@ -493,7 +495,7 @@ fn edit_sequence_rows_in_txn(
         .map_err(|_| invalid("sync text delete"))?;
     body.insert(edit.start, &text.stored)
         .map_err(|_| invalid("sync text insert"))?;
-    stamp_with(&doc, stamp, edit.at, "edit", &[])?;
+    stamp_with(&doc, stamp, edit.actor, edit.at, "edit", &[])?;
     let update = doc
         .export(ExportMode::updates(&before))
         .map_err(|_| invalid("sync text update export"))?;
