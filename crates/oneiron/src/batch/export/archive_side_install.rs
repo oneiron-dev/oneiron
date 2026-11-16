@@ -82,8 +82,6 @@ pub(crate) enum ArchivedSideGroup {
     DreamerWake,
     /// Digest schedules, owner settings and change records.
     WeaveDigest,
-    /// Description routing policy.
-    Llm,
     /// Web provider and key-selection choices.
     WebConnector,
     /// Dependent walk bounds.
@@ -186,7 +184,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         {
             Some(Group::WeaveDigest)
         }
-        name if name == side_table::LLM_DESCRIPTION_POLICY.name => Some(Group::Llm),
         name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
@@ -299,9 +296,6 @@ pub(crate) fn land_archived_side_group_in_txn(
             crate::web_connector::archive_restore::land_archived_web_connector_rows_in_txn(
                 vault, txn, permit, rows,
             )
-        }
-        ArchivedSideGroup::Llm => {
-            crate::llm::archive_restore::land_archived_llm_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)
