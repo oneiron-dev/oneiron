@@ -182,8 +182,7 @@ pub(super) fn refold_world_edits(
         // that does not fold stands for its parents' merge, as every other
         // crossed row does.
         if (closes_root_work(&entry.op)
-            || answers_root_work(&entry.op, kind_of)
-            || on_grant_line(&entry.op))
+            || answers_root_work(&entry.op, kind_of))
             && selected.contains(&hash)
         {
             let parents = parent_states(entry, states, &stand_ins);
