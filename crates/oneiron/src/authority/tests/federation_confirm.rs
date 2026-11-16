@@ -57,6 +57,8 @@ fn federation_confirm_consumes_ids_nonces_and_requires_live_roster() {
     );
 }
 
+/// Two sibling confirmations that share a nonce both stay valid as spent
+/// evidence, in any delivery order (RULING COLLISION-SETTLEMENT-SHAPE = A).
 #[test]
 fn federation_confirm_sibling_replay_is_permutation_independent() {
     let genesis = genesis_entry(21, 1);
@@ -65,7 +67,7 @@ fn federation_confirm_sibling_replay_is_permutation_independent() {
     let first = fold_authority_log(&[genesis.clone(), a.clone(), b.clone()]);
     let second = fold_authority_log(&[b.clone(), genesis, a.clone()]);
     assert_eq!(first, second);
-    assert_eq!(first.federation_confirms.len(), 1);
+    assert_eq!(first.federation_confirms.len(), 2);
     let hashes = [
         authority_entry_hash(&a).unwrap(),
         authority_entry_hash(&b).unwrap(),
@@ -75,7 +77,7 @@ fn federation_confirm_sibling_replay_is_permutation_independent() {
             .iter()
             .filter(|h| first.valid_entries.contains(*h))
             .count(),
-        1
+        2
     );
 }
 
@@ -111,11 +113,11 @@ fn federation_confirm_codec_all_kinds_and_zero_rejection() {
     }
 }
 
-/// A later nonce collision can invalidate the ENROLLMENT that authorized a
-/// previously verified revoke. Only the enrollment drops; its verified revoke
-/// floor cannot resurrect an independently valid owner binding.
+/// A later sibling confirmation that reuses a nonce drops nothing: the
+/// enrollment above the first confirmation and the revoke its key signed stay
+/// valid (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39).
 #[test]
-fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
+fn a_nonce_sibling_confirmation_keeps_the_enrollment_and_its_revoke() {
     let owner_seed = 81;
     let owner = ed_key(owner_seed);
     let owner_key = authority_key_from_ed(&owner);
@@ -178,7 +180,8 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     );
 
     // A signed sibling confirm has a different id and a different signer seq,
-    // but reuses the nonce. Pick a lower hash so the collision rejects `first`.
+    // but reuses the nonce. A lower hash once made the collision reject
+    // `first` with every row above it; no hash order picks a loser now.
     let replacement = (1..=u8::MAX)
         .map(|id| confirm(&bind, &genesis, owner_seed, 4, id, 77))
         .find(|entry| authority_entry_hash(entry).unwrap() < first_hash)
@@ -186,17 +189,12 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     let replacement_hash = authority_entry_hash(&replacement).unwrap();
     entries.push(replacement);
     let after = fold_authority_log(&entries);
-    assert!(after.valid_entries.contains(&replacement_hash));
-    assert!(!after.valid_entries.contains(&first_hash));
-    assert!(!after.valid_entries.contains(&enroll_hash));
-    assert!(!after.valid_entries.contains(&revoke_hash));
-    assert_eq!(
-        after.roster.get(&signer_key),
-        None,
-        "invalid enrollment must not survive"
-    );
+    for kept in [replacement_hash, first_hash, enroll_hash, revoke_hash] {
+        assert!(after.valid_entries.contains(&kept));
+    }
+    assert!(after.roster.contains_key(&signer_key));
     assert!(
-        after
+        !after
             .issues
             .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
     );
@@ -216,12 +214,12 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     assert_eq!(fold_authority_log(&entries), after);
 }
 
-/// engine-crates-05: a slip withdrawal or burn signed below a confirmation
-/// that later loses a nonce collision stays applied. The dropped entries stay
-/// dropped; only their restrictions survive, so no revoked or spent slip
-/// lives again.
+/// engine-crates-05: a slip withdrawal or burn signed above a confirmation
+/// that a later sibling collides with on its nonce stays applied, and so do
+/// their rows: the collision drops nothing (RULING
+/// COLLISION-SETTLEMENT-SHAPE = A), so no revoked or spent slip lives again.
 #[test]
-fn a_lost_confirmation_never_revives_a_revoked_or_spent_slip() {
+fn a_colliding_confirmation_never_revives_a_revoked_or_spent_slip() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let issuer = HostSlipIssuer::from_secret(b"confirmation collision host root").unwrap();
@@ -293,16 +291,16 @@ fn a_lost_confirmation_never_revives_a_revoked_or_spent_slip() {
     assert!(before.slips.consumed.contains(&spent));
     assert!(before.slip_is_live(&root.claims.slip_id));
 
-    // A sibling confirmation reuses the nonce and hashes lower, so it wins
-    // the collision and drops `first` with everything signed after it.
+    // A sibling confirmation reuses the nonce and hashes lower. It once won
+    // the collision and dropped `first` with everything signed after it.
     let sibling = (1..=u8::MAX)
         .map(|id| confirm(seq + 4, id))
         .find(|entry| authority_entry_hash(entry).unwrap() < first_hash)
         .expect("a distinct confirmation hashes below the first");
     entries.push(sibling);
     let after = fold_authority_log(&entries);
-    assert!(!after.valid_entries.contains(&first_hash));
-    assert!(!after.valid_entries.contains(&burn_hash));
+    assert!(after.valid_entries.contains(&first_hash));
+    assert!(after.valid_entries.contains(&burn_hash));
     assert!(after.slips.revoked.contains(&withdrawn));
     assert!(after.slips.explicit_revoked.contains(&withdrawn));
     assert!(after.slips.consumed.contains(&spent));
@@ -314,10 +312,11 @@ fn a_lost_confirmation_never_revives_a_revoked_or_spent_slip() {
 }
 
 /// The same holds when the withdrawal merges two concurrent confirmations at
-/// one sequence, which the fold admits (Sol review 1): the loser of a later
-/// nonce collision takes the withdrawal's entry, never its restriction.
+/// one sequence, which the fold admits (Sol review 1): a later nonce
+/// collision with one of them takes neither the withdrawal's entry nor its
+/// restriction.
 #[test]
-fn a_withdrawal_over_two_concurrent_confirmations_survives_a_lost_one() {
+fn a_withdrawal_over_two_concurrent_confirmations_survives_a_colliding_one() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let issuer = HostSlipIssuer::from_secret(b"concurrent confirmations host root").unwrap();
@@ -385,8 +384,8 @@ fn a_withdrawal_over_two_concurrent_confirmations_survives_a_lost_one() {
         .expect("a distinct confirmation hashes below the first");
     entries.push(sibling);
     let after = fold_authority_log(&entries);
-    assert!(!after.valid_entries.contains(&first_hash));
-    assert!(!after.valid_entries.contains(&revoke_hash));
+    assert!(after.valid_entries.contains(&first_hash));
+    assert!(after.valid_entries.contains(&revoke_hash));
     assert!(after.slips.explicit_revoked.contains(&withdrawn));
     assert!(!after.slip_is_live(&withdrawn));
 }
