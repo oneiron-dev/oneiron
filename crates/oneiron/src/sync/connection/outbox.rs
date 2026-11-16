@@ -56,7 +56,7 @@ impl SyncConnection {
             .lock()
             .map(|receipts| receipts.clone())
             .unwrap_or_default();
-        let updates = self.queue.read_updates()?;
+        let updates = self.queue.drain_updates()?;
         let owed = updates.len() as u64;
         let mut windows: Vec<SyncOutboxWindow> = Vec::new();
         for queued in updates {
