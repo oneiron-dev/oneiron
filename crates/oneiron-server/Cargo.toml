@@ -60,6 +60,12 @@ doc = false
 # doctest compile pass entirely.
 doctest = false
 
+# A mailbox's own person approves its drafted replies at the served door (FIX 18868).
+[[test]]
+name = "mail_reply_approve_mailbox_person_door"
+path = "tests/mail_reply_approve_mailbox_person_door.rs"
+required-features = ["oneiron/test-support"]
+
 [dependencies]
 heed.workspace = true
 arc-swap.workspace = true
@@ -395,6 +401,13 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The channel identity door cases root their owner on a `MemoryKeystore` and install the
+# owner's lifecycle grants through `conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "vault_channel_identities_doors"
+path = "tests/vault_channel_identities_doors.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # The skill hub door cases root their owner on a `MemoryKeystore` (`oneiron/test-support`).
 [[test]]
 name = "vault_skill_hubs_doors"
@@ -480,6 +493,21 @@ required-features = ["oneiron/test-support"]
 name = "rerank_pair_template_price"
 path = "tests/rerank_pair_template_price.rs"
 required-features = ["oneiron/test-support"]
+
+# L5-02 PR 4's selector fetch seeds its member's federation grant with
+# `put_selector_test_federation_grant` (`oneiron/test-hooks`).
+[[test]]
+name = "selector_home_clearance_ws"
+path = "tests/selector_home_clearance_ws.rs"
+required-features = ["oneiron/test-hooks"]
+
+# L5-02 PR 5's history page test seeds its federation grants with
+# `put_selector_test_federation_grant` (`oneiron/test-hooks`) and binds the
+# vault owner with `bind_host_owner` (`oneiron/test-support`).
+[[test]]
+name = "machine_history_page_controls"
+path = "tests/machine_history_page_controls.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 [lints]
 workspace = true

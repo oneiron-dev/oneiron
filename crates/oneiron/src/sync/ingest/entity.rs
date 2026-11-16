@@ -153,7 +153,7 @@ pub(in crate::sync) enum RefusalRetry {
     Terminal,
     /// A later pass may admit them: the quota window rolls over, the pack kind is installed
     /// (`pack_sync::pack_rejection_keeps_retry_marker`), or the owner raises the authority log's
-    /// signer bound (H72, rule 5).
+    /// signer bound (H72, rule 5) or its fold memory floor past the owner's reserve.
     Retry,
     /// Admission waits on another replicated row this vault has not seen yet.
     DependencyPending,
