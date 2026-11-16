@@ -5,9 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::{
-    WeaveDigestRequest, WeaveReportRequest, WeaveWrongItemRequest, WeaveWrongLinkRequest,
-};
+use crate::claim::{WeaveReportRequest, WeaveWrongItemRequest};
 use crate::lens::WeaveLensRequest;
 
 /// `vault.weave.admin.report`'s input.
@@ -31,24 +29,10 @@ pub struct WeaveAdminLensRequest {
     pub request: WeaveLensRequest,
 }
 
-/// `vault.weave.admin.digest`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveAdminDigestRequest {
-    /// The Admin membership grant the read stands on (32 hex).
-    pub membership_grant: String,
-    #[serde(default)]
-    pub request: WeaveDigestRequest,
-}
-
-/// `vault.weave.admin.link.wrong`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveAdminLinkWrongRequest {
-    /// The Admin membership grant the label stands on (32 hex).
-    pub membership_grant: String,
-    pub request: WeaveWrongLinkRequest,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::step_up::admin_inputs::{
+    WeaveAdminDigestRequest, WeaveAdminLinkWrongRequest,
+};
 
 /// `vault.weave.admin.item.wrong`'s input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

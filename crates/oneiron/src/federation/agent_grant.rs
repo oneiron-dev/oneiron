@@ -78,8 +78,8 @@ mod member_index;
 pub(crate) use member_index::{backfill_agent_grant_member_index, index_agent_grant_member_in_txn};
 mod withdrawal;
 
-/// The one-tap revoke command every agent grant carries.
-pub(crate) const AGENT_GRANT_REVOKE_COMMAND: &str = "vault.agents.grants.revoke";
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::federation::agent_grant::AGENT_GRANT_REVOKE_COMMAND;
 
 const NO_VERB_LIST: &str = "an agent grant names its verbs: authority_scope.verbs must be a \
                             nonempty explicit set, or empty beside a nonempty verb_classes";
@@ -711,7 +711,11 @@ impl Vault {
     /// [`Vault::ensure_agent_principal`] derives from its name (an OAuth
     /// client's sign-in, FIX 4902). Any other machine is a device and any
     /// other person a person.
-    fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
+    pub(crate) fn is_agent_principal_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,

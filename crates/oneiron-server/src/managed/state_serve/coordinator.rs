@@ -260,6 +260,13 @@ async fn serve_with_handles(
             .with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
             .with_tagger_egress(Arc::new(|_: &oneiron::llm::TaggerCall<'_>| true));
     }
+    // Bound before any worker starts, so every admitted call is attributed,
+    // to the payer of the tenancy the supervisor started this vault under
+    // (census L8-12, RULING HOSTED-BILLING-OWNER = A).
+    crate::managed::usage_meter::bind_tenancy_usage_metering(
+        &sync_server,
+        managed.vault_binding()?.tenancy(),
+    );
     sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();
@@ -270,6 +277,10 @@ async fn serve_with_handles(
     #[cfg(unix)]
     {
         sync_server = sync_server.with_organ_dir(super::owner_storage::organ_dir(&managed));
+        // The image organ the supervisor names by its program (L4-15).
+        if let Some(program) = &managed.image_organ {
+            sync_server.install_image_organ(program);
+        }
     }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
     // plain serve attaches them: a vault that dials a home, by the owner's
@@ -558,6 +569,7 @@ async fn serve_with_handles(
                 config.vault_path.clone(),
                 admitted(),
             )
+            .with_archive_entry_cap(config.import.archive_entry_cap())
             .spawn(Arc::clone(&sync_server)),
         );
     }
