@@ -84,10 +84,17 @@ fn person(vault: &Vault, id: EntityId) {
         .expect("a live person");
 }
 
+/// `person`'s proof. An Admin's or a Deputy's membership act stands on an
+/// MFA step-up (L7-17); these people hold no slip, so each proof carries a
+/// managed supervisor's `mfa_verified` claim. Only the org-admin step-up
+/// reads it, and an Owner needs none.
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
-    vault
+    let proof = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
-        .expect("a person proof")
+        .expect("a person proof");
+    vault
+        .bind_managed_mfa_verified(proof)
+        .expect("the supervisor's MFA claim binds")
 }
 
 /// `member` accepts its founding invitation to the shared vault at `role`.

@@ -123,6 +123,7 @@ pub mod mail_landing;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+pub mod managed_person;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
@@ -136,6 +137,7 @@ pub mod nightly;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod off_record_side_row;
+pub mod org_admin_gate;
 pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;
 pub mod own_device_message_replay;

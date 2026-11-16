@@ -337,6 +337,12 @@ async fn verify_person_action(state: &ManagedState, request: Request) -> Result<
         request
             .extensions_mut()
             .insert(super::ManagedPersonHolder(holder));
+        // Verified with the action, under its own key (L7-17).
+        if assertion.mfa_verified {
+            request
+                .extensions_mut()
+                .insert(super::ManagedPersonMfaVerified(holder));
+        }
     }
     Ok(request)
 }

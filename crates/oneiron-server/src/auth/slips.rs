@@ -282,6 +282,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            managed_person_mfa_verified: false,
         })
     }
     /// An invitee's slip (FIX 1925) on the facade route of one of

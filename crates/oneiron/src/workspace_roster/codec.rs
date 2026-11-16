@@ -101,7 +101,7 @@ pub(super) fn write_journal(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     record: &OnboardingJournal,
-    writer: &WriteActor,
+    writer: &OrgAdminWriter,
     proofs: MailboxProofs<'_>,
 ) -> Result<()> {
     require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;

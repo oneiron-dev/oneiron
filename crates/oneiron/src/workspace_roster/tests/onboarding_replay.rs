@@ -23,13 +23,14 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
     };
 
     let (_clean_dir, clean, clean_intent) = build("Antevon");
-    let expected_outcome = clean.onboard_workspace_member(clean_intent, &writer(WRITER), None)?;
+    let expected_outcome =
+        clean.onboard_workspace_member(clean_intent, &admin_writer(WRITER), None)?;
     let expected_census = census(&clean);
 
     let (_dir, vault, intent) = build("Antevon");
     let halted = vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &writer(WRITER),
+        &admin_writer(WRITER),
         None,
         MemberOnboardingStep::ActorLinked,
     )?;
@@ -40,7 +41,7 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
     assert_eq!(journal.step, MemberOnboardingStep::ActorLinked);
     assert_eq!(journal.completed_at, None);
 
-    let resumed = vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    let resumed = vault.onboard_workspace_member(intent, &admin_writer(WRITER), None)?;
     assert_eq!(resumed, expected_outcome);
     assert_eq!(census(&vault), expected_census);
     assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
@@ -52,25 +53,25 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
 #[test]
 fn changed_input_same_id_fails_typed() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
-    let first = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    let first = vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)?;
 
     let mut changed = intent.clone();
     changed.occurred_at = AT + 1;
     let err = vault
-        .onboard_workspace_member(changed, &writer(WRITER), None)
+        .onboard_workspace_member(changed, &admin_writer(WRITER), None)
         .expect_err("changed input under a used id must fail");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     let mut renamed = intent.clone();
     renamed.workspace.venture_name = "Somewhere Else".to_owned();
     let err = vault
-        .onboard_workspace_member(renamed, &writer(WRITER), None)
+        .onboard_workspace_member(renamed, &admin_writer(WRITER), None)
         .expect_err("a changed venture name is changed input");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     // The original replay still answers with the original outcome.
     assert_eq!(
-        vault.onboard_workspace_member(intent, &writer(WRITER), None)?,
+        vault.onboard_workspace_member(intent, &admin_writer(WRITER), None)?,
         first
     );
     Ok(())
@@ -100,7 +101,7 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
     let first = vault
         .onboard_workspace_member(
             intent.clone(),
-            &writer(WRITER),
+            &admin_writer(WRITER),
             Some(&mailbox_owner(&vault)?),
         )
         .expect_err("request must be refused");
@@ -109,7 +110,7 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
     let second = vault
         .onboard_workspace_member(
             intent.clone(),
-            &writer(WRITER),
+            &admin_writer(WRITER),
             Some(&mailbox_owner(&vault)?),
         )
         .expect_err("request must be refused");
@@ -129,7 +130,11 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
         .read_envelope
         .not_after = Some(AT + 120);
     let err = vault
-        .onboard_workspace_member(changed, &writer(WRITER), Some(&mailbox_owner(&vault)?))
+        .onboard_workspace_member(
+            changed,
+            &admin_writer(WRITER),
+            Some(&mailbox_owner(&vault)?),
+        )
         .expect_err("request must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_eq!(census(), counts);
@@ -145,11 +150,11 @@ fn every_completed_step_resumes_with_identical_stable_refs() -> Result<()> {
         intent.companion_birth = Some(birth);
         vault.onboard_workspace_member_halting_after(
             intent.clone(),
-            &writer(WRITER),
+            &admin_writer(WRITER),
             None,
             step,
         )?;
-        let first = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+        let first = vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)?;
         let counts = [
             ENTITY_TYPE_PERSON,
             ENTITY_TYPE_AGENT_DEF,
@@ -160,7 +165,7 @@ fn every_completed_step_resumes_with_identical_stable_refs() -> Result<()> {
         ]
         .map(|kind| type_count(&vault, kind));
         assert_eq!(
-            vault.onboard_workspace_member(intent, &writer(WRITER), None)?,
+            vault.onboard_workspace_member(intent, &admin_writer(WRITER), None)?,
             first
         );
         assert_eq!(
@@ -191,7 +196,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
         let owner = writer(WRITER);
         vault.onboard_workspace_member_halting_after(
             intent.clone(),
-            &owner,
+            &stepped_up(owner),
             None,
             MemberOnboardingStep::ActorLinked,
         )?;
@@ -212,7 +217,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
             );
             vault.put_access_grant(&birth.profile_grant_ref, &wrong)?;
             let err = vault
-                .onboard_workspace_member(intent.clone(), &owner, None)
+                .onboard_workspace_member(intent.clone(), &stepped_up(owner), None)
                 .expect_err("conflicting profile grant refuses this attempt");
             assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
             assert_eq!(
@@ -224,7 +229,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
         } else {
             // Model a crash after the complete birth write but before the
             // separate CompanionBorn journal write.
-            birth_companion(&vault, &intent, &birth, &owner)?;
+            birth_companion(&vault, &intent, &birth, &stepped_up(owner))?;
         }
         let journal = read_journal(&vault, &intent.onboarding_id)?
             .expect("the birth step did not advance its journal");
@@ -246,7 +251,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
                 .any(|(key, _)| key.as_str() == Some("persona_definition"))
         );
 
-        let outcome = vault.onboard_workspace_member(intent.clone(), &owner, None)?;
+        let outcome = vault.onboard_workspace_member(intent.clone(), &stepped_up(owner), None)?;
         assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
         assert_eq!(vault.get(&birth.person_ref)?, Some(before));
         assert_eq!(
@@ -260,7 +265,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
             MemberOnboardingStep::Complete
         );
         assert_eq!(
-            vault.onboard_workspace_member(intent, &owner, None)?,
+            vault.onboard_workspace_member(intent, &stepped_up(owner), None)?,
             outcome
         );
     }
@@ -276,11 +281,11 @@ fn companion_retry_rejects_conflicting_roster_identity_after_baseline() -> Resul
     let owner = writer(WRITER);
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &owner,
+        &stepped_up(owner),
         None,
         MemberOnboardingStep::ActorLinked,
     )?;
-    birth_companion(&vault, &intent, &birth, &owner)?;
+    birth_companion(&vault, &intent, &birth, &stepped_up(owner))?;
     let mut fields = decode_map(&vault.get(&birth.person_ref)?.expect("PERSON"))?;
     let name = fields
         .iter_mut()
@@ -299,7 +304,7 @@ fn companion_retry_rejects_conflicting_roster_identity_after_baseline() -> Resul
         )
         .commit()?;
     let err = vault
-        .onboard_workspace_member(intent, &owner, None)
+        .onboard_workspace_member(intent, &stepped_up(owner), None)
         .expect_err("a conflicting roster identity cannot be adopted");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_eq!(vault.get(&birth.person_ref)?, Some(conflicting));

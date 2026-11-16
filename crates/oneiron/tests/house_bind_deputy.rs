@@ -236,7 +236,16 @@ fn org() -> Result<Org> {
     let admin = row(ENTITY_TYPE_PERSON)?;
     let member = row(ENTITY_TYPE_PERSON)?;
     vault.initialize_shared_vault(&owner_proof, VAULT_ID, None, &[], vault.now_recorded_at())?;
-    let admin_proof = join(&vault, &owner_proof, admin, FederationGrantRole::Admin)?;
+    // An Admin's assignment stands on an MFA step-up (L7-17). An unrooted
+    // vault holds no slip to step up on, so this Admin's proof carries a
+    // managed supervisor's signed `mfa_verified` claim instead
+    // (`tests/org_admin_step_up.rs` steps up with TOTP on a rooted vault).
+    let admin_proof = vault.bind_managed_mfa_verified(join(
+        &vault,
+        &owner_proof,
+        admin,
+        FederationGrantRole::Admin,
+    )?)?;
     let member_proof = join(&vault, &owner_proof, member, FederationGrantRole::Member)?;
     store_workspace(&vault, &owner_proof, org);
     Ok(Org {

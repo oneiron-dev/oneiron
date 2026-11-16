@@ -195,6 +195,10 @@ fn default_delegate_does_not_inherit_parent_write_or_admin_verbs() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
+    // An Admin's delegation stands on an MFA step-up (L7-17). This unrooted
+    // vault holds no slip to step up on, so the proof carries a managed
+    // supervisor's `mfa_verified` claim.
+    let admin_proof = vault.bind_managed_mfa_verified(admin_proof).unwrap();
     let created = vault
         .initialize_shared_vault(
             &owner_proof,

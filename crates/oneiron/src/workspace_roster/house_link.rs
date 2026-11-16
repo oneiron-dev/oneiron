@@ -18,9 +18,11 @@
 //! shipped defaults), the deputy and owner roles only by an Owner
 //! (HOUSE-UNBIND-AUTHORITY = A), and the vault's own owner holds every
 //! assignment. The bind checks it in its own write, and so
-//! does the unbind. [`Vault::set_house_role`] and [`Vault::clear_house_role`]
-//! set and clear the role alone, under the same rule; neither touches the
-//! root's leader, which only the owner's bind and unbind sign.
+//! does the unbind; an Admin's assignment also stands on the MFA step-up
+//! its request shows (L7-17). [`Vault::set_house_role`] and
+//! [`Vault::clear_house_role`] set and clear the role alone, under the same
+//! rule; neither touches the root's leader, which only the owner's bind and
+//! unbind sign.
 //!
 //! Each bind and each unbind keeps one receipt (`IdentityLifecycle`) that
 //! names the binder, the house, the org and the role. The receipts are the
@@ -40,8 +42,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::{
-    FederationGrant, FederationGrantRole, FederationGrantScope, OrgAdminPower, SharedVaultWrite,
-    encode_federation_grant_body,
+    FederationGrant, FederationGrantRole, FederationGrantScope, OrgAdminPower, OrgAdminStepUp,
+    OrgAdminWriter, SharedVaultWrite, encode_federation_grant_body,
 };
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT};
@@ -170,14 +172,17 @@ fn assignment_write(role: FederationGrantRole) -> SharedVaultWrite {
 
 /// `actor` may set or clear `role` on a house seated in shared vault
 /// `vault_id`, in `txn`: this vault's live owner holds every assignment, and
-/// anyone else needs the role table's power over that vault. An actor with
-/// no live authority binding keeps that refusal; one without the power gets
-/// [`ROLE_ASSIGNER_REFUSAL`].
+/// anyone else needs the role table's power over that vault, and an
+/// Admin's power the step-up `step_up` shows (L7-17). An actor with no live
+/// authority binding keeps that refusal; one without the power gets
+/// [`ROLE_ASSIGNER_REFUSAL`]; an Admin with no standing step-up gets
+/// [`crate::federation::ORG_ADMIN_STEP_UP_REQUIRED`].
 fn require_role_assigner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_id: u64,
     actor: EntityId,
+    step_up: &OrgAdminStepUp,
     role: FederationGrantRole,
 ) -> Result<()> {
     if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
@@ -185,16 +190,23 @@ fn require_role_assigner_in_txn(
     }
     let writer = WriteActor::new(actor, EdgeActorClass::Human);
     vault.verify_write_actor_in_txn(txn, &writer).map(drop)?;
-    vault
-        .authorize_shared_vault_write_in_txn(txn, vault_id, &writer, &assignment_write(role))
-        .map_err(|error| match error {
-            Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => {
-                Error::Claim(ClaimError::ActorLacksClaimAuthority {
-                    reason: ROLE_ASSIGNER_REFUSAL,
-                })
-            }
-            other => other,
-        })
+    match assignment_write(role) {
+        SharedVaultWrite::Admin(power) => vault.authorize_org_admin_act_in_txn(
+            txn,
+            vault_id,
+            &OrgAdminWriter::showing(writer, step_up.clone()),
+            power,
+        ),
+        root => vault.authorize_shared_vault_write_in_txn(txn, vault_id, &writer, &root),
+    }
+    .map_err(|error| match error {
+        Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => {
+            Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                reason: ROLE_ASSIGNER_REFUSAL,
+            })
+        }
+        other => other,
+    })
 }
 
 /// The live membership grants that seat `house` in shared vault `vault_id`,
@@ -330,13 +342,15 @@ fn append_receipt_in_txn(
 /// the house already holds there is rewritten in place at the new role; a
 /// house already seated at exactly `role` is left as it is, with no second
 /// receipt. `binder` must be able to assign `role`, and every role the house
-/// holds there now, by the role table.
+/// holds there now, by the role table, an Admin on the step-up `step_up`
+/// shows.
 pub(crate) fn link_house_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     preset: &WorkspaceRosterPreset,
     role: FederationGrantRole,
     binder: EntityId,
+    step_up: &OrgAdminStepUp,
     now: u64,
 ) -> Result<()> {
     require_house_role(role)?;
@@ -355,9 +369,9 @@ pub(crate) fn link_house_in_txn(
     }
     require_undeleted_in_txn(vault, txn)?;
     let held = house_grants_in_txn(vault, txn, house, vault_id)?;
-    require_role_assigner_in_txn(vault, txn, vault_id, binder, role)?;
+    require_role_assigner_in_txn(vault, txn, vault_id, binder, step_up, role)?;
     for (_, grant) in &held {
-        require_role_assigner_in_txn(vault, txn, vault_id, binder, grant.role)?;
+        require_role_assigner_in_txn(vault, txn, vault_id, binder, step_up, grant.role)?;
     }
     // The same link is a retry: the grant at `role` and its open bind
     // receipt for this workspace. A grant another workspace's bind opened, or
@@ -433,12 +447,13 @@ pub(crate) fn link_house_in_txn(
 /// shared vault, in the caller's transaction, each withdrawal known here and
 /// to the vault's peers, and keeps one unbind receipt per removed grant,
 /// naming `binder`, who must be able to assign each removed role by the role
-/// table. Whether any grant went.
+/// table, an Admin on the step-up `step_up` shows. Whether any grant went.
 fn unlink_preset_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     preset: &WorkspaceRosterPreset,
     binder: EntityId,
+    step_up: &OrgAdminStepUp,
     now: u64,
 ) -> Result<bool> {
     let house = preset.house_actor_ref;
@@ -448,7 +463,7 @@ fn unlink_preset_in_txn(
         require_undeleted_in_txn(vault, txn)?;
     }
     for (_, grant) in &held {
-        require_role_assigner_in_txn(vault, txn, vault_id, binder, grant.role)?;
+        require_role_assigner_in_txn(vault, txn, vault_id, binder, step_up, grant.role)?;
     }
     let open = open_links_at_in_txn(vault, txn, house, u64::MAX)?;
     for (id, grant) in &held {
@@ -487,13 +502,14 @@ pub(crate) fn unlink_house_in_txn(
     txn: &mut heed::RwTxn<'_>,
     house: EntityId,
     binder: EntityId,
+    step_up: &OrgAdminStepUp,
     now: u64,
 ) -> Result<bool> {
     let mut seen = BTreeSet::new();
     let mut removed = false;
     for preset in presets_naming_in_txn(vault, txn, house)? {
         if seen.insert(preset.workspace_vault_id) {
-            removed |= unlink_preset_in_txn(vault, txn, &preset, binder, now)?;
+            removed |= unlink_preset_in_txn(vault, txn, &preset, binder, step_up, now)?;
         }
     }
     Ok(removed)
@@ -535,10 +551,11 @@ impl Vault {
         role: FederationGrantRole,
     ) -> Result<()> {
         self.with_write_txn(|txn| {
+            let step_up = actor.org_admin_step_up();
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            link_house_in_txn(self, txn, &preset, role, actor, now)
+            link_house_in_txn(self, txn, &preset, role, actor, &step_up, now)
         })
     }
 
@@ -554,10 +571,11 @@ impl Vault {
         workspace_ref: &str,
     ) -> Result<bool> {
         self.with_write_txn(|txn| {
+            let step_up = actor.org_admin_step_up();
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            unlink_preset_in_txn(self, txn, &preset, actor, now)
+            unlink_preset_in_txn(self, txn, &preset, actor, &step_up, now)
         })
     }
 }

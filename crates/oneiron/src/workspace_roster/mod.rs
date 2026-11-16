@@ -71,7 +71,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    decode_federation_grant_body, encode_federation_grant_body,
+    OrgAdminWriter, decode_federation_grant_body, encode_federation_grant_body,
 };
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_FACET,
