@@ -229,10 +229,13 @@ impl Vault {
         {
             return Ok(None);
         }
+        let now = self.instant_in_txn(txn)?.secs();
+        // The row stands on its counted giving as a member's Grant, never on its shape and
+        // the absence of an end alone (review #8855 P1-1).
         if grant.member_ref.to_hex() != claims.holder_ref
             || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
-            || self.grant_line_ended_in_txn(txn, grant_ref)?
-            || !grant.confers_at(self.instant_in_txn(txn)?.secs())
+            || !self.grant_row_stands_in_txn(txn, grant_ref, &body, now)?
+            || !grant.confers_at(now)
             || live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.live_type()
                 != Some(crate::registry::ENTITY_TYPE_PERSON)
         {

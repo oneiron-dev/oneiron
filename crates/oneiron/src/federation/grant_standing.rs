@@ -538,6 +538,27 @@ impl Vault {
         Ok(given_in_fold(&fold, id, &grant, terms_key.as_ref(), &[family]).is_some())
     }
 
+    /// Whether the live Grant row `id`, whose stored body is `body`, stands at `now` as
+    /// [`grant_row_in_fold`] reads it under this vault's fold: a row a counted act names stands
+    /// only on that act's line, whatever its shape says now, so a counted guest's row re-put as
+    /// a member or own-device row keeps its line's terms and its end (review #8855 P1-1); a row
+    /// no counted act names (an own-device Grant, read as derived in R4) reads from itself.
+    ///
+    /// # Errors
+    ///
+    /// A store or authority-fold read failure.
+    pub(crate) fn grant_row_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        body: &[u8],
+        now: u64,
+    ) -> Result<bool> {
+        let shared_scope = self.shared_vault_scope_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(grant_row_in_fold(&fold, id, body, shared_scope.as_ref(), now).is_some())
+    }
+
     /// Whether a counted act ended the line of Grant `id` (pass 28 R3c): a guest's revoke
     /// (`SlipGrantRevoke`), a membership withdrawal or a grant act's end, on every replica that
     /// folded it. A Grant whose line ended confers nothing, whatever its row says, and an end
