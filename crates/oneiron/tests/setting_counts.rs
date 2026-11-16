@@ -8,12 +8,14 @@
 //! - beside a counted widening of the owner's that it did not see, meets it with what it
 //!   replaced;
 //! - as the first act on the vault value row narrows the accepted default and never widens it;
+//! - over a value wider than the default is judged against that value, not the default;
 //! - on a key with no order changes nothing: what it replaced stays in force.
 //!
-//! An act that a removal saw keeps its full count.
+//! An act that a removal saw keeps its full count, and so does a lone owner act wider than the
+//! default.
 //!
 //! Red at 7a-4 (`7879603777ea`, whose projection read every live head as if it counted in
-//! full): the three widening tests and the no-order test fail there. Green at the 7b-2 head.
+//! full): the four widening tests and the no-order test fail there. Green at the 7b-2 head.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_counts`.
 
@@ -300,5 +302,43 @@ fn an_act_a_removal_saw_keeps_its_full_count() {
         fx.cap(),
         (9, SettingStanding::Settled),
         "the removal saw the act, so it keeps its full count"
+    );
+}
+
+#[test]
+fn an_owners_act_wider_than_the_default_counts_in_full() {
+    let fx = Fixture::rooted();
+    fx.owner_sets(CAP, json!(20));
+
+    assert_eq!(
+        fx.cap(),
+        (20, SettingStanding::Settled),
+        "the owner's lone act counts in full: the vault row replaces the default 10"
+    );
+}
+
+#[test]
+fn a_raced_act_is_judged_against_the_value_it_replaced_not_the_default() {
+    let fx = Fixture::rooted();
+    let other = fx.other_machine(0x68);
+    fx.owner_sets(CAP, json!(20));
+    let before_removal = fx.frontier(CAP);
+    fx.removes(&other);
+    fx.lands_from(&other, &before_removal, CAP, json!(30));
+
+    assert_eq!(
+        fx.cap(),
+        (20, SettingStanding::Settled),
+        "a raced 30 over the owner's 20 gives the 20 it replaced, not the default 10"
+    );
+
+    let other = fx.other_machine(0x69);
+    let now = fx.frontier(CAP);
+    fx.removes(&other);
+    fx.lands_from(&other, &now, CAP, json!(15));
+    assert_eq!(
+        fx.cap(),
+        (15, SettingStanding::Settled),
+        "a raced 15 over that row narrows it to 15"
     );
 }

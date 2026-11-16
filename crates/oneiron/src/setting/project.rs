@@ -437,18 +437,23 @@ fn combine(
             empty,
             given: BTreeMap::new(),
         };
-        let mut met = None;
+        let mut given = Vec::with_capacity(heads.len());
+        let mut inert = None;
         for head in heads {
-            let gives = match walk.gives(head.act)? {
-                Ok(gives) => gives,
+            match walk.gives(head.act)? {
+                Ok(gives) => given.push(gives),
                 Err(Short::Unreadable) => return Ok(Ok(quarantined())),
-                Err(Short::Inert(why)) => return Ok(Err(why)),
-            };
-            met = match walk.meet(met, gives) {
-                Ok(met) => met,
-                Err(()) => return Ok(Ok(quarantined())),
-            };
+                Err(Short::Inert(why)) => inert = inert.or(Some(why)),
+            }
         }
+        // A value that does not decode quarantines the row whichever head it is under; only then
+        // does an act this build cannot read yet leave the row as it is.
+        if let Some(why) = inert {
+            return Ok(Err(why));
+        }
+        let Ok(met) = walk.meet_all(given) else {
+            return Ok(Ok(quarantined()));
+        };
         return Ok(Ok(Projected {
             value: met,
             keep: false,
@@ -557,18 +562,17 @@ impl Walk<'_, '_> {
                 Err(short) => return Ok(Err(short)),
             };
             let gives = if safe {
-                let mut from = None;
-                for replaced in &counted.replaced {
-                    let replaced = self.given.get(replaced).cloned().flatten();
-                    from = match self.meet(from, replaced) {
-                        Ok(from) => from,
-                        Err(()) => return Ok(Err(Short::Unreadable)),
-                    };
-                }
-                match self.meet(own, from) {
-                    Ok(gives) => gives,
-                    Err(()) => return Ok(Err(Short::Unreadable)),
-                }
+                let from = counted
+                    .replaced
+                    .iter()
+                    .map(|replaced| self.given.get(replaced).cloned().flatten());
+                let Ok(from) = self.meet_all(from.collect::<Vec<_>>()) else {
+                    return Ok(Err(Short::Unreadable));
+                };
+                let Ok(gives) = self.meet(own, from) else {
+                    return Ok(Err(Short::Unreadable));
+                };
+                gives
             } else {
                 own
             };
@@ -592,6 +596,23 @@ impl Walk<'_, '_> {
             Err(why) => return Ok(Err(Short::Inert(why))),
         };
         Ok(value_of(self.vault, self.txn, self.spec, &head)?.map_err(|()| Short::Unreadable))
+    }
+
+    /// The meet of what each of `given` gives the row ([`Self::meet`], folded from the first):
+    /// no row when there is none (an act that replaced nothing replaced the empty slot), or when
+    /// each gives no row. `Err` where two values do not meet.
+    fn meet_all(
+        &self,
+        given: Vec<Option<EncodedValue>>,
+    ) -> std::result::Result<Option<EncodedValue>, ()> {
+        let mut given = given.into_iter();
+        let Some(mut met) = given.next() else {
+            return Ok(None);
+        };
+        for one in given {
+            met = self.meet(met, one)?;
+        }
+        Ok(met)
     }
 
     /// The stricter of two things the row is given: their meet; no row on both sides is no row,
