@@ -71,6 +71,7 @@ pub(super) fn active_comm_party_key_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> CommResult<Option<String>> {
+    note_comm_party_row_read();
     let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
@@ -91,6 +92,29 @@ pub(super) fn active_comm_party_key_in_txn(
     Ok(required_string(entries, KEY_PARTY_KEY)
         .ok()
         .map(str::to_owned))
+}
+
+// Test-door tally of the PERSON rows the party validator reads, per thread
+// (FIX COMM-PARTY-LOOKUP-INDEX-CANDIDATES): a lookup past the shortcut reads
+// only the PERSONs the party-key index names for its key.
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static COMM_PARTY_ROW_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(oneiron_test_support)]
+fn note_comm_party_row_read() {
+    COMM_PARTY_ROW_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(oneiron_test_support))]
+const fn note_comm_party_row_read() {}
+
+/// The PERSON rows the party validator read on this thread since the last
+/// call.
+#[cfg(oneiron_test_support)]
+pub(crate) fn take_comm_party_row_reads() -> usize {
+    COMM_PARTY_ROW_READS.with(|reads| reads.replace(0))
 }
 
 /// The `party_key` of the active comm-owned PERSON `id`: the address the
