@@ -27,8 +27,8 @@ use oneiron_gen::gemini::{
     GeminiMediaTransport,
 };
 use oneiron_llm::openai_compat::{
-    OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
-    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+    OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod,
+    OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
 use oneiron_speech::tts::hosted::{self, HostedWire};
 
@@ -36,6 +36,7 @@ use super::broker::{
     BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join, open_with_key_released,
 };
 use super::http::{charge_read, is_cloud_node, read_broker_booked};
+use super::media::openai_compat_media;
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -91,13 +92,11 @@ pub(super) fn broker_media_backend(
                 wire_models,
             )))
         }
-        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => Ok(Arc::new(
-            OpenAiMediaBackend::new(
-                BrokerMedia::new(name, provider, &provider.base_url, site, keys)?,
-                wire_models,
-                provider.base_url.clone(),
-            )
-            .with_embed_shape(provider.embed_shape),
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => Ok(openai_compat_media(
+            BrokerMedia::new(name, provider, &provider.base_url, site, keys)?,
+            wire_models,
+            provider.base_url.clone(),
+            provider.embed_shape,
         )),
         ProviderKind::Cartesia | ProviderKind::Elevenlabs => {
             let wire = if matches!(provider.kind, ProviderKind::Cartesia) {
