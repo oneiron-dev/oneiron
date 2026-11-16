@@ -94,7 +94,9 @@ impl<'a> WitnessMessageAuthorization<'a> {
 /// # Errors
 ///
 /// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) when the envelope is malformed, the author
-/// bucket exceeds the actor's authority, or the policy ceiling refuses.
+/// bucket exceeds the actor's authority, or the policy ceiling refuses;
+/// [`RegistryError::InvalidRelationship`](crate::error::RegistryError::InvalidRelationship)
+/// when its metadata's `rel` names no live RELATIONSHIP row.
 pub(crate) fn check_witness_message_ceiling<'a>(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -123,6 +125,7 @@ pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
     policy: &PolicyManifestResolution,
     permit: Option<&OfferQuestionPermit>,
 ) -> Result<WitnessMessageAuthorization<'a>> {
+    require_message_rel_relationship(store, txn, envelope)?;
     let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, txn, actor);
     let mut input = witness_message_gate_input(actor, agent_definition_ceiling);
     input.foreign_agent_ceiling = super::foreign_agent::resolve(store, txn, actor)?;
@@ -152,6 +155,50 @@ pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
         body,
         binding: witness_message_binding(actor, body),
     })
+}
+
+/// MESSAGE-REL-NAMES = A (ARCH-0003:43: a scope names "all" or a set of
+/// relationship ids): a MESSAGE whose metadata names a `rel` names a live
+/// RELATIONSHIP row, the test a claim's relationships meet at their write
+/// (`batch/claim_candidate_apply.rs`), so a message never carries a scope
+/// the claims derived from it cannot. The `rel` decodes as the read gate
+/// decodes it (`claim/scoped_read/access_gate.rs`): a 16-byte binary or a
+/// hex string. A nil `rel`, or one that decodes to no id, names nothing
+/// and is read as unscoped there; it is not judged here.
+fn require_message_rel_relationship(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    envelope: &WitnessMessageEnvelope<'_>,
+) -> Result<()> {
+    let Some(Value::Map(fields)) = envelope.metadata.as_ref() else {
+        return Ok(());
+    };
+    for (key, value) in fields {
+        if key.as_str() != Some("rel") {
+            continue;
+        }
+        let relationship = match value {
+            Value::Binary(bytes) => bytes
+                .as_slice()
+                .try_into()
+                .ok()
+                .and_then(|b| EntityId::from_bytes(b).ok()),
+            Value::String(s) => s.as_str().and_then(|s| EntityId::from_hex(s).ok()),
+            _ => None,
+        };
+        let Some(relationship) = relationship else {
+            continue;
+        };
+        let found = crate::vault::live_entity_row_in_txn(store, txn, &relationship)?.live_type();
+        if found != Some(crate::registry::ENTITY_TYPE_RELATIONSHIP) {
+            return Err(crate::error::RegistryError::InvalidRelationship {
+                relationship,
+                found,
+            }
+            .into());
+        }
+    }
+    Ok(())
 }
 
 /// The transcript gate of a Retry's assistant TURN: the policy verdict

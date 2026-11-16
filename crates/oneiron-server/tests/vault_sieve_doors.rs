@@ -50,7 +50,7 @@ use oneiron::dreamer_runner::{
     EnqueueDreamerAttemptOutcome, ReserveDreamerBudget,
 };
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_TURN};
 use oneiron::{
     EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage,
     WitnessTurn,
@@ -758,6 +758,19 @@ fn a_turn_the_dreamer_may_not_read_gives_no_span() {
         let fixture = setup().await;
         let space = EntityId::from_bytes([0x5A; 16]).expect("space id");
         let now = fixture.vault.now_recorded_at();
+        fixture
+            .vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                b"relationship",
+            )
+            .expect("a relationship");
         let turn = witness_turn(
             &fixture,
             P1_TURN_HEX,
