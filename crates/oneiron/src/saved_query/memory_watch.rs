@@ -1,13 +1,16 @@
-//! Owner-bound per-claim watches stored as SAVED_QUERY definitions.
+//! Per-claim watches stored as SAVED_QUERY definitions: the owner's, and an agent's own.
 //!
-//! The query identity is deterministic for (owner, anchor). This makes the
+//! The query identity is deterministic for (watcher, anchor). This makes the
 //! flag idempotent and prevents two concurrent callers from creating two
 //! standing watches. The definition is the durable authority, not a socket.
+//! While `memory.watch.agent_may_watch` is on, an agent keeps a watch of its
+//! own on a claim it can read; while it is off, only the vault owner keeps
+//! watches, and an agent's watches do not wake.
 use crate::EdgeActorClass;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::MemoryResult;
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
@@ -83,15 +86,109 @@ fn is_watch(record: &SavedQueryRecord, owner: EntityId, anchor: EntityId) -> boo
         && watch_id(owner, anchor).ok() == Some(record.query_ref)
 }
 
+/// Whether an agent keeps a watch of its own: the `memory.watch.agent_may_watch` key.
+pub fn agent_may_watch(vault: &Vault) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    agent_may_watch_in_txn(vault, &txn)
+}
+
+/// [`agent_may_watch`] in the caller's read: the vault scope decides.
+fn agent_may_watch_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(super::setting_keys::MEMORY_WATCH_AGENT_MAY_WATCH
+        .read_in_txn(vault, txn, &[], None)?
+        .value)
+}
+
 /// Sets the owner's per-entry watch flag. The SAVED_QUERY row survives restart
 /// and the returned query ref can be used as the durable flag's identity.
 /// A vault must have registered its SAVED_QUERY kind before accepting watches.
 /// Every watch the owner sets or re-enables is kept: no count refuses one
 /// (FIX 8186), and each watch's reactive work stays bounded per wake by its
-/// own eval policy.
+/// own eval policy. An agent keeps its own watch through
+/// `set_memory_watch_as_agent` while `memory.watch.agent_may_watch` is on.
 pub fn set_memory_watch(
     vault: &Vault,
     owner: EntityId,
+    anchor: EntityId,
+    enabled: bool,
+    now: u64,
+) -> MemoryResult<Option<MemoryWatch>> {
+    set_watch(
+        vault,
+        owner,
+        EdgeActorClass::Human,
+        |txn| {
+            vault
+                .memory(owner, EdgeActorClass::Human)
+                .verify_owner_in_txn(txn)
+        },
+        anchor,
+        enabled,
+        now,
+    )
+}
+
+/// Sets an agent's own per-entry watch flag while `memory.watch.agent_may_watch` is on.
+/// The agent is admitted in the write: it is a live agent of this vault, the presented
+/// credential, when one is presented, is still live, and the key is on. The claim stays
+/// readable through the agent's own scoped read, and each wake reads through the agent's
+/// live grants; the route checks the claim's readability before calling here.
+pub fn set_memory_watch_as_agent(
+    vault: &Vault,
+    agent: EntityId,
+    credential: Option<&crate::authority::VerifiedSlip>,
+    anchor: EntityId,
+    enabled: bool,
+    now: u64,
+) -> MemoryResult<Option<MemoryWatch>> {
+    set_watch(
+        vault,
+        agent,
+        EdgeActorClass::Agent,
+        |txn| {
+            if !crate::authority::live_agent_principal_in(
+                &vault.store,
+                txn,
+                agent,
+                EdgeActorClass::Agent,
+            )? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "only a live agent of this vault keeps a watch of its own",
+                    &["name a live agent principal of this vault"],
+                ));
+            }
+            if let Some(slip) = credential {
+                let live = vault.capability_slip_is_live_in_txn(txn, slip)?;
+                if !live {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "the credential presented is no longer live",
+                        &["present a live credential"],
+                    ));
+                }
+            }
+            if !agent_may_watch_in_txn(vault, txn)? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "an agent keeps a watch of its own only while memory.watch.agent_may_watch is on",
+                    &["the vault owner turns memory.watch.agent_may_watch on"],
+                ));
+            }
+            Ok(())
+        },
+        anchor,
+        enabled,
+        now,
+    )
+}
+
+/// Sets `watcher`'s per-entry watch flag as `class`, admitted by `admit` in the write.
+fn set_watch(
+    vault: &Vault,
+    watcher: EntityId,
+    class: EdgeActorClass,
+    admit: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
     anchor: EntityId,
     enabled: bool,
     now: u64,
@@ -106,15 +203,15 @@ pub fn set_memory_watch(
     {
         return Err(Error::EntityNotFound.into());
     }
-    let query_ref = watch_id(owner, anchor)?;
+    let query_ref = watch_id(watcher, anchor)?;
     vault.try_with_write_txn_grouped(|txn| {
-        vault
-            .memory(owner, EdgeActorClass::Human)
-            .verify_owner_in_txn(&*txn)?;
+        admit(&*txn)?;
         let existing = load_record_in_txn(vault, txn, query_ref, kind)?;
         match existing {
             Some(mut record) => {
-                if !is_watch(&record, owner, anchor) {
+                if !is_watch(&record, watcher, anchor)
+                    || record.definition.owner_actor_class != class
+                {
                     return Err(
                         Error::InvariantViolation("memory watch query identity collision").into(),
                     );
@@ -149,8 +246,8 @@ pub fn set_memory_watch(
                     query_ref,
                     definition: SavedQueryDefinition {
                         schema_version: SAVED_QUERY_SCHEMA_VERSION,
-                        owner_actor: owner,
-                        owner_actor_class: EdgeActorClass::Human,
+                        owner_actor: watcher,
+                        owner_actor_class: class,
                         scope: QueryScope::default(),
                         definition_version: 1,
                         filter: FilterAst::EdgeExists {
