@@ -13,10 +13,12 @@ mod fake_llm;
 use std::sync::Arc;
 
 use fake_llm::{FakeLlm, Reply};
-use oneiron::{Vault, VaultConfig};
+use oneiron::deletion::DeleteEntityOptions;
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::models::ModelRuntime;
-use oneiron_server::test_doors::prefix_refresh::warm_then_refresh;
+use oneiron_server::test_doors::prefix_refresh::{warm_erase_then_refresh, warm_then_refresh};
 use serde_json::json;
 
 /// The cached prefix's extent in the provider's own tokens.
@@ -92,5 +94,58 @@ async fn a_cold_prefix_gets_no_refresh() {
         fake.seen().len(),
         1,
         "the warm send alone; no refresh went out"
+    );
+}
+
+/// A hard erase after the run entered skips the Keep refresh: the kept
+/// request may hold the erased row's content, which the erase never reaches
+/// in memory, so nothing is sent twice (review P1 of #8428).
+#[tokio::test]
+async fn a_hard_erase_since_entry_skips_the_refresh() {
+    let fake = FakeLlm::start(
+        vec![
+            Reply::CachedText {
+                text: "warm".into(),
+                model: "claude-family-latest".into(),
+                cache_write: PREFIX_TOKENS,
+                cache_read: 0,
+            },
+            Reply::CachedText {
+                text: "kept".into(),
+                model: "claude-family-latest".into(),
+                cache_write: 0,
+                cache_read: PREFIX_TOKENS,
+            },
+        ],
+        None,
+    )
+    .await;
+    let (_dir, vault, runtime) = runtime_at(&fake.base_url).await;
+    let horizon = warm_erase_then_refresh(vault, runtime, |vault| {
+        let before = vault.source_erase_generation();
+        let source = EntityId::now();
+        vault
+            .put_entity(
+                &source,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"human",
+            )
+            .expect("put writes the source row");
+        vault
+            .delete_entity_with_options(&source, DeleteEntityOptions { purge: true })
+            .expect("hard-erase the source row");
+        assert!(
+            vault.source_erase_generation() > before,
+            "the hard erase moved the source erase generation"
+        );
+    })
+    .await;
+    assert_eq!(horizon, None);
+    assert_eq!(
+        fake.seen().len(),
+        1,
+        "the warm send alone; no refresh went out after the erase"
     );
 }

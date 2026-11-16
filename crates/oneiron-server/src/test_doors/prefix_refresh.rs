@@ -7,7 +7,7 @@ use std::sync::Arc;
 use oneiron::llm::ServedCacheHorizon;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, Vault};
 
-use crate::ai_host::PrefixRefresh;
+use crate::ai_host::{KeptPrefix, PrefixRefresh};
 use crate::models::ModelRuntime;
 
 /// Warms the chat seat's one model with a single request that marks its
@@ -35,6 +35,25 @@ pub async fn warm_then_refresh(
     vault: Arc<Vault>,
     runtime: Arc<ModelRuntime>,
 ) -> Option<ServedCacheHorizon> {
+    warm_erase_then_refresh(vault, runtime, |_| {}).await
+}
+
+/// [`warm_then_refresh`] with `erase` run on the vault, on a blocking
+/// thread, after the warm send answered and before the refresh; a panic in
+/// it is the caller's. The refresh keeps the source erase generation read
+/// before the warm request was built, as a run's hold reads it as the run
+/// enters (review P1 of #8428).
+///
+/// # Errors
+///
+/// None, as [`warm_then_refresh`].
+#[doc(hidden)]
+pub async fn warm_erase_then_refresh(
+    vault: Arc<Vault>,
+    runtime: Arc<ModelRuntime>,
+    erase: impl FnOnce(&Vault) + Send + 'static,
+) -> Option<ServedCacheHorizon> {
+    let erase_generation = vault.source_erase_generation();
     let seat = runtime.seat(crate::ai_host::CHAT_ROLE)?;
     let model = seat.rung_models().into_iter().next()?.0;
     let mut request = oneiron::LlmRequest {
@@ -82,7 +101,11 @@ pub async fn warm_then_refresh(
         .generate_exact_recorded_while(&run, admitted.request, None, &|| true)
         .await
         .ok()?;
-    let answering = binding.answering?;
+    let kept = KeptPrefix::new(binding.answering?, erase_generation);
+    let erased = Arc::clone(&vault);
+    tokio::task::spawn_blocking(move || erase(&erased))
+        .await
+        .unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic()));
     let refresh = PrefixRefresh::new(
         vault,
         runtime,
@@ -90,7 +113,7 @@ pub async fn warm_then_refresh(
         Default::default(),
         tokio::runtime::Handle::current(),
     );
-    tokio::task::spawn_blocking(move || refresh.refresh(None, &answering))
+    tokio::task::spawn_blocking(move || refresh.refresh(None, &kept))
         .await
         .ok()
         .flatten()

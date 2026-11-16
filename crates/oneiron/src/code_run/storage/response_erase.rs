@@ -40,6 +40,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::Ordering;
 
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
 use super::records::REPLAY_RECORDS;
@@ -620,6 +621,9 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     source: &EntityId,
 ) -> Result<()> {
+    // Every hard erase moves the vault's source erase generation here, before
+    // it commits; a writer that rolls back still moved it (L2-37 PR-3).
+    store.source_erase_generation.fetch_add(1, Ordering::AcqRel);
     retire_source_step_starts_in_txn(store, wtxn, source)?;
     let mut records = Vec::new();
     for row in REPLAY_RECORDS.iter_raw_from(store, wtxn, &[])? {

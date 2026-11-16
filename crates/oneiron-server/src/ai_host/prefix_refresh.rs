@@ -11,6 +11,12 @@
 //! parks, keeps the latest answered rung there when the park left a cached
 //! prefix, and refreshes that rung from its idle pass. A refresh is metered as the run's own calls and compaction spend:
 //! under the run's spend scope when it has one, else on code mode's meter.
+//!
+//! A hard erase reaches a run's stored rows, never the request its slot
+//! keeps in memory. So the hold reads the vault's source erase generation as
+//! the run enters, before the run builds any request, and a refresh sends
+//! only while that generation has not moved (review P1 of #8428): any hard
+//! erase since then skips the Keep, and the idle call falls back.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,9 +76,18 @@ impl PrefixRefresh {
     /// `run`'s answering rung slot, held while the run runs: the one held
     /// already, else a fresh one. The run's step calls fill it as they
     /// answer, beside the compaction writer's own hold of the same slot
-    /// (FIX 4933).
+    /// (FIX 4933). The hold reads the vault's source erase generation
+    /// first, as the run enters, and notes the request the slot already
+    /// holds, which an earlier entry sent.
     pub(crate) fn hold(&self, run: EntityId) -> HeldAnsweringRung {
-        HeldAnsweringRung(self.answering.hold(run))
+        let erase_generation = self.vault.source_erase_generation();
+        let slot = self.answering.hold(run);
+        let inherited = slot.latest().map(|rung| rung.request);
+        HeldAnsweringRung {
+            slot,
+            inherited,
+            erase_generation,
+        }
     }
 
     /// One charged refresh of `kept`, the run's last request as its rung
@@ -80,13 +95,24 @@ impl PrefixRefresh {
     /// `scope` it spends on a fresh guard on that scope and books what it
     /// spent, as a compaction pass does; with no scope it spends on code
     /// mode's meter. Returns the horizon the refresh answer stamped, or
-    /// `None` when nothing was sent or answered. Blocking; the pump's pass
-    /// calls it on a blocking thread.
+    /// `None` when nothing was sent or answered: also when a hard erase
+    /// moved the vault's source erase generation since the run entered.
+    /// Blocking; the pump's pass calls it on a blocking thread.
     pub(crate) fn refresh(
         &self,
         scope: Option<&SpendScopeId>,
-        kept: &AnsweringRung,
+        kept: &KeptPrefix,
     ) -> Option<ServedCacheHorizon> {
+        // The kept request may hold content read from a row a hard erase
+        // has taken since; the erase never reaches this copy (review P1 of
+        // #8428). Any hard erase since the run entered skips the resend.
+        if self.vault.source_erase_generation() != kept.erase_generation {
+            tracing::debug!(
+                "a row was hard-erased since the run entered; its idle prefix refresh is skipped"
+            );
+            return None;
+        }
+        let kept = &kept.rung;
         // The resend: the kept request's bytes with only the output limit
         // set to 1. The limit is generation-only: the provider reads the
         // cached prompt beside it, never in it (FIX 6492).
@@ -205,11 +231,47 @@ impl PrefixRefresh {
 
 /// `run`'s answering rung slot held while the run runs (L2-37 PR-3): the
 /// pump's hold beside the compaction writer's, dropped when the run parks.
-pub(crate) struct HeldAnsweringRung(Arc<AnsweringRungSlot>);
+/// It keeps the source erase generation read as the run entered, and the
+/// request the slot held then, which an earlier entry sent.
+pub(crate) struct HeldAnsweringRung {
+    slot: Arc<AnsweringRungSlot>,
+    inherited: Option<Arc<LlmRequest>>,
+    erase_generation: u64,
+}
 
 impl HeldAnsweringRung {
-    /// The run's latest call that answered, as its rung sent it, held now.
-    pub(crate) fn latest(&self) -> Option<AnsweringRung> {
-        self.0.latest()
+    /// The run's latest call that answered during this hold, as its rung
+    /// sent it, kept with the hold's erase generation; `None` when no call
+    /// answered since the run entered.
+    pub(crate) fn latest(&self) -> Option<KeptPrefix> {
+        let rung = self.slot.latest()?;
+        if self
+            .inherited
+            .as_ref()
+            .is_some_and(|before| Arc::ptr_eq(before, &rung.request))
+        {
+            return None;
+        }
+        Some(KeptPrefix::new(rung, self.erase_generation))
+    }
+}
+
+/// A parked run's answering rung, kept for its idle Keep refresh (L2-37
+/// PR-3), with the vault's source erase generation as read before the run
+/// built the kept request.
+#[derive(Clone)]
+pub(crate) struct KeptPrefix {
+    rung: AnsweringRung,
+    erase_generation: u64,
+}
+
+impl KeptPrefix {
+    /// `rung`, kept with `erase_generation`, read before its request was
+    /// built.
+    pub(crate) fn new(rung: AnsweringRung, erase_generation: u64) -> Self {
+        Self {
+            rung,
+            erase_generation,
+        }
     }
 }
