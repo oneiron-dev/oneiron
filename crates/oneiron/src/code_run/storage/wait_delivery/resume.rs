@@ -4,7 +4,7 @@
 //! a bound code consent wait's settlement, in one writer. The resumed
 //! reply's body is published in that writer too (FIX 6592).
 
-use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output_sourced};
+use super::super::records::{FinishedOutput, finish_output_sourced};
 use super::super::replay_bodies::response_erased_error;
 use super::super::wait_holders::{holder_erased_in_txn, holder_erased_routed};
 use super::erased_read::delivery_in_txn;
@@ -118,7 +118,6 @@ impl ExecutorStorage<'_> {
                 },
             ),
             Self::Session(binding) => {
-                REPLAY_RECORDS.encode_value(record)?;
                 let next_generation = record.generation()?;
                 binding.answered(|| {
                     let row =
