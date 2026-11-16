@@ -47,8 +47,8 @@ use super::output::{check_output, context_text};
 use super::provisional::{self, ProvisionalEntity};
 use super::role;
 use super::tags::{
-    DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags,
-    readable_in_txn, replace_in_txn, tag_set_in_txn,
+    DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention,
+    TaggedRelation, TurnTags, readable_in_txn, replace_in_txn, tag_set_in_txn,
 };
 use super::vector;
 use crate::attempt_queue::AttemptQueue;
@@ -335,12 +335,26 @@ pub(super) fn save_with_hint_read_in_txn(
         }
         None => (None, false),
     };
+    // One mention per span, in span order: a relation's span indices name
+    // the same mentions.
+    let relations = output.relations.as_ref().map(|relations| {
+        relations
+            .iter()
+            .map(|relation| TaggedRelation {
+                head: relation.head,
+                tail: relation.tail,
+                label: relation.label.clone(),
+                confidence: relation.confidence,
+            })
+            .collect()
+    });
     let mut tags = TurnTags {
         turn,
         envelope,
         messages,
         mentions,
         merge_evidence,
+        relations,
         mood,
         mood_carried,
         mood_parts: output.mood_parts.clone(),
