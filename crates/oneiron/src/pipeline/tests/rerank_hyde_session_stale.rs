@@ -112,3 +112,371 @@ fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     session.close()?;
     Ok(())
 }
+
+fn person_name_body(name: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+    )
+    .expect("encode person name");
+    body
+}
+
+fn put_indexed_person(vault: &Vault, id: EntityId, name: &str) -> Result<()> {
+    vault
+        .batch()
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &person_name_body(name),
+        )
+        .text(&id, &[("name", name)])
+        .commit()
+}
+
+/// Opens a test vault that keeps the default policy manifest `Vault::open`
+/// seeds. A pipeline run reads its claim aging profiles from that manifest
+/// and fails closed without it, so the legacy opener's cleared vault cannot
+/// run a query.
+fn open_test_vault_keeping_policy_manifest() -> (tempfile::TempDir, Vault) {
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    (dir, vault)
+}
+
+fn restage_room_person(
+    session: &crate::off_record::OffRecordSession<'_>,
+    id: EntityId,
+    name: &str,
+) -> Result<()> {
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let route = session.write_route()?;
+    let conversation = session.overlay_conversation_shell()?;
+    let occurred = TimeRange { start: 2, end: 2 };
+    let entry = JournalEntry {
+        scope: JournalScope::new(conversation, id),
+        role: JournalRole::TurnOwnedArtifact,
+        occurred,
+        learned_at: 2,
+        source_run: None,
+        op: crate::batch::BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            learned_at: 2,
+            row_version: None,
+            data: person_name_body(name),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+    };
+    session.overlay_write_routed(&route, |wtxn, apply| apply(wtxn, entry))
+}
+
+#[test]
+fn a_room_put_only_restage_publishes_its_revision_at_once() -> Result<()> {
+    let (_dir, vault) = open_test_vault_keeping_policy_manifest();
+    let id = entity_id(0x9B);
+    put_indexed_person(&vault, id, "Owen Marsh")?;
+    let old_codes = crate::batch::generate_phonetic_codes("Owen Marsh");
+    let new_codes = crate::batch::generate_phonetic_codes("Yuki Tanaka");
+    let old_refs: Vec<_> = old_codes.iter().map(String::as_str).collect();
+    let new_refs: Vec<_> = new_codes.iter().map(String::as_str).collect();
+    assert!(
+        vault
+            .query()
+            .search_phonetic(&old_refs)
+            .run()?
+            .iter()
+            .any(|row| row.id == id),
+        "base holds the old name codes"
+    );
+    assert!(
+        vault
+            .query()
+            .search_text("Marsh", 10)
+            .run()?
+            .iter()
+            .any(|row| row.id == id),
+        "base holds the old name text"
+    );
+
+    let session = vault.off_record_session_vault().enter(
+        "sess-put-only-restage",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    restage_room_person(&session, id, "Yuki Tanaka")?;
+    {
+        let view = session.read_view()?;
+        let rtxn = vault.store.env.read_txn()?;
+        let record = crate::ports::EntityStoreRead::port_entity_record(&view, &rtxn, &id)?
+            .expect("room holds the restaged person");
+        let body = rmpv::decode::read_value(&mut std::io::Cursor::new(record.body))
+            .expect("decode room person");
+        let name = body
+            .as_map()
+            .expect("person body is a map")
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("name"))
+            .and_then(|(_, value)| value.as_str());
+        assert_eq!(name, Some("Yuki Tanaka"));
+        drop(rtxn);
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_phonetic(&old_refs)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the old name codes stop answering as soon as the Put lands"
+        );
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_phonetic(&new_refs)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the new name codes answer without a Text apply"
+        );
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("Marsh", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the old name text stops answering"
+        );
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_text("Tanaka", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the live body's name text answers at once"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
+
+#[test]
+fn a_room_restage_with_its_text_keeps_the_text_it_sent() -> Result<()> {
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let (_dir, vault) = open_test_vault_keeping_policy_manifest();
+    let id = entity_id(0x9C);
+    put_indexed_person(&vault, id, "Owen Marsh")?;
+    let session = vault.off_record_session_vault().enter(
+        "sess-restage-with-text",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    restage_room_person(&session, id, "Yuki Tanaka")?;
+    let route = session.write_route()?;
+    let entry = JournalEntry {
+        scope: JournalScope::new(session.overlay_conversation_shell()?, id),
+        role: JournalRole::TurnOwnedArtifact,
+        occurred: TimeRange { start: 2, end: 2 },
+        learned_at: 2,
+        source_run: None,
+        op: crate::batch::BatchOp::Text {
+            id,
+            fields: vec![("name".to_owned(), "Yuki Tanaka".to_owned())],
+        },
+    };
+    session.overlay_write_routed(&route, |wtxn, apply| apply(wtxn, entry))?;
+    {
+        let view = session.read_view()?;
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_text("Tanaka", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the following Text apply keeps its own name postings"
+        );
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("Marsh", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the following Text apply removes the old name postings"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
+
+/// An ASSET_TEXT body whose `text` field holds `text`.
+fn asset_text_body(text: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("text"), rmpv::Value::from(text))]),
+    )
+    .expect("encode asset text");
+    body
+}
+
+/// Restages ASSET_TEXT `id` in the room with a new body and no Text op, as a
+/// session-bound raw put does.
+fn restage_room_asset_text(
+    session: &crate::off_record::OffRecordSession<'_>,
+    id: EntityId,
+    text: &str,
+) -> Result<()> {
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let route = session.write_route()?;
+    let conversation = session.overlay_conversation_shell()?;
+    let occurred = TimeRange { start: 2, end: 2 };
+    let entry = JournalEntry {
+        scope: JournalScope::new(conversation, id),
+        role: JournalRole::TurnOwnedArtifact,
+        occurred,
+        learned_at: 2,
+        source_run: None,
+        op: crate::batch::BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
+            occurred,
+            learned_at: 2,
+            row_version: None,
+            data: asset_text_body(text),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+    };
+    session.overlay_write_routed(&route, |wtxn, apply| apply(wtxn, entry))
+}
+
+/// Review round 1 of #7822 (P1 ops_pipeline.rs:642): a Put-only restage of a
+/// derived text whose source is marked indexes the sealed-file placeholder in
+/// the room, as an explicit Text op does, never the restaged words.
+#[test]
+fn a_room_put_only_restage_of_a_marked_derived_text_indexes_the_placeholder() -> Result<()> {
+    let (_dir, vault) = open_test_vault_keeping_policy_manifest();
+    let blob_bytes: &[u8] = b"repo fixture file bytes for marked derived text";
+    let blob_hash = *blake3::hash(blob_bytes).as_bytes();
+    let asset = crate::codebase::snapshot_asset_entity_id(&blob_hash)?;
+    let text_id = entity_id(0x9D);
+    let old_text = "olduniqueword base caption";
+    let new_text = "fresh caption confidentialtoken";
+
+    vault.put_entity(
+        &asset,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        blob_bytes,
+    )?;
+    vault.put_entity(
+        &text_id,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &asset_text_body(old_text),
+    )?;
+    vault.put_edge(&text_id, crate::edge::EdgeKind::DerivedFrom, &asset, 1.0)?;
+    vault
+        .batch()
+        .text(&text_id, &[("text", old_text)])
+        .commit()?;
+
+    assert!(
+        vault
+            .query()
+            .search_text("olduniqueword", 10)
+            .run()?
+            .iter()
+            .any(|row| row.id == text_id),
+        "base holds the old caption text"
+    );
+
+    // The source blob is marked opaque: the room indexes a text derived
+    // from it as the sealed-file placeholder.
+    let store_identity = "test-store-marked-derived-text";
+    let store_id = crate::origin::lfs::lfs_repo_id(store_identity)?;
+    let mark = crate::origin::secret_marks::RepoSecretMark {
+        schema_version: crate::origin::secret_marks::RepoSecretMark::SCHEMA,
+        operation_id: entity_id(0xA0),
+        store_id,
+        store_identity: store_identity.to_owned(),
+        source: crate::origin::secret_marks::RepoSecretSource::Quarantine,
+        blob_oid: crate::git_wire::GitOid::parse_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("valid test oid"),
+        raw_blake3: blob_hash,
+        path: None,
+        detector_kind: "test-opaque".to_owned(),
+        content_kind: crate::receive_scan::ReceiveBlobKind::Text,
+        placement: crate::origin::secret_marks::RepoSecretPlacement::Opaque,
+        marked_at: 1,
+    };
+    vault.with_write_txn(|wtxn| {
+        crate::origin::secret_marks::put_repo_secret_mark_in_txn(&vault, wtxn, &mark)?;
+        Ok(())
+    })?;
+
+    let session = vault.off_record_session_vault().enter(
+        "sess-put-only-restage-marked-derived-text",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    restage_room_asset_text(&session, text_id, new_text)?;
+    {
+        let view = session.read_view()?;
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("confidentialtoken", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == text_id),
+            "the room must not index the secret word of a marked derived text"
+        );
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_text("sealed", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == text_id),
+            "the restage published the sealed-file placeholder"
+        );
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("olduniqueword", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == text_id),
+            "the old caption stops answering in the room"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
