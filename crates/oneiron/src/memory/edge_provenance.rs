@@ -15,8 +15,7 @@ use crate::vault::ReadMode;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::edge_provenance::{
-    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
-    EdgeProvenanceSupersession, EdgeProvenanceView,
+    EdgeProvenanceLifecycle, EdgeProvenanceRequest, EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 
 /// 32 lowercase hex characters for an opaque 16-byte reference.
@@ -104,7 +103,7 @@ impl Memory<'_> {
                             edge_kind: claim.subject.kind.name().to_owned(),
                             target_ref: claim.subject.target.to_hex(),
                             actor_entity_ref: record.actor_entity_ref.to_hex(),
-                            actor_class: claim.actor_class.into(),
+                            actor_class: claim.actor_class,
                             source_revision_ref: record
                                 .source_revision_ref
                                 .as_ref()
