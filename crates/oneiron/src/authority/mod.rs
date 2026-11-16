@@ -395,6 +395,8 @@ pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_vouch::require_holding_machine;
 pub use owner_key_vouch::{
     DeviceOwnerKeyVouch, OWNER_KEY_VOUCH_LABEL_MAX, OWNER_KEY_VOUCH_TEXT_PREFIX,
     OwnerKeyVouchRequest,

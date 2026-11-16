@@ -112,6 +112,7 @@ pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod own_device_message_replay;
 pub mod owner_key_release;
+pub mod owner_key_vouch_holding_machine;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
