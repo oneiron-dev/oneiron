@@ -48,16 +48,7 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), room, limit)?;
         let (scope, rows) = self.thread_rows(room, root)?;
         page_after(rows, after, limit, scope)
     }
@@ -76,16 +67,7 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), room, limit)?;
         let mut scope: Option<crate::federation::Scope> = None;
         let mut rows = Vec::new();
         for root in self.privileged_private_roots(room)? {
