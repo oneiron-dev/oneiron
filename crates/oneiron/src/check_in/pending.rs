@@ -143,6 +143,15 @@ pub(crate) trait RungResolver {
     /// enters the agent's rung (P22-SHAPE Q4 = A). `None`: no verdict, and
     /// the agent passes the ask up.
     fn agent_verdict(&self, pending: &PendingCheckIn, holder: &RungHolder) -> Option<HolderAnswer>;
+
+    /// The asker's spawn parent this chain was built with, which an open
+    /// stores on the row ([`PendingCheckIn::spawn_parent`]) before it enters
+    /// the first rung, so every later rung reads it from the row. `None`
+    /// unless the agent verb door built the chain from the caller's running
+    /// attempt (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL).
+    fn spawn_parent(&self) -> Option<EntityId> {
+        None
+    }
 }
 
 /// A holder's answer and the effect it is over: it settles the ask only
@@ -233,6 +242,7 @@ pub(crate) fn open_pending_check_in_in_txn(
     let mut row = PendingCheckIn {
         id: vault.store.clock.entity_id()?,
         asker: request.asker,
+        spawn_parent: chain.spawn_parent(),
         grant_ref: request.grant_ref,
         verb: request.verb,
         act: request.act,
@@ -651,8 +661,11 @@ fn require_may_answer(
 /// a pending check-in the actor asked is removed, since no act of theirs
 /// waits any more; every other row drops the actor from its pinned holders
 /// and from a skipped rung's missing link, and names nobody where it named
-/// the actor as the one who answered, extended or objected. The answer, the
-/// extension, the objection and the skip stand. The receipts stand,
+/// the actor as the one who answered, extended or objected, or as the
+/// asker's spawn parent. A rung the ask enters after that reads the asker's
+/// grantor as an ask no spawned run opened does (the grant's
+/// `delegated_by`). The answer, the extension, the objection and the skip
+/// stand. The receipts stand,
 /// scrubbed by their own table's scrub, which takes the actor out of the
 /// same `missing_link` value the same way.
 ///
@@ -695,6 +708,7 @@ fn scrub_row(row: &mut PendingCheckIn, actor: &EntityId) -> bool {
     if let PendingState::Answered { by, .. } = &mut row.state {
         scrub(by);
     }
+    scrub(&mut row.spawn_parent);
     for entry in &mut row.rungs {
         if let Some(extension) = entry.extension.as_mut() {
             scrub(&mut extension.by);
