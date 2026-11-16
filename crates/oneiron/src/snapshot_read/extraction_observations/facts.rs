@@ -7,7 +7,8 @@ use super::types::{
 };
 use crate::EntityId;
 use crate::claim::{
-    ClaimBody, ClaimSource, ScopedRead, is_preference_predicate, observed_preference_support_in_txn,
+    ClaimBody, ClaimSource, ClaimSubject, ScopedRead, is_preference_predicate,
+    observed_preference_support_in_txn,
 };
 use crate::dreamer_consolidation::extraction_pack::BoundBranchRead;
 use crate::dreamer_consolidation::routing::{candidate_keys, cosine};
@@ -56,9 +57,20 @@ pub(super) fn extraction_observation_facts(
             None => vault.default_facet_in_txn(txn)?,
         };
         let meet = candidate.evidence.meet();
+        // The support is read for the candidate's subject, as the derive claim
+        // item reads it at the commit. An edge subject never qualifies: the
+        // claim item takes only an entity subject.
         let observed = meet == ClaimSource::Generated
             && is_preference_predicate(&fresh.predicate)
-            && observed_preference_support_in_txn(vault, txn, &candidate.evidence.refs())?;
+            && match fresh.subject {
+                ClaimSubject::Entity(subject) => observed_preference_support_in_txn(
+                    vault,
+                    txn,
+                    &subject,
+                    &candidate.evidence.refs(),
+                )?,
+                ClaimSubject::Edge { .. } => false,
+            };
         facts.candidates.push(CandidateObservation {
             index,
             claim: candidate.claim_id.to_hex(),
