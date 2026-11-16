@@ -135,7 +135,10 @@ fn a_deleted_share_issuer_is_refused_as_a_missing_issuer_is() {
         "a deleted shell issuer must be refused as a missing issuer is: {deleted:?}"
     );
     assert!(
-        vault.get_share(&share_id).expect("read the share").is_none(),
+        vault
+            .get_share(&share_id)
+            .expect("read the share")
+            .is_none(),
         "no share was created for the deleted issuer"
     );
 }
