@@ -32,6 +32,7 @@ use oneiron::code_run::{
     RunSpeechDestination, SelfAgentVerbCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
     SelfEffect,
 };
+use oneiron::deletion::DeleteReason;
 use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, invoke};
@@ -548,5 +549,59 @@ fn revert_all_unwinds_a_runs_note_forks_in_landing_order() -> TestResult {
         "The first line. The second line.",
         "the revision from before the run is restored"
     );
+    Ok(())
+}
+
+/// A run lands a fork of each of two NOTEs through its own proposals, and
+/// the owner then erases the first NOTE. Undo-all of the run takes back the
+/// second NOTE's fork and reports the erased NOTE's fork as dependent. Before,
+/// the journal row's kept undo sent the revert to the erased NOTE, whose read
+/// failed the whole revert ("NOTE was erased"), so the second fork stood
+/// (review round 2 of #8214).
+#[test]
+fn revert_all_reports_an_erased_notes_fork_as_dependent() -> TestResult {
+    let f = Fixture::open()?;
+    let run = f.run("run-notes-erased")?;
+    let (erased, kept) = (
+        f.note("A note the owner erases.")?,
+        f.note("A note the revert restores.")?,
+    );
+    let gone = fork(
+        &f,
+        &run,
+        erased,
+        whole_text(&f, erased, "A note the owner erases, edited by the run.")?,
+    )?;
+    open_proposal(&f, &run, erased, &gone)?;
+    let landed = fork(
+        &f,
+        &run,
+        kept,
+        whole_text(&f, kept, "A note the revert restores, edited by the run.")?,
+    )?;
+    open_proposal(&f, &run, kept, &landed)?;
+    assert_eq!(
+        f.text(kept)?,
+        "A note the revert restores, edited by the run."
+    );
+    f.vault
+        .delete_entity_with_reason(&erased, DeleteReason::UserHardDelete)
+        .map_err(at("the owner's erase of the first NOTE"))?;
+
+    let outcome = f.revert_all("run-notes-erased")?;
+    assert_eq!(
+        rows(&outcome, "compensated", "receipt")?
+            .into_iter()
+            .map(|(change, _)| change)
+            .collect::<Vec<_>>(),
+        vec![landed],
+        "the other NOTE's fork is taken back"
+    );
+    assert_eq!(
+        rows(&outcome, "not_undone", "reason")?,
+        vec![(gone, "dependent".to_owned())],
+        "the erased NOTE's fork is reported, not undone"
+    );
+    assert_eq!(f.text(kept)?, "A note the revert restores.");
     Ok(())
 }
