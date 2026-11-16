@@ -24,8 +24,10 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
+use crate::comm::claim_class_descriptor_id;
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyContactStatus, normalize_channel_class,
+    CounterpartyContactRecord, CounterpartyContactStatus, PREDICATE_COUNTERPARTY_CONTACT_STATUS,
+    normalize_channel_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -62,6 +64,9 @@ pub(crate) struct SendTarget<'a> {
 /// One class whose live heads hold the send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EnforcementHead {
+    /// The class's registry id: the descriptor entity id its predicate
+    /// derives, which keys the class's posture row.
+    pub(crate) class: EntityId,
     /// The receipt reason the hold carries.
     pub(crate) receipt_reason: &'static str,
     /// Whether an owner override or the opt-out posture answers the hold.
@@ -84,6 +89,16 @@ impl SendEnforcement {
     /// Whether a head no override lifts holds the send.
     pub(crate) fn revoked(&self) -> bool {
         self.heads.iter().any(|head| !head.overridable)
+    }
+
+    /// The registry ids of the overridable classes that hold the send, in the
+    /// heads' order.
+    pub(crate) fn hold_classes(&self) -> Vec<EntityId> {
+        self.heads
+            .iter()
+            .filter(|head| head.overridable)
+            .map(|head| head.class)
+            .collect()
     }
 }
 
@@ -111,6 +126,7 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
         .any(|record| record.status == CounterpartyContactStatus::Revoked)
     {
         heads.push(EnforcementHead {
+            class: claim_class_descriptor_id(PREDICATE_COUNTERPARTY_CONTACT_STATUS)?,
             receipt_reason: COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON,
             overridable: false,
         });
@@ -138,6 +154,7 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
                 send.verb,
             )? {
                 heads.push(EnforcementHead {
+                    class: claim_class_descriptor_id(&predicate)?,
                     receipt_reason: COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON,
                     overridable: true,
                 });
@@ -153,6 +170,7 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
                 send.channel_class,
             ))? {
                 heads.push(EnforcementHead {
+                    class: claim_class_descriptor_id(&predicate)?,
                     receipt_reason,
                     overridable: true,
                 });
@@ -166,6 +184,7 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
         for predicate in generic {
             if generic_class_holds_in_txn(store, txn, &predicate, &subjects, send.channel_class)? {
                 heads.push(EnforcementHead {
+                    class: claim_class_descriptor_id(&predicate)?,
                     receipt_reason: COUNTERPARTY_ENFORCEMENT_HOLD_RECEIPT_REASON,
                     overridable: true,
                 });

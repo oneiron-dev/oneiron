@@ -4,10 +4,27 @@ use crate::claim::enforcement_read::{
     SendTarget, enforcement_heads_for_send_in_txn, send_override_head_in_txn,
 };
 use crate::counterparty_contact::{CounterpartyFirstTouch, normalize_channel_class};
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::input::{ExternalEffectGateInput, ExternalEffectPolicyRisk};
 use crate::store::Store;
 use crate::write_envelope::communication::SendOverrideMatch;
+
+/// What hydration answers: the input with the counterparty's contact and
+/// hold facts folded in, and beside it the gate-internal facts no caller may
+/// assert, which the single evaluating caller writes onto the gate context.
+pub(crate) struct CounterpartyHydration {
+    /// The hydrated input.
+    pub(crate) effect: ExternalEffectGateInput,
+    /// The owner's matching `comm.send_override`, read only for a held send.
+    pub(crate) send_override: Option<SendOverrideMatch>,
+    /// Whether a head no override lifts (an owner-revoked contact) holds the
+    /// send.
+    pub(crate) revoked: bool,
+    /// The registry ids of the overridable classes whose heads hold the send,
+    /// for the evaluator's per-class posture (ARCH-0057 §3.1).
+    pub(crate) hold_classes: Vec<EntityId>,
+}
 
 /// Hydrates the counterparty consent facts the external-effect door decides on.
 ///
@@ -30,13 +47,14 @@ use crate::write_envelope::communication::SendOverrideMatch;
 /// byte-unchanged — an override is never something a caller may assert — so
 /// the match travels back as its own value and the single caller writes it
 /// onto the gate-internal context. Whether a head no override lifts (an
-/// owner-revoked contact) holds the send travels back the same way.
+/// owner-revoked contact) holds the send, and which classes hold it, travel
+/// back the same way.
 pub(crate) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &crate::gate::PolicyManifestResolution,
-) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
+) -> Result<CounterpartyHydration> {
     hydrate_external_effect_contact_at(store, txn, effect, policy, None)
 }
 
@@ -46,10 +64,15 @@ pub(crate) fn hydrate_external_effect_contact_at(
     effect: &ExternalEffectGateInput,
     policy: &crate::gate::PolicyManifestResolution,
     override_now: Option<u64>,
-) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
+) -> Result<CounterpartyHydration> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
-        return Ok((hydrated, None, false));
+        return Ok(CounterpartyHydration {
+            effect: hydrated,
+            send_override: None,
+            revoked: false,
+            hold_classes: Vec::new(),
+        });
     };
 
     let channel_class = normalize_channel_class(&effect.channel);
@@ -130,7 +153,12 @@ pub(crate) fn hydrate_external_effect_contact_at(
         // opt-out fall-through, so an unsuppressed send must not carry one.
         None
     };
-    Ok((hydrated, send_override, any_revoked))
+    Ok(CounterpartyHydration {
+        effect: hydrated,
+        send_override,
+        revoked: any_revoked,
+        hold_classes: enforcement.hold_classes(),
+    })
 }
 
 /// The owner's `comm.send_override` head for this send, read on the caller's
