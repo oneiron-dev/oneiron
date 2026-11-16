@@ -111,7 +111,11 @@ impl CanonicalDocument {
     }
     pub(super) fn key(&self) -> String {
         // All callers validate the UUID bytes before they reach storage.
-        format!("note-value:v2:{}:{}", hex(self.entity_id), hex(self.head))
+        format!(
+            "note-value:v2:{}:{}",
+            oneiron_hex::encode(&self.entity_id),
+            oneiron_hex::encode(&self.head)
+        )
     }
     /// Rebuild a new entity document; old insert/delete history is not imported.
     pub fn rebuild(&self) -> Result<LoroDoc> {
