@@ -16,7 +16,6 @@ use crate::{
     store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 mod asset_body;
 #[cfg(feature = "sync")]
@@ -146,9 +145,11 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
     asset_text::retire_source_free_birth(store, txn, id)?;
     bump_scope_revision(store, txn)
 }
-fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
-    ScopeAxis::Some(BTreeSet::from([v]))
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::federation::record_scope::default_stamp;
+#[doc(hidden)]
+use oneiron_records::federation::record_scope::singleton;
+
 pub(crate) use crate::batch::row_put::RowPut;
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
@@ -166,18 +167,6 @@ impl BirthPosition {
             .filter(|world| *world != crate::claim::base_world_id())
     }
 }
-pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
-    Scope {
-        worlds: singleton(ScopeId(crate::claim::base_world_id())),
-        facets: singleton(ScopeId(facet)),
-        bands: singleton(kind),
-        audience: singleton(ScopeId(crate::claim::default_project_id())),
-        // The record itself is not a capability. The operation is bound at evaluation.
-        verbs: ScopeAxis::Bottom,
-        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Sensitive),
-    }
-}
-
 /// L02 17:11 (carried by L01-W for FIX 7774): intentionally NOTE/ASSET
 /// only. EVENT/TURN read their birth edge from dedicated arms below so a
 /// derived row without edge keeps the substrate fallback instead of the

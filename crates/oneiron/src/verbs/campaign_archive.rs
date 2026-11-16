@@ -7,19 +7,48 @@ use crate::autoreason_campaign::archive::records::{self, attempt};
 use crate::autoreason_campaign::archive::{
     ArchiveJudgeHost, CampaignArchiveAdmission, CampaignArchiveAxesQueued, CampaignArchiveCoverage,
     CampaignArchiveInstall, CampaignArchiveJudge, CampaignArchiveJudged, CampaignArchiveOutput,
-    CampaignArchiveProposalRequest, CampaignArchiveProposalState, CampaignArchiveProposeAxes,
-    CampaignArchiveRecord, CampaignArchiveReproposal, CampaignArchiveRequest, CampaignArchiveView,
+    CampaignArchivePin, CampaignArchiveProposalRequest, CampaignArchiveProposalState,
+    CampaignArchiveProposeAxes, CampaignArchiveRecord, CampaignArchiveReproposal,
+    CampaignArchiveRequest, CampaignArchiveView,
 };
-use crate::claim::ClaimReadStatus;
+use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
+
+/// Refuses a caller who does not read every sample `pin` was drawn from.
+/// An installed pin's axes and bins carry its samples' words, as the
+/// proposal it came from does, so a door that serves a pin, a view of one
+/// or a cell under one serves only a caller who reads every sample now: a
+/// read grant revoked since the request withholds the archive too (#7966
+/// review round 2).
+fn samples_read_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    pin: &CampaignArchivePin,
+) -> MemoryResult<()> {
+    let samples: Vec<EntityId> = pin
+        .sample_outputs()
+        .iter()
+        .map(|output| output.entity)
+        .collect();
+    if lane
+        .entities_readable_in_txn(txn, &samples)?
+        .contains(&false)
+    {
+        return Err(crate::Error::EntityNotFound.into());
+    }
+    Ok(())
+}
 
 pub fn research_archive_install(
     memory: &Memory<'_>,
     input: CampaignArchiveInstall,
 ) -> MemoryResult<CampaignArchiveView> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
-        Ok(records::install_in_txn(memory.vault(), txn, input)?)
+        let view = records::install_in_txn(memory.vault(), txn, input)?;
+        samples_read_in_txn(&lane, txn, &view.pin)?;
+        Ok(view)
     })
 }
 
@@ -27,9 +56,12 @@ pub fn research_archive_record(
     memory: &Memory<'_>,
     input: CampaignArchiveOutput,
 ) -> MemoryResult<CampaignArchiveView> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
-        Ok(records::record_in_txn(memory.vault(), txn, input)?)
+        let view = records::record_in_txn(memory.vault(), txn, input)?;
+        samples_read_in_txn(&lane, txn, &view.pin)?;
+        Ok(view)
     })
 }
 
@@ -37,6 +69,7 @@ pub fn research_archive_get(
     memory: &Memory<'_>,
     input: CampaignArchiveRequest,
 ) -> MemoryResult<CampaignArchiveRecord> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let txn = memory
         .vault()
         .store
@@ -45,7 +78,9 @@ pub fn research_archive_get(
         .map_err(crate::Error::from)?;
     let root = attempt(input.root)?;
     controller_in_txn(memory, &txn, Some(root))?;
-    Ok(records::read_in_txn(memory.vault(), &txn, root)?)
+    let record = records::read_in_txn(memory.vault(), &txn, root)?;
+    samples_read_in_txn(&lane, &txn, &record.pin)?;
+    Ok(record)
 }
 
 pub fn research_archive_best(
@@ -59,10 +94,16 @@ pub fn research_archive_repropose(
     memory: &Memory<'_>,
     input: CampaignArchiveReproposal,
 ) -> MemoryResult<CampaignArchiveView> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
-        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
+        let root = attempt(input.root)?;
+        controller_in_txn(memory, txn, Some(root))?;
         controller_in_txn(memory, txn, Some(attempt(input.new_root)?))?;
-        Ok(records::repropose_in_txn(memory.vault(), txn, input)?)
+        let held = records::read_in_txn(memory.vault(), txn, root)?;
+        samples_read_in_txn(&lane, txn, &held.pin)?;
+        let view = records::repropose_in_txn(memory.vault(), txn, input)?;
+        samples_read_in_txn(&lane, txn, &view.pin)?;
+        Ok(view)
     })
 }
 
@@ -70,8 +111,12 @@ pub fn research_archive_coverage(
     memory: &Memory<'_>,
     input: CampaignArchiveCoverage,
 ) -> MemoryResult<CampaignArchiveAdmission> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
-        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
+        let root = attempt(input.root)?;
+        controller_in_txn(memory, txn, Some(root))?;
+        let held = records::read_in_txn(memory.vault(), txn, root)?;
+        samples_read_in_txn(&lane, txn, &held.pin)?;
         Ok(records::coverage_in_txn(memory.vault(), txn, input)?)
     })
 }
@@ -115,11 +160,16 @@ pub fn research_archive_propose_axes(
     Ok(CampaignArchiveAxesQueued { request })
 }
 
-/// One axes request's state, for its campaign's controller.
+/// One axes request's state, for its campaign's controller. The axes are
+/// drawn from the samples' words, so the state serves only a caller who
+/// reads every sample now, as the caller who queued the request had to: a
+/// read grant revoked since the request withholds its answer (#7966 review
+/// round 1).
 pub fn research_archive_proposal(
     memory: &Memory<'_>,
     input: CampaignArchiveProposalRequest,
 ) -> MemoryResult<CampaignArchiveProposalState> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let txn = memory
         .vault()
         .store
@@ -128,6 +178,12 @@ pub fn research_archive_proposal(
         .map_err(crate::Error::from)?;
     let record = axes_job::request_record_in_txn(memory.vault(), &txn, input.request)?;
     controller_in_txn(memory, &txn, Some(attempt(record.root())?))?;
+    if lane
+        .entities_readable_in_txn(&txn, &record.sample_entities())?
+        .contains(&false)
+    {
+        return Err(crate::Error::EntityNotFound.into());
+    }
     Ok(record.into_state())
 }
 
@@ -139,8 +195,9 @@ pub fn research_archive_proposal(
 /// pinned on-device embedder instead). The engine records the placement and
 /// score producer records the answer names; the caller never supplies its
 /// own. The caller must read the output and the task, since their words go
-/// to the ladder. An answer the archive does not take records nothing and is
-/// refused with its reason.
+/// to the ladder, and every sample of the pin, since its axes and bins carry
+/// their words (#7966 review round 2). An answer the archive does not take
+/// records nothing and is refused with its reason.
 pub fn research_archive_judge(
     memory: &Memory<'_>,
     input: CampaignArchiveJudge,
@@ -152,6 +209,7 @@ pub fn research_archive_judge(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         controller_in_txn(memory, &txn, Some(attempt(input.root)?))?;
         let (pin, output_text, rubric) = judge::premises_in_txn(vault, &txn, &input)?;
+        samples_read_in_txn(&lane, &txn, &pin)?;
         if lane
             .entities_readable_in_txn(&txn, &[input.output.entity, pin.task()])?
             .contains(&false)

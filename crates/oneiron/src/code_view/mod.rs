@@ -2,7 +2,7 @@
 use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult, CachedBuildLeg};
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
-use crate::git_wire::{git_path_bytes, git_path_os_str, git_path_text_of_os};
+use crate::git_wire::{git_path_os_str, git_path_text_of_os};
 use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::store::checkout_task::CheckoutTaskClass;
 use crate::{EntityId, Vault};
@@ -35,25 +35,11 @@ const VIEW_RECEIPTS: SideTable<EntityId, ViewReceipt, Named> =
 const VIEW_BUILD_OUTCOMES: SideTable<(EntityId, [u8; 32]), serde_json::Value, LegacyJson> =
     SideTable::new(&side_table::CODE_VIEW_BUILD);
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct VisibleFilePolicy {
-    pub version: u32,
-    pub include_prefixes: Vec<String>,
-    pub exclude_prefixes: Vec<String>,
-}
-impl VisibleFilePolicy {
-    pub fn selects(&self, path: &str) -> Result<bool> {
-        relative(path)?;
-        if self.version != 1 {
-            return Err(Error::InvalidClaimBody(
-                "unknown visible-file policy version",
-            ));
-        }
-        Ok(self.include_prefixes.iter().any(|p| path.starts_with(p))
-            && !self.exclude_prefixes.iter().any(|p| path.starts_with(p)))
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_view::VisibleFilePolicy;
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::code_view::relative;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ViewReceipt {
     #[serde(with = "entity_serde")]
@@ -432,22 +418,6 @@ fn view_file_target(root: &Path, path: &str) -> Result<PathBuf> {
         return Err(Error::CorruptedIndex("view file was replaced"));
     }
     Ok(target)
-}
-
-/// A view path, a Git path's text (FIX 21326): a name outside UTF-8 holds its
-/// canonical escape, the only NUL it may hold, and lands on disk as its own
-/// bytes through [`view_path_on_disk`].
-pub(crate) fn relative(path: &str) -> Result<()> {
-    if path.is_empty()
-        || path.contains('\\')
-        || git_path_bytes(path).is_err()
-        || path
-            .split('/')
-            .any(|p| p.is_empty() || p == "." || p == ".." || p == ".git" || p.contains(':'))
-    {
-        return Err(Error::InvalidClaimBody("unsafe view path"));
-    }
-    Ok(())
 }
 
 /// The file the view path `path` names under `root`: its own bytes, so a

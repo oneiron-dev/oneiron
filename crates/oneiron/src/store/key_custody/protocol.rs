@@ -4,11 +4,9 @@
 pub use oneiron_store::key_custody::protocol::*;
 
 pub use super::identity::{CustodyNamespace, CustodyVaultId};
-use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 pub use oneiron_store::key_custody::log::{CustodyEpoch, CustodyPosition};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use zeroize::Zeroizing;
 // Where a restore asks its residence home to start the log (FIX 12045).
 pub use self::drain::{
@@ -18,40 +16,15 @@ pub use self::drain::{
 pub use self::fetched::{CustodyHomeCursor, CustodyHomePage, FetchedCustodySource};
 pub(crate) use super::anchor::anchored_position;
 use super::files::read_whole;
-use super::identity::hex_decode;
 use super::log::{frame_hash, frame_name};
 
 mod drain;
 mod fetched;
 
-/// One lineage a target holds: a vault's custody in one namespace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Lineage {
-    pub vault: CustodyVaultId,
-    pub namespace: CustodyNamespace,
-}
-
-impl Lineage {
-    pub(super) fn of(position: &CustodyPosition) -> Self {
-        Self {
-            vault: position.vault,
-            namespace: position.namespace,
-        }
-    }
-
-    /// The lineage a wire names: vault (64 hex) and namespace (32 hex).
-    pub fn from_hex(vault: &str, namespace: &str) -> Option<Self> {
-        Some(Self {
-            vault: CustodyVaultId::from_bytes(hex_decode(vault)?.try_into().ok()?),
-            namespace: CustodyNamespace::from_bytes(hex_decode(namespace)?.try_into().ok()?),
-        })
-    }
-
-    /// Its vault and namespace in hex, as a wire names them.
-    pub fn to_hex(&self) -> (String, String) {
-        (hex(self.vault.as_bytes()), hex(self.namespace.as_bytes()))
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::store::key_custody::protocol::operation_id;
+#[doc(hidden)]
+pub use oneiron_records::store::key_custody::protocol::{AckRecord, Lineage};
 
 /// Where a restore reads a lineage's custody from: an archive target or
 /// the kit's fetch, through the same validator.
@@ -209,37 +182,6 @@ impl BatchFacts {
     }
 }
 
-/// The publish-and-delete-superseded operation of the head `head_object_id`
-/// at `position`.
-pub(super) fn operation_id(position: &CustodyPosition, head_object_id: &[u8; 32]) -> [u8; 32] {
-    let mut material = position.to_bytes().to_vec();
-    material.extend_from_slice(head_object_id);
-    blake3::derive_key(OPERATION_CONTEXT, &material)
-}
-
-/// A target's durable acknowledgement of one batch: named MessagePack
-/// (`rmp_serde::to_vec_named`) at rest, JSON on a wire. Ids, positions and
-/// digests only; never a key, a wrap, head bytes or a credential.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AckRecord {
-    pub version: u8,
-    pub target_id: String,
-    pub set_revision: u64,
-    pub position: AckPosition,
-    /// The BLAKE3 (64 hex) of the head the target now holds as its latest.
-    pub head_object_id: String,
-    pub operation: AckOperation,
-    /// [`CustodyBatch::operation_id`], 64 hex.
-    pub operation_id: String,
-    pub evidence: DeletionEvidence,
-    /// Who attests: `this-install` for a local folder, the residence home's
-    /// machine id (hex) as its socket proved it, a hosted adapter's own id.
-    pub attester: String,
-    /// Unix seconds the target persisted the ack.
-    pub acked_at: u64,
-}
-
 /// A machine's commit of the head it staged at its residence home: the
 /// batch's set revision, position, head object id and operation id. The
 /// home checks the staged bytes against all of them before it switches its
@@ -252,40 +194,8 @@ pub struct ResidenceCommit {
     pub operation_id: [u8; 32],
 }
 
-/// A custody position in an ack: vault (64 hex), namespace (32 hex), writer
-/// epoch, log sequence number and tip (64 hex).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AckPosition {
-    pub vault: String,
-    pub namespace: String,
-    pub epoch: u64,
-    pub seq: u64,
-    pub tip: String,
-}
-
-impl AckPosition {
-    pub fn of(position: &CustodyPosition) -> Self {
-        Self {
-            vault: hex(position.vault.as_bytes()),
-            namespace: hex(position.namespace.as_bytes()),
-            epoch: position.epoch.get(),
-            seq: position.seq,
-            tip: hex(&position.tip),
-        }
-    }
-
-    /// The position this names; `None` when a field does not parse.
-    pub fn position(&self) -> Option<CustodyPosition> {
-        Some(CustodyPosition {
-            vault: CustodyVaultId::from_bytes(hex_decode(&self.vault)?.try_into().ok()?),
-            namespace: CustodyNamespace::from_bytes(hex_decode(&self.namespace)?.try_into().ok()?),
-            epoch: CustodyEpoch(self.epoch),
-            seq: self.seq,
-            tip: hex_decode(&self.tip)?.try_into().ok()?,
-        })
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::store::key_custody::protocol::AckPosition;
 
 /// What a target did with a batch.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -11,6 +11,8 @@ use super::{
 use crate::autoreason_campaign::coverage::project_output_coverage;
 use crate::autoreason_campaign::research::{self, ResearchBinding};
 use crate::autoreason_campaign::{CampaignError, CampaignResult};
+use crate::error::SecretError;
+use crate::secret_custody::SecretSight;
 use crate::side_table::{self, Named, SideTable};
 use crate::workspace_roster::GoalRecord;
 use crate::{AttemptId, EntityId, Error, Result, Vault};
@@ -42,11 +44,10 @@ pub struct CampaignArchiveInstall {
     pub proposal: ArchiveAxesProposal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignArchiveRequest {
-    pub root: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::archive::records::{
+    CampaignArchiveAdmission, CampaignArchiveRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -107,17 +108,6 @@ pub struct CampaignArchiveCoverage {
     pub descriptor_revision: String,
     pub incumbent_outputs: Vec<ArchiveOutputRef>,
     pub candidate_outputs: Vec<ArchiveOutputRef>,
-}
-
-/// Admission to the coverage floor only; other promotion gates still apply.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignArchiveAdmission {
-    pub descriptor_revision: String,
-    pub candidate: EntityId,
-    pub required_cells: Vec<ArchiveCell>,
-    pub covered_cells: Vec<ArchiveCell>,
-    pub admitted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -268,10 +258,16 @@ pub(super) fn output_in_txn(
     Ok(())
 }
 
-/// The text of a held output revision, as the Coach's recipe reads it: an
+/// The text of a held output revision, as a model's input reads it (the
+/// Coach's recipe and embedder, the judge's ladder and embedder): an
 /// ARTIFACT version's bytes, or another entity's body at its revision (a
-/// MessagePack body as its served JSON). `None` when that revision no longer
-/// serves (withdrawn words, a body its reader refuses).
+/// file-plane ASSET's body file, never its manifest; a MessagePack body as
+/// its served JSON). Each is read as a masked reader is served it (OF-560):
+/// every key a write door marked is overwritten, whoever asks, so no key
+/// reaches a model through the archive (#7967 review round 1). `None` when
+/// that revision no longer serves (withdrawn words, a body its reader
+/// refuses, a file no revision keeps, bytes no masked copy of may leave, an
+/// ARTIFACT version only a proof no model input carries reads).
 pub(super) fn output_text_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -287,9 +283,26 @@ pub(super) fn output_text_in_txn(
         else {
             return Ok(None);
         };
-        return Ok(vault
-            .read_blob_artifact_version_in_txn(txn, &output.entity, version.version)?
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()));
+        // A queue check's exhaust reads only with the owner's live proof
+        // (`Vault::export_blob_artifact_for_reader_in_txn`, FIX 4997), and a
+        // reminder wording only for a reader of its source. No model input
+        // here carries either proof, so neither version serves, masked or
+        // not (#7967 review round 2).
+        if matches!(
+            version.provenance,
+            crate::blob_artifact::BlobVersionProvenance::QueueCheck { .. }
+        ) || version.made_by.process.identity
+            == crate::commitment_wake::COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND
+        {
+            return Ok(None);
+        }
+        let served = masked_served(vault.read_blob_artifact_version_sighted_in_txn(
+            txn,
+            &output.entity,
+            version.version,
+            SecretSight::Masked,
+        ))?;
+        return Ok(served.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()));
     }
     let Some(revision) = revision_ref(&output.revision) else {
         return Ok(None);
@@ -303,16 +316,66 @@ pub(super) fn output_text_in_txn(
     else {
         return Ok(None);
     };
-    let body = row
+    // A file-plane ASSET's revision is stored as its manifest: it reads as
+    // the body file it names, as every revision reader serves it (FIX 3677,
+    // 22091): the live row through the ASSET's current file, an older one
+    // through the file its revisions keep, whatever body the ASSET holds now
+    // (#7966 review round 2). A manifest whose file nothing keeps any more
+    // no longer serves (#7966 review round 1).
+    let materialized = vault.materialized_revision_in_txn(txn, &output.entity, row.clone())?;
+    if materialized == row && stored_manifest(&row) {
+        return Ok(None);
+    }
+    let body = materialized
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-        .unwrap_or_default();
-    let mut cursor = body;
+        .unwrap_or_default()
+        .to_vec();
+    let Some(body) = crate::store::file_key_masks::served_bytes_in_txn(
+        &vault.store,
+        txn,
+        body,
+        None,
+        SecretSight::Masked,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut cursor = body.as_slice();
     Ok(Some(match rmpv::decode::read_value(&mut cursor) {
         Ok(value) if cursor.is_empty() => {
-            crate::batch::export::served_stored_messagepack_json(body, value).to_string()
+            crate::batch::export::served_stored_messagepack_json(&body, value).to_string()
         }
-        _ => String::from_utf8_lossy(body).into_owned(),
+        _ => String::from_utf8_lossy(&body).into_owned(),
     }))
+}
+
+/// Whether the stored row `row` is an ASSET's whose body is a file-plane
+/// manifest.
+fn stored_manifest(row: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(row)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_ASSET)
+        && row
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .and_then(crate::store::AssetFileManifest::decode)
+            .is_some()
+}
+
+/// An ARTIFACT version's bytes as a door serves a masked reader an optional
+/// file (`served_bytes_in_txn`): `None` when no masked copy of them may
+/// leave, or when the release scan reads a credential in the copy that
+/// would.
+fn masked_served(read: Result<Option<Vec<u8>>>) -> Result<Option<Vec<u8>>> {
+    match read {
+        Ok(Some(bytes)) if crate::batch::secret_scan::scan_file_content("", &bytes).is_some() => {
+            Ok(None)
+        }
+        Ok(served) => Ok(served),
+        Err(
+            Error::EntityNotFound
+            | Error::Secret(SecretError::MaskedCopyWithheld { .. } | SecretError::SealedFileWithheld),
+        ) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn lower_hex(bytes: &[u8]) -> String {

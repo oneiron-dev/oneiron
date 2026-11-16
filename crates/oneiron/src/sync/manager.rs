@@ -38,13 +38,23 @@
 //!   transition and never waits; opens and unloads of other windows never
 //!   wait on it. The registry mutex covers only lookups, the fast path,
 //!   registration and removal.
-//! - Lock order: **registry lock → materializer lock** (a cold open takes the
+//! - Lock order: **live-window turn → materializer lock**, and nothing waits
+//!   for the turn while it holds the registry lock (the turn,
+//!   [`Materializer::enter_live_window`], serializes a peer import into a
+//!   live window with an indexed pass over one, L7-45). A fast-path open runs
+//!   its retry pass after it drops the registry lock, and a replacement
+//!   forwards its candidate, which no import reaches before it is
+//!   registered, without the turn. The turn's holder may take the registry
+//!   lock: Observer B's NOTE scrub lists the live windows under the
+//!   materializer lock (FIX 12128).
+//!   The registry lock before the materializer lock: a cold open takes the
 //!   materializer lock for step-5 forward remat, and an unload for its
-//!   persist, without the registry lock).
-//!   Observer callbacks take ONLY the materializer lock and never the
-//!   registry lock, so observer traffic cannot deadlock against
-//!   open/unload. Code built on the manager must never acquire the registry
-//!   lock while holding the materializer lock.
+//!   persist, without the registry lock. Two holders break that order and
+//!   can deadlock against each other: a replacement forwards its candidate
+//!   under the registry lock, and that NOTE scrub takes the registry lock
+//!   under the materializer lock (FIX 25183). Every other observer callback
+//!   takes only the materializer lock. Code built on the manager must never
+//!   acquire the registry lock while holding the materializer lock.
 
 mod document_api;
 mod live_mirror;
@@ -63,6 +73,7 @@ pub(crate) use self::pending_mirror::{discard_window_mirrors_in_txn, window_owes
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::{Duration, Instant};
 
 use super::bridge::{Materializer, OutboundSink};
 use super::schema::create_window_doc;
@@ -76,6 +87,10 @@ use super::window_rows::REMAT_WINDOW_MARKER;
 use super::window_rows::{WINDOW_UPDATE, WindowUpdateKey};
 use crate::Vault;
 use crate::error::{Error, Result, SyncError};
+
+/// How often the erasure sweep's drain looks whether a window's issued
+/// handles have dropped ([`WindowManager::while_window_drained_closed`]).
+const SWEEP_DRAIN_POLL: Duration = Duration::from_millis(5);
 
 /// Production registry + recovery orchestrator for window Docs.
 ///
@@ -270,16 +285,19 @@ impl WindowManager {
         }
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
-            // A resident SKILL may have arrived before its actor. Observer B
-            // kept its entity-scoped replay marker; an already-loaded window
-            // must retry it too, not only the cold-open recovery path.
-            if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
-                forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
-            }
             #[cfg(test)]
             self.maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);
             drop(registry);
+            // A resident SKILL may have arrived before its actor. Observer B
+            // kept its entity-scoped replay marker; an already-loaded window
+            // must retry it too, not only the cold-open recovery path. The
+            // pass runs with the registry lock down: it waits for the
+            // live-window turn, whose holder may take the registry lock
+            // (Observer B's NOTE scrub, FIX 12128).
+            if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
+                forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+            }
             return Ok((existing, false));
         }
         let opening = self
@@ -448,6 +466,100 @@ impl WindowManager {
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let registry = self.windows.lock().ok()?;
+        self.while_unregistered_window_closed(registry, key, f)
+    }
+
+    /// The erasure sweep's handoff (ARCH-0038 #housekeeping-sla-open, census
+    /// L9-41): [`while_window_closed`](Self::while_window_closed), after the
+    /// manager first takes a registered window from its holders. While it
+    /// waits, no new handle to the window is issued. Once the handles issued
+    /// before have dropped, within `bound`, the window is persisted and
+    /// deregistered as [`unload_window`](Self::unload_window) does, and then
+    /// held closed through `f`, with no step between in which an open could
+    /// register it again. A caller that asks for the window meanwhile waits,
+    /// then reads what `f` wrote.
+    ///
+    /// A window held by short, overlapping calls (one sync frame each) is
+    /// registered at almost every pass, so without this the probe would
+    /// defer it on each one, past the erasure deadline.
+    ///
+    /// `None` without running `f`, as the probe answers, when a handle is
+    /// still held at `bound` (the window stays registered, and its holders
+    /// keep it as before), when its persist fails (it stays registered and
+    /// observed), or when the probe refuses the key. A holder that asks for
+    /// the same window again while it holds one waits until `bound` at most.
+    pub(crate) fn while_window_drained_closed<T>(
+        &self,
+        key: &WindowKey,
+        bound: Duration,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let registry = self.lock_registry_settled(key);
+        let Some(window) = registry.get(key).map(Arc::clone) else {
+            return self.while_unregistered_window_closed(registry, key, f);
+        };
+        // The transition mark keeps `window`/`open_window` from issuing a new
+        // handle while the issued ones drop, as an unload's persist does.
+        let draining = self.transition.close(key)?;
+        drop(registry);
+        let deadline = Instant::now() + bound;
+        // The registry's own `Arc` and this one.
+        while Arc::strong_count(&window) > 2 {
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    window = %key,
+                    "sweep: window still held at the drain bound — deferred"
+                );
+                return None;
+            }
+            std::thread::sleep(SWEEP_DRAIN_POLL);
+        }
+        // Persist BEFORE deregistering, while observers still cover the doc.
+        if let Err(error) = window.persist_state(&self.vault) {
+            tracing::warn!(
+                window = %key,
+                kind = ?error.kind(),
+                "sweep: drained window not persisted — deferred"
+            );
+            return None;
+        }
+        let mut registry = self.lock_registry();
+        let registered = registry
+            .remove(key)
+            .expect("window present under its transition mark");
+        drop(registered);
+        drop(window);
+        // From the transition mark straight into the sweep fence, under the
+        // registry lock: no open registers the window between them. An
+        // orphaned handle a discard left still defers it, as in the probe.
+        let retained = {
+            let mut issued = self
+                .issued_handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            Self::prune_issued_handles_locked(&mut issued, key)
+        };
+        let closed = if retained {
+            None
+        } else {
+            self.sweep_fence.close(key)
+        };
+        drop(draining);
+        drop(registry);
+        let closed = closed?;
+        let result = f();
+        drop(closed);
+        Some(result)
+    }
+
+    /// [`while_window_closed`](Self::while_window_closed) under the registry
+    /// lock `registry` the caller took.
+    fn while_unregistered_window_closed<T>(
+        &self,
+        registry: MutexGuard<'_, HashMap<WindowKey, Arc<LoadedWindow>>>,
+        key: &WindowKey,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
         if registry.contains_key(key) || self.transition.holds(key) {
             return None;
         }

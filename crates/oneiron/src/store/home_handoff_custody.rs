@@ -58,21 +58,9 @@ impl KeyRef {
     /// # Errors
     /// Any other spelling.
     pub(crate) fn from_hex(text: &str) -> Result<Self> {
-        let bytes = (text.len() == 64)
-            .then(|| {
-                (0..64)
-                    .step_by(2)
-                    .map(|at| {
-                        text.get(at..at + 2)
-                            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                    })
-                    .collect::<Option<Vec<u8>>>()
-            })
-            .flatten()
-            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-            .filter(|bytes| crate::entity_id::bytes_to_hex_lower(bytes) == text)
-            .ok_or(Error::CorruptedIndex("erasable key ref"))?;
-        Ok(Self(bytes))
+        oneiron_hex::decode::<32>(text)
+            .ok_or(Error::CorruptedIndex("erasable key ref"))
+            .map(Self)
     }
 
     /// Its 64 lowercase hex digits.
@@ -370,13 +358,19 @@ pub(crate) fn install_received(
     Ok(installed)
 }
 
-/// Stages the retirement of the key `k` in `w`: an erase's intent, which
-/// custody's finisher carries out after commit. Its holders' debts stay
-/// until each one's retirement is verified. A key this custody does not
-/// hold, or an archived vault, stages nothing.
+/// Stages the retirement of the home handoff key `k` in `w`: an erase's
+/// intent, which custody's finisher carries out after commit. Its holders'
+/// debts stay until each one's retirement is verified. A key this custody
+/// does not hold, or an archived vault, stages nothing.
+///
+/// A peer names `k` (`home_handoff_retire`), so a key custody holds for
+/// another purpose (a grant's scope opening, a drafter artifact, an
+/// authenticator enrollment) is refused and stays live (FIX 23943): only
+/// that key's own door retires it.
 ///
 /// # Errors
-/// Storage and custody faults.
+/// A key of another purpose than the handoff's
+/// ([`StoreError::ErasableKeyPurposeMismatch`]); storage and custody faults.
 pub(crate) fn retire(s: &Store, w: &mut RwTxn<'_>, k: KeyRef) -> Result<()> {
     if s.core.gate_custody_archived() {
         return Ok(());
@@ -384,10 +378,31 @@ pub(crate) fn retire(s: &Store, w: &mut RwTxn<'_>, k: KeyRef) -> Result<()> {
     let Some(custody) = s.core.key_custody.local() else {
         return Ok(());
     };
-    match custody.erasable_by_ref(&k.0)? {
-        Some(item) => stage_erasable_retirement_in_txn(s, w, &custody, &item),
-        None => Ok(()),
+    let Some(item) = custody.erasable_by_ref(&k.0)? else {
+        return Ok(());
+    };
+    if item.purpose != ErasablePurpose::HomeHandoff {
+        return Err(Error::Store(StoreError::ErasableKeyPurposeMismatch));
     }
+    stage_erasable_retirement_in_txn(s, w, &custody, &item)
+}
+
+/// The refs of the scope opening keys custody holds for `grant`: keys of
+/// another purpose than the handoff's, which the retire purpose test hands
+/// to [`retire`] (FIX 23943).
+///
+/// # Errors
+/// Custody faults.
+#[cfg(oneiron_test_support)]
+pub(crate) fn grant_scope_refs_for_test(s: &Store, grant: &EntityId) -> Result<Vec<KeyRef>> {
+    let Some(custody) = s.core.key_custody.local() else {
+        return Ok(Vec::new());
+    };
+    Ok(custody
+        .erasable_keys_of(ErasablePurpose::GrantScope, grant.as_bytes())?
+        .into_iter()
+        .map(|item| KeyRef(item.key_ref))
+        .collect())
 }
 
 /// Every key of `actor` this vault knows, whatever handoff it served

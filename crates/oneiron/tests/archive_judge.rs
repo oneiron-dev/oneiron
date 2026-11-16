@@ -9,7 +9,9 @@
 //! uncertain answer or a ladder fault records nothing and is refused with its
 //! reason, a non-controller is refused before any question, the score reads
 //! the rubric of the judge the pin names, and an embedding-cluster campaign
-//! is placed by its pinned on-device embedder with no model judgment.
+//! is placed by its pinned on-device embedder with no model judgment. A
+//! campaign one of whose samples no longer reads for the caller is not
+//! judged (#7966 review round 2).
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_judge`.
 #![cfg(oneiron_test_support)]
 
@@ -31,7 +33,7 @@ use oneiron::llm::decision::{
     DecisionAnswer, DecisionBand, DecisionReceipt, DecisionRung, HumanAskReason, ProviderPin,
     TypedDecision,
 };
-use oneiron::memory::Memory;
+use oneiron::memory::{MEMORY_CODE_NOT_FOUND, Memory};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::archive_producers::archive_producer_records;
@@ -244,6 +246,7 @@ struct Campaign {
     root: EntityId,
     revision: String,
     output: ArchiveOutputRef,
+    samples: Vec<ArchiveOutputRef>,
 }
 
 impl Campaign {
@@ -294,7 +297,7 @@ fn campaign(f: &Fixture, campaign_id: &str, descriptor: ArchiveDescriptor) -> Ca
             project: f.project,
             goal_ref: f.goal_ref,
             quality_metric: f.ruler.clone(),
-            sample_outputs: samples,
+            sample_outputs: samples.clone(),
             proposal,
         },
     )
@@ -307,6 +310,7 @@ fn campaign(f: &Fixture, campaign_id: &str, descriptor: ArchiveDescriptor) -> Ca
             &format!("{campaign_id}-output.txt"),
             "a formal, short reply to the customer",
         ),
+        samples,
     }
 }
 
@@ -746,4 +750,33 @@ fn an_embedding_campaign_places_by_the_nearest_pinned_center() {
         ArchiveCell::Cluster { index: 0 },
         "the formal output's nearest center"
     );
+}
+
+/// The pin's axes and bins carry its samples' words: once a sample no longer
+/// reads for the caller, the judge asks nothing and records nothing (#7966
+/// review round 2).
+#[test]
+fn a_campaign_whose_sample_no_longer_reads_is_not_judged() {
+    let f = fixture();
+    let campaign = campaign(&f, "judge-withdrawn", two_axes());
+    assert!(
+        f.vault
+            .delete_entity(&campaign.samples[0].entity)
+            .expect("the owner deletes a sample"),
+        "the sample existed"
+    );
+    let before = producers(&f);
+    let ladder = ScriptedLadder::new(
+        vec![
+            choice(&f, "formal"),
+            choice(&f, "short"),
+            quality(&f, 0.8, 0.99),
+        ],
+        None,
+    );
+    let refused = research_archive_judge(&owner_memory(&f), campaign.judge(), &ladder)
+        .expect_err("the judge is refused once a sample no longer reads");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    assert!(ladder.asked().is_empty(), "no question was asked");
+    assert_eq!(producers(&f), before, "nothing was recorded");
 }

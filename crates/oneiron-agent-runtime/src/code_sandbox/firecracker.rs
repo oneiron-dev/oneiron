@@ -223,6 +223,7 @@ impl FirecrackerBackend {
                         .collect(),
                 }),
                 image_release,
+                guest_pressure: None,
             }
         };
         {

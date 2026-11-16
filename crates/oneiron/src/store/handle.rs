@@ -4,7 +4,7 @@
 //! module doc on [`crate::store`] for the gate order.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, Env, RwTxn};
@@ -65,6 +65,17 @@ pub struct RawDatabases {
 pub struct StoreEnv {
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
+    mark_check: OnceLock<MarkCheck>,
+    mark_check_armed: std::sync::atomic::AtomicBool,
+}
+
+/// The table holding the archive mark and the directory this handle opened,
+/// fixed at open.
+pub(in crate::store) struct MarkCheck {
+    pub(in crate::store) vault_meta: OverlayDb,
+    pub(in crate::store) own_root: std::path::PathBuf,
+    #[cfg(unix)]
+    pub(in crate::store) opened: Option<super::root_directory::FileIdentity>,
 }
 
 impl StoreEnv {
@@ -72,19 +83,36 @@ impl StoreEnv {
         Self {
             env,
             sealed: std::sync::atomic::AtomicBool::new(false),
+            mark_check: OnceLock::new(),
+            mark_check_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    /// A write transaction, refused on a sealed (archived) vault. The seal
-    /// is checked again once LMDB's writer is held: a vault is sealed while
-    /// the writer marking it archived holds it, so a writer that waited
-    /// behind that one refuses too.
+    /// A write transaction, refused on a sealed or archived vault. A handle
+    /// any process opened before a restore's swap keeps the vault moved
+    /// aside. LMDB's writer sees every process's commits, so reading the
+    /// archive mark inside it sees the current mark; a live-only mark also
+    /// requires the opened directory still to sit at its canonical root.
+    /// The in-memory seal is checked again after taking that writer too.
     pub(crate) fn write_txn(&self) -> Result<RwTxn<'_>> {
         self.refuse_sealed()?;
         #[cfg(test)]
         run_after_seal_check();
         let txn = self.env.write_txn()?;
         self.refuse_sealed()?;
+        if self
+            .mark_check_armed
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            let check = self
+                .mark_check
+                .get()
+                .ok_or(Error::InvariantViolation("archive mark check missing"))?;
+            if check.refuses_writer(&txn)? {
+                self.seal();
+                return Err(Error::Store(StoreError::ArchivedVault));
+            }
+        }
         Ok(txn)
     }
 
@@ -93,6 +121,17 @@ impl StoreEnv {
     /// lifts it.
     pub(in crate::store) fn past_seal_write_txn(&self) -> Result<RwTxn<'_>> {
         Ok(self.env.write_txn()?)
+    }
+
+    pub(in crate::store) fn arm_mark_check(&self, check: MarkCheck) {
+        let _ = self.mark_check.set(check);
+        self.mark_check_armed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(in crate::store) fn disarm_mark_check(&self) {
+        self.mark_check_armed
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 
     fn refuse_sealed(&self) -> Result<()> {

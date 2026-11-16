@@ -62,8 +62,8 @@ use erase::put_intent_in_txn;
 
 /// Domain of an intent's row key.
 const INTENT_KEY_CONTEXT: &str = "oneiron spawn planned intent key v1";
-/// Domain of an intent's ask digest.
-const ASK_DIGEST_CONTEXT: &str = "oneiron spawn planned intent ask v1";
+#[doc(hidden)]
+use oneiron_records::agent_dispatch::planner_live::intent::{ASK_DIGEST_CONTEXT, CUSTODY_LOST};
 
 /// Framed (actor, parent, intent key) → the intent it names.
 const INTENTS: SideTable<[u8; 32], PlannedIntent, Named> =
@@ -75,9 +75,6 @@ const IN_DOUBT: &str = "this planned spawn was in flight when it was asked again
      doubt; it is never rerun, so ask again under a new intent key";
 const HELD_ELSEWHERE: &str = "this planned spawn is in flight under another placement adapter \
      or key; resume it with that adapter and key, or ask under a new intent key";
-const CUSTODY_LOST: &str = "another call took custody of this planned spawn before it settled; \
-     ask again under the same intent key to read where it stands";
-
 /// Where a stored intent stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -377,7 +377,7 @@ impl WindowManager {
                 destroys.reject_held_in_txn(&vault.store, &rtxn, &HoldActor::TIMER)?;
             }
             read.destroys = Some(destroys);
-            let (candidate, lost) = replace_detached_mirror(vault, &old, snapshot)?;
+            let (candidate, lost) = replace_detached_mirror(vault, window, &old, snapshot)?;
             if lost > 0 {
                 tracing::warn!(
                     window = %window.as_str(),

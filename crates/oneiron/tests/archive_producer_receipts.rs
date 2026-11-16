@@ -27,17 +27,21 @@ use oneiron::llm::decision::{
     DecisionAnswer, DecisionBand, DecisionReceipt, DecisionRung, ProviderPin, TypedDecision,
 };
 use oneiron::memory::Memory;
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 use oneiron::skill_hub::HubFile;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::coach::write_root_goal;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::test_doors::skill_package::land_active_skill_with_files;
 use oneiron::verbs::{
     research_archive_install, research_archive_record, research_archive_repropose,
 };
-use oneiron::{ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{
+    ClaimApprovalStatus, ClaimSource, DeleteReason, EdgeActorClass, EntityId, Vault, VaultConfig,
+};
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -281,6 +285,11 @@ fn install(
 
 /// A typed decision as the decision ladder returns one, on the Big rung.
 fn decision(f: &Fixture, answer: DecisionAnswer) -> TypedDecision {
+    decision_of(f.owner, answer)
+}
+
+/// A decision asked for `principal`, as its receipt names it.
+fn decision_of(principal: EntityId, answer: DecisionAnswer) -> TypedDecision {
     TypedDecision {
         answer,
         probability: Some(0.99),
@@ -290,7 +299,7 @@ fn decision(f: &Fixture, answer: DecisionAnswer) -> TypedDecision {
             question: EntityId::derive(b"archive-fixture", &[b"question".as_slice()])
                 .expect("question id"),
             question_version: 1,
-            principal: f.owner,
+            principal,
             providers: vec![ProviderPin {
                 rung: DecisionRung::Big,
                 model: "fixture-model".into(),
@@ -825,4 +834,67 @@ fn repropose_takes_only_the_engine_reproposal_of_a_bunched_archive() {
     let view = repropose(reproposal).expect("the engine's re-proposal installs");
     assert_eq!(view.pin.task(), old.task);
     assert_ne!(view.descriptor_revision, old.revision);
+}
+
+/// An actor's hard erase drops the producer records it minted (#7965 review
+/// round 2): record refuses the placement and score receipts of an erased
+/// judge, and the owner's own receipts for the same output still record.
+#[test]
+fn an_erased_principal_leaves_no_producer_record() {
+    let f = fixture();
+    let sample = artifact(&f, "erased-judge.txt", "a formal, short answer");
+    let campaign = installed(&f, "archive-erased-judge", std::slice::from_ref(&sample));
+    let judge = EntityId::now();
+    f.vault
+        .put_entity(
+            &judge,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            b"judge",
+        )
+        .expect("a live person");
+    let placed = mint_archive_placement(
+        &f.vault,
+        campaign.root,
+        &campaign.revision,
+        sample.clone(),
+        ArchivePlacementBasis::Judgment {
+            decisions: ["formal", "short"]
+                .iter()
+                .map(|bin| decision_of(judge, DecisionAnswer::Choice((*bin).into())))
+                .collect(),
+        },
+        judge,
+    )
+    .map(judgment)
+    .expect("the judge's placement");
+    let scored = mint_archive_score(
+        &f.vault,
+        campaign.root,
+        &campaign.revision,
+        sample.clone(),
+        decision_of(judge, DecisionAnswer::Score(0.75)),
+        judge,
+    )
+    .expect("the judge's score");
+    f.vault
+        .delete_entity_with_reason(&judge, DeleteReason::UserHardDelete)
+        .expect("the judge's hard erase");
+    refused(
+        "a placement and score the erased judge minted",
+        record(&f, campaign.root, &campaign.revision, placed, scored),
+    );
+    let placed = place(
+        &f,
+        campaign.root,
+        &campaign.revision,
+        &sample,
+        ["formal", "short"],
+    )
+    .expect("the owner's placement");
+    let scored =
+        score(&f, campaign.root, &campaign.revision, &sample, 0.75).expect("the owner's score");
+    record(&f, campaign.root, &campaign.revision, placed, scored)
+        .expect("the owner's receipts still record");
 }
