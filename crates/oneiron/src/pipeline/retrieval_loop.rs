@@ -208,6 +208,7 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                     .as_ref()
                     .map(|vector| (vector.clone(), plan.result_limit));
                 plan.phonetic_search = (!phonetic.is_empty()).then(|| phonetic.clone());
+                plan.phonetic_vector_search = None;
                 plan.ppr_search = None;
                 plan.ppr_expand = None;
                 let searched = self.search(&plan, &requested)?;
@@ -278,6 +279,7 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                         grain.text_search = None;
                         grain.vector_search = None;
                         grain.phonetic_search = None;
+                        grain.phonetic_vector_search = None;
                         grain.temporal_search = None;
                         grain.ppr_expand = None;
                         grain.turn_fold = super::TurnFold::Off;
