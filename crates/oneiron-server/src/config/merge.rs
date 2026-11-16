@@ -112,19 +112,9 @@ pub fn resolve_serve_config_with_sources(
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
     let layers = read_layers(args, env, default_config_path)?;
-    let resolved = merge_layers(args, &layers)?;
     // Same-source or higher-precedence references remain for validation to
     // refuse rather than silently fixing a contradictory self-host request.
-    // A refusal names the layer that set what it refuses (FIX
-    // CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE).
-    validate_serve_config(&resolved).map_err(|refusal| {
-        let origins: Vec<_> = layers.iter().map(|layer| layer.origin.as_ref()).collect();
-        refusal_origin::locate_refusal(refusal, &origins, |count| {
-            let merged = merge_layers(args, &layers[..count]).ok()?;
-            validate_serve_config(&merged).err()
-        })
-    })?;
-    Ok(resolved)
+    merge_layers(args, &layers, validate_serve_config)
 }
 
 /// The file, environment and flag layers merged, before the checks that
@@ -136,7 +126,7 @@ pub(crate) fn layer_serve_config(
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
     let layers = read_layers(args, env, default_config_path)?;
-    merge_layers(args, &layers)
+    merge_layers(args, &layers, |_| Ok(()))
 }
 
 /// One layer of the merge: its place in the precedence order, where its
@@ -225,9 +215,47 @@ impl Layer {
     }
 }
 
-/// `layers` merged over the defaults in order, then the settings only argv
-/// gives. A layer's value refused as it is applied names that layer.
-fn merge_layers(args: &ServeArgs, layers: &[Layer]) -> anyhow::Result<ServeConfig> {
+/// `layers` merged over the defaults in order, then settled and held to
+/// `check`. A value refused as its layer is applied names that layer; one
+/// refused once every layer has applied (the local embedder's space, then
+/// `check`) names the layer [`refusal_origin::locate_refusal`] finds (FIX
+/// CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE).
+fn merge_layers(
+    args: &ServeArgs,
+    layers: &[Layer],
+    check: fn(&ServeConfig) -> anyhow::Result<()>,
+) -> anyhow::Result<ServeConfig> {
+    let (resolved, space_naming) = apply_layers(args, layers)?;
+    settle_merged(resolved, space_naming, check).map_err(|refusal| {
+        let origins: Vec<_> = layers.iter().map(|layer| layer.origin.as_ref()).collect();
+        refusal_origin::locate_refusal(refusal, &origins, |start| {
+            let (resolved, space_naming) = apply_layers(args, &layers[start..]).ok()?;
+            settle_merged(resolved, space_naming, check).err()
+        })
+    })
+}
+
+/// `resolved`'s local embedder space settled as `space_naming` says, then
+/// `resolved` held to `check`.
+fn settle_merged(
+    mut resolved: ServeConfig,
+    space_naming: super::embedder_space::SpaceNaming,
+    check: fn(&ServeConfig) -> anyhow::Result<()>,
+) -> anyhow::Result<ServeConfig> {
+    if let Some(embedder) = resolved.embedder.as_mut() {
+        super::embedder_space::settle_local_space(embedder, space_naming)?;
+    }
+    check(&resolved)?;
+    Ok(resolved)
+}
+
+/// `layers` applied over the defaults in order, then the settings only argv
+/// gives, and what the layers name of the local embedder's space and files.
+/// A layer's value refused as it is applied names that layer.
+fn apply_layers(
+    args: &ServeArgs,
+    layers: &[Layer],
+) -> anyhow::Result<(ServeConfig, super::embedder_space::SpaceNaming)> {
     let mut embedders = [None; 4];
     for (slot, layer) in embedders.iter_mut().zip(layers) {
         *slot = layer.values.embedder.as_ref();
@@ -263,9 +291,6 @@ fn merge_layers(args: &ServeArgs, layers: &[Layer]) -> anyhow::Result<ServeConfi
     {
         resolved.hosted_kms_key_ref = None;
     }
-    if let Some(embedder) = resolved.embedder.as_mut() {
-        super::embedder_space::settle_local_space(embedder, space_naming)?;
-    }
     // The organ builds this server runs as first party, from argv alone
     // (FIX 7644): no file, settings file or environment layer names one.
     resolved.trusted_organ_builds = args.trusted_organ_builds.iter().cloned().collect();
@@ -281,7 +306,7 @@ fn merge_layers(args: &ServeArgs, layers: &[Layer]) -> anyhow::Result<ServeConfi
     {
         models.voice.listen_on(socket)?;
     }
-    Ok(resolved)
+    Ok((resolved, space_naming))
 }
 
 /// One `[embedder]` table settled onto `config` as [`layer_serve_config`]

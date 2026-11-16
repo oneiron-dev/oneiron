@@ -1,9 +1,10 @@
 //! FIX [CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE]: a value serve refuses after
 //! the parse names where it was set. One set in the config file or the
 //! owner's settings file names that file and the line of its key; one set in
-//! the environment or on the command line names that layer. The refusal
-//! itself is unchanged under it, and no value is repeated. Public paths
-//! only: the shipped `oneiron` binary.
+//! the environment or on the command line names that layer; of two layers
+//! that set a refused value, the one in effect. The refusal itself is
+//! unchanged under it, and no value is repeated. Public paths only: the
+//! shipped `oneiron` binary.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 #![allow(
@@ -24,6 +25,8 @@ const STOPS_WITHIN: Duration = Duration::from_secs(120);
 const BLANK_KEY_REF: &str = "   ";
 /// What that refusal says.
 const BLANK_KEY_REF_REFUSED: &str = "KMS key custody requires a non-empty key reference";
+/// A local embedder model, by its repository and revision.
+const HARRIER: &str = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee";
 
 /// A value refused as its layer is applied (`house_role`) names the file and
 /// the line of its key.
@@ -136,6 +139,50 @@ fn a_key_reference_refused_from_the_environment_or_a_flag_names_that_layer() {
     assert!(error.contains("from the command line"), "{error}");
     assert!(error.contains(BLANK_KEY_REF_REFUSED), "{error}");
     assert!(!error.contains("is set in config file"), "{error}");
+}
+
+/// A blank reference in the config file and in the environment over it: the
+/// environment's is in effect, so the environment is named and the file is
+/// not.
+#[test]
+fn a_key_reference_refused_from_two_layers_names_the_one_in_effect() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = file(
+        dir.path(),
+        "custody.toml",
+        &format!("hosted_kms_key_ref = \"{BLANK_KEY_REF}\"\n"),
+    );
+    let error = serve_refused(
+        dir.path(),
+        &["--config", config.to_str().unwrap()],
+        &[("ONEIRON_HOSTED_KMS_KEY_REF", BLANK_KEY_REF)],
+    );
+    assert!(error.contains("from the environment"), "{error}");
+    assert!(error.contains(BLANK_KEY_REF_REFUSED), "{error}");
+    assert!(!error.contains("from config file"), "{error}");
+}
+
+/// A local embedder's space refused once every layer has applied (files
+/// that are not the named model's) names the file and the line of its key.
+#[test]
+fn an_embedder_space_refused_from_the_config_file_names_the_file_and_the_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = file(
+        dir.path(),
+        "embedder.toml",
+        &format!(
+            "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\nrepo = \"mirror/harrier\"\n"
+        ),
+    );
+    let error = serve_refused(dir.path(), &["--config", config.to_str().unwrap()], &[]);
+    assert!(
+        error.contains(&format!(
+            "embedder.model_id is set in config file {} at line 5",
+            config.display()
+        )),
+        "{error}"
+    );
+    assert!(error.contains("but embedder.repo and embedder.revision name"), "{error}");
 }
 
 /// A new file `name` in `dir` that holds `text`, mode 0600.

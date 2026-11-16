@@ -9,10 +9,13 @@
 //! else the file alone. The environment and the flags are named as layers:
 //! most refusals already name their variable and their flag.
 //!
-//! A refusal met as a layer is applied comes from that layer. One met when
-//! the merged result is checked is located by merging the layers again over
-//! the defaults, one more at a time: the first merge whose check meets the
-//! same refusal names the layer it added last. No validator changes for it.
+//! A refusal met as a layer is applied comes from that layer. One met once
+//! every layer has applied (the local embedder's space settled, the merged
+//! result checked) is located by merging the layers again over the
+//! defaults, from the top down: the flags alone, then the environment under
+//! them, and so on. The first merge that meets the same refusal names the
+//! lowest layer it holds, so of two layers that set a refused value, the one
+//! in effect is named. No validator changes for it.
 
 use std::path::{Path, PathBuf};
 
@@ -44,24 +47,22 @@ impl LayerOrigin {
     }
 }
 
-/// `refusal`, met checking the merge of every layer, under the origin of the
-/// layer that completes it: `refused_with(count)` is the refusal met checking
-/// the merge of the first `count` layers, if any, and the first count whose
-/// refusal reads the same names the layer at `count - 1`. The refusal as it
-/// is when the defaults alone meet it, when that layer has no origin, or
-/// when no merge meets it.
+/// `refusal`, met once every layer has applied, under the origin of the
+/// layer it comes from: `refused_with(start)` is the refusal met merging the
+/// layers from `start` up, if any. The starts are tried from the top, the
+/// defaults alone first, and the first whose refusal reads the same names
+/// the layer at `start`. The refusal as it is when the defaults alone meet
+/// it, when that layer has no origin, or when no merge meets it.
 pub(super) fn locate_refusal(
     refusal: anyhow::Error,
     origins: &[Option<&LayerOrigin>],
     refused_with: impl Fn(usize) -> Option<anyhow::Error>,
 ) -> anyhow::Error {
     let refused = format!("{refusal:#}");
-    let completes = (0..=origins.len())
-        .find(|&count| refused_with(count).is_some_and(|met| format!("{met:#}") == refused));
-    match completes
-        .and_then(|count| count.checked_sub(1))
-        .and_then(|last| origins[last])
-    {
+    let lowest = (0..=origins.len())
+        .rev()
+        .find(|&start| refused_with(start).is_some_and(|met| format!("{met:#}") == refused));
+    match lowest.and_then(|start| origins.get(start).copied().flatten()) {
         Some(origin) => origin.attach(refusal),
         None => refusal,
     }
