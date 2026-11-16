@@ -111,7 +111,9 @@ pub(super) mod root_routes;
 pub(super) mod schema;
 pub(super) mod secret_control_routes;
 pub(super) mod secret_found_routes;
+mod secret_handle_edit_routes;
 pub(super) mod secret_lift_routes;
+mod secret_list_routes;
 mod secret_payment_mark_routes;
 pub(super) mod secret_reveal_routes;
 pub(super) mod secret_use_routes;
@@ -214,8 +216,10 @@ fn owner_tables() -> OwnerTable {
         secret_use_routes::owner_table(),
         secret_reveal_routes::owner_table(),
         secret_found_routes::owner_table(),
+        secret_handle_edit_routes::owner_table(),
         code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
+        secret_list_routes::owner_table(),
         secret_payment_mark_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
