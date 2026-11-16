@@ -30,6 +30,7 @@ pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
+pub mod code_run_result_body;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
 pub mod comm_late_stop;
@@ -40,6 +41,7 @@ pub mod consent_graduation_demotion;
 pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod contact_family_heads;
+pub mod conversation_membership_index;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;
@@ -71,9 +73,12 @@ pub mod home_handoff_retire;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
+#[cfg(feature = "sync")]
+pub mod host_taint_replica;
 pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
+pub mod idle_fold;
 pub mod imported_evidence;
 pub mod inquiry;
 pub mod job_kind_rows;
