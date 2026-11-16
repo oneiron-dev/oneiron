@@ -1,6 +1,8 @@
 //! Recording external-effect governance: record, check and held; `effect` re-exports them.
 
 use super::*;
+use crate::store::{PolicyBasis, ReceiptActor};
+use oneiron_contracts::RecordedSeconds;
 
 pub(crate) fn record_external_effect_policy(
     store: &Store,
@@ -45,44 +47,38 @@ pub(crate) fn record_external_effect_policy(
     {
         crate::consent::spend_approve_once_in_txn(store, wtxn, authorization)?;
     }
-    let candidate = GateDecisionRecord {
-        version: 0,
-        decision_id,
-        created_at,
-        outcome: decision.outcome().as_str().to_owned(),
-        reason_codes: decision
-            .reason_codes()
-            .iter()
-            .map(|code| code.as_str().to_owned())
-            .collect(),
-        receipt_reasons: decision
-            .receipt_reasons()
-            .iter()
-            .map(|reason| (*reason).to_owned())
-            .chain(
-                decision
-                    .policy_row_ref()
-                    .map(|row| format!("policy_row_{row}")),
-            )
-            .chain(decision.precedence_row_ref().map(|row| match row {
-                Some(row) => format!("policy_precedence_row_{row}"),
-                None => "policy_precedence_shipped_default".to_owned(),
-            }))
-            .chain(decision.delegation_narrowing_receipt())
-            .chain(decision.charter_stamp_receipt())
-            .collect(),
-        system_notices: Vec::new(),
-        actor_class: input.actor.actor_class.clone(),
-        actor_ref: input.actor.actor_ref.clone(),
-        content_kind: input.content_kind.as_str().to_owned(),
-        policy_manifest_version: input.policy_manifest_version,
-        claim_id: None,
-        grant_ref,
-        diff_handle: binding.diff_handle,
-        read_frontier_hash: binding.read_frontier_hash,
-        context: Default::default(),
-        redacted_at: None,
-    };
+    let mut receipt = decision.gate_receipt(
+        input.content_kind.as_str(),
+        ReceiptActor::Verbatim {
+            class: input.actor.actor_class.clone(),
+            actor_ref: input.actor.actor_ref.clone(),
+        },
+        binding.diff_handle,
+        PolicyBasis::versioned(binding.read_frontier_hash, input.policy_manifest_version),
+    );
+    receipt.receipt_reasons = decision
+        .receipt_reasons()
+        .iter()
+        .map(|reason| (*reason).to_owned())
+        .chain(
+            decision
+                .policy_row_ref()
+                .map(|row| format!("policy_row_{row}")),
+        )
+        .chain(decision.precedence_row_ref().map(|row| match row {
+            Some(row) => format!("policy_precedence_row_{row}"),
+            None => "policy_precedence_shipped_default".to_owned(),
+        }))
+        .chain(decision.delegation_narrowing_receipt())
+        .chain(decision.charter_stamp_receipt())
+        .collect();
+    receipt.grant_ref = grant_ref;
+    // The id and the time of the evaluation this row records.
+    receipt.id = Some(decision_id);
+    receipt.decided_at = Some(RecordedSeconds::from_secs(created_at));
+    // Minted, not appended: a pending twin already on the ledger answers
+    // instead, and the egress floor appends this one.
+    let candidate = store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     if decision.outcome() == GateOutcome::Pending {
         // Read the caller's txn so retries also see its uncommitted appends.
         // Stop at the first match; the cursor is dropped before any write.
