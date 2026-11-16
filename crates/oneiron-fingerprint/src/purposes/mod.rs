@@ -60,46 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! {
-    agent,
-    agent_def,
-    blob,
-    broker,
-    browser_library,
-    channel_identity,
-    claim,
-    cluster,
-    code,
-    code_run,
-    connector,
-    dreamer,
-    engine_executor,
-    git_wire,
-    identity,
-    ids,
-    learning,
-    llm,
-    note,
-    origin,
-    outbound_intent_ledger,
-    people,
-    policy_model,
-    restore,
-    retrieval,
-    runtime_hooks,
-    saved_query,
-    secret,
-    setting,
-    skill,
-    skill_attribution,
-    skill_hub,
-    task,
-    testing,
-    vault_import,
-    voice,
-    web_fetch,
-    world,
-}
+areas! { agent, agent_def, blob, broker, browser_library, channel_identity, claim, cluster, code, code_run, connector, dreamer, engine_executor, git_wire, identity, ids, learning, llm, note, origin, outbound_intent_ledger, people, policy_model, restore, retrieval, runtime_hooks, saved_query, secret, setting, skill, skill_attribution, skill_hub, task, testing, vault_import, vault_shape, voice, web_fetch, world }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
