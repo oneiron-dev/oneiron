@@ -1,6 +1,6 @@
 {
   "name": "vault.repo.merge_queue.enqueue",
-  "description": "Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under.",
+  "description": "Queues the attached run's own stored proposals of one work as one batch, under the declaration they were made under; more than 63 form consecutive batches, each an entry of the work.",
   "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoMergeQueueEnqueueInput>",
   "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.merge_queue.enqueue\", &input)?",
