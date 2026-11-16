@@ -357,6 +357,13 @@ name = "artifact_private_owner_read"
 path = "tests/artifact_private_owner_read.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# Publishes its app with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_localhost_origins"
+path = "tests/artifact_localhost_origins.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # The vault hook doors serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "vault_hooks_doors"
@@ -392,6 +399,12 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 [[test]]
 name = "self_off_record_doors"
 path = "tests/self_off_record_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# The found-key route's refusal case roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "found_key_route_bound_refusal"
+path = "tests/found_key_route_bound_refusal.rs"
 required-features = ["oneiron/test-support"]
 
 # L9-12's broker rerank leg registers its sentinel key in a test vault and
@@ -452,6 +465,13 @@ name = "oauth_named_client_acceptance"
 path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
+# L1-07's lost host root: the test door empties this install's issuer seed slot
+# and retires its escrow under the cfg, which needs oneiron's test support.
+[[test]]
+name = "host_root_recovery"
+path = "tests/host_root_recovery.rs"
+required-features = ["oneiron/test-support"]
+
 # The fan-out doors (spawn, launch, slots, resume, resume_as, ack) root on a `MemoryKeystore`.
 [[test]]
 name = "vault_fanout_doors"
@@ -474,6 +494,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "lens_frame_state_door"
 path = "tests/lens_frame_state_door.rs"
+required-features = ["oneiron/test-support"]
+
+# L1-14's native OAuth sign-in roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "hosted_native_sign_in"
+path = "tests/hosted_native_sign_in.rs"
 required-features = ["oneiron/test-support"]
 
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
