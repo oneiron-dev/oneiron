@@ -8,14 +8,16 @@
 //! FEDERATION_GRANT over the workspace's shared vault, its member the house,
 //! at the role its binder chose: member, steward, admin, deputy or owner. So
 //! [`Vault::authorize_shared_vault_write`] gates the house by that role and
-//! by nothing else, and its actor class stays `agent`. The binder names the
+//! by nothing else, and its actor class stays `agent`. An Admin role's named
+//! power, a house's as a person's, also stands on the org's stored setup
+//! policy when the owner stored one (RULING FIX-4887-ORG-ADMIN-POLICY = A). The binder names the
 //! role; a binder that names none gets [`DEFAULT_HOUSE_ROLE`], deputy
 //! (DEPUTY = A, the owner, 10 Nov 07:45), which the host's finish applies.
 //!
 //! Who may set that role is the role table's rule (ARCH-0043), the one the
-//! membership acts apply: a member, steward or admin role is set by whoever
-//! holds `org:assign-role` over the vault (an Admin or an Owner by the
-//! shipped defaults), the deputy and owner roles only by an Owner
+//! membership acts apply: a member or admin role is set by whoever holds
+//! `org:assign-role` over the vault (an Admin or an Owner by the shipped
+//! defaults), the steward, deputy and owner roles only by an Owner
 //! (HOUSE-UNBIND-AUTHORITY = A), and the vault's own owner holds every
 //! assignment. The bind checks it in its own write, and so
 //! does the unbind; an Admin's assignment also stands on the MFA step-up
@@ -539,8 +541,8 @@ impl Vault {
     /// owner's bind and unbind sign, stays as it is. One grant at `role`,
     /// rewritten in place if the house holds another, and one bind receipt
     /// naming `actor`. `actor` must be able to assign `role`, and the role it
-    /// replaces, by the role table: `org:assign-role` for member, steward or
-    /// admin, an Owner for deputy or owner; the vault's owner may assign
+    /// replaces, by the role table: `org:assign-role` for member or admin,
+    /// an Owner for steward, deputy or owner; the vault's owner may assign
     /// any. The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
