@@ -276,6 +276,7 @@ fn oracle_config() -> EventTypeConfig {
         weekly_cap: None,
         routing: RoutingMode::Either,
         hosts: vec![host(HOST_A_SEED, vec![window(0, 9, 14)])],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
