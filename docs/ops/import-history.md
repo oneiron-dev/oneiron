@@ -200,7 +200,12 @@ A Google Takeout `.zip` imported into a mailbox (`vault.mail.sources.import_mbox
 passes the same check, with each mbox file's first bytes checked as an mbox. Its
 entry cap is the call's own `archive_max_entries` input (262,144 when absent),
 which the refusal names; its report lists the skipped entries in
-`skipped_entries`.
+`skipped_entries`. On a served vault with `[import] storage_cap_bytes` set,
+one call reads at most the cap less what the vault's folder holds: it stops
+before the message the cap cuts, keeps what landed, and answers
+`stopped_at_storage_cap: true` with `done: false`. A later call goes on from
+there once the vault holds less. A plain `.mbox` file is read in place and
+never stops so.
 
 A hosted import (`oneiron import <chatgpt|claude> <zip> --hosted`, or an
 upload to the vault's own hostname) passes it when its job decodes the
