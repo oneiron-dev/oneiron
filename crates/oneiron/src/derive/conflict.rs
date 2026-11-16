@@ -25,17 +25,13 @@
 pub(super) mod inputs;
 
 use super::batch::DerivedConflict;
-use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
+use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn};
 use super::extraction_opening::{ExtractionOpening, open_attempt, open_verdict_read};
+use super::extraction_set::{RebuildInput, SetRebuildError, rebuild_conflict_set};
+use super::verified_landing::{refuse, refuse_or_abort};
 use crate::Vault;
-use crate::dreamer_consolidation::extraction_pack::{
-    ExtractionRebuildContext, check_engine_claim_pins, check_extraction_operands_in_txn,
-    check_pack_candidates, select_routed_conflict,
-};
 use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError};
-use crate::verbs::CandidateOperand;
 
 /// The refusal of a conflict item whose commit runs outside a queued
 /// extraction attempt: it names no attempt, or its attempt is not in the
@@ -100,106 +96,32 @@ pub(super) fn stage_in_txn(
         memory,
         reader_scope,
     } = opening;
-    let turn_read = turn_owned.as_ref().unwrap_or(&read);
-    // The verdict's operand checks, over the members' operands with the
-    // item's heads as the priors (no listed pins: a conflict asks no
-    // correction read).
-    let operands: Vec<CandidateOperand> = item
-        .members
-        .iter()
-        .map(|member| member.operand.clone())
-        .collect();
-    let (branch, bound) = {
+    let now_ms = context.now.saturating_mul(1_000);
+    let (selected, members) = {
         let read_txn: &heed::RoTxn<'_> = txn;
-        match check_extraction_operands_in_txn(
-            &memory,
-            &read,
-            read_txn,
-            reader_scope.as_ref(),
-            attempt_id,
-            &operands,
-            Some((&[], &item.heads)),
-        ) {
-            Ok(checked) => checked,
-            Err(error) => {
-                return refuse_or_abort(vault, txn, context, error, CONFLICT_OPERANDS_REFUSED);
-            }
-        }
-    };
-    // The native set rebuild over the checked rows, then the shared set
-    // selection with the item's selector.
-    let checked = match check_pack_candidates(&operands, &bound, attempt_id, &branch) {
-        Ok(checked) => checked,
-        // A claim-domain failure of an operand is the request's, as the
-        // Settle stager reads it; anything else is the store's.
-        Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-            return refuse(vault, txn, context, &[CONFLICT_OPERANDS_REFUSED.to_owned()]);
-        }
-        Err(error) => return Err(error),
-    };
-    let selected = {
-        let read_txn: &heed::RoTxn<'_> = txn;
-        let rebuild = ExtractionRebuildContext {
+        let turn_read = turn_owned.as_ref().unwrap_or(&read);
+        match rebuild_conflict_set(RebuildInput {
             memory: &memory,
             read: &read,
             turn_read,
             txn: read_txn,
-            operands: &operands,
-        };
-        match select_routed_conflict(&checked.rows, &bound, &rebuild, item.set_members.as_deref()) {
-            Ok(selected) => selected,
-            Err(error) => {
+            reader_scope: reader_scope.as_ref(),
+            attempt: attempt_id,
+            members: &item.members,
+            heads: &item.heads,
+            set_members: item.set_members.as_deref(),
+            now_ms,
+        }) {
+            Ok(rebuilt) => (rebuilt.selected, rebuilt.members),
+            Err(SetRebuildError::Operands(error)) => {
                 return refuse_or_abort(vault, txn, context, error, CONFLICT_OPERANDS_REFUSED);
             }
+            Err(SetRebuildError::HeadsDiffer(error)) => {
+                return refuse_or_abort(vault, txn, context, error, CONFLICT_HEADS_DIFFER);
+            }
+            Err(SetRebuildError::Abort(error)) => return Err(error),
         }
     };
-    // The item's heads, in order, must equal the selected set's prior
-    // heads, by the verdict's own check.
-    {
-        let read_txn: &heed::RoTxn<'_> = txn;
-        if let Err(error) =
-            check_engine_claim_pins(&read, read_txn, &item.heads, &selected.set.prior_heads)
-        {
-            return refuse_or_abort(vault, txn, context, error, CONFLICT_HEADS_DIFFER);
-        }
-    }
-    // The members: each selected proposal stamped with its item member's
-    // confidence and normalised hints, then verified as native verifies it
-    // at the commit's clock. The claim id does not move: the deterministic
-    // id hashes only the identity axes (attempt, subject, predicate, value,
-    // world, facet, relationship, project, topic), and confidence and hints
-    // are not among them.
-    let now_ms = context.now.saturating_mul(1_000);
-    let mut members = Vec::with_capacity(selected.set.candidate_indexes.len());
-    for index in &selected.set.candidate_indexes {
-        let (member, proposal) = match (item.members.get(*index), selected.proposals.get(*index)) {
-            (Some(member), Some(proposal)) => (member, proposal),
-            _ => return refuse(vault, txn, context, &[CONFLICT_OPERANDS_REFUSED.to_owned()]),
-        };
-        let mut stamped = proposal.clone();
-        stamped.candidate = inputs::member_candidate(
-            &proposal.candidate,
-            member.confidence,
-            &member.prospective_queries,
-        )?;
-        let verified = {
-            let read_txn: &heed::RoTxn<'_> = txn;
-            match bound.verify_observation_candidate_in_txn(
-                &memory,
-                turn_read,
-                read_txn,
-                &member.operand,
-                &stamped,
-                now_ms,
-            ) {
-                Ok(verified) => verified,
-                Err(error) => {
-                    return refuse_or_abort(vault, txn, context, error, CONFLICT_OPERANDS_REFUSED);
-                }
-            }
-        };
-        members.push(verified);
-    }
     // The marker id: a row already stored at it refuses the item.
     let marker = crate::dreamer_consolidation::conflict_open_marker_id(&selected.set, attempt_id)?;
     {
@@ -272,38 +194,4 @@ pub(super) fn stage_in_txn(
         approval: None,
         receipt: Some(receipt),
     })
-}
-
-/// Refuses the item with `token` for a request refusal, or aborts the commit
-/// for anything else: only `BAD_REQUEST` and `FORBIDDEN` refuse, and every
-/// other code aborts. A storage failure reaches here as
-/// `INTERNAL_SERVER_ERROR` through the `From<Error>` mapping, which the bound
-/// evidence verification and the set selection keep for every failure that
-/// is not the request's. There is no `From<MemoryError> for Error`, so the
-/// abort carries the message as the I/O error that mapping reads as
-/// internal. A receipt carries the token only: never an error message, an id
-/// the actor does not read, or words of a TURN.
-fn refuse_or_abort(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    context: &ItemContext<'_>,
-    error: MemoryError,
-    token: &str,
-) -> Result<ItemOutcome> {
-    if error.code == MEMORY_CODE_BAD_REQUEST || error.code == MEMORY_CODE_FORBIDDEN {
-        refuse(vault, txn, context, &[token.to_owned()])
-    } else {
-        Err(Error::Io(std::io::Error::other(error.to_string())))
-    }
-}
-
-fn refuse(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    context: &ItemContext<'_>,
-    reasons: &[String],
-) -> Result<ItemOutcome> {
-    let reasons = reasons.to_vec();
-    let receipt = refusal_receipt_in_txn(vault, txn, context, None, &reasons)?;
-    Ok(ItemOutcome::Refused { reasons, receipt })
 }

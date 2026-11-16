@@ -62,6 +62,8 @@ pub(crate) struct CheckedCandidate {
     pub(super) project: EntityId,
     /// The assembled proposal with its native id, as nomination routes it.
     pub(crate) proposal: PromotionCandidate,
+    /// The bound head a correcting operand names, as the pack check bound it.
+    pub(crate) corrects_head: Option<EntityId>,
 }
 
 /// One listed claim as the rebuild holds it: its id and subject with its
@@ -337,6 +339,7 @@ pub(crate) fn check_pack_candidates(
             predicate: operand.predicate.clone(),
             value_text: operand.value.to_string(),
             project: facts.project,
+            corrects_head: corrects_id,
             proposal: PromotionCandidate {
                 claim_id,
                 candidate,

@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 
 mod conflicts;
+pub(crate) use conflicts::{cross_predicate_merge_unnamed, recompute_kept_selection};
 mod decisions;
 pub(super) mod extraction;
 mod failure;
@@ -363,7 +364,7 @@ impl ConsolidationExecutor<'_> {
 
 /// The merged head: `decisions` are the pack's that merged it, joined with
 /// every member's.
-fn merged_candidate(
+pub(crate) fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&VerifiedCandidate],
     priors: &[super::conflict::PriorHead],

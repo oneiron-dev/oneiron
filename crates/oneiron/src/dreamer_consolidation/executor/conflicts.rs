@@ -27,6 +27,46 @@ pub(super) struct ResolvedSets {
     pub(super) waiting: bool,
 }
 
+/// Whether a merge that names no candidate spans predicates: no one identity
+/// to land under, so the conflict stays open as an escalation does (FIX 10521).
+pub(crate) fn cross_predicate_merge_unnamed(
+    conflict: &ConflictSet,
+    members: &[&VerifiedCandidate],
+) -> bool {
+    members.iter().any(|member| {
+        candidate_facts(&member.candidate)
+            .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
+    })
+}
+
+/// The selected set for a merge that kept `kept`: the conflict with its
+/// identity recomputed from the kept member's keys and its prior head
+/// recomputed from `matching` (the member's matching priors). `matching` is
+/// native's `matching_priors` for the executor and the bound route's kept
+/// matches for a derive stager, so the answered head is one the routed set
+/// names. `prior_heads` are deliberately not recomputed.
+///
+/// # Errors
+///
+/// A kept id no member carries.
+pub(crate) fn recompute_kept_selection(
+    conflict: &ConflictSet,
+    members: &[&VerifiedCandidate],
+    kept: EntityId,
+    key_rules: &super::super::routing::PredicateKeyRules,
+    matching: impl Fn(&VerifiedCandidate) -> Result<Vec<(EntityId, bool)>>,
+) -> Result<ConflictSet> {
+    let member = members
+        .iter()
+        .find(|member| member.claim_id == kept)
+        .ok_or_else(|| invalid_consolidation("merge selected an unlisted candidate"))?;
+    let mut selected = conflict.clone();
+    selected.identity = super::super::routing::candidate_keys(member, key_rules)?.identity;
+    let matches = matching(member)?;
+    selected.prior_head = (matches.len() == 1).then(|| matches[0].0);
+    Ok(selected)
+}
+
 impl ConsolidationExecutor<'_> {
     /// Decides each conflicting set in order. `Break` carries the run a trap,
     /// a checkpoint or a failed set ends the attempt with; `Continue` what
@@ -212,11 +252,7 @@ impl ConsolidationExecutor<'_> {
                 MergeResolution::Merge {
                     candidate_ref: None,
                     ..
-                } if members.iter().any(|member| {
-                    candidate_facts(&member.candidate)
-                        .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
-                }) =>
-                {
+                } if cross_predicate_merge_unnamed(conflict, &members) => {
                     tracing::info!(
                         target: "oneiron::dreamer",
                         code = "cross_predicate_merge_unnamed",
@@ -245,20 +281,16 @@ impl ConsolidationExecutor<'_> {
                     value,
                     candidate_ref,
                 } => {
-                    let mut selected = conflict.clone();
-                    if let Some(id) = candidate_ref {
-                        let member = members
-                            .iter()
-                            .find(|member| member.claim_id == id)
-                            .ok_or_else(|| {
-                                invalid_consolidation("merge selected an unlisted candidate")
-                            })?;
-                        selected.identity =
-                            super::super::routing::candidate_keys(member, resources.key_rules())?
-                                .identity;
-                        let matching = resources.matching_priors(member, resources.key_rules())?;
-                        selected.prior_head = (matching.len() == 1).then(|| matching[0].0);
-                    }
+                    let selected = match candidate_ref {
+                        Some(id) => recompute_kept_selection(
+                            conflict,
+                            &members,
+                            id,
+                            resources.key_rules(),
+                            |member| resources.matching_priors(member, resources.key_rules()),
+                        )?,
+                        None => conflict.clone(),
+                    };
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     let mut output = merged_candidate(
                         &selected,

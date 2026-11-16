@@ -156,8 +156,23 @@ pub(crate) fn conflict_close_candidate(
     resolution: Value,
     evidence_refs: Vec<EntityId>,
 ) -> Result<PromotionCandidate> {
+    // One snapshot where the build took two: the marker and the evidence
+    // project checks all read below. No other change.
+    let txn = vault.store.env.read_txn()?;
+    conflict_close_candidate_in_txn(vault, &txn, run, open, resolution, evidence_refs)
+}
+
+/// [`conflict_close_candidate`] on the caller's read `txn`.
+pub(crate) fn conflict_close_candidate_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: &crate::dreamer_promotion::DreamerRunContext,
+    open: EntityId,
+    resolution: Value,
+    evidence_refs: Vec<EntityId>,
+) -> Result<PromotionCandidate> {
     let body = vault
-        .get_claim(&open)?
+        .get_claim_in_txn(txn, &open)?
         .ok_or(invalid_consolidation("conflict marker not found"))?;
     if body.predicate != PREDICATE_CONFLICT_OPEN {
         return Err(invalid_consolidation("not an open conflict marker"));
@@ -166,25 +181,22 @@ pub(crate) fn conflict_close_candidate(
         return Err(invalid_consolidation("conflict subject"));
     };
     let project = body.scope_project;
-    {
-        let txn = vault.store.env.read_txn()?;
-        for id in &evidence_refs {
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
-                .ok_or_else(|| invalid_consolidation("conflict evidence not found"))?;
-            let header = crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or(crate::error::Error::CorruptedIndex("record header"))?;
-            let source = super::resources::stored_project(
-                &vault.store,
-                &txn,
-                *id,
-                header.entity_type,
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )?;
-            if source != Some(project) {
-                return Err(invalid_consolidation(
-                    "conflict evidence crossed the marker's project",
-                ));
-            }
+    for id in &evidence_refs {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+            .ok_or_else(|| invalid_consolidation("conflict evidence not found"))?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(crate::error::Error::CorruptedIndex("record header"))?;
+        let source = super::resources::stored_project(
+            &vault.store,
+            txn,
+            *id,
+            header.entity_type,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        if source != Some(project) {
+            return Err(invalid_consolidation(
+                "conflict evidence crossed the marker's project",
+            ));
         }
     }
     let claim_id = deterministic_claim_id(

@@ -48,6 +48,9 @@ pub(crate) use admission::{
     evidence_ref_refusal_in_txn, public_evidence_refs, public_evidence_value,
 };
 mod corrections;
+pub(crate) use corrections::{
+    CloseConflictsRequest, close_conflicts_naming_in_txn, grant_allowed_replacement_in_txn,
+};
 mod imported_keep;
 mod resolved_outputs;
 mod scoped;

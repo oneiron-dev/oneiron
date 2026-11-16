@@ -590,7 +590,7 @@ pub fn corroboration_count(collapsed: &CollapsedEvidence, prior_heads: &[PriorHe
 /// its value key equals too. This mirrors `BranchResources::matching_priors`
 /// over the bound projection instead of branch resources, keying heads with
 /// the native `resources::prior_keys`.
-pub(in crate::dreamer_consolidation) fn bound_matching_priors(
+pub(crate) fn bound_matching_priors(
     candidate: &PromotionCandidate,
     priors: &[PriorHead],
     rules: &PredicateKeyRules,
