@@ -8,9 +8,7 @@ use heed::RoTxn;
 use crate::error::Result;
 
 use super::builder::PipelineBuilder;
-use super::capabilities::CapabilityLane;
 use super::channels::fusion_fetch_limit;
-use super::filters::pipeline_candidate_matches_filters_and_gate;
 use super::types::{ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity};
 
 /// One learned query: the model the vector is of, the vector, and its list length.
@@ -23,10 +21,11 @@ pub(super) struct PhoneticVectorQuery {
 
 impl PipelineBuilder<'_> {
     /// `query`'s admitted results, best first: each entity scores its best name, and only rows
-    /// that pass the run's own filters and gate take a place. The walk asks with caches of its
-    /// own, as the code rung's sound cut and the narrowed vector walk do, so a row it passes
-    /// leaves no decision behind and adds nothing to the pack's suppression counts; the rows
-    /// it returns enter the run's caches when the channel admits them.
+    /// the code rung's sound cut would admit take a place: the run's own filters and gate, its
+    /// memory lane and its made_by predicate ([`Self::phonetic_candidate_admits`]). The walk
+    /// asks with caches of its own, as the sound cut and the narrowed vector walk do, so a row
+    /// it passes leaves no decision behind and adds nothing to the pack's suppression counts;
+    /// the rows it returns enter the run's caches when the channel admits them.
     pub(super) fn phonetic_vector_results(
         &self,
         rtxn: &RoTxn<'_>,
@@ -34,7 +33,6 @@ impl PipelineBuilder<'_> {
         filters: PipelineFilterConfig<'_>,
         claim_gate: &ClaimStatusGateCache,
     ) -> Result<Vec<ScoredEntity>> {
-        let memory = self.memory_category;
         let mut metadata = EntityMetadataCache::default();
         let mut gate = claim_gate.fresh(filters.authority_filter.include_stale);
         crate::phonetic_learned::search_phonetic_vectors_in_txn(
@@ -43,16 +41,7 @@ impl PipelineBuilder<'_> {
             &query.model_id,
             &query.vector,
             fusion_fetch_limit(query.limit),
-            |id| {
-                Ok(pipeline_candidate_matches_filters_and_gate(
-                    &self.read,
-                    rtxn,
-                    id,
-                    filters,
-                    &mut metadata,
-                    &mut gate,
-                )? && (!memory || CapabilityLane::Memory.admits(&self.read, rtxn, id)?))
-            },
+            |id| self.phonetic_candidate_admits(rtxn, id, filters, &mut metadata, &mut gate),
         )
     }
 }
