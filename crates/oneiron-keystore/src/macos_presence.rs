@@ -9,7 +9,8 @@
 //!   thread that runs a run loop, which a headless host has not, so the
 //!   presence gate asks: at each act, and on a timer.
 //! - A process with no session on the device's screen (a system daemon, a
-//!   remote shell, a user switched out) cannot show the sheet and says so.
+//!   shell of a user with no session on the screen, a user switched out)
+//!   cannot show the sheet and says so.
 //!
 //! Other Apple platforms have no screen-lock reading here, so they get no
 //! prompt: a window must never outlast a lock.
@@ -52,7 +53,8 @@ const NO_LOCAL_AUTHENTICATION: &str = "the device's unlock prompt is not availab
 /// What the window server says of the session this process runs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScreenSession {
-    /// No window-server session: a system daemon, or a remote shell.
+    /// No window-server session: a system daemon, or a shell of a user with
+    /// no session on the screen.
     Absent,
     /// A session that is not on the device's screen: its user switched out.
     OffScreen,

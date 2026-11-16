@@ -4,7 +4,7 @@
 //! labelled takes the binding's silence label only where the binding maps one.
 
 use super::{
-    arrival,
+    arrival::{self, SavedLaneJudge},
     reader_authority::{Reader, store_home},
     records::*,
     store::{
@@ -121,11 +121,14 @@ pub fn next_outcome_window_close_at(vault: &Vault) -> Result<Option<u64>> {
 }
 
 /// Closes every outcome window that ended before `now`, once each, and
-/// returns how many it closed. Stored facts are projected for those
-/// questions first: a fact written before its answer, with an event time
-/// inside the window, never met the answer at arrival. Each close then
+/// returns how many it closed. It first judges every fact an arrival
+/// deferred under a narrowed saved lane, due window or not
+/// ([`arrival::project_deferred_outcomes`]). Stored facts are then projected
+/// for the due questions: a fact written before its answer, with an event
+/// time inside the window, never met the answer at arrival. Each close then
 /// records an observed fact, the binding's silence label, or unknown.
 pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
+    arrival::project_deferred_outcomes(vault)?;
     let due: Vec<OpenWindow> = {
         let txn = vault.store.env.read_txn()?;
         open_windows(vault, &txn)?
@@ -148,7 +151,7 @@ pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
         .collect::<Result<BTreeSet<_>>>()?
     };
     vault.with_write_txn_grouped(|txn| {
-        arrival::project_questions_in_txn(&vault.store, txn, &facts, &questions)?;
+        arrival::project_questions_in_txn(vault, txn, &facts, &questions)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
         let mut closed = 0;
         for window in &due {
@@ -186,7 +189,14 @@ pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
                 question_version: version,
                 ends_at: window.ends_at,
                 closed_at: now,
-                outcome: window_outcome(&vault.store, txn, &policy, &record, &window.answer)?,
+                outcome: window_outcome(
+                    &vault.store,
+                    txn,
+                    &policy,
+                    SavedLaneJudge::Vault(vault),
+                    &record,
+                    &window.answer,
+                )?,
             };
             secret_scan_before_put(&close)?;
             QUESTION_WINDOW.put(&vault.store, txn, &key, &close)?;
@@ -197,19 +207,124 @@ pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
 }
 
 /// The closed windows of `principal`'s standing question, across its
-/// versions; none when the question is not theirs.
+/// versions, that still read as they closed; none when the question is not
+/// theirs. Each is judged again in the read's snapshot under the lane its
+/// version was saved under (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE): a
+/// window that closed observed reads while a stored label of its answer
+/// still stands ([`super::outcomes::standing_labels_in_txn`]), and one that
+/// closed in silence while that silence still stands ([`silence_stands`]).
+/// So a window closed past that lane, or before its principal lost a read of
+/// a row it rests on, reads no more. A window that closed unknown recorded
+/// nothing learned, and reads as it closed. The record keeps how the window
+/// closed: a fact recorded after the close that labels its answer changes
+/// neither an unknown nor a silence close.
 pub fn closed_outcome_windows(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
 ) -> Result<Vec<OutcomeWindowClose>> {
+    Ok(standing_windows(vault, principal, question)?
+        .into_iter()
+        .map(|window| window.close)
+        .collect())
+}
+
+/// One closed window that still reads as it closed, beside the row sets it
+/// rests on: a reader that reads any one of them whole reads the window.
+pub(super) struct StandingWindow {
+    pub(super) close: OutcomeWindowClose,
+    /// For a window that closed observed, the rows each standing label of its
+    /// answer was derived from; for any other, the question, its answer and
+    /// the answer's unit.
+    pub(super) rests_on: Vec<Vec<EntityId>>,
+}
+
+/// [`closed_outcome_windows`], each window beside the row sets it rests on.
+pub(super) fn standing_windows(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<StandingWindow>> {
     let txn = vault.store.env.read_txn()?;
     super::store::owned_head(vault, &txn, principal, question)?;
-    Ok(QUESTION_WINDOW
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"window"))?
-        .into_iter()
-        .map(|(_, close)| close)
-        .collect())
+    let answers = super::outcomes::stored_answers(vault, &txn, question)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    let labels = super::outcomes::standing_labels_in_txn(
+        vault,
+        &txn,
+        &policy,
+        principal,
+        question,
+        &answers,
+        &BTreeSet::new(),
+    )?;
+    let mut standing = Vec::new();
+    for (_, close) in
+        QUESTION_WINDOW.scan_from(&vault.store, &txn, &family_prefix(question, b"window"))?
+    {
+        let answer = answers.iter().find(|answer| answer.claim == close.answer);
+        let rests_on: Vec<Vec<EntityId>> = match close.outcome {
+            WindowOutcome::Observed => labels
+                .iter()
+                .filter(|label| label.label.answer == close.answer)
+                .map(|label| label.derived_from.clone())
+                .collect(),
+            WindowOutcome::Silence(_) => {
+                silence_rests_on(vault, &txn, &policy, principal, question, &close, answer)?
+            }
+            WindowOutcome::Unknown => vec![answer.map_or_else(
+                || vec![question, close.answer],
+                |answer| vec![question, answer.claim, answer.unit],
+            )],
+        };
+        if !rests_on.is_empty() {
+            standing.push(StandingWindow { close, rests_on });
+        }
+    }
+    Ok(standing)
+}
+
+/// The rows a window that closed in silence on `answer` rests on: the
+/// question, the answer and its unit while that silence still stands under
+/// the lane `close`'s version, which must be `principal`'s, was saved under
+/// ([`silence_stands`]); none once it does not, or once the answer or the
+/// version is gone.
+fn silence_rests_on(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    principal: EntityId,
+    question: EntityId,
+    close: &OutcomeWindowClose,
+    answer: Option<&AnswerRecord>,
+) -> Result<Vec<Vec<EntityId>>> {
+    let Some(answer) = answer else {
+        return Ok(Vec::new());
+    };
+    let Some(record) = QUESTION_VERSION.get(
+        &vault.store,
+        txn,
+        &VersionKey {
+            id: question,
+            version: close.question_version,
+        },
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    if record.principal != principal
+        || !silence_stands(
+            &vault.store,
+            txn,
+            policy,
+            SavedLaneJudge::Vault(vault),
+            &record,
+            answer,
+        )?
+    {
+        return Ok(Vec::new());
+    }
+    Ok(vec![vec![question, answer.claim, answer.unit]])
 }
 
 /// How `answer`'s lapsed window closes: observed when a stored fact still
@@ -219,10 +334,11 @@ fn window_outcome(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     record: &QuestionRecord,
     answer: &AnswerRecord,
 ) -> Result<WindowOutcome> {
-    if fact_labelled(store, txn, policy, record, answer)? {
+    if fact_labelled(store, txn, policy, lane, record, answer)? {
         return Ok(WindowOutcome::Observed);
     }
     let silence = record
@@ -231,7 +347,7 @@ fn window_outcome(
         .as_ref()
         .and_then(|binding| binding.mapping.get(SILENCE_OUTCOME).copied());
     Ok(match silence {
-        Some(label) if silence_stands(store, txn, policy, record, answer)? => {
+        Some(label) if silence_stands(store, txn, policy, lane, record, answer)? => {
             WindowOutcome::Silence(label)
         }
         _ => WindowOutcome::Unknown,
@@ -239,11 +355,13 @@ fn window_outcome(
 }
 
 /// Whether a stored fact label on `answer` still holds: its fact is
-/// evaluated again exactly as a calibration read evaluates it.
+/// evaluated again exactly as a calibration read evaluates it, its saved
+/// lane judged as `lane` judges it.
 pub(super) fn fact_labelled(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     record: &QuestionRecord,
     answer: &AnswerRecord,
 ) -> Result<bool> {
@@ -271,7 +389,7 @@ pub(super) fn fact_labelled(
             body: &body,
             occurred_at: header.occurred_start,
         };
-        if arrival::evaluate_fact(store, txn, policy, record, answer, &fact)?.as_ref()
+        if arrival::evaluate_fact(store, txn, policy, lane, record, answer, &fact)?.as_ref()
             == Some(&label)
         {
             return Ok(true);
@@ -282,11 +400,13 @@ pub(super) fn fact_labelled(
 
 /// Whether a silence label may stand on `answer`: its version still matches
 /// the receipt and learns, and the answer and its unit still read as its
-/// principal's, as a fact's label requires of them.
+/// principal's, inside the lane its version was saved under, as a fact's
+/// label requires of them.
 pub(super) fn silence_stands(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     record: &QuestionRecord,
     answer: &AnswerRecord,
 ) -> Result<bool> {
@@ -303,7 +423,14 @@ pub(super) fn silence_stands(
     // FIX 7461: the principal's bare read first, then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);
     Ok(reader.readable_in_txn(txn, policy, &answer.unit)?
-        && arrival::answer_live(store, txn, policy, &reader, answer)?)
+        && arrival::answer_live(store, txn, policy, &reader, answer)?
+        && arrival::saved_lane_reads_in_txn(
+            store,
+            lane,
+            txn,
+            record,
+            &[answer.unit, answer.claim],
+        )?)
 }
 
 /// The value hash a silence label pins in place of a fact's.
