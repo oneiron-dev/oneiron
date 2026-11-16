@@ -14,6 +14,7 @@ use crate::memory::{
 use crate::note::{
     FileHandle, FileReadiness, FolderFileState, FolderRescanReport, FolderSource, FolderSourceFile,
 };
+use crate::request_limits::page_limit_zero_as_one;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::files::{
@@ -107,7 +108,7 @@ pub fn files_source_view(vault: &Vault, source: &FolderSource) -> MemoryResult<F
 }
 
 /// One ledger row as `vault.files.sources.files` answers it.
-fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
+pub(super) fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
     let readiness = file.readiness();
     let (state, fork) = match file.state {
         FolderFileState::Landed => (FilesFileState::Landed, None),
@@ -181,12 +182,10 @@ pub fn files_source_files_as(
 ) -> MemoryResult<FilesSourceFiles> {
     owner.revalidate(vault)?;
     let source = files_source_named(vault, input.source)?;
-    let take = usize::try_from(input.limit.unwrap_or(DEFAULT_FILES_PAGE_LIMIT))
-        .unwrap_or(usize::MAX)
-        .clamp(
-            1,
-            usize::try_from(MAX_FILES_PAGE_LIMIT).unwrap_or(usize::MAX),
-        );
+    let take = usize::try_from(
+        page_limit_zero_as_one(input.limit, DEFAULT_FILES_PAGE_LIMIT, MAX_FILES_PAGE_LIMIT).rows,
+    )
+    .unwrap_or(usize::MAX);
     let mut ledger = vault.folder_source_files(&source.folder)?;
     // Ledger keys hash overlong paths, so path order is sorted here, not
     // read off the keys.

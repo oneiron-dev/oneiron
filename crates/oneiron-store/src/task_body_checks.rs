@@ -1,6 +1,7 @@
 //! Lenient raw TASK terminal and deadline checks used at storage admission.
 
 use oneiron_base::error::{Error, RecordError, Result};
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 use std::io::Cursor;
 
@@ -95,41 +96,17 @@ fn raw_task_deadline_at(data: &[u8]) -> Option<u64> {
 }
 
 pub fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    let mut values = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value);
-    let value = values
-        .next()
-        .ok_or(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )))?;
-    if values.next().is_some() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    Ok(value)
+    Entries::new(entries)
+        .require(name)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))
 }
 
 pub fn task_body_optional<'a>(
     entries: &'a [(Value, Value)],
     name: &str,
 ) -> Result<Option<&'a Value>> {
-    let mut values = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value);
-    let Some(value) = values.next() else {
-        return Ok(None);
-    };
-    if values.next().is_some() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    Ok(match value {
-        Value::Nil => None,
-        value => Some(value),
-    })
+    let value = Entries::new(entries)
+        .get(name)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
+    Ok(value.filter(|value| !value.is_nil()))
 }

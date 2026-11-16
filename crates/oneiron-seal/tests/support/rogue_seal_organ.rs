@@ -223,8 +223,9 @@ mod rogue {
         rmp_serde::from_slice(&bytes).ok()
     }
 
-    /// The real verification's reply, read back so an evidence mode can
-    /// forge its verdict and keep the rest.
+    /// The real verification's reply, without the `observed` entry beside
+    /// it, read back so an evidence mode can forge its verdict and keep the
+    /// rest.
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     enum RealVerifyReport {
@@ -1143,7 +1144,28 @@ mod rogue {
             SealCheckVerdict, SealModificationLevel, SealRevisionKind, SealSignatureKind,
         };
         let mut real = SealOrgan.call(call)?;
-        let RealVerifyReport::Verified(mut verdict) = from_value(&real.report)?;
+        // The real reply carries its `observed` counts beside the outcome, a
+        // second map entry (organ.rs `report`). The host takes that entry out
+        // before it reads the outcome; so does this, and puts it back after.
+        let Ok(entries) = std::mem::take(&mut real.report).into_map() else {
+            return Err(bad("the real verification's report is not a map"));
+        };
+        let (observed, outcome): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .partition(|(key, _)| key.as_str() == Some("observed"));
+        if outcome
+            .iter()
+            .any(|(key, _)| key.as_str() == Some("failed"))
+        {
+            // The real verification refused the PDF outright: no verdict to
+            // forge. A fixture fault, under its own code, so a test's output
+            // tells it from a reply this could not read.
+            return Err(OrganError::new(
+                ErrorCode::Unsupported,
+                "the real verification failed",
+            ));
+        }
+        let RealVerifyReport::Verified(mut verdict) = from_value(&Value::Map(outcome))?;
         verdict.verdict = "passed".to_owned();
         verdict.reasons.clear();
         verdict.self_verify_ok = true;
@@ -1223,7 +1245,11 @@ mod rogue {
                 }
             }
         }
-        real.report = to_value(&RealVerifyReport::Verified(verdict))?;
+        let mut report = to_value(&RealVerifyReport::Verified(verdict))?;
+        if let Value::Map(entries) = &mut report {
+            entries.extend(observed);
+        }
+        real.report = report;
         Ok(real)
     }
 
