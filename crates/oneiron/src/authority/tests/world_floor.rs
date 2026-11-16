@@ -22,7 +22,10 @@ fn replica_storing(host: &Host, rows: &[&AuthorityLogEntry]) -> (tempfile::TempD
     let dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     replica
-        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &host.vault.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     for row in rows {
         let put = || replica.put_authority_log_entry(row, TimeRange { start: 3, end: 3 }, 3);

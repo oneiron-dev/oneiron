@@ -292,7 +292,7 @@ fn a_signed_history_holding_a_strangers_pre_door_row_imports_without_it() {
 
     let (_target_dir, target) = open_vault();
     let imported = target
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the history imports without the rows its source's fold never applied");
     assert_eq!(
         imported,

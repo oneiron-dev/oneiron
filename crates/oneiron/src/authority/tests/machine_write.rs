@@ -171,7 +171,10 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
     let replica_dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(replica_dir.path(), VaultConfig::device()).unwrap();
     replica
-        .import_signed_authority_history(&vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &vault.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     replica
         .put_entity(

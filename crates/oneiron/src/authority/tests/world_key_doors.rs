@@ -450,7 +450,7 @@ fn a_record_naming_another_key_or_suite_is_refused_before_any_write() {
         assert!(decode_authority_log_entry_body(&bytes).is_err());
         assert!(
             host.vault
-                .import_signed_authority_history(&[bytes])
+                .import_signed_authority_history(&[bytes], &CarriedOverlays::new())
                 .is_err()
         );
         assert_eq!(stored_entries(&host.vault).len(), stored);

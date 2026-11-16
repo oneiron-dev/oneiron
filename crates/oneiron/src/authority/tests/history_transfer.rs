@@ -22,7 +22,8 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
     let genesis = genesis_entry(110, 1);
     store(&a, &genesis);
     let export = a.export_signed_authority_history().unwrap();
-    b.import_signed_authority_history(&export).unwrap();
+    b.import_signed_authority_history(&export, &CarriedOverlays::new())
+        .unwrap();
     assert_eq!(b.export_signed_authority_history().unwrap(), export);
     let reroot = b
         .re_root_authority(
@@ -41,16 +42,23 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
     assert!(!fold.roster[&authority_key_from_ed(&new)].revoked);
     let moved = b.export_signed_authority_history().unwrap();
     assert_eq!(moved[0], export[0]);
-    c.import_signed_authority_history(&moved).unwrap();
+    c.import_signed_authority_history(&moved, &CarriedOverlays::new())
+        .unwrap();
     assert_eq!(c.authority_fold().unwrap().roster, fold.roster);
     assert_eq!(moved[1], encode_authority_log_entry_body(&reroot).unwrap());
     let mut corrupt = export;
     let last = corrupt[0].len() - 1;
     corrupt[0][last] ^= 1;
-    assert!(c.import_signed_authority_history(&corrupt).is_err());
+    assert!(
+        c.import_signed_authority_history(&corrupt, &CarriedOverlays::new())
+            .is_err()
+    );
     assert_eq!(c.export_signed_authority_history().unwrap(), moved);
     let other = encode_authority_log_entry_body(&genesis_entry(112, 1)).unwrap();
-    assert!(c.import_signed_authority_history(&[other]).is_err());
+    assert!(
+        c.import_signed_authority_history(&[other], &CarriedOverlays::new())
+            .is_err()
+    );
     assert_eq!(c.export_signed_authority_history().unwrap(), moved);
 }
 
@@ -174,7 +182,10 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
     );
     source.apply_signed_re_root(&handoff).unwrap();
     target
-        .import_signed_authority_history(&source.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &source.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     mature_observed_widen(&target, &rotation);
     let migrated = target.authority_fold().unwrap();
@@ -557,7 +568,7 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
     let body = encode_authority_log_entry_body(&forked).unwrap();
     assert!(
         vault
-            .import_signed_authority_history(std::slice::from_ref(&body))
+            .import_signed_authority_history(std::slice::from_ref(&body), &CarriedOverlays::new())
             .is_err()
     );
     #[cfg(feature = "sync")]
@@ -625,7 +636,9 @@ pub(super) fn replica_with(
     let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let mut history = history;
     history.push(encode_authority_log_entry_body(extra).unwrap());
-    replica.import_signed_authority_history(&history).unwrap();
+    replica
+        .import_signed_authority_history(&history, &CarriedOverlays::new())
+        .unwrap();
     (dir, replica)
 }
 
@@ -763,7 +776,9 @@ fn a_successor_merge_of_a_fenced_row_installs_nothing_anywhere() {
 
     let fresh_dir = tempfile::tempdir().unwrap();
     let fresh = Vault::open(fresh_dir.path(), VaultConfig::default()).unwrap();
-    fresh.import_signed_authority_history(&bodies).unwrap();
+    fresh
+        .import_signed_authority_history(&bodies, &CarriedOverlays::new())
+        .unwrap();
     let fold = fresh.authority_fold().unwrap();
     assert!(keeps_next(&fold), "a fresh replica installs no third root");
     assert!(
@@ -774,7 +789,11 @@ fn a_successor_merge_of_a_fenced_row_installs_nothing_anywhere() {
 
     store(&vault, &genesis);
     vault.apply_signed_re_root(&first).unwrap();
-    assert!(vault.import_signed_authority_history(&bodies).is_err());
+    assert!(
+        vault
+            .import_signed_authority_history(&bodies, &CarriedOverlays::new())
+            .is_err()
+    );
     assert!(keeps_next(&vault.authority_fold().unwrap()));
     vault
         .apply_signed_re_root(&re_root_entry(id, &first, &next, 1, &third))

@@ -377,7 +377,7 @@ fn host_root_row_from_a_second_install(rooted: &Rooted) -> Vec<u8> {
     other.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let history = stored_history(&rooted.vault);
     other
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the second install takes the history");
     oneiron::test_support::bind_host_actor(&other, &rooted.issuer, EntityId::now(), "agent")
         .expect("the host root rebinds its key on the second install");
@@ -565,7 +565,7 @@ fn an_owners_import_past_the_reserve_refuses_whole_and_lands_once_the_floor_is_r
     ];
     let refused = rooted
         .vault
-        .import_signed_authority_history(&import)
+        .import_signed_authority_history(&import, &std::collections::BTreeMap::new())
         .expect_err("an import carrying a row past the owner reserve refuses");
     assert_eq!(
         refused.kind(),
@@ -592,7 +592,7 @@ fn an_owners_import_past_the_reserve_refuses_whole_and_lands_once_the_floor_is_r
     set_floor(&rooted.vault, 4 * FLOOR_BYTES);
     rooted
         .vault
-        .import_signed_authority_history(&import)
+        .import_signed_authority_history(&import, &std::collections::BTreeMap::new())
         .expect("the import lands whole under the raised floor");
     assert!(
         stored_history(&rooted.vault).contains(&owners_row),

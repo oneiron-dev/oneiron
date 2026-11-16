@@ -84,7 +84,10 @@ fn replica_holding(
     let dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     replica
-        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &host.vault.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     for row in [later, first] {
         replica

@@ -134,7 +134,9 @@ fn every_arrival_order_of_one_machines_world_rows_keeps_each_row() {
         for earlier in 0..later {
             let dir = tempfile::tempdir().unwrap();
             let receiver = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-            receiver.import_signed_authority_history(&history).unwrap();
+            receiver
+                .import_signed_authority_history(&history, &CarriedOverlays::new())
+                .unwrap();
             receiver.put_authority_log_entries(&main).unwrap();
             let rest = (0..rows.len()).filter(|at| *at != earlier && *at != later);
             for at in [later, earlier].into_iter().chain(rest) {

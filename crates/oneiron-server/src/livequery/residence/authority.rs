@@ -30,7 +30,7 @@ pub(super) fn authority_tail(
     let limit = input
         .limit
         .clamp(1, oneiron::sync::residence::AUTHORITY_TAIL_PAGE_MAX);
-    let entries = authority_tail_for(&server.vault, peer, &held, limit)
+    let (entries, overlays) = authority_tail_for(&server.vault, peer, &held, limit)
         .map_err(|_| AppError::not_found("authority history", None))?;
     let wanted: Vec<u8> = if entries.len() < limit {
         authority_wanted(&server.vault, &held)
@@ -42,10 +42,11 @@ pub(super) fn authority_tail(
     } else {
         Vec::new()
     };
-    let (entries, parted) = parted_page(entries)?;
+    let (entries, parted, overlays) = parted_page(entries, &overlays)?;
     Ok((
         json!({
             "entries": entries,
+            "overlays": overlays,
             "parted": parted,
             "wanted": base64::engine::general_purpose::STANDARD.encode(wanted),
         }),
@@ -53,11 +54,23 @@ pub(super) fn authority_tail(
     ))
 }
 
+/// A sealed row's opaque AUTHORITY_OVERLAY row by entry hash, as this home
+/// holds or takes it (census L5-22 1a-ii).
+type HeldOverlays = std::collections::BTreeMap<oneiron::authority::AuthorityEntryHash, Vec<u8>>;
+
+/// [`HeldOverlays`] on the wire: base64 entry hash to base64 row.
+type WireOverlays = std::collections::BTreeMap<String, String>;
+
 /// One page of entries as it goes (FIX 8246): those that ride inline, in
 /// base64, and each named by reference, its place, hash and length, for the
-/// machine to fetch in parts (`authority_entry`).
-fn parted_page(entries: Vec<Vec<u8>>) -> Result<(Vec<String>, Vec<Value>), AppError> {
-    let page = split_authority_page(entries)
+/// machine to fetch in parts (`authority_entry`), with the overlay rows of the
+/// inline ones (census L5-22 1a-ii; a parted entry's row rides its offset-0
+/// part).
+fn parted_page(
+    entries: Vec<Vec<u8>>,
+    overlays: &HeldOverlays,
+) -> Result<(Vec<String>, Vec<Value>, WireOverlays), AppError> {
+    let page = split_authority_page(entries, overlays)
         .map_err(|_| AppError::internal_server_error("authority history unavailable"))?;
     let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     let inline = page.inline.iter().map(|entry| encode(entry)).collect();
@@ -68,7 +81,7 @@ fn parted_page(entries: Vec<Vec<u8>>) -> Result<(Vec<String>, Vec<Value>), AppEr
             json!({ "place": named.place, "hash": encode(&named.hash), "total": named.total })
         })
         .collect();
-    Ok((inline, parted))
+    Ok((inline, parted, encode_overlays(&page.overlays)))
 }
 
 /// Concatenated 32-byte hashes in base64, as the authority RPCs pack them.
@@ -92,6 +105,27 @@ pub(super) fn one_hash(encoded: &str) -> Result<[u8; 32], AppError> {
         .decode(encoded)
         .map_err(|_| AppError::invalid_params())?;
     <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| AppError::invalid_params())
+}
+
+fn encode_overlays(overlays: &HeldOverlays) -> WireOverlays {
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    overlays
+        .iter()
+        .map(|(hash, row)| (encode(hash), encode(row)))
+        .collect()
+}
+
+fn decode_overlays(overlays: WireOverlays) -> Result<HeldOverlays, AppError> {
+    overlays
+        .into_iter()
+        .map(|(hash, row)| {
+            let hash = one_hash(&hash)?;
+            let row = base64::engine::general_purpose::STANDARD
+                .decode(row)
+                .map_err(|_| AppError::invalid_params())?;
+            Ok((hash, row))
+        })
+        .collect()
 }
 
 /// The authority entries the proved machine selects (exact hashes, or the
@@ -142,7 +176,7 @@ pub(super) fn authority_range(
     };
     let mut page = authority_range_for(&server.vault, peer, &fetch)
         .map_err(|_| AppError::not_found("authority history", None))?;
-    let (rows, parted) = parted_page(std::mem::take(&mut page.rows))?;
+    let (rows, parted, overlays) = parted_page(std::mem::take(&mut page.rows), &page.overlays)?;
     let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     let unheld: Vec<u8> = page.unheld.iter().flatten().copied().collect();
     Ok((
@@ -151,6 +185,7 @@ pub(super) fn authority_range(
             "checkpoint": page.checkpoint.map(|head| encode(&head)),
             "selection": encode(&page.selection),
             "rows": rows,
+            "overlays": overlays,
             "parted": parted,
             "unheld": encode(&unheld),
             "next": page.next.map(|next| encode(&next)),
@@ -207,7 +242,8 @@ pub(super) fn authority_append(
         .map(|entry| base64::engine::general_purpose::STANDARD.decode(entry))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AppError::invalid_params())?;
-    let progress = authority_append_progress_for(&server.vault, peer, &entries)
+    let overlays = decode_overlays(input.overlays)?;
+    let progress = authority_append_progress_for(&server.vault, peer, &entries, &overlays)
         .map_err(|_| AppError::bad_request("authority entries refused", Some("entries")))?
         .ok_or_else(|| AppError::not_found("authority history", None))?;
     Ok(append_answer(&progress))
@@ -245,10 +281,12 @@ pub(super) fn authority_entry(
     let part = authority_entry_part_for(&server.vault, peer, &hash, input.offset)
         .map_err(|_| AppError::not_found("authority entry", None))?
         .ok_or_else(|| AppError::not_found("authority entry", None))?;
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok((
         json!({
             "total": part.total,
-            "part": base64::engine::general_purpose::STANDARD.encode(&part.part),
+            "part": encode(&part.part),
+            "overlay": part.overlay.as_deref().map(encode),
         }),
         Some(Vec::new()),
     ))
@@ -273,6 +311,11 @@ pub(super) fn authority_append_part(
     let part = base64::engine::general_purpose::STANDARD
         .decode(input.part)
         .map_err(|_| AppError::invalid_params())?;
+    let overlay = input
+        .overlay
+        .map(|row| base64::engine::general_purpose::STANDARD.decode(row))
+        .transpose()
+        .map_err(|_| AppError::invalid_params())?;
     let outcome = authority_append_part_for(
         &server.vault,
         peer,
@@ -282,6 +325,7 @@ pub(super) fn authority_append_part(
         input.offset,
         &part,
         || super::checkpoint_roots::stage_charge(server),
+        overlay,
     )
     .map_err(|_| AppError::bad_request("authority entry part refused", Some("part")))?
     .ok_or_else(|| AppError::not_found("authority history", None))?;

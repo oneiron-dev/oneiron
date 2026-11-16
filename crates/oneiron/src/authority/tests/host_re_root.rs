@@ -193,7 +193,10 @@ fn a_replica_reads_a_history_the_move_carried() {
     let replica_dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(replica_dir.path(), crate::VaultConfig::device()).unwrap();
     replica
-        .import_signed_authority_history(&vault.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &vault.export_signed_authority_history().unwrap(),
+            &crate::authority::CarriedOverlays::new(),
+        )
         .unwrap();
     // The Dreamer's MACHINE id is shared across replicas of one vault.
     let dreamer = vault.dreamer_authority().unwrap().entity_ref();

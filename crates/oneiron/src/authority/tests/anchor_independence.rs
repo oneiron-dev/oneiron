@@ -134,7 +134,10 @@ fn a_root_and_its_mark_arrive_together_past_a_retired_roster_key() {
     put(&batch, &[&log.published, &mark]).unwrap();
     let (_other, imported) = vault_with(&log);
     imported
-        .import_signed_authority_history(&batch.export_signed_authority_history().unwrap())
+        .import_signed_authority_history(
+            &batch.export_signed_authority_history().unwrap(),
+            &CarriedOverlays::new(),
+        )
         .unwrap();
     for vault in [&batch, &imported] {
         let fold = vault.authority_fold().unwrap();

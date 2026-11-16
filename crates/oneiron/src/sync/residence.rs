@@ -45,7 +45,7 @@ pub use authority_tail::{
     AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
     authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
-    import_authority_page,
+    held_authority_history_with_overlays, import_authority_page,
 };
 pub use bundle::work::{
     SEALED_BUNDLE_WORK_PART_BYTES, SealedBundleCommitInput, SealedBundleWorkOutcome,

@@ -199,6 +199,7 @@ fn a_root_move_signed_elsewhere_stores_the_stale_stamp_it_owes_before_it_returns
                 .vault
                 .export_signed_authority_history()
                 .expect("the member's history"),
+            &std::collections::BTreeMap::new(),
         )
         .expect("the receiver holds the member's authority");
     let world = owe_a_stamp(&receiver, pact_id);
