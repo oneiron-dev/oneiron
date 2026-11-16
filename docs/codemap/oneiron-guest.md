@@ -11,11 +11,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `src/batch.rs` | src | s | 2 crate-vis | — | The batch transcript channel a vendor's sandbox runs the guest over (L8-43, VENDOR-BOUNDARY = A: a batch… |
 | `src/boot.rs` | src | m | 1 fn · 8 crate-vis | — | Linux-only PID-1 setup, isolated execution, and final-delivery custody |
 | `src/conformance.rs` | src | s | 1 fn · 1 crate-vis | — | Typed Component Model fixture |
 | `src/egress.rs` | src | s | 1 crate-vis | — | The native microVM supervisor's network reaches only the engine's vsock |
 | `src/filesystem.rs` | src | m | 8 crate-vis | — | Descriptor-relative workspace access |
-| `src/lib.rs` | src | s | 1 enum · 2 fn · 1 type · 2 re-export | Error | Linux microVM guest agent and an unprivileged protocol conformance adapter |
+| `src/lib.rs` | src | s | 1 enum · 3 fn · 1 type · 2 re-export | Error | Linux microVM guest agent and an unprivileged protocol conformance adapter |
 | `src/main.rs` | src | s | — | — | Guest PID-1 entry point and explicitly named, unprivileged local test tools |
 | `src/native.rs` | src | s | 1 crate-vis | — | Native OCI session inside a no-NIC microVM |
 | `src/native/egress.rs` | src | s | 3 crate-vis | — | A guest-local Fetch entry to the VM's existing host-policy relay |
@@ -23,4 +24,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/protocol.rs` | src | m | 22 crate-vis | — | Strict, bounded host/guest JSON framing and admission state machine |
 | `src/runtime.rs` | src | m | 1 crate-vis | — | Canonical typed Component Model execution with seven non-write imports and the three that stream a proposed… |
 | `src/tests.rs` | test | m | — | — | — |
+| `tests/batch_transcript.rs` | test | s | — | — | A run on a vendor's sandbox (L8-43, VENDOR-BOUNDARY = A): the real QuickJS foreign component runs one… |
 | `tests/cli.rs` | test | s | — | — | Native CLI artifact generation and pinning, not microVM boot evidence |
