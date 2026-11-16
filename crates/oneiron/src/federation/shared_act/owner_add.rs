@@ -52,12 +52,58 @@ impl Vault {
             encode(&AddOwnerPlan {
                 v: PLAN_VERSION,
                 owner: owner.to_hex(),
+                house_workspace: None,
             })?,
             crate::federation::pending_act::StartCheckIn {
                 verb: "vault.shared.propose_add_owner",
                 act: crate::check_in::ActClass::OwnershipTransfer,
                 effect_digest: crate::check_in::owner_add_effect_digest(vault_id, &owner),
                 applies: check_in_ref,
+            },
+        )
+    }
+
+    /// Starts the `add_owner` act that seats `workspace_ref`'s house mind,
+    /// `house`, at the Owner role in shared vault `vault_id`
+    /// (HOUSE-UNBIND-AUTHORITY = A; FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER): the
+    /// act a person's Owner add starts, under the same policy row, the same
+    /// owner-change wait and the same objection window, judged by the same
+    /// check-in. Its executor writes the house's link and bind receipt, as
+    /// the house link door would; until then the house holds the role it
+    /// holds now. The starter must be a live Owner, and the house
+    /// no Owner yet. [`Vault::set_house_role`] is the door that starts it.
+    pub(crate) fn propose_house_owner_seat(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        workspace_ref: &str,
+        house: EntityId,
+    ) -> Result<PendingAuthorityAct> {
+        {
+            let txn = self.store.env.read_txn()?;
+            let starter = starter.revalidate_person_in_txn(self, &txn)?;
+            check_vault(self, &txn, vault_id)?;
+            let holders =
+                self.live_act_holders(&txn, vault_id, self.store.clock.now_recorded_at())?;
+            let owners = live_owners(&holders, None);
+            if !owners.contains(&starter) || owners.contains(&house) {
+                return Err(invalid());
+            }
+        }
+        self.start_authority_act_checked(
+            starter,
+            vault_id,
+            SharedActKind::AddOwner.as_str(),
+            encode(&AddOwnerPlan {
+                v: PLAN_VERSION,
+                owner: house.to_hex(),
+                house_workspace: Some(workspace_ref.to_owned()),
+            })?,
+            crate::federation::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_add_owner",
+                act: crate::check_in::ActClass::OwnershipTransfer,
+                effect_digest: crate::check_in::owner_add_effect_digest(vault_id, &house),
+                applies: None,
             },
         )
     }

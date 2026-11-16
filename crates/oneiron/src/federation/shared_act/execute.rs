@@ -6,7 +6,9 @@ use crate::authority::{MembershipExecutionCause, MembershipHandover};
 
 impl Vault {
     /// Execute a completed `delete_vault`, `add_owner`, `transfer_ownership` or
-    /// `remove_owner` act. Any live Owner may run it once its window has
+    /// `remove_owner` act. An `add_owner` act that names a workspace seats
+    /// that workspace's house mind at the Owner role, as
+    /// [`Vault::set_house_role`] would, and writes no person's owner keys. Any live Owner may run it once its window has
     /// passed on the store clock with no live objection, while its starter
     /// is still a live Owner. The claim, the effect, the receipt and every
     /// recipient's notice commit in one writer, so the act takes effect at
@@ -157,25 +159,60 @@ impl Vault {
                     return Err(invalid());
                 }
                 let owner = hex_id(&plan.owner)?;
-                let mut notify =
-                    live_owners(&self.live_act_holders(&txn, act.vault_id, now)?, None);
-                let moved = self.add_owner_in_txn(
-                    &mut txn,
-                    act.vault_id,
-                    &notify,
-                    hex_id(&act.starter)?,
-                    owner,
-                    slips,
-                    now,
-                )?;
-                handover_ids = moved.handover_ids();
-                notify.insert(owner);
-                Effect {
-                    change: SharedVaultChange::OwnerAdded { owner: plan.owner },
-                    grants: moved.grants,
-                    revoked_slips: moved.revoked_slips,
-                    detach: None,
-                    notify,
+                if let Some(workspace_ref) = plan.house_workspace.as_deref() {
+                    // A house seated at Owner (FIX HOUSE-OWNER-ROLE-VIA-ADD-
+                    // OWNER): its org link, under the role table, with no
+                    // person's owner keys or own-device grant and no signed
+                    // Owner handover, as a direct seat writes none. The
+                    // receipt reads as the membership change it is.
+                    let (before, grants) = crate::workspace_roster::seat_house_owner_by_act_in_txn(
+                        self,
+                        &mut txn,
+                        act.vault_id,
+                        workspace_ref,
+                        owner,
+                        hex_id(&act.starter)?,
+                        now,
+                    )?;
+                    let change = match before {
+                        Some(from) => SharedVaultChange::MemberRoleChanged {
+                            member: plan.owner,
+                            from,
+                            to: Role::Owner,
+                        },
+                        None => SharedVaultChange::MemberAdded {
+                            member: plan.owner,
+                            role: Role::Owner,
+                        },
+                    };
+                    Effect {
+                        change,
+                        grants,
+                        revoked_slips: Vec::new(),
+                        detach: None,
+                        notify: BTreeSet::new(),
+                    }
+                } else {
+                    let mut notify =
+                        live_owners(&self.live_act_holders(&txn, act.vault_id, now)?, None);
+                    let moved = self.add_owner_in_txn(
+                        &mut txn,
+                        act.vault_id,
+                        &notify,
+                        hex_id(&act.starter)?,
+                        owner,
+                        slips,
+                        now,
+                    )?;
+                    handover_ids = moved.handover_ids();
+                    notify.insert(owner);
+                    Effect {
+                        change: SharedVaultChange::OwnerAdded { owner: plan.owner },
+                        grants: moved.grants,
+                        revoked_slips: moved.revoked_slips,
+                        detach: None,
+                        notify,
+                    }
                 }
             }
             SharedActKind::TransferOwnership => {

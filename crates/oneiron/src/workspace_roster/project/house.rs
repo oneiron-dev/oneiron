@@ -43,7 +43,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::federation::FederationGrantRole;
 use crate::workspace_roster::WorkspaceRosterPreset;
 use crate::workspace_roster::house_link::{
-    house_links_in_txn, link_house_in_txn, unlink_house_in_txn,
+    OwnerSeatPath, house_links_in_txn, link_house_in_txn, unlink_house_in_txn,
 };
 use crate::{EdgeActorClass, WriteActor};
 
@@ -143,7 +143,12 @@ impl Vault {
     /// the house takes its role in the org (`house_link`, the owner able to
     /// assign it by the role table), a house that led before it loses its
     /// own, and an untouched seeded policy default takes
-    /// the house's read row (`gate::house_grant`), as an engine default. Then
+    /// the house's read row (`gate::house_grant`), as an engine default. A
+    /// bind at Owner over the workspace's shared vault that the vault's
+    /// owner-change wait would hold is refused, writing nothing: bind at a
+    /// lower role, then seat the house at Owner through
+    /// [`Vault::set_house_role`], whose `add_owner` act the Owners may object
+    /// to (FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER). Then
     /// the house files its join of the root's home room, with the revalidated
     /// owner as filer; a join that holds or is refused is no participation,
     /// and the lead stands either way. No subject anchor changes.
@@ -254,7 +259,7 @@ impl Vault {
                 }
                 self.sign_root_leader_in_txn(txn, owner, signer, (root, kind), witness, house)?;
             }
-            link_house_in_txn(self, txn, preset, role, binder, now)?;
+            link_house_in_txn(self, txn, preset, role, binder, now, OwnerSeatPath::Door)?;
             let reseeded = self.reseed_policy_manifest_in_txn(txn, now)?.is_some();
             self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref)?;
             Ok((true, reseeded))

@@ -22,6 +22,14 @@
 //! set and clear the role alone, under the same rule; neither touches the
 //! root's leader, which only the owner's bind and unbind sign.
 //!
+//! Seating a house at the Owner role makes it a co-Owner, so over a shared
+//! vault it waits as a person's Owner add waits (HOUSE-UNBIND-AUTHORITY = A;
+//! FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER): [`Vault::set_house_role`] starts the
+//! same `add_owner` act, under its policy row, the vault's owner-change wait
+//! and its objection window, and that act's executor writes the link. A
+//! bind at Owner that the wait would hold is refused and names that door.
+//! With no wait (the default) the seat is still instant.
+//!
 //! Each bind and each unbind keeps one receipt (`IdentityLifecycle`) that
 //! names the binder, the house, the org and the role. The receipts are the
 //! bind intervals a byline reads: a statement the house wrote inside one is
@@ -40,8 +48,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::{
-    FederationGrant, FederationGrantRole, FederationGrantScope, OrgAdminPower, SharedVaultWrite,
-    encode_federation_grant_body,
+    FederationGrant, FederationGrantRole, FederationGrantScope, OrgAdminPower, PendingAuthorityAct,
+    SharedActKind, SharedVaultWrite, encode_federation_grant_body,
 };
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT};
@@ -141,6 +149,54 @@ fn require_undeleted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> 
         return Err(Error::InvalidConfig(DELETED_VAULT_REFUSAL.into()));
     }
     Ok(())
+}
+
+/// The refusal of an Owner house link, written outside its `add_owner` act,
+/// that the vault's owner-change wait would hold.
+const OWNER_SEAT_WAITS_REFUSAL: &str = "seating a house at the owner role waits the vault's owner-change wait, as a person's Owner add does: start it with set_house_role(.., owner), whose add_owner act the other Owners may object to";
+
+/// The refusal of an `add_owner` act's house seat whose workspace no longer
+/// names that house over that vault.
+const HOUSE_SEAT_ACT_STALE_REFUSAL: &str =
+    "the add_owner act's workspace no longer names that house over this vault";
+
+/// The refusal of an `add_owner` act's house seat for a house already an
+/// Owner there.
+const HOUSE_ALREADY_OWNER_REFUSAL: &str = "the house already holds the owner role in this vault";
+
+/// Who writes an Owner-role house link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerSeatPath {
+    /// A bind or a role door, in its own transaction.
+    Door,
+    /// The executor of the `add_owner` act that names the house.
+    AddOwnerAct,
+}
+
+/// Whether shared vault `vault_id` is this vault's shared vault: the one its
+/// Owners' acts run on. A house may be linked before sharing, with no act.
+fn holds_owner_acts_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, vault_id: u64) -> Result<bool> {
+    Ok(vault
+        .shared_vault_creation_in_txn(txn)?
+        .is_some_and(|creation| creation.vault_id == vault_id))
+}
+
+/// Whether an `add_owner` act started now on `vault_id` would wait: the
+/// owner-change wait an Owner-role house link written outside the act would
+/// skip.
+fn owner_seat_waits_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
+    now: u64,
+) -> Result<bool> {
+    if !holds_owner_acts_in_txn(vault, txn, vault_id)? {
+        return Ok(false);
+    }
+    Ok(
+        vault.stored_act_wait_secs_in_txn(txn, vault_id, SharedActKind::AddOwner.as_str(), now)?
+            > 0,
+    )
 }
 
 /// The refusal of a set or clear by someone the role table does not let
@@ -325,20 +381,17 @@ fn append_receipt_in_txn(
     RECEIPTS.put(&vault.store, txn, &(receipt.house, id), receipt)
 }
 
-/// Seats `preset`'s house in its workspace's shared vault at `role`, in the
-/// caller's transaction, and keeps the bind receipt naming `binder`. A grant
-/// the house already holds there is rewritten in place at the new role; a
-/// house already seated at exactly `role` is left as it is, with no second
-/// receipt. `binder` must be able to assign `role`, and every role the house
-/// holds there now, by the role table.
-pub(crate) fn link_house_in_txn(
+/// Every refusal a link of `preset`'s house at `role` by `binder` meets,
+/// read in `txn`, before it writes: `None` when the house is already linked
+/// here at exactly `role` (a retry, which writes nothing), else the grants
+/// the house holds there now, which the link rewrites in place.
+fn check_house_link_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     preset: &WorkspaceRosterPreset,
     role: FederationGrantRole,
     binder: EntityId,
-    now: u64,
-) -> Result<()> {
+) -> Result<Option<Vec<(EntityId, FederationGrant)>>> {
     require_house_role(role)?;
     let house = preset.house_actor_ref;
     let vault_id = preset.workspace_vault_id;
@@ -373,7 +426,38 @@ pub(crate) fn link_house_in_txn(
             .iter()
             .all(|(id, grant)| grant.role == role && linked_here(id))
     {
+        return Ok(None);
+    }
+    Ok(Some(held))
+}
+
+/// Seats `preset`'s house in its workspace's shared vault at `role`, in the
+/// caller's transaction, and keeps the bind receipt naming `binder`. A grant
+/// the house already holds there is rewritten in place at the new role; a
+/// house already seated at exactly `role` is left as it is, with no second
+/// receipt. `binder` must be able to assign `role`, and every role the house
+/// holds there now, by the role table. An Owner seat that the vault's
+/// owner-change wait would hold is written only by its `add_owner` act
+/// (`path`), never by a door ([`OWNER_SEAT_WAITS_REFUSAL`]).
+pub(crate) fn link_house_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    preset: &WorkspaceRosterPreset,
+    role: FederationGrantRole,
+    binder: EntityId,
+    now: u64,
+    path: OwnerSeatPath,
+) -> Result<()> {
+    let house = preset.house_actor_ref;
+    let vault_id = preset.workspace_vault_id;
+    let Some(held) = check_house_link_in_txn(vault, txn, preset, role, binder)? else {
         return Ok(());
+    };
+    if role == FederationGrantRole::Owner
+        && path == OwnerSeatPath::Door
+        && owner_seat_waits_in_txn(vault, txn, vault_id, now)?
+    {
+        return Err(Error::InvalidConfig(OWNER_SEAT_WAITS_REFUSAL.into()));
     }
     let mut ids: Vec<EntityId> = held.into_iter().map(|(id, _)| id).collect();
     if ids.is_empty() {
@@ -517,6 +601,48 @@ fn stored_preset_in_txn(
     Ok(preset)
 }
 
+/// The seat of `house` at the Owner role that an `add_owner` act names, in
+/// its executor's transaction (FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER): the link
+/// [`Vault::set_house_role`] would have written, its bind receipt naming the
+/// act's `starter`, who must still be able to assign the role. The act's
+/// workspace must still name `house` over `vault_id`, and the house must not
+/// be an Owner there already. Answers the role the house held there before,
+/// if any, and the grants that seat it now.
+pub(crate) fn seat_house_owner_by_act_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    vault_id: u64,
+    workspace_ref: &str,
+    house: EntityId,
+    starter: EntityId,
+    now: u64,
+) -> Result<(Option<FederationGrantRole>, Vec<EntityId>)> {
+    let preset = stored_preset_in_txn(vault, txn, workspace_ref)?;
+    if preset.house_actor_ref != house || preset.workspace_vault_id != vault_id {
+        return Err(Error::InvalidConfig(HOUSE_SEAT_ACT_STALE_REFUSAL.into()));
+    }
+    let before = house_grants_in_txn(vault, txn, house, vault_id)?
+        .first()
+        .map(|(_, grant)| grant.role);
+    if before == Some(FederationGrantRole::Owner) {
+        return Err(Error::InvalidConfig(HOUSE_ALREADY_OWNER_REFUSAL.into()));
+    }
+    link_house_in_txn(
+        vault,
+        txn,
+        &preset,
+        FederationGrantRole::Owner,
+        starter,
+        now,
+        OwnerSeatPath::AddOwnerAct,
+    )?;
+    let grants = house_grants_in_txn(vault, txn, house, vault_id)?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    Ok((before, grants))
+}
+
 impl Vault {
     /// Sets the role `workspace_ref`'s house mind runs its org in, as the
     /// bind does, and nothing else: the root's leader, which only the
@@ -528,18 +654,54 @@ impl Vault {
     /// any. The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
+    ///
+    /// The Owner role over the workspace's shared vault makes the house a
+    /// co-Owner, so it goes as a person's Owner add goes
+    /// (HOUSE-UNBIND-AUTHORITY = A; FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER): the
+    /// call starts an `add_owner` act naming the house, under the act's
+    /// policy row, the vault's owner-change wait and its objection window,
+    /// and every Owner is told. An act that completes at once (no wait, the
+    /// default) is executed in this call, which then answers `None` as any
+    /// other set does. An act that waits is answered: the house keeps the
+    /// role it holds until a live Owner executes the matured act
+    /// ([`Vault::execute_completed_shared_act`]), and an objection inside the
+    /// window stops it. Before sharing, the Owner seat is written at once.
     pub fn set_house_role(
         &self,
         actor: &AuthenticatedOwner,
         workspace_ref: &str,
         role: FederationGrantRole,
-    ) -> Result<()> {
+    ) -> Result<Option<PendingAuthorityAct>> {
+        if role == FederationGrantRole::Owner {
+            let seat = {
+                let txn = self.store.env.read_txn()?;
+                let starter = actor.revalidate_person_in_txn(self, &txn)?;
+                let preset = stored_preset_in_txn(self, &txn, workspace_ref)?;
+                let writes = check_house_link_in_txn(self, &txn, &preset, role, starter)?.is_some();
+                (writes && holds_owner_acts_in_txn(self, &txn, preset.workspace_vault_id)?)
+                    .then_some(preset)
+            };
+            if let Some(preset) = seat {
+                let act = self.propose_house_owner_seat(
+                    actor,
+                    preset.workspace_vault_id,
+                    workspace_ref,
+                    preset.house_actor_ref,
+                )?;
+                if !act.completed {
+                    return Ok(Some(act));
+                }
+                self.execute_completed_shared_act(actor, &act.id, None)?;
+                return Ok(None);
+            }
+        }
         self.with_write_txn(|txn| {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            link_house_in_txn(self, txn, &preset, role, actor, now)
-        })
+            link_house_in_txn(self, txn, &preset, role, actor, now, OwnerSeatPath::Door)
+        })?;
+        Ok(None)
     }
 
     /// Clears the role `workspace_ref`'s house mind runs its org in: its
