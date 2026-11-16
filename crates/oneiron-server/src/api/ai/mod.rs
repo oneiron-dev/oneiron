@@ -304,6 +304,15 @@ async fn answer_quota(
             }
         }
     }
+    // The agent's answer is a write: its credential carries core Read and
+    // Write, as a wave plan's does.
+    if agent.is_some()
+        && let Err(error) = auth
+            .require(CoreScope::Read)
+            .and_then(|()| auth.require(CoreScope::Write))
+    {
+        return error.into_response();
+    }
     // FIX 2222: an owner act; a hosted operator's root is refused, typed.
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
         return error.into_response();
