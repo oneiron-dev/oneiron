@@ -96,10 +96,20 @@ pub struct EmbeddingSpaceProbePutRequest {
 pub struct EmbeddingSpaceProbeDeleteRequest {
     /// The probe's id, 32 hex.
     pub id: String,
+    /// Another asker's approved check-in for deleting this probe, 32 hex:
+    /// the Owner applies it on their own proof, and the delete's writer
+    /// spends it (ROLES-CHECKIN 2k5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
-/// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went,
+/// and the check-in decision the delete ran on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbeDeleted {
     pub ok: bool,
+    /// The Owner's own proof, naming the asker's approved check-in it applied
+    /// (ROLES-CHECKIN 2k5; P25-SHAPE Q1 = A).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
