@@ -344,6 +344,13 @@ impl AuthenticatedOwner {
             .is_some_and(|credential| credential.claims().delegation.is_some())
     }
 
+    /// Whether this is a person's own proof, carried by their person
+    /// credential ([`Vault::bind_person_credential`]): it carries no owner
+    /// authority, even an owner's (FIX 4707).
+    pub(crate) const fn is_person_tier(&self) -> bool {
+        self.person_credential.is_some()
+    }
+
     /// The slip a transport bound this proof to: the owner's credential, or
     /// a person's ([`Vault::bind_person_credential`]).
     fn carried_slip(&self) -> Option<&crate::authority::VerifiedSlip> {
