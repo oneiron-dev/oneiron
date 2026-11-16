@@ -282,6 +282,18 @@ impl Vault {
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
         let destination: ReadDestination = destination.into();
         let locality = crate::settings::read_destination_locality(&destination);
+        // L2-23: an archive's manifest is signed by this install's machine
+        // key, read here outside every transaction. This signer lookup
+        // writes no vault row and no slot (the export's callers still write
+        // its receipt and audit rows, as before): it never mints a machine
+        // id or a seed, and never forgets a machine whose slot is empty
+        // (`Vault::read_install_signer`, which names the one keystore that
+        // makes its own sealing key on a read). With no keystore, no machine
+        // id or no seed it goes out unsigned, as before: the export never
+        // refuses (ARCH-0052 P6).
+        let signer = (cut == ExportCut::Archive)
+            .then(|| self.read_install_signer().ok().flatten())
+            .flatten();
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
@@ -707,6 +719,7 @@ impl Vault {
                     fold_only_secrets,
                     embedding_setup,
                     sources: sources.into_iter().collect(),
+                    signer,
                 },
                 sink,
             )
