@@ -87,7 +87,7 @@ pub(super) fn carried_request_kind(
 }
 
 /// Settlement drops every row above a main-log row it refuses (a retired
-/// signer's fence, a confirmation collision, an unsettled handoff), and the door names every main-log head as a parent, so
+/// signer's fence, an unsettled handoff), and the door names every main-log head as a parent, so
 /// a world's edits would fall with an unrelated row and the world would read
 /// wider than the owner set it (Wonder P2 round 1, W1). A world edit is judged
 /// on the main log as the fold keeps it: every edit above a main-log row the
@@ -97,13 +97,16 @@ pub(super) fn carried_request_kind(
 /// signed on the crossed row's parents instead (Wonder P2 round 2, W1). A
 /// root request, cancel or root request's result folded again folds before
 /// the rows crossed above it, so what descends from it reads it (FIX 5584,
-/// 5649).
+/// 5649). A row a closed fence refuses for its own signer (`fenced`) is
+/// never folded again: the same row on the crossed row's parents is
+/// refused there too (REVIEW-7987).
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
+    fenced: impl Fn(&AuthorityEntryHash) -> bool,
 ) {
     let kind_of = |request: &AuthorityEntryHash| by_hash.get(request).and_then(request_kind);
     let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
@@ -125,6 +128,7 @@ pub(super) fn refold_world_edits(
             .filter(|(hash, entry)| {
                 refolds(&entry.op, kind_of)
                     && !states.contains_key(*hash)
+                    && !fenced(*hash)
                     && ancestors
                         .get(*hash)
                         .is_some_and(|past| past.iter().any(crossable))

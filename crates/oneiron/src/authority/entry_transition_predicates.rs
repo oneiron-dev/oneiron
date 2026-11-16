@@ -30,6 +30,38 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     )
 }
 
+/// A row that changes the roster: a genesis, an enrollment (an agent key or
+/// an owner's own signing key), a revocation, a rotation or a re-root, the
+/// ops whose `apply_op` arms write `FoldState::roster`. No arrival floor
+/// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]), and one vouches for
+/// every row of its own signer below it in its ancestry that a floor refuses
+/// (`floor_refuses`, `sequence_ancestry`), so arrival order alone does not
+/// change the roster, as a revocation's rule asks (ARCH-0040 ONE-REVOKE-D3).
+/// A restriction it names keeps its floor and lands restriction only there.
+/// Its signer's own order still binds it, on every install alike: a row at
+/// or below a sequence its signer reached in the row's own ancestry is
+/// refused (`fold_entry_state`, `state.seqs`). A parent of another signer
+/// that this install's floor refuses still holds it back (FIX
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
+pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::Genesis { .. }
+            | AuthorityOp::EnrollDevice { .. }
+            | AuthorityOp::OwnerKeyEnroll(_)
+            | AuthorityOp::RevokeDevice { .. }
+            | AuthorityOp::RotateKey { .. }
+            | AuthorityOp::ReRoot { .. }
+    )
+}
+
+/// Whether this install's sequence floor refuses a row of `op` that reaches
+/// it past the floor: every op but a roster change, which no floor refuses,
+/// and a restriction, which lands restriction only.
+pub(super) fn floor_refuses(op: &AuthorityOp) -> bool {
+    !changes_roster(op) && !lands_restriction_only(op)
+}
+
 /// A device-key op the host-rooted redesign retired (identity canon,
 /// op-vocabulary amendment 2026-08-05): client enrollment is pairing-only,
 /// and `RotateKey` became the re-root. An agent-only enrollment is not one of
