@@ -292,12 +292,8 @@ impl Vault {
                 replay_rows::put_append(self, wtxn, &stored, record, &fenced)?;
             }
             stored => {
-                replay_rows::put(
-                    self,
-                    wtxn,
-                    &fenced.run_id,
-                    &with_stored_birth(&fenced, stored.as_ref())?,
-                )?;
+                let born = with_stored_birth(&fenced, stored.as_ref())?;
+                replay_rows::put(self, wtxn, &fenced.run_id, &born)?;
             }
         }
         if let Some((key, count)) = next_heal_count {
