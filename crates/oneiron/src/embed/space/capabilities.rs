@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 
 use super::{EmbeddingSpace, InputKind, kind_slot_bindings_in_txn};
-use crate::HostingPrivacyPosture;
 use crate::embed::space_move::moving_kind_in_txn;
 use crate::embed::world_space::WorldTextSpaces;
 use crate::error::Result;
@@ -18,14 +17,14 @@ use crate::store::Store;
 /// its text space keeps text the same way, until the owner changes that order (DEC-0005
 /// #private-world-vectors): a redeclaration without text would otherwise end the world's hold
 /// on its rows, and send them to the vault's index or a rung its order never named. Every other
-/// change applies at once. The setup records publish the space as stored, so they read what it
-/// serves. No declaration is refused for it.
+/// change applies at once. The world orders are read under the hosting posture the store was
+/// opened with. The setup records publish the space as stored, so they read what it serves. No
+/// declaration is refused for it.
 ///
 /// # Errors
 /// A store failure.
 pub(crate) fn reconcile_bound_space_capabilities_in_txn(
     store: &Store,
-    posture: HostingPrivacyPosture,
     txn: &RoTxn<'_>,
     existing: &EmbeddingSpace,
     declared: &EmbeddingSpace,
@@ -39,7 +38,7 @@ pub(crate) fn reconcile_bound_space_capabilities_in_txn(
             used.insert(kind);
         }
     }
-    if WorldTextSpaces::read_for_store_in(store, posture, txn)?.names(&existing.id) {
+    if WorldTextSpaces::read_for_store_in(store, store.privacy_posture, txn)?.names(&existing.id) {
         used.insert(InputKind::Text);
     }
     let mut effective = declared.clone();
