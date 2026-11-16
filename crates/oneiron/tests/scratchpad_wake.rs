@@ -288,19 +288,17 @@ fn a_racing_first_line_lands_on_the_pad_the_other_opened() {
         receipt.sealed_prior, None,
         "the later racing line seals no pad"
     );
-    let recall = memory
-        .scratchpad_recall(LABEL, "racing")
-        .expect("recall")
-        .expect("the wake has a pad");
+    assert!(!sealed(&vault, first), "a running wake's pad is live");
+    // The pad's text as the append reads it. The agent's own scoped read
+    // (`scratchpad_recall`) carries no read proof here, as a dispatched
+    // run's does, and no grant, so it reads nothing.
     assert_eq!(
-        recall.pad, first,
-        "the wake's pad is the one the race opened"
-    );
-    assert!(!recall.sealed, "a running wake's pad is live");
-    let lines: Vec<&str> = recall.lines.iter().map(|line| line.text.as_str()).collect();
-    assert_eq!(
-        lines,
-        ["the second racing line", "the first racing line"],
+        vault
+            .note_program_document(first)
+            .expect("pad read")
+            .expect("the pad's document")
+            .text(),
+        "[-] the first racing line\n[-] the second racing line\n",
         "the wake's one pad holds both racing lines"
     );
     complete(&queue, &leased, t + 5);
