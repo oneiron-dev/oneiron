@@ -161,10 +161,12 @@ pub(crate) fn authority_missing_believed_history_in_txn(
 pub(crate) enum NamingRows {
     /// Every held row's, whoever admitted it: what delivery fetches.
     Every,
-    /// Only the rows this install believes (`AuthorityDoorView::believes`):
+    /// Only the rows this install believes (`AuthorityStructure::believes`):
     /// what the peer route's settled gate waits for. A chain is read only by
     /// a reader that believes its admitter (design pass 29), so a parent only
-    /// a stranger's row names is not history this install lacks.
+    /// a stranger's row names is not history this install lacks. The
+    /// checkpoint cover, the resumed hashes, `required` and the pending
+    /// evidence's needs count under either naming.
     Believed,
 }
 
@@ -194,9 +196,10 @@ pub(crate) fn authority_history_request_in_txn(
 /// [`authority_history_request_in_txn`] of the held log alone. Under
 /// [`NamingRows::Believed`] a held row's parents count only when the store
 /// gate's view of this snapshot believes the row; the checkpoint cover, the
-/// resumed hashes and `required` count either way. An adopted image's request
-/// is the fold's own past the image, which a gap below a stranger's row
-/// alone never moves.
+/// resumed hashes and `required` count either way. A vault that adopted a
+/// checkpoint image answers the fold's own request past the image under
+/// either naming; that fold still names a parent a stranger's tail row
+/// names (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
 fn held_history_request_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -274,11 +277,14 @@ impl Vault {
 
     /// The history [`Self::authority_missing_history`] names that this
     /// install believes it lacks: the parents only rows it believes name
-    /// (the roster's and its own anchors'), with the checkpoint cover, the
-    /// resumed hashes and the pending evidence's needs as there. A parent only
-    /// a stranger's row names leaves it as it was before that row arrived
-    /// (FIX [STRANGER-WITHHELD-PARENT-STALLS-PEER-SETTLED]). The peer route's
-    /// settled gate reads this; delivery still fetches the whole request.
+    /// (the roster's and its own anchors', never a root it only awaits), with
+    /// the checkpoint cover, the resumed hashes and the pending evidence's
+    /// needs as there. A parent only a stranger's row names leaves it as it
+    /// was before that row arrived (FIX
+    /// [STRANGER-WITHHELD-PARENT-STALLS-PEER-SETTLED]). On a vault that adopted
+    /// a checkpoint image it is the adopted fold's own request, as there. The
+    /// peer route's settled gate reads this; delivery still fetches the whole
+    /// request.
     pub fn authority_missing_believed_history(&self) -> Result<AuthorityHistoryRequest> {
         let txn = self.store.env.read_txn()?;
         authority_missing_believed_history_in_txn(&self.store, self.privacy_posture(), &txn)

@@ -286,13 +286,11 @@ pub(crate) struct AuthorityDoorView {
 }
 
 impl AuthorityDoorView {
-    /// Whether this install believes `entry`: a key may vouch for it and it
-    /// vouches as no stranger's. The roster's rows and the rows of this
-    /// install's own or awaited anchors are believed; a foreign anchor's rows,
-    /// and rows no key vouches for, are not (design pass 29: "a chain is read
-    /// only by a reader that believes its admitter").
+    /// Whether this install believes `entry`, as this view's structure reads
+    /// it (`AuthorityStructure::believes`): the roster's rows and this
+    /// install's own anchors' rows.
     pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
-        self.structure.vouches_for(entry) && !self.structure.is_stranger(entry)
+        self.structure.believes(entry)
     }
 }
 

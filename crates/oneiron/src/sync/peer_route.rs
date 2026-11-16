@@ -158,8 +158,8 @@ pub const fn peer_ignores_frame(tag: u8) -> bool {
 /// this machine's authority fold is settled enough to serve a peer; it fails
 /// closed otherwise ("It fails closed while the authority fold is
 /// unsettled"). Settled is all of: the fold reads (no history it lacks
-/// refuses it), its vault root is not in conflict, every row its believed rows
-/// and checkpoint name is held ([`Vault::authority_missing_believed_history`]), and
+/// refuses it), its vault root is not in conflict, the history it believes it
+/// lacks is held ([`Vault::authority_missing_believed_history`]), and
 /// this machine's own chains do not rest on an unsettled roster root (no
 /// chain `admitter_unsettled`, the retired-signer conflict mark).
 ///
