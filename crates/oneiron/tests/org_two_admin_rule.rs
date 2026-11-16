@@ -32,6 +32,22 @@
 //! - An Admin's held Steward add never lands, even on an Owner's approve: an
 //!   approval lifts only the rule, and the Steward role is an Owner's to give.
 //!
+//! The Astra review of #8482 (lanes/engine-tools/astra-reviews/
+//! unbuilt-b1c-8482-two-admin) added seven:
+//! - H1: an Admin's `vault.delete` of a Member's NOTE refuses with the hold's
+//!   reason while the rule is on; the Admin's own NOTE and an Owner's delete
+//!   still go.
+//! - H2: a Deputy's remove asks an Owner first (the Deputy's own check-in
+//!   comes before the rule); once approved, the call with its ref is held, and
+//!   a second admin's approve spends the Deputy's check-in as it lands.
+//! - H2: a held act whose first admin an Owner removed lands no more.
+//! - H3: an approve claimed before `lapses_at` whose re-run reaches its write
+//!   after it lands nothing.
+//! - H4: `org.two_admin_lapse_secs` refuses a value above 90 days.
+//! - H5: a hard erase of the first admin scrubs `first_admin` from the
+//!   receipt of their approved act.
+//! - H7: a first admin an Owner removed cannot withdraw their act.
+//!
 //! On the base (#8259, a2cb32313b0) this file does not build: there is no
 //! `org.two_admin` key, no `MEMORY_CODE_ADMIN_ACT_HELD` and no held-act
 //! verbs.
@@ -42,8 +58,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use oneiron::authority::HostSlipIssuer;
+use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     FederationGrantRole as Role, HeldAdminAct, HeldAdminActStatus, InitialSharedMember,
@@ -52,20 +69,26 @@ use oneiron::federation::{
 };
 use oneiron::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use oneiron::memory::{
-    ADMIN_ACT_HELD_REASON_PREFIX, MEMORY_CODE_ADMIN_ACT_HELD, MemoryError, MemoryResult,
+    ADMIN_ACT_HELD_REASON_PREFIX, CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_ADMIN_ACT_HELD,
+    MEMORY_CODE_CHECK_IN_PENDING, MemoryError, MemoryResult, SafeDeleteReason,
     TWO_ADMIN_HOLD_REASON_CODE,
 };
-use oneiron::registry::{ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON};
+use oneiron::note::TakeTarget;
+use oneiron::registry::{
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
+};
 use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::store::GateDecisionId;
+use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::held_admin_act as cut_short;
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::verbs::{
-    FederationDelegateRequest, HeldAdminActRequest, SharedMemberAddRequest, add_shared_member_as,
-    approve_held_admin_act_as, create_federation_delegate_as, read_held_admin_acts,
+    FederationDelegateRequest, HeldAdminActRequest, SharedMemberAddRequest,
+    SharedMemberRemoveRequest, add_shared_member_as, approve_held_admin_act_as,
+    create_federation_delegate_as, read_held_admin_acts, remove_shared_member_as,
     withdraw_held_admin_act_as,
 };
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
 
 const SHARED: u64 = 47;
@@ -79,6 +102,8 @@ struct Org {
     /// The first Admin's own membership grant: the parent of their delegate.
     admin_grant: EntityId,
     admin_b: EntityId,
+    /// A Deputy, who asks an Owner before a remove (check-in).
+    deputy: EntityId,
     member: EntityId,
 }
 
@@ -132,8 +157,8 @@ fn held_id(err: &MemoryError) -> String {
 }
 
 impl Org {
-    /// A rooted vault whose shared vault holds the owner, two Admins and a
-    /// Member, each of whom accepted.
+    /// A rooted vault whose shared vault holds the owner, two Admins, a
+    /// Deputy and a Member, each of whom accepted.
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
@@ -141,8 +166,8 @@ impl Org {
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
-        let [admin, admin_b, member] = std::array::from_fn(|_| EntityId::now());
-        for id in [admin, admin_b, member] {
+        let [admin, admin_b, deputy, member] = std::array::from_fn(|_| EntityId::now());
+        for id in [admin, admin_b, deputy, member] {
             person(&vault, id);
         }
         let founding = |member_ref, role| InitialSharedMember {
@@ -158,13 +183,15 @@ impl Org {
                     founding(owner, Role::Owner),
                     founding(admin, Role::Admin),
                     founding(admin_b, Role::Admin),
+                    founding(deputy, Role::Deputy),
                     founding(member, Role::Member),
                 ],
                 1,
             )
-            .expect("a shared vault with two Admins and a Member");
+            .expect("a shared vault with two Admins, a Deputy and a Member");
         let admin_grant = accept(&vault, admin, Role::Admin);
         accept(&vault, admin_b, Role::Admin);
+        accept(&vault, deputy, Role::Deputy);
         accept(&vault, member, Role::Member);
         Self {
             _dir: dir,
@@ -174,6 +201,7 @@ impl Org {
             admin,
             admin_grant,
             admin_b,
+            deputy,
             member,
         }
     }
@@ -275,6 +303,142 @@ impl Org {
             .expect("the newcomer reads their invitations")
             .iter()
             .any(|open| open.inviter == inviter.to_hex())
+    }
+
+    /// `by` removes `member` through `vault.members.remove`, naming
+    /// `check_in` once an Owner approved an earlier call's check-in.
+    fn remove(
+        &self,
+        by: EntityId,
+        member: EntityId,
+        check_in: Option<&str>,
+    ) -> MemoryResult<SharedActExecutionReceipt> {
+        self.as_person(by, || {
+            remove_shared_member_as(
+                &self.vault,
+                &proof(&self.vault, by),
+                Some(&self.issuer),
+                SharedMemberRemoveRequest {
+                    vault_id: SHARED,
+                    member: member.to_hex(),
+                    check_in_ref: check_in.map(str::to_owned),
+                },
+            )
+        })
+    }
+
+    /// `by` withdraws held act `held` through `vault.members.held.withdraw`.
+    fn withdraw(&self, by: EntityId, held: &str) -> MemoryResult<HeldAdminAct> {
+        self.as_person(by, || {
+            withdraw_held_admin_act_as(
+                &self.vault,
+                &proof(&self.vault, by),
+                HeldAdminActRequest {
+                    vault_id: SHARED,
+                    held: held.to_owned(),
+                },
+            )
+        })
+    }
+
+    /// The role `member` holds in the shared vault now, from its grant rows.
+    fn role_of(&self, member: EntityId) -> Option<Role> {
+        self.vault
+            .entities_by_type(ENTITY_TYPE_FEDERATION_GRANT)
+            .expect("grants")
+            .into_iter()
+            .find_map(|id| {
+                let body = self.vault.get(&id).expect("grant row")?;
+                let grant = oneiron::federation::decode_federation_grant_body(&body).ok()?;
+                (grant.member_ref == member && grant.role != Role::Delegate).then_some(grant.role)
+            })
+    }
+
+    /// The Owner approves pending check-in `id` over the effect it waits on,
+    /// through `vault.check_in.answer`.
+    fn owner_approves(&self, id: &str) {
+        let row = self
+            .vault
+            .pending_check_in(&EntityId::from_hex(id).expect("a check-in id"))
+            .expect("read the check-in")
+            .expect("the check-in is stored");
+        let digest: String = row
+            .effect_digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let settled = invoke(
+            &self.vault.memory(self.owner, EdgeActorClass::Human),
+            "vault.check_in.answer",
+            json!({ "handle": id, "answer": "approve", "effect_digest": digest }),
+        )
+        .expect("the Owner answers");
+        assert_eq!(
+            settled["eligible"].as_str(),
+            Some("approved"),
+            "the Owner's approval makes the act eligible: {settled}"
+        );
+    }
+
+    /// A NOTE `author` writes about a fresh person, with the host key bound
+    /// to them for that one write.
+    fn note_of(&self, author: EntityId) -> String {
+        let subject = self.newcomer();
+        self.as_person(author, || {
+            self.vault
+                .memory(author, EdgeActorClass::Human)
+                .author_take(TakeTarget::Subject(subject), "a take about the subject")
+                .expect("author a NOTE")
+                .id_hex
+        })
+    }
+
+    fn deleted(&self, note: &str) -> bool {
+        self.vault
+            .is_deleted_shell(&EntityId::from_hex(note).expect("note id"))
+            .expect("shell read")
+    }
+
+    /// The live `human` credential this host mints `person`, verified as a
+    /// transport verifies the slip a request presents.
+    fn credential(&self, person: EntityId) -> VerifiedSlip {
+        static NEXT: AtomicU8 = AtomicU8::new(1);
+        let root = self
+            .vault
+            .ensure_host_root_slip(&self.issuer)
+            .expect("the host root slip");
+        let issued_at = self.vault.capability_slip_now().expect("slip clock");
+        let mut claims = root.claims;
+        claims.slip_id = [NEXT.fetch_add(1, Ordering::Relaxed); 32];
+        claims.holder_ref = person.to_hex();
+        claims.actor_class = Some("human".into());
+        claims.issued_at = issued_at;
+        claims.expires_at = issued_at + 3_600;
+        claims.ttl_secs = 3_600;
+        let slip = self
+            .vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the person's credential");
+        let challenge = b"two-admin-delete";
+        let binding = self
+            .issuer
+            .binding_proof(&slip, challenge)
+            .expect("binding proof");
+        self.vault
+            .verify_capability_slip(&self.issuer.public_key(), &slip, challenge, &binding)
+            .expect("a verified credential")
+    }
+
+    /// `person` deletes `note` through `vault.delete` over its own
+    /// credential, as a person other than the owner acts on a rooted vault.
+    fn delete_with_credential(&self, person: EntityId, note: &str) -> MemoryResult<bool> {
+        let credential = self.credential(person);
+        self.vault
+            .memory(person, EdgeActorClass::Human)
+            .with_transport_invocation()
+            .with_read_proof(&credential)
+            .safe_delete(note, SafeDeleteReason::UserDelete)
+            .map(|receipt| receipt.existed)
     }
 }
 
@@ -612,4 +776,217 @@ fn an_admins_held_steward_add_never_lands_by_an_owners_approve() {
     assert!(!org.invited_by(newcomer, org.owner));
     steward_add(org.owner).expect("an Owner gives the Steward role at once");
     assert!(org.invited_by(newcomer, org.owner));
+}
+
+/// Whether `err` carries the hold's own reason code.
+fn held_by_the_rule(err: &MemoryError) -> bool {
+    err.reason_codes
+        .iter()
+        .any(|code| code == TWO_ADMIN_HOLD_REASON_CODE)
+}
+
+#[test]
+fn an_admins_delete_of_a_members_note_refuses_while_the_rule_is_on() {
+    let org = Org::new();
+    let note = org.note_of(org.member);
+    let own = org.note_of(org.admin);
+    org.owner_sets("org.two_admin", json!(true));
+
+    let refusal = org
+        .delete_with_credential(org.admin, &note)
+        .expect_err("an Admin's delete of a Member's NOTE is an admin power act");
+    assert!(
+        held_by_the_rule(&refusal),
+        "it refuses with the hold's reason: {refusal:?}"
+    );
+    assert!(!org.deleted(&note), "the Member's NOTE is untouched");
+
+    assert!(
+        org.delete_with_credential(org.admin, &own)
+            .expect("an Admin's delete of their own NOTE is their own act")
+    );
+    assert!(org.deleted(&own));
+    assert!(
+        org.vault
+            .memory(org.owner, EdgeActorClass::Human)
+            .safe_delete(&note, SafeDeleteReason::UserDelete)
+            .expect("an Owner's delete is never held")
+            .existed
+    );
+    assert!(org.deleted(&note));
+}
+
+#[test]
+fn a_deputys_held_remove_spends_the_deputys_own_check_in() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+
+    // The Deputy's own check-in comes first: an Owner answers it before the
+    // rule holds the act.
+    let waits = org
+        .remove(org.deputy, org.member, None)
+        .expect_err("a Deputy's remove waits");
+    assert_eq!(waits.code, MEMORY_CODE_CHECK_IN_PENDING, "{waits:?}");
+    let [code] = waits.reason_codes.as_slice() else {
+        panic!("one reason code: {waits:?}");
+    };
+    let check_in = code
+        .strip_prefix(CHECK_IN_PENDING_REASON_PREFIX)
+        .expect("the check-in reason code")
+        .to_owned();
+    assert_eq!(org.role_of(org.member), Some(Role::Member));
+
+    org.owner_approves(&check_in);
+    let held = held_id(
+        &org.remove(org.deputy, org.member, Some(&check_in))
+            .expect_err("with its check-in approved, the rule holds the Deputy's remove"),
+    );
+    assert_eq!(
+        org.role_of(org.member),
+        Some(Role::Member),
+        "a held remove runs nothing"
+    );
+
+    let output = org
+        .approve(org.admin_b, &held)
+        .expect("a second admin's approve lands the Deputy's remove");
+    let receipt: SharedActExecutionReceipt =
+        serde_json::from_value(output).expect("the remove's receipt");
+    let decision = receipt.check_in.expect("the receipt records the check-in");
+    assert_eq!(decision.role, "deputy", "the check-in is the first admin's");
+    assert_eq!(decision.check_in.as_deref(), Some(check_in.as_str()));
+    assert_eq!(org.role_of(org.member), None, "the Member is gone");
+    let spent = org
+        .vault
+        .pending_check_in(&EntityId::from_hex(&check_in).expect("a check-in id"))
+        .expect("read the check-in")
+        .expect("the check-in is stored");
+    assert!(spent.consumed_at.is_some(), "the re-run spent it");
+}
+
+#[test]
+fn a_removed_first_admins_act_lands_no_more() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+
+    org.remove(org.owner, org.admin, None)
+        .expect("an Owner removes the first admin at once");
+    assert!(
+        org.approve(org.admin_b, &held).is_err(),
+        "an approval lifts only the rule: the act is no longer its first admin's to make"
+    );
+    assert!(!org.invited_by(newcomer, org.admin_b));
+    assert_eq!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Open
+    );
+}
+
+#[test]
+fn an_approve_claimed_in_time_lands_nothing_after_the_lapse() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    org.owner_sets("org.two_admin_lapse_secs", json!(3));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+    let request = HeldAdminActRequest {
+        vault_id: SHARED,
+        held: held.clone(),
+    };
+
+    let late = org.as_person(org.admin_b, || {
+        cut_short::approve_held_add_after_pause(
+            &org.vault,
+            &proof(&org.vault, org.admin_b),
+            &request,
+            std::time::Duration::from_secs(4),
+        )
+    });
+    assert!(
+        late.is_err(),
+        "a re-run that reaches its write past lapses_at lands nothing: {late:?}"
+    );
+    assert!(!org.invited_by(newcomer, org.admin_b));
+    assert_ne!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Landed {
+            approver: org.admin_b.to_hex()
+        }
+    );
+}
+
+#[test]
+fn a_lapse_past_ninety_days_refuses() {
+    const CEILING: u64 = 90 * 24 * 60 * 60;
+    let org = Org::new();
+    let set = |value: u64| {
+        org.vault.set_setting(
+            SettingCaller::Owner(&proof(&org.vault, org.owner)),
+            SetSetting::vault_value("org.two_admin_lapse_secs", json!(value)),
+        )
+    };
+    for value in [u64::MAX, CEILING + 1] {
+        assert!(
+            set(value).is_err(),
+            "a lapse of {value} s would hold an act past any deadline"
+        );
+    }
+    set(CEILING).expect("90 days is the longest lapse");
+}
+
+#[test]
+fn a_hard_erase_scrubs_the_first_admin_from_the_receipt() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+    let receipt: SharedActExecutionReceipt = serde_json::from_value(
+        org.approve(org.admin_b, &held)
+            .expect("a second admin approves"),
+    )
+    .expect("the add's receipt");
+    let erased = org.admin.to_hex();
+    assert_eq!(receipt.first_admin.as_deref(), Some(erased.as_str()));
+
+    let ran = oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
+        &org.vault,
+        &org.admin,
+        &["SHARED_ACT_RECEIPT"],
+    )
+    .expect("the receipt table's actor scrub");
+    assert_eq!(ran, 1, "the receipt table registers an actor scrub");
+    let read = org
+        .as_person(org.admin_b, || {
+            org.vault
+                .shared_act_receipt(&proof(&org.vault, org.admin_b), &receipt.id)
+        })
+        .expect("the approver reads the receipt");
+    assert_ne!(
+        read.first_admin.as_deref(),
+        Some(erased.as_str()),
+        "the erased first admin is named no more: {read:?}"
+    );
+    assert_ne!(read.proposer.as_deref(), Some(erased.as_str()));
+    assert_eq!(read.actor, org.admin_b.to_hex(), "the approver stays");
+}
+
+#[test]
+fn a_removed_first_admin_withdraws_nothing() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+
+    org.remove(org.owner, org.admin, None)
+        .expect("an Owner removes the first admin at once");
+    assert!(
+        org.withdraw(org.admin, &held).is_err(),
+        "a first admin with no live grant here withdraws nothing"
+    );
+    assert_eq!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Open
+    );
 }

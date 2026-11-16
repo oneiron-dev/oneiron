@@ -1,6 +1,8 @@
 //! Doors for `tests/org_two_admin_rule.rs` (UNBUILT-06 PR 2, Sol review of
 //! #8482, the approve cut short): `vault.members.held.approve` stopped by a
-//! crash after its claim, before or after its re-run, and never settled.
+//! crash after its claim, before or after its re-run, and never settled; and
+//! (Astra on #8482, H3) one whose re-run reaches its write only after a
+//! pause past the act's lapse.
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -28,7 +30,20 @@ pub fn approve_held_add_unsettled(
     approver: &AuthenticatedOwner,
     input: &HeldAdminActRequest,
 ) -> MemoryResult<serde_json::Value> {
+    approve_held_add_after_pause(vault, approver, input, std::time::Duration::ZERO)
+}
+
+/// [`approve_held_add_unsettled`] with `pause` between the claim and the
+/// re-run: the re-run reaches its write that much later, as one held behind
+/// other writers does.
+pub fn approve_held_add_after_pause(
+    vault: &Vault,
+    approver: &AuthenticatedOwner,
+    input: &HeldAdminActRequest,
+    pause: std::time::Duration,
+) -> MemoryResult<serde_json::Value> {
     let (act, approval) = vault.claim_held_admin_act(approver, input.vault_id, &input.held)?;
+    std::thread::sleep(pause);
     if act.verb != "vault.members.add" {
         return Err(MemoryError::bad_request("not a held vault.members.add act"));
     }
