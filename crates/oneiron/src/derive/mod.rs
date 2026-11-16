@@ -27,6 +27,7 @@
 
 mod archive;
 mod artifact;
+mod attachment_head;
 mod batch;
 mod candidate;
 mod claim;
@@ -117,7 +118,14 @@ pub const DERIVE_SURFACE: &str = "vault.derive";
 /// The provenance key naming the batch a row landed in.
 pub const DERIVE_BATCH_KEY: &str = "batch";
 
-/// The refusal token of an item that names a refused item of its batch.
+/// The provenance key naming the extraction attempt whose binding committed
+/// the batch, as lower hex of its attempt id. Only a binding's commit stamps
+/// it; the gate groups the row with the binding's run from it.
+pub const DERIVE_EXTRACTION_ATTEMPT_KEY: &str = "extraction_attempt";
+
+/// The refusal token of an item that names a batch-local row that is not
+/// there: a refused item's, or that of a candidate that attached to a head
+/// and so created no row.
 pub const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
 
 /// The gate decision ledger's content kind for a derivation item's refusal

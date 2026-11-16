@@ -59,8 +59,10 @@ pub(super) struct ItemContext<'s> {
     pub(super) stamp: &'s DerivationStamp,
     /// The write's recorded clock, Unix seconds.
     pub(super) now: u64,
-    /// Only an extraction binding records landed claims as attempt outputs.
-    pub(super) record_outputs: bool,
+    /// Whether this commit is an extraction attempt binding's: only then are
+    /// landed claims recorded as attempt outputs, rows marked as the
+    /// attempt's, and imported evidence landed held.
+    pub(super) extraction_binding_commit: bool,
     /// The row each landed item of the batch so far created, by local name.
     landed: BTreeMap<String, EntityId>,
     /// The deferred-grant gate receipts staged grants wrote, for the commit
@@ -107,18 +109,20 @@ impl Vault {
         DerivationReceipt,
         Vec<crate::gate::RecordedClaimGateDecision>,
     )> {
-        self.derive_commit_in_txn_with_output_recording(txn, stamp, batch, false)
+        self.derive_commit_in_txn_with_binding_mark(txn, stamp, batch, false)
     }
 
-    /// The caller-owned commit with its attempt-output recording purpose.
-    /// Existing host and stamp doors leave recording disabled. Deferred-grant
-    /// receipts are returned for metrics only after the caller's write commits.
-    pub(crate) fn derive_commit_in_txn_with_output_recording(
+    /// The caller-owned commit with its binding mark: an extraction attempt
+    /// binding's commit marks its rows as the attempt's and records its
+    /// landed claims as attempt outputs. Existing host and stamp doors leave
+    /// the mark off. Deferred-grant receipts are returned for metrics only
+    /// after the caller's write commits.
+    pub(crate) fn derive_commit_in_txn_with_binding_mark(
         &self,
         txn: &mut heed::RwTxn<'_>,
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
-        record_outputs: bool,
+        extraction_binding_commit: bool,
     ) -> Result<(
         DerivationReceipt,
         Vec<crate::gate::RecordedClaimGateDecision>,
@@ -129,20 +133,19 @@ impl Vault {
             batch: EntityId::now(),
             stamp,
             now: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            record_outputs,
+            extraction_binding_commit,
             landed: BTreeMap::new(),
             grant_receipts: RefCell::new(Vec::new()),
         };
-        let mut refused: BTreeSet<String> = BTreeSet::new();
+        let mut unavailable_names: BTreeSet<String> = BTreeSet::new();
         let mut items = Vec::with_capacity(batch.items.len());
         let mut applied_edges = Vec::with_capacity(batch.items.len());
         for item in &batch.items {
-            let names_refused = item
-                .refs()
-                .into_iter()
-                .any(|named| matches!(named, ItemRef::Local(name) if refused.contains(name)));
+            let names_unavailable = item.refs().into_iter().any(
+                |named| matches!(named, ItemRef::Local(name) if unavailable_names.contains(name)),
+            );
             let mut applied_edge = None;
-            let outcome = if names_refused {
+            let outcome = if names_unavailable {
                 let reasons = vec![super::DEPENDENCY_REFUSED.to_owned()];
                 let receipt = refusal_receipt_in_txn(self, txn, &context, None, &reasons)?;
                 ItemOutcome::Refused { reasons, receipt }
@@ -208,16 +211,18 @@ impl Vault {
                 }
             };
             match &outcome {
-                ItemOutcome::Landed { rows, .. } => {
-                    // A name stands only for a row its item created.
-                    if item.creates_row()
+                ItemOutcome::Landed { rows, approval, .. } => {
+                    // An attached candidate created support, not a named claim.
+                    if matches!(item, DerivationItem::Candidate(_)) && approval.is_none() {
+                        unavailable_names.insert(item.local().to_owned());
+                    } else if item.creates_row()
                         && let Some(row) = rows.first()
                     {
                         context.landed.insert(item.local().to_owned(), *row);
                     }
                 }
                 ItemOutcome::Refused { .. } => {
-                    refused.insert(item.local().to_owned());
+                    unavailable_names.insert(item.local().to_owned());
                 }
             }
             applied_edges.push(applied_edge);

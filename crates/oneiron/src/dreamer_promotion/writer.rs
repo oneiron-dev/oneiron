@@ -286,7 +286,7 @@ pub(crate) fn prepare_promotion<'a>(
         _ => SourceLineage::of(ClaimSource::Generated),
     };
     let provenance_value = match provenance {
-        Some(value) => value,
+        Some(value) => caller_provenance_with_import_review(value, import_review.as_deref()),
         None => super::resolved_outputs::with_answers(
             promotion_provenance(
                 run,

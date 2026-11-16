@@ -327,54 +327,30 @@ fn attach_evidence(
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
-        let assertion = EvidenceAssertion {
-            actor: run.agent_actor,
-            envelope: &envelope,
-            head,
-            candidate: &candidate.candidate,
-            sources: &refs,
-            evidence,
-            answers,
-            now_ms: run.now_ms,
-        };
-        let AssertedEvidence {
-            original,
-            answers: stored,
-            ..
-        } = assert_evidence_in_txn(
+        let asserted = attach_evidence_in_txn(
             vault,
             txn,
-            &assertion,
+            AttachmentWrite {
+                assertion: EvidenceAssertion {
+                    actor: run.agent_actor,
+                    envelope: &envelope,
+                    head,
+                    candidate: &candidate.candidate,
+                    sources: &refs,
+                    evidence,
+                    answers,
+                    now_ms: run.now_ms,
+                },
+                candidate,
+                attempt: run.attempt_id,
+                record_outputs,
+            },
             checker.as_ref(),
             &reader,
             auto_write_rate,
             &mut carried,
         )?;
-        vault
-            .batch_in()
-            .append_lexical_hints_for_existing_head(
-                txn,
-                &head,
-                &envelope,
-                candidate.occurred,
-                candidate.learned_at,
-                candidate.candidate.lexical_hints(),
-            )?
-            .apply(txn)?;
-        if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&original) {
-            return Err(Error::InvalidClaimBody(
-                "evidence attachment altered its head",
-            ));
-        }
-        if record_outputs {
-            crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
-                vault,
-                txn,
-                run.attempt_id,
-                &[head],
-            )?;
-        }
-        Ok(stored)
+        Ok(asserted.answers)
     });
     match outcome {
         Err(error) => {
@@ -393,6 +369,63 @@ fn attach_evidence(
         }
         Ok(stored) => Ok(stored),
     }
+}
+
+/// The sealed candidate and assertion whose support, hints and output share one write.
+pub(crate) struct AttachmentWrite<'a> {
+    pub(crate) assertion: EvidenceAssertion<'a>,
+    pub(crate) candidate: &'a PromotionCandidate,
+    pub(crate) attempt: AttemptId,
+    pub(crate) record_outputs: bool,
+}
+
+/// Writes an attachment after the caller holds its clock, fence and checker turn.
+/// Returns the assertion's support records and replay answers; the head stays intact.
+pub(crate) fn attach_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    write: AttachmentWrite<'_>,
+    checker: Option<&BoundedAutoChecker>,
+    reader: &crate::claim::ScopedRead<'_>,
+    auto_write_rate: crate::store::own_rate_record::OwnRate,
+    carried: &mut Option<String>,
+) -> Result<AssertedEvidence> {
+    let assertion = &write.assertion;
+    let head = assertion.head;
+    let asserted = assert_evidence_in_txn(
+        vault,
+        txn,
+        assertion,
+        checker,
+        reader,
+        auto_write_rate,
+        carried,
+    )?;
+    vault
+        .batch_in()
+        .append_lexical_hints_for_existing_head(
+            txn,
+            &head,
+            assertion.envelope,
+            write.candidate.occurred,
+            write.candidate.learned_at,
+            write.candidate.candidate.lexical_hints(),
+        )?
+        .apply(txn)?;
+    if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&asserted.original) {
+        return Err(Error::InvalidClaimBody(
+            "evidence attachment altered its head",
+        ));
+    }
+    if write.record_outputs {
+        crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
+            vault,
+            txn,
+            write.attempt,
+            &[head],
+        )?;
+    }
+    Ok(asserted)
 }
 
 /// One evidence assertion: `evidence` supports the stored claim `head`, as

@@ -45,7 +45,10 @@ pub(crate) fn member_candidate(
 
 /// The provenance the marker carries: derive's, as every other derive item
 /// stamps it (the Claim stager's envelope): the derivation surface, the
-/// batch, the item, and the run. No decision memo.
+/// batch, the item, and the run. An extraction binding's commit also marks
+/// the attempt and always names the run, so the gate groups the row with the
+/// binding's run; every other commit writes exactly the map above. No
+/// decision memo.
 pub(crate) fn derive_provenance(context: &ItemContext<'_>, local: &str) -> Vec<(Value, Value)> {
     let mut provenance = vec![
         (
@@ -58,7 +61,21 @@ pub(crate) fn derive_provenance(context: &ItemContext<'_>, local: &str) -> Vec<(
         ),
         (Value::from("item"), Value::from(local)),
     ];
-    if let Some(run) = &context.stamp.run {
+    if context.extraction_binding_commit
+        && let Some(attempt) = context.stamp.attempt
+    {
+        provenance.push((
+            Value::from(super::super::DERIVE_EXTRACTION_ATTEMPT_KEY),
+            Value::from(crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
+        ));
+        provenance.push((
+            Value::from("run"),
+            Value::from(super::super::verified_landing::promotion_run_id(
+                context.stamp,
+                attempt,
+            )),
+        ));
+    } else if let Some(run) = &context.stamp.run {
         provenance.push((Value::from("run"), Value::from(run.as_str())));
     }
     provenance

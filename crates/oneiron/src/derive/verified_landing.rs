@@ -1,6 +1,6 @@
 //! The shared landing for the extraction stagers: the attempt's-Dreamer
-//! rule, the refusal helpers and the landing of one verified candidate
-//! through native's promotion.
+//! rule, the refusal helpers, equal-head attachment and landing of one
+//! verified candidate through native's promotion.
 //!
 //! Both the Candidate stager and the ConflictResolution stager land verified
 //! candidates identically; only their refusal tokens differ. This file owns
@@ -61,8 +61,8 @@ pub(super) enum LandingError {
 pub(super) struct VerifiedLandingOptions {
     /// The caller's provenance, replacing native's when present.
     pub(super) provenance: Option<rmpv::Value>,
-    /// Whether this claim is a committed output of the bound attempt.
-    pub(super) record_output: bool,
+    /// Whether this commit is an extraction attempt binding's.
+    pub(super) extraction_binding_commit: bool,
 }
 
 /// Lands one verified `candidate` with `evidence` under `fence` in the
@@ -91,9 +91,7 @@ pub(super) fn land_verified_candidate(
     // gate's imported floor and the owner's review grouping among them. A
     // stamp carries its attempt's recorded run, and the queue admits one
     // that is only whitespace.
-    if run.run_id.trim().is_empty() {
-        return Err(Refusal(LandingRefused));
-    }
+    require_promotion_run(run)?;
     let (prepared, claim_candidate) = {
         let read_txn: &heed::RoTxn<'_> = txn;
         match crate::dreamer_promotion::prepare_promotion(
@@ -122,7 +120,7 @@ pub(super) fn land_verified_candidate(
             }
         }
     };
-    if prepared.imported {
+    if prepared.imported && !options.extraction_binding_commit {
         return Err(Refusal(Imported));
     }
     if let Err(error) = crate::dreamer_promotion::land_prepared_promotion_in_txn(
@@ -131,20 +129,10 @@ pub(super) fn land_verified_candidate(
         &prepared,
         claim_candidate,
         fence,
-        options.record_output,
+        options.extraction_binding_commit,
         txn,
     ) {
-        match error {
-            Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
-                let reasons: Vec<String> =
-                    reason_codes.iter().map(|code| (*code).to_owned()).collect();
-                return Err(Refusal(Gate(reasons)));
-            }
-            Error::Claim(_) | Error::InvalidClaimBody(_) => {
-                return Err(Refusal(LandingRefused));
-            }
-            error => return Err(Abort(error)),
-        }
+        return Err(landing_error(error));
     }
     let stored = {
         let save_read: &heed::RoTxn<'_> = txn;
@@ -160,6 +148,96 @@ pub(super) fn land_verified_candidate(
     match landed {
         Some(approval) => Ok(approval),
         None => Err(Refusal(LandingRefused)),
+    }
+}
+
+/// A verified equal restatement, with the attempt's gated reader and provenance.
+pub(super) struct VerifiedAttachment<'a, 'v> {
+    pub(super) head: crate::EntityId,
+    pub(super) candidate: &'a PromotionCandidate,
+    pub(super) evidence: &'a VerifiedEvidenceSet,
+    pub(super) fence: &'a ConsolidationFence,
+    pub(super) read: &'a crate::claim::ScopedRead<'v>,
+    pub(super) provenance: rmpv::Value,
+    pub(super) extraction_binding_commit: bool,
+}
+
+/// Attaches inside the batch's savepoint, with no checker or conflict answers.
+/// Imported words cannot attach: native holds that head without changing support.
+pub(super) fn attach_verified_candidate(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    txn: &mut heed::RwTxn<'_>,
+    attachment: VerifiedAttachment<'_, '_>,
+) -> std::result::Result<Vec<crate::EntityId>, LandingError> {
+    use crate::dreamer_promotion::{AttachmentWrite, EvidenceAssertion, attach_evidence_in_txn};
+    use crate::write_envelope::{SourceLineage, WriteEnvelope, WriteProvenance};
+    require_promotion_run(run)?;
+    let source = attachment.evidence.meet();
+    if source == crate::claim::ClaimSource::Imported {
+        return Err(LandingError::Refusal(LandingRefusal::Imported));
+    }
+    let envelope = WriteEnvelope::with_lineage(
+        run.agent_actor,
+        source,
+        WriteProvenance::new(attachment.provenance).map_err(landing_error)?,
+        ClaimApprovalStatus::Auto,
+        SourceLineage::of(crate::claim::ClaimSource::Generated).with(source),
+    );
+    let sources: std::collections::BTreeSet<crate::EntityId> = attachment
+        .candidate
+        .evidence_turn_refs
+        .iter()
+        .copied()
+        .collect();
+    attachment
+        .fence
+        .validate_in_txn(vault, txn)
+        .map_err(landing_error)?;
+    let asserted = attach_evidence_in_txn(
+        vault,
+        txn,
+        AttachmentWrite {
+            assertion: EvidenceAssertion {
+                actor: run.agent_actor,
+                envelope: &envelope,
+                head: attachment.head,
+                candidate: &attachment.candidate.candidate,
+                sources: &sources,
+                evidence: attachment.evidence,
+                answers: &[],
+                now_ms: run.now_ms,
+            },
+            candidate: attachment.candidate,
+            attempt: run.attempt_id,
+            record_outputs: attachment.extraction_binding_commit,
+        },
+        None,
+        attachment.read,
+        crate::own_rate::auto_write_rate(),
+        &mut None,
+    )
+    .map_err(landing_error)?;
+    Ok(asserted.records)
+}
+
+/// A queue run may be blank; neither a landing nor an attachment may hide in it.
+fn require_promotion_run(run: &DreamerRunContext) -> std::result::Result<(), LandingError> {
+    if run.run_id.trim().is_empty() {
+        return Err(LandingError::Refusal(LandingRefusal::LandingRefused));
+    }
+    Ok(())
+}
+
+fn landing_error(error: Error) -> LandingError {
+    match error {
+        Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => LandingError::Refusal(
+            LandingRefusal::Gate(reason_codes.iter().map(|code| (*code).to_owned()).collect()),
+        ),
+        Error::Claim(_) | Error::InvalidClaimBody(_) => {
+            LandingError::Refusal(LandingRefusal::LandingRefused)
+        }
+        error => LandingError::Abort(error),
     }
 }
 

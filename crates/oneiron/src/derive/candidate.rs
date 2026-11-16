@@ -7,21 +7,23 @@
 //! Staging rebuilds the verdict's read in the batch's write transaction and
 //! hands the one candidate to native's promotion writer. In order: the
 //! attempt rule, the attempt's Dreamer, the verdict's operand checks, the
-//! duplicate refusal, the kept-match refusal (a candidate that stands
-//! against any head is a set-level item's), one verified member, the
-//! unlisted restatement refusal, the declined-words refusal, the derive
-//! verdict over the subject, then native's own preparation and landing in a
-//! savepoint, with derive provenance and no answers. A refusal lands
-//! nothing, writes the item's receipt, and the batch goes on; a storage
-//! error aborts the commit.
+//! duplicate refusal, the unequal kept-match refusal, one verified member,
+//! native's attachment-head rule over the equal matches, the unlisted
+//! restatement refusal, the declined-words refusal, the derive verdict over
+//! the subject, then in a savepoint either native's own preparation and
+//! landing or the attachment to the equal head, with derive provenance and
+//! no answers. A refusal lands nothing, writes the item's receipt, and the
+//! batch goes on; a storage error aborts the commit.
 
+use super::attachment_head::{AttachmentHead, attachment_head};
 use super::batch::DerivedCandidate;
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn};
 use super::conflict::inputs::{derive_provenance, member_candidate};
 use super::extraction_opening::{open_attempt, open_verdict_read};
 use super::verified_landing::{
-    LandingError, LandingRefusal, VerifiedLandingOptions, attempt_dreamer_matches,
-    land_verified_candidate, promotion_run_id, refuse, refuse_or_abort,
+    LandingError, LandingRefusal, VerifiedAttachment, VerifiedLandingOptions,
+    attach_verified_candidate, attempt_dreamer_matches, land_verified_candidate, promotion_run_id,
+    refuse, refuse_or_abort,
 };
 use crate::Vault;
 use crate::dreamer_consolidation::extraction_pack::{
@@ -47,8 +49,8 @@ pub const CANDIDATE_NOT_ATTEMPT_DREAMER: &str = "gate.deny.derive.candidate_not_
 /// an operand the native checks refuse, or a check the seal refuses.
 pub const CANDIDATE_OPERAND_REFUSED: &str = "gate.deny.derive.candidate_operand_refused";
 
-/// The refusal of a candidate item that restates a head: every kept match
-/// is value-equal, or the unlisted restatement matches.
+/// The refusal of an equal restatement native cannot attach to, or an
+/// unlisted restatement.
 pub const CANDIDATE_RESTATES_HEAD: &str = "gate.deny.derive.candidate_restates_head";
 
 /// The refusal of a candidate item that contests a head: a kept match is
@@ -65,7 +67,8 @@ pub const CANDIDATE_DUPLICATE: &str = "gate.deny.derive.candidate_duplicate";
 
 /// The refusal of a candidate item whose evidence meets at `Imported`: a
 /// claim from imported evidence lands only in the owner's review of its
-/// import, and a derive row has no review to join.
+/// import; an unbound derive row has no review to join and an attachment
+/// creates no claim that review could hold.
 pub const CANDIDATE_IMPORTED_EVIDENCE: &str = "gate.deny.derive.candidate_imported_evidence";
 
 /// The refusal of a candidate item native's promotion refused to land.
@@ -74,14 +77,17 @@ pub const CANDIDATE_LANDING_REFUSED: &str = "gate.deny.derive.candidate_landing_
 /// The reason a landed candidate item's receipt names.
 const CANDIDATE_ALLOWED: &str = "gate.allow.derive.candidate";
 
+/// The allowance for support attached to a standing head, without a new claim.
+const CANDIDATE_ATTACHED: &str = "gate.allow.derive.candidate_attached";
+
 /// Stages a candidate item: one extraction candidate that replaces
 /// nothing, landed by native's writer inside the batch's write transaction
 /// (`txn` reborrowed as a read for every read). Outside a queued
 /// extraction attempt, or for any actor but the attempt's Dreamer, the item
-/// is refused; inside one its operand is checked, a head it stands against
-/// refuses it, its member is verified, and the one claim lands with derive
-/// provenance. Each refusal writes the item's receipt and lands nothing,
-/// and the batch goes on.
+/// is refused; inside one its operand and member are checked, then it
+/// attaches to an equal head or lands one claim with derive provenance.
+/// Each refusal writes the item's receipt and lands nothing, and the batch
+/// goes on.
 ///
 /// # Errors
 ///
@@ -173,8 +179,8 @@ pub(super) fn stage_in_txn(
         }
     }
     // The heads the candidate stands against after the observed-beside
-    // exclusion, by the bound route's own rule. Any of them refuses the
-    // item: native attaches to an equal one and judges an unequal one.
+    // exclusion, by the bound route's own rule. An unequal head refuses
+    // the item; equal heads proceed to native's attachment rule.
     let kept = {
         let read_txn: &heed::RoTxn<'_> = txn;
         let rebuild = ExtractionRebuildContext {
@@ -191,13 +197,8 @@ pub(super) fn stage_in_txn(
             }
         }
     };
-    if !kept.is_empty() {
-        let token = if kept.iter().all(|(_, equal)| *equal) {
-            CANDIDATE_RESTATES_HEAD
-        } else {
-            CANDIDATE_CONTESTS_HEAD
-        };
-        return refuse(vault, txn, context, &[token.to_owned()]);
+    if kept.iter().any(|(_, equal)| !equal) {
+        return refuse(vault, txn, context, &[CANDIDATE_CONTESTS_HEAD.to_owned()]);
     }
     // The member: the checked proposal stamped with the item's confidence
     // and normalised hints, then verified as native verifies it at the
@@ -228,26 +229,42 @@ pub(super) fn stage_in_txn(
     let evidence = verified.evidence;
     let mut candidate = verified.proposal;
     candidate.evidence_meet = evidence.meet();
+    let attachment = match attachment_head(&bound, &candidate, &kept, evidence.meet()) {
+        Ok(AttachmentHead::Attach(head)) => Some(head),
+        Ok(AttachmentHead::AlreadySaid) => {
+            return refuse(vault, txn, context, &[CANDIDATE_RESTATES_HEAD.to_owned()]);
+        }
+        Ok(AttachmentHead::NoHead) if kept.is_empty() => None,
+        Ok(AttachmentHead::NoHead) => {
+            return refuse(vault, txn, context, &[CANDIDATE_RESTATES_HEAD.to_owned()]);
+        }
+        Ok(AttachmentHead::Refused) | Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
+            return refuse(vault, txn, context, &[CANDIDATE_OPERAND_REFUSED.to_owned()]);
+        }
+        Err(error) => return Err(error),
+    };
     // Native's two skips for a candidate that matched no listed head: an
     // unlisted head of the Dreamer's own that says the same, and words the
     // owner declined from the same imported MESSAGEs.
     {
         let read_txn: &heed::RoTxn<'_> = txn;
-        match bound.restates_unlisted_candidate_in_txn(
-            vault,
-            read,
-            read_txn,
-            &candidate,
-            candidate.evidence_meet,
-        ) {
-            Ok(true) => {
-                return refuse(vault, txn, context, &[CANDIDATE_RESTATES_HEAD.to_owned()]);
+        if attachment.is_none() {
+            match bound.restates_unlisted_candidate_in_txn(
+                vault,
+                read,
+                read_txn,
+                &candidate,
+                candidate.evidence_meet,
+            ) {
+                Ok(true) => {
+                    return refuse(vault, txn, context, &[CANDIDATE_RESTATES_HEAD.to_owned()]);
+                }
+                Ok(false) => {}
+                Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
+                    return refuse(vault, txn, context, &[CANDIDATE_OPERAND_REFUSED.to_owned()]);
+                }
+                Err(error) => return Err(error),
             }
-            Ok(false) => {}
-            Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-                return refuse(vault, txn, context, &[CANDIDATE_OPERAND_REFUSED.to_owned()]);
-            }
-            Err(error) => return Err(error),
         }
         match crate::dreamer_consolidation::reviewed::declined_from_same_words_in_txn(
             vault,
@@ -266,8 +283,8 @@ pub(super) fn stage_in_txn(
         }
     }
     // The derive verdict over the candidate's subject, as the Conflict
-    // stager takes it: the claim is new, so the subject is the stored
-    // record the verdict judges.
+    // stager takes it. An attachment asserts the same entity subject as
+    // its matched head; the claim gate separately keeps the head's full scope.
     let subject = match crate::dreamer_consolidation::candidate_probe_body(&candidate.candidate) {
         Ok(body) => match body.subject {
             crate::claim::ClaimSubject::Entity(subject) => subject,
@@ -290,9 +307,9 @@ pub(super) fn stage_in_txn(
     };
     // Native's preparation and landing on this transaction, with derive
     // provenance in place of native's. The run id is formed as the attempt
-    // sink forms it; only native's provenance reads it. The preparation reads
-    // the same snapshot inside the savepoint as outside it: the savepoint
-    // holds no prior writes at that point.
+    // sink forms it; an extraction binding also stamps it for review. The
+    // preparation reads the same snapshot inside the savepoint as outside
+    // it: the savepoint holds no prior writes at that point.
     let fence =
         crate::dreamer_consolidation::resources::ConsolidationFence::for_bound_read(actor, &bound);
     let run = crate::dreamer_promotion::DreamerRunContext {
@@ -301,23 +318,43 @@ pub(super) fn stage_in_txn(
         agent_actor: actor,
         now_ms,
     };
-    let provenance = Some(rmpv::Value::Map(derive_provenance(context, &item.local)));
+    let provenance = rmpv::Value::Map(derive_provenance(context, &item.local));
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    let approval = match land_verified_candidate(
-        vault,
-        &run,
-        candidate,
-        Some(&evidence),
-        Some(&fence),
-        VerifiedLandingOptions {
-            provenance,
-            record_output: context.record_outputs,
-        },
-        &mut savepoint,
-    ) {
-        Ok(approval) => {
+    let result = if let Some(head) = attachment {
+        attach_verified_candidate(
+            vault,
+            &run,
+            &mut savepoint,
+            VerifiedAttachment {
+                head,
+                candidate: &candidate,
+                evidence: &evidence,
+                fence: &fence,
+                read,
+                provenance,
+                extraction_binding_commit: context.extraction_binding_commit,
+            },
+        )
+        .map(|rows| (rows, None, head, CANDIDATE_ATTACHED))
+    } else {
+        land_verified_candidate(
+            vault,
+            &run,
+            candidate,
+            Some(&evidence),
+            Some(&fence),
+            VerifiedLandingOptions {
+                provenance: Some(provenance),
+                extraction_binding_commit: context.extraction_binding_commit,
+            },
+            &mut savepoint,
+        )
+        .map(|approval| (vec![claim_id], Some(approval), claim_id, CANDIDATE_ALLOWED))
+    };
+    let (rows, approval, about, reason) = match result {
+        Ok(outcome) => {
             savepoint.commit()?;
-            approval
+            outcome
         }
         Err(LandingError::Refusal(LandingRefusal::Gate(reasons))) => {
             savepoint.abort();
@@ -345,13 +382,13 @@ pub(super) fn stage_in_txn(
         vault,
         txn,
         context,
-        Some(claim_id),
-        &[CANDIDATE_ALLOWED.to_owned()],
+        Some(about),
+        &[reason.to_owned()],
         &allowance,
     )?;
     Ok(ItemOutcome::Landed {
-        rows: vec![claim_id],
-        approval: Some(approval),
+        rows,
+        approval,
         receipt: Some(receipt),
     })
 }

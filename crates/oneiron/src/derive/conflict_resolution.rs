@@ -23,6 +23,7 @@
 //! Only a queued extraction attempt stages one, as the attempt's Dreamer. Each
 //! refusal lands nothing, writes the item's refusal receipt and the batch goes
 //! on; a storage error aborts the commit. A receipt carries tokens only.
+use super::attachment_head::{AttachmentHead, attachment_head};
 use super::batch::{DerivedConflictResolution, DerivedResolutionOutcome};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn};
 use super::conflict::inputs::derive_provenance;
@@ -207,51 +208,8 @@ fn seal_one(
         return Err(Refusal(OutputRefused));
     }
     let meet = evidence.meet();
-    let mut attachment: Option<EntityId> = None;
-    if let [(id, true)] = matches.as_slice() {
-        attachment = Some(*id);
-    } else if matches.len() > 1 && meet != crate::claim::ClaimSource::Imported {
-        let mut all_equal = true;
-        for (id, equal) in &matches {
-            if !equal {
-                all_equal = false;
-                break;
-            }
-            let Some(head) = bound.prior(*id) else {
-                return Err(Refusal(OutputRefused));
-            };
-            match bound.observation_prior_provisional(head) {
-                Ok(false) => {}
-                Ok(true) => {
-                    all_equal = false;
-                    break;
-                }
-                Err(_) => return Err(Refusal(OutputRefused)),
-            }
-        }
-        if all_equal {
-            let (id, _) = matches[0];
-            let Some(head) = bound.prior(id) else {
-                return Err(Refusal(OutputRefused));
-            };
-            // A scope whose facet does not read names none, as native reads it.
-            let named =
-                crate::dreamer_consolidation::resources::BoundBranchRead::observation_named_facet(
-                    probe.scope.as_ref(),
-                )
-                .ok()
-                .flatten();
-            let same_scope = named == Some(probe.scope_facet)
-                && probe.scope_facet == head.body.scope_facet
-                && probe.scope_project == head.body.scope_project
-                && crate::dreamer_promotion::scope_with_taint(probe.scope.clone(), meet)
-                    == crate::dreamer_promotion::scope_with_taint(head.body.scope.clone(), meet);
-            if same_scope {
-                attachment = Some(id);
-            }
-        }
-    }
-    if attachment.is_none() && matches.is_empty() && prior.is_none() {
+    let attachment = attachment_head(bound, &stripped, &matches, meet).map_err(Abort)?;
+    if matches!(attachment, AttachmentHead::NoHead) && matches.is_empty() && prior.is_none() {
         match bound.restates_unlisted_candidate_in_txn(vault, read, txn, &stripped, meet) {
             Ok(true) => return Err(Refusal(RestatesHead)),
             Ok(false) => {}
@@ -261,24 +219,11 @@ fn seal_one(
             Err(error) => return Err(Abort(error)),
         }
     }
-    if let Some(id) = attachment {
-        let Some(head) = bound.prior(id) else {
-            return Err(Refusal(OutputRefused));
-        };
-        match bound.observation_prior_provisional(head) {
-            Ok(true) if id != stripped.claim_id => return Err(Refusal(RestatesHead)),
-            Ok(_) => {}
-            Err(_) => return Err(Refusal(OutputRefused)),
-        }
-        if stripped.evidence_turn_refs.contains(&id) {
-            return Err(Refusal(OutputRefused));
-        }
-        if bound.require_prior_write(id).is_err() {
-            return Err(Refusal(OutputRefused));
-        }
-        return Err(Refusal(RestatesHead));
+    match attachment {
+        AttachmentHead::Attach(_) | AttachmentHead::AlreadySaid => Err(Refusal(RestatesHead)),
+        AttachmentHead::Refused => Err(Refusal(OutputRefused)),
+        AttachmentHead::NoHead => Ok(()),
     }
-    Ok(())
 }
 
 /// Stages a resolution item: the rebuilt set decided as the job asked, in the
@@ -686,7 +631,7 @@ pub(super) fn stage_in_txn(
             Some(&fence),
             VerifiedLandingOptions {
                 provenance: Some(provenance.clone()),
-                record_output: context.record_outputs,
+                extraction_binding_commit: context.extraction_binding_commit,
             },
             &mut savepoint,
         ) {

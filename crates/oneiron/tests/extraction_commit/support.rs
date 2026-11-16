@@ -7,11 +7,20 @@
 //! a binding commit stamps the attempt's run (`EXTRACTION_RUN`), not the
 //! stamp door's `"run"`.
 
-use oneiron::claim::ClaimSubject;
+use oneiron::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
+use oneiron::dreamer_consolidation::OpenConflict;
 use oneiron::dreamer_runner::DreamerAttemptBinding;
+use oneiron::ingest::history::{
+    HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
+    HistoryThreadKind,
+};
 use oneiron::test_doors::extraction_inputs::EXTRACTION_RUN;
+use oneiron::test_doors::history_import_rows::{ImportedMessageRows, imported_message_rows};
 use oneiron::test_doors::open_candidate::build_native_candidate;
-use oneiron::{AttemptId, EntityId, Vault};
+use oneiron::test_doors::steward::{dreamer, owner};
+use oneiron::{AttemptId, EdgeActorClass, EntityId, TimeRange, Vault};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 
@@ -160,4 +169,96 @@ pub(crate) fn land_green_tea_via_binding(
     assert!(map_at(provenance, "job_id").is_none());
     assert!(map_at(provenance, "decisions").is_none());
     Ok(BoundLanding { claim, batch })
+}
+
+/// Lands one user-stated food preference about `subject` and returns its id.
+pub(crate) fn land_head(vault: &Vault, subject: EntityId, value: &str) -> TestResult<EntityId> {
+    let head = EntityId::now();
+    let mut body = ClaimBody::new(
+        FOOD,
+        ClaimSubject::Entity(subject),
+        RmpValue::from(value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    body.scope_facet = vault.default_facet()?;
+    let now = vault.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    vault.put_claim(&head, &body, at, now)?;
+    Ok(head)
+}
+
+/// The green-tea/black-coffee sibling pair over `subject` and `turns`.
+pub(crate) fn sibling_pair(subject: &EntityId, turns: &[(String, Value)]) -> Vec<Value> {
+    let hex = subject.to_hex();
+    let green = operand_for(&hex, json!("green tea"), &turns[0]);
+    let black = operand_for(&hex, json!("black coffee"), &turns[1]);
+    vec![
+        member(green, 0.0, vec![]),
+        member(black, 0.0, vec![]),
+    ]
+}
+
+/// One Conflict wire item over `members` against `heads`.
+pub(crate) fn conflict_spec(local: &str, members: Vec<Value>, heads: Vec<Value>) -> Value {
+    json!({
+        "kind": "conflict",
+        "spec": {"local": local, "members": members, "heads": heads},
+    })
+}
+
+/// The Dreamer's open conflicts about `subject`.
+pub(crate) fn open_for(vault: &Vault, subject: EntityId) -> TestResult<Vec<OpenConflict>> {
+    let memory = vault.memory(dreamer(vault)?, EdgeActorClass::System);
+    memory
+        .open_conflicts(None, Some(subject), usize::MAX)
+        .map_err(Into::into)
+}
+
+/// The import time the green-tea history lands at, as seconds.
+pub(crate) const IMPORTED_AT: u64 = 1_700_100_000;
+
+/// Imports one history whose single turn says `owen chooses green tea`,
+/// unshared so the Dreamer reads it, and returns its rows. Copies
+/// `history_import_source_sharing.rs` with one message.
+pub(crate) fn import_green_tea_history(vault: &Vault) -> TestResult<ImportedMessageRows> {
+    let proof = owner(vault)?;
+    let conversation = HistoryConversation {
+        native_id: "chan-venue".to_owned(),
+        kind: HistoryThreadKind::Main,
+        parent: None,
+        title: Some("venue".to_owned()),
+        started_at_ms: Some(1_699_990_000_000),
+        own_started_at_ms: Some(1_699_990_000_000),
+        cwd: None,
+        messages: vec![HistoryMessage {
+            native_id: "m1".to_owned(),
+            parent_id: None,
+            role: HistoryRole::User,
+            text: "owen chooses green tea".to_owned(),
+            at_ms: Some(1_700_000_000_000),
+            said_by: None,
+            tools: Vec::new(),
+            alias: None,
+        }],
+        skipped: HistorySkips::default(),
+        sharing: None,
+    };
+    let report = vault.import_history(
+        &proof,
+        HistorySource::Chatgpt,
+        &conversation,
+        IMPORTED_AT,
+    )?;
+    if (report.new, report.refused, report.pending) != (1, 0, 0) {
+        return Err(format!("the history did not land: {report:?}").into());
+    }
+    let rows = imported_message_rows(vault, HistorySource::Chatgpt, "m1")?
+        .ok_or("message m1 did not land")?;
+    Ok(rows)
 }

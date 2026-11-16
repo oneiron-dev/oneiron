@@ -62,7 +62,10 @@ pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
 pub(crate) use imported_keep::KeptConflictLink;
 pub use scoped::promote_scoped_consolidation;
-pub(crate) use scoped::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
+pub(crate) use scoped::{
+    AssertedEvidence, AttachmentWrite, EvidenceAssertion, assert_evidence_in_txn,
+    attach_evidence_in_txn,
+};
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
 use writer::promote_one;
 pub(crate) use writer::{
@@ -288,6 +291,23 @@ fn promotion_provenance(
         ));
     }
     Ok(Value::Map(entries))
+}
+
+/// The caller's provenance with the import review a claim from imported
+/// evidence waits in: the review key added to the caller's map, or the value
+/// unchanged when there is no review or it is not a map.
+fn caller_provenance_with_import_review(provenance: Value, import_review: Option<&str>) -> Value {
+    let Some(review) = import_review else {
+        return provenance;
+    };
+    let Value::Map(mut entries) = provenance else {
+        return provenance;
+    };
+    entries.push((
+        Value::from(crate::gate::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY),
+        Value::from(review),
+    ));
+    Value::Map(entries)
 }
 
 /// Envelope-provenance key carrying the typed consolidation lineage.

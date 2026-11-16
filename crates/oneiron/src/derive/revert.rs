@@ -229,6 +229,12 @@ impl Vault {
                 .ok_or(Error::InvariantViolation("a landed item names no row"))
         };
         match item.kind.as_str() {
+            "evidence" | "candidate" if item.kind == "evidence" || item.approval.is_none() => {
+                // An attached candidate, like Evidence, owns only support records.
+                for record in &item.rows {
+                    self.retract_edge_provenance_in_txn(txn, record, now_ms / 1_000, false)?;
+                }
+            }
             // A claim, a candidate's claim, and a person's `about` landing:
             // the Dreamer's own per-row inverse, for this batch's author.
             "claim" | "candidate" | "person_about" => {
@@ -240,13 +246,6 @@ impl Vault {
                     reverter,
                     now_ms,
                 )?;
-            }
-            "evidence" => {
-                // The provenance retract takes Unix seconds, as the other
-                // inverses here do.
-                for record in &item.rows {
-                    self.retract_edge_provenance_in_txn(txn, record, now_ms / 1_000, false)?;
-                }
             }
             "supersede" => {
                 let [new, old] = item.rows.as_slice() else {

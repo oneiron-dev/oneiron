@@ -9,8 +9,10 @@ use crate::snapshot_read::evidence_spans::EvidenceRange;
 
 /// A row an item names: `{"stored": "<id>"}` for a stored row, or
 /// `{"local": "<name>"}` for the row an earlier item of the batch creates.
-/// Only a claim, a settlement, a SameAs, a topology and a person item create
-/// a row that can be named; a stored row is always named as stored.
+/// Only claim, settle, SameAs, topology, conflict, candidate,
+/// conflict_resolution and person items create a row that can be named (a
+/// candidate that attached to a head names no row); a stored row is always
+/// named as stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveRef {
