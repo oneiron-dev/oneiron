@@ -24,6 +24,7 @@ mod meter;
 pub mod qualification;
 mod qualification_kit;
 mod record;
+pub(crate) mod setting_keys;
 mod setup;
 mod slate;
 mod slate_draft;
@@ -73,6 +74,7 @@ pub use self::record::{
     EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
     PendingConnectorCharter, PendingConnectorManifest,
 };
+pub use self::setting_keys::openai_proxy_recall_limit;
 pub(crate) use self::setup::GrantAccess;
 pub use self::setup::{
     AuthorizationCodeGrant, BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GOOGLE_TOKEN_CHECK,

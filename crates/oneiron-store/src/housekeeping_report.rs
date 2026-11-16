@@ -115,6 +115,11 @@ pub enum SweepWork {
         enqueued: u64,
         failed: u64,
     },
+    EsignTokens {
+        documents: u64,
+        removed: u64,
+        failed: u64,
+    },
     Commitments {
         lapsed: u64,
         close_hooks_repaired: u64,
@@ -196,7 +201,9 @@ impl SweepWork {
     /// the backoff.
     pub fn items_failed(&self) -> u64 {
         match *self {
-            Self::EsignExpiry { failed, .. } | Self::EsignSeals { failed, .. } => failed,
+            Self::EsignExpiry { failed, .. }
+            | Self::EsignSeals { failed, .. }
+            | Self::EsignTokens { failed, .. } => failed,
             Self::HardErase(work) => work
                 .jobs_failed
                 .saturating_add(work.obligations_undecodable),
@@ -225,6 +232,9 @@ impl SweepWork {
             Self::EsignSeals {
                 enqueued, failed, ..
             } => enqueued == 0 && failed == 0,
+            Self::EsignTokens {
+                removed, failed, ..
+            } => removed == 0 && failed == 0,
             Self::Commitments {
                 lapsed,
                 close_hooks_repaired,
@@ -282,6 +292,12 @@ pub struct HardEraseWork {
     /// Obligations whose attempt failed; each keeps its row with a retry time.
     pub jobs_failed: u64,
     pub windows_compacted: u64,
+    /// Windows that hold no history and that no scrub changed, left as they
+    /// are rather than cut again (census L6-07).
+    pub windows_unchanged: u64,
+    /// Of `windows_compacted`, the windows cut while a holder kept them, under
+    /// their history-free pin (census L6-05).
+    pub windows_compacted_held: u64,
     pub windows_deferred_live: u64,
     pub windows_deferred_raced: u64,
     /// Windows whose cut was not proved to root at their tip (FIX 6520).
