@@ -34,8 +34,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
     ConnectGrantRequest, FederationDirectionScope, FederationGrant, FederationGrantScope,
-    INQUIRE_VERB_CLASS, Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
-    connect_direction_projection, decode_federation_grant_body, require_one_connect_per_peer,
+    INQUIRE_VERB_CLASS, INQUIRY_PUSH_VERB_CLASS, Scope, ScopeAxis, ScopeId, Sensitivity,
+    SensitivityCeiling, connect_direction_projection, decode_federation_grant_body,
+    require_one_connect_per_peer,
 };
 use crate::receipt::GuestRevokeOutcome;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
@@ -161,7 +162,8 @@ pub struct InquiryEdge {
 }
 
 /// The company's reciprocal grant to the member's vault: the smallest grant
-/// that lets the Connect pact become Active.
+/// that lets the Connect pact become Active, and the one that admits the
+/// member's told statements ([Now]).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InquiryEdgeReciprocalGrant {
     /// The company's Connect guest grant to the member's vault.
@@ -171,7 +173,8 @@ pub struct InquiryEdgeReciprocalGrant {
     /// The vault-resident guest actor the grant names for the member's
     /// vault.
     pub guest_actor: EntityId,
-    /// The grant's stored scope: `propose` alone over that WORLD.
+    /// The grant's stored scope: `propose` and `inquiry_push` over that
+    /// WORLD.
     pub authority_scope: Scope,
 }
 
@@ -216,11 +219,11 @@ fn pact_direction_of(scope: &Scope) -> Result<FederationDirectionScope> {
         .ok_or_else(|| refused("an inquiry edge's scope projects to no pact direction"))
 }
 
-/// The scope of both grants of an inquiry edge: `verb` alone over `world`,
-/// no facet, CLAIM records of the default project, at most public content.
-/// The smallest live Connect scope; neither verb confers read, so the scope
-/// clamps no inquiry: the terms' tier ceiling does.
-fn inquiry_edge_scope(world: EntityId, verb: &str) -> Scope {
+/// The scope of both grants of an inquiry edge: `verbs` over `world`, no
+/// facet, CLAIM records of the default project, at most public content. The
+/// smallest live Connect scope; no verb of either grant confers read, so the
+/// scope clamps no inquiry: the terms' tier ceiling does.
+fn inquiry_edge_scope(world: EntityId, verbs: &[&str]) -> Scope {
     Scope {
         worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(world)])),
         facets: ScopeAxis::Bottom,
@@ -228,7 +231,7 @@ fn inquiry_edge_scope(world: EntityId, verb: &str) -> Scope {
         audience: ScopeAxis::Some(BTreeSet::from([
             ScopeId(crate::claim::default_project_id()),
         ])),
-        verbs: ScopeAxis::Some(BTreeSet::from([verb.to_owned()])),
+        verbs: ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect()),
         sensitivity: SensitivityCeiling::AtMost(Sensitivity::Public),
     }
 }
@@ -311,27 +314,7 @@ pub(super) fn open_inquiry_scope_item_in_txn(
 ) -> Result<()> {
     let opened_world = edge.terms.opened_world;
     if let Some(source) = item.drawn_from {
-        let source_body = vault
-            .get_claim_in_txn(txn, &source)?
-            .ok_or(Error::EntityNotFound)?;
-        if source_body.lifecycle != ClaimLifecycleStatus::Active
-            || source_body.world == Some(opened_world)
-        {
-            return Err(refused(
-                "an opened statement is drawn from a live claim outside the opened scope",
-            ));
-        }
-        // A copy another vault shared, or an inquiry answer landed as a
-        // copy, is not re-shareable: it is no source for an answer to a third
-        // vault (federation.md:36; FIX INQUIRY-SCOPE-DRAWN-FROM-FOREIGN).
-        if source_body
-            .world
-            .is_some_and(crate::entity_id::is_foreign_world_id_range)
-        {
-            return Err(refused(
-                "an opened statement is never drawn from a claim in a foreign WORLD",
-            ));
-        }
+        refuse_undrawable_source_in_txn(vault, txn, &source, opened_world)?;
     }
     let mut body = ClaimBody::new(
         INQUIRY_STATEMENT_PREDICATE,
@@ -358,6 +341,43 @@ pub(super) fn open_inquiry_scope_item_in_txn(
     if let Some(source) = item.drawn_from {
         SCOPE_LINK.put(&vault.store, txn, &item.claim, &source)?;
         SCOPE_LINK_BY_SOURCE.put(&vault.store, txn, &(source, item.claim), &())?;
+    }
+    Ok(())
+}
+
+/// Refuses `source` as the claim a statement for the company is drawn from,
+/// an opened one or a told one (L7-03), unless it is live, outside the
+/// opened WORLD `opened_world`, and not in a foreign WORLD.
+///
+/// # Errors
+///
+/// No such claim; the first of those rules that fails; storage errors.
+pub(super) fn refuse_undrawable_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+    opened_world: EntityId,
+) -> Result<()> {
+    let source_body = vault
+        .get_claim_in_txn(txn, source)?
+        .ok_or(Error::EntityNotFound)?;
+    if source_body.lifecycle != ClaimLifecycleStatus::Active
+        || source_body.world == Some(opened_world)
+    {
+        return Err(refused(
+            "an opened statement is drawn from a live claim outside the opened scope",
+        ));
+    }
+    // A copy another vault shared, or an inquiry answer landed as a copy, is
+    // not re-shareable: it is no source for an answer to a third vault
+    // (federation.md:36; FIX INQUIRY-SCOPE-DRAWN-FROM-FOREIGN).
+    if source_body
+        .world
+        .is_some_and(crate::entity_id::is_foreign_world_id_range)
+    {
+        return Err(refused(
+            "an opened statement is never drawn from a claim in a foreign WORLD",
+        ));
     }
     Ok(())
 }
@@ -522,8 +542,9 @@ impl Vault {
                 owner,
                 request.company_vault_id,
                 ConnectGrantRequest {
-                    scope: inquiry_edge_scope(opened_world, INQUIRE_VERB_CLASS),
+                    scope: inquiry_edge_scope(opened_world, &[INQUIRE_VERB_CLASS]),
                     inquiry_terms: Some(terms),
+                    inquiry_reciprocal: false,
                 },
                 request.expires_at,
                 None,
@@ -542,10 +563,13 @@ impl Vault {
     /// The company's side of an inquiry edge, approved by the company's
     /// `owner`, in one writer: the empty WORLD "Inquiry edge: <member>",
     /// then a Connect guest grant to the member's vault with verbs
-    /// `propose` alone over that WORLD, no facet, CLAIM records of the
-    /// default project, at most public content (Engine ruling INQUIRE-SHAPE
-    /// Q1 = A). It shares nothing: `propose` confers no read, and the WORLD
-    /// holds no record. The existing Connect offer and accept then bind it.
+    /// `propose` and `inquiry_push` over that WORLD, no facet, CLAIM records
+    /// of the default project, at most public content (Engine ruling
+    /// INQUIRE-SHAPE Q1 = A; lead ruling L7-03-LANDING = A). It shares
+    /// nothing: neither class confers read, and the WORLD holds no record.
+    /// `inquiry_push` admits the member's told statements, which land as
+    /// copies (`Vault::land_pushed_inquiry_statement`). The existing Connect
+    /// offer and accept then bind it.
     pub fn mint_inquiry_edge_reciprocal_grant(
         &self,
         owner: &AuthenticatedOwner,
@@ -567,8 +591,12 @@ impl Vault {
                 owner,
                 member_vault_id,
                 ConnectGrantRequest {
-                    scope: inquiry_edge_scope(world, PROPOSE_VERB_CLASS),
+                    scope: inquiry_edge_scope(
+                        world,
+                        &[PROPOSE_VERB_CLASS, INQUIRY_PUSH_VERB_CLASS],
+                    ),
                     inquiry_terms: None,
+                    inquiry_reciprocal: true,
                 },
                 None,
                 None,
@@ -665,8 +693,8 @@ impl Vault {
 
     /// Revokes an inquiry edge, approved by `owner`: the Connect guest
     /// revoke, in one writer (the pact's disconnect, the slips' revokes,
-    /// the grant's withdrawal and delete). The opened WORLD and its
-    /// statements stay the member's. A grant that is live and no inquiry
+    /// the grant's withdrawal and delete, the member's push route). The
+    /// opened WORLD and its statements stay the member's. A grant that is live and no inquiry
     /// edge refuses; a repeat answers the first revoke.
     pub fn revoke_inquiry_edge(
         &self,
@@ -682,7 +710,10 @@ impl Vault {
             {
                 return Err(refused("that grant is not an inquiry edge"));
             }
-            self.revoke_guest_access_in_txn(txn, owner, issuer, grant)
+            let outcome = self.revoke_guest_access_in_txn(txn, owner, issuer, grant)?;
+            // The member's push route to the company ends with the edge.
+            super::push::end_inquiry_push_route_in_txn(&self.store, txn, &grant)?;
+            Ok(outcome)
         })?;
         if !outcome.revoked_slips.is_empty() {
             self.store.notify_credential_revocations();

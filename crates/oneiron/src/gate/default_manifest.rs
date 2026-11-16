@@ -1487,13 +1487,19 @@ fn federation_grant_default_rows() -> Value {
             },
             // FIX 3016: a Connect peer reads and proposes, at most private
             // content. The mint names its worlds; this row names none. An
-            // inquiry edge's class `inquire` confers no read (INQUIRE-1).
+            // inquiry edge's class `inquire` and its reciprocal grant's class
+            // `inquiry_push` confer no read (INQUIRE-1, L7-03).
             Row::ConnectGuestCeiling {
                 scope: Scope {
                     sensitivity: oneiron_authority::federation::SensitivityCeiling::AtMost(
                         oneiron_authority::federation::Sensitivity::Private,
                     ),
-                    ..scope(&["read", "propose", crate::federation::INQUIRE_VERB_CLASS])
+                    ..scope(&[
+                        "read",
+                        "propose",
+                        crate::federation::INQUIRE_VERB_CLASS,
+                        crate::federation::INQUIRY_PUSH_VERB_CLASS,
+                    ])
                 },
             },
         ]
