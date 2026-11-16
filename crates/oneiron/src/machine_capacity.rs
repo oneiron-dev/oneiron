@@ -377,6 +377,11 @@ impl Vault {
             body.evidence = Some(Value::from(EVIDENCE));
             body.valid_from = Some(now);
             body.source = Some(ClaimSource::Observed);
+            // A MACHINE is no FACET, so the subject-derived facet has no
+            // FACET row and the claim birth gate would refuse it
+            // (InvalidFacet). The claim is born in the vault's default facet,
+            // as the provider confidence prior is.
+            body.scope_facet = self.default_facet_in_txn(txn)?;
             let id = self.store.clock.entity_id()?;
             self.put_reserved_claim_in_txn(
                 txn,
