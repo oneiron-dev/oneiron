@@ -1391,7 +1391,10 @@ the source its flight ran on (`retained_turns` or `live_fork`, never
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
 refused as its own line, the call's step hash and the home parts it wore,
-and, on the live fork, every row the captured request was read from.
+and, on the live fork, every row the captured request was read from. A call
+refused after it went out keeps its own record as the pass's last try: what
+ran it and what it wore, with its usage `null` unless the provider reported
+it; it answered nothing, so no step is filed for it.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
 the last pass as `self_writer` (landed or not) and every summary the run
@@ -3380,6 +3383,35 @@ tier's checkpoint stops tagging and names that tier in the log.
 configured processing language as a lowercase ISO 639 code. It covers every
 vault turn the tagger reads. Leave it unset when the vault's language is
 unknown or mixed; unset sends no configured language.
+
+`[oneironer.relations]` maps a tagger's relation labels to claim
+predicates, for a tagger whose model card declares `"relations": true`:
+
+```toml
+[oneironer.relations]
+works_at = "work.employer"
+```
+
+The tagger saves the relations it reads between a turn's spans with the
+turn's tags, and `vault.tagging.tags` shows them. A relation is a tag, never
+a claim: the Dreamer's child authors any claim (JointIE, ARCH-0026). Each
+predicate must be one a public claim write takes: two or more dotted
+lowercase segments, outside the engine's reserved namespaces (`edge.*`,
+`skill.*`, `actor.*` and the other engine-owned families), or the server
+refuses to start.
+
+When the Dreamer consolidates a slice whose every turn holds a current tag
+set from the configured tagger with relations, it extracts that slice from
+the relations instead of calling the extraction model. Each relation whose
+label the table maps files one candidate claim: the head span's linked
+entity as its subject, the table's predicate, the tail span's words as its
+value, and the turn as its evidence. Its corrections and conflicts are
+decided as a model's candidates are. Such a slice files only the relations
+its table maps, even where the extraction model would have filed more. A
+slice with a turn the tagger has not tagged, or tagged without relations,
+keeps the extraction model. The table is read when it is used, so changing
+it needs no new tagging pass, and an empty table, the default, leaves every
+slice to the extraction model.
 
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses
