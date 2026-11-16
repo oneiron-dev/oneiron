@@ -479,8 +479,12 @@ async fn a_confirm_answers_with_its_own_attempt_never_another_visitors() {
         let second_hold = held_token(&fixture, &slots[2 * round + 1], &second).await;
 
         let now = now_secs().expect("clock");
-        let (page_ref, publication) =
-            resolve_public_booking_page(&fixture.server, &fixture.token).expect("live page");
+        let (page_ref, publication) = resolve_public_booking_page(
+            &fixture.server,
+            &fixture.token,
+            &ReadDestination::on_device(),
+        )
+        .expect("live page");
         let authority = PublicBookingAuthority {
             page_ref,
             publication,

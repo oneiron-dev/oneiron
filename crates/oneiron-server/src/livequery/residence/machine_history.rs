@@ -3,7 +3,10 @@
 //! ancestors. The target passes the touch's gate: a bound selector, then the
 //! credential's read of the exact target on the machine this socket proved.
 //! The rows are this home's stored history under its pin; a home whose own
-//! copy does not resolve answers `pending` and serves none of it. Nothing in
+//! copy does not resolve answers `pending` and serves none of it. A history
+//! with a row the selector's export would not carry looks missing, as its
+//! target does in that export (RULING SECREAD-HOME-MACHINE-HISTORY = A).
+//! Nothing in
 //! the reply is trusted there: the machine lands each row through its replay
 //! door and derives any pin itself.
 
@@ -53,13 +56,23 @@ pub(super) fn machine_history(
     {
         return Err(AppError::not_found("item", None));
     }
-    let page = machine_history_page(&server.vault, target, cursor)
-        .map_err(|_| AppError::internal_server_error("machine history unavailable"))?;
-    let MachineHistoryPage::Rows { rows, cursor, more } = page else {
-        return Ok((
-            json!({ "target": target.to_hex(), "pending": true, "rows": [] }),
-            Some(Vec::new()),
-        ));
+    let page = machine_history_page(
+        &server.vault,
+        crate::handler::selector_scope::selector_grant_scope(),
+        &selector,
+        target,
+        cursor,
+    )
+    .map_err(|_| AppError::internal_server_error("machine history unavailable"))?;
+    let (rows, cursor, more) = match page {
+        MachineHistoryPage::Rows { rows, cursor, more } => (rows, cursor, more),
+        MachineHistoryPage::Pending => {
+            return Ok((
+                json!({ "target": target.to_hex(), "pending": true, "rows": [] }),
+                Some(Vec::new()),
+            ));
+        }
+        MachineHistoryPage::Refused => return Err(AppError::not_found("item", None)),
     };
     let ids = rows.iter().map(|(id, _)| *id).collect();
     let rows: Vec<Value> = rows
