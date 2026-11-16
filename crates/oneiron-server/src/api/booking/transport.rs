@@ -49,6 +49,10 @@ pub(super) fn http_transport_context(
         requires_publication: auth.is_attested_booking_holder(),
         payer_guard: payer.guard,
         transport: BookingTransport::PublicHttp,
+        destination: oneiron::settings::read_destination_at(
+            crate::auth::caller_locality(&parts.headers, &parts.extensions),
+            crate::auth::proved_peer(&parts.headers, &parts.extensions),
+        ),
     })
 }
 
@@ -116,6 +120,9 @@ pub(crate) struct BookingAdmissionContext {
     /// ([`Self::payer_now`]).
     payer_guard: Option<BookingPayerGuard>,
     pub(super) transport: BookingTransport,
+    /// Where this request's answer goes (DEC-0005): a published page it
+    /// books on is judged for it.
+    pub(super) destination: oneiron::settings::ReadDestination,
 }
 
 impl From<&BookingTransportContext> for BookingAdmissionContext {
@@ -139,6 +146,7 @@ impl From<&BookingTransportContext> for BookingAdmissionContext {
             requires_publication: transport.requires_publication,
             payer_guard: transport.payer_guard.clone(),
             transport: transport.transport,
+            destination: transport.destination.clone(),
         }
     }
 }
@@ -196,6 +204,7 @@ pub(crate) fn credential_transport_context(
         requires_publication: true,
         payer_guard: payer.guard,
         transport: BookingTransport::Credential,
+        destination: auth.destination(),
     })
 }
 

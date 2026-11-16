@@ -80,9 +80,11 @@ async fn public_booking_render_requires_no_authentication() {
             .status(),
         StatusCode::UNAUTHORIZED
     );
-    let context =
-        public_http_transport_context(ClientAddress(Some("127.0.0.1".parse().expect("peer"))))
-            .expect("context");
+    let context = public_http_transport_context(
+        ClientAddress(Some("127.0.0.1".parse().expect("peer"))),
+        ReadDestination::on_device(),
+    )
+    .expect("context");
     assert_eq!(context.authenticated_actor_ref, None);
     assert_eq!(context.transport, BookingTransport::AnonymousHttp);
     assert_eq!(
