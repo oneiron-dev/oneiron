@@ -965,13 +965,7 @@ fn table_page<'txn>(
 
 /// `bytes` as lowercase hex, for a proposal's path.
 fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
-            let _ = write!(out, "{byte:02x}");
-            out
-        })
+    oneiron_hex::encode(bytes)
 }
 
 /// The exclusive upper bound of every key under `prefix`.

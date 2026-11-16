@@ -123,6 +123,19 @@ impl Memory<'_> {
         self
     }
 
+    /// Marks this surface as answering asks as this install's owner device
+    /// (UC-05 PR 2b): an ask word it gives with no owner proof bound carries
+    /// the one this install's owner key mints for that word
+    /// ([`crate::Vault::authenticate_owner_device`]). An embedded host sets
+    /// it only on a handle its owner opted into; where this install holds no
+    /// key the authority fold trusts as the owner's, each such word refuses
+    /// `owner_key_required`. It proves nothing else this surface does.
+    #[must_use]
+    pub fn answering_as_owner_device(mut self) -> Self {
+        self.answers_as_owner_device = true;
+        self
+    }
+
     /// Binds where the owner's request reached this install, as the host
     /// verified it on that request (FIX 4650): the hosted console, a linked
     /// machine its connection proved, or this install. An owner act this
@@ -383,10 +396,13 @@ impl Memory<'_> {
     }
 
     /// Marks this surface as a caller's whose credential this host admitted.
-    /// It grants and narrows nothing: a verb hook's ask on its call saves no
-    /// way to run the call without the credential, so the caller's retry,
-    /// which the host verifies again, resumes it, or the host's own check
-    /// when it bound the credential's instrument and door (ARCH-0080 §3 Ask).
+    /// It grants nothing: a verb hook's ask on its call saves no way to run
+    /// the call without the credential, so the caller's retry, which the
+    /// host verifies again, resumes it, or the host's own check when it bound
+    /// the credential's instrument and door (ARCH-0080 §3 Ask). It narrows
+    /// one read: with no slip bound, a caller that is neither the owner nor
+    /// one of the vault's own agents reads homed in no conversation of this
+    /// vault (`ScopedReadActorKey::homed_unnamed`).
     #[must_use]
     pub fn for_credential(mut self) -> Self {
         self.credential = true;
