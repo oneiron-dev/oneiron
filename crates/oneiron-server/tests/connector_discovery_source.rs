@@ -481,6 +481,15 @@ fn find<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     }
 }
 
+/// An agent verb answer's `output`, which the facade carries as JSON text,
+/// parsed; `answer` itself when it carries none.
+fn verb_output(answer: &Value) -> Value {
+    find(answer, "output")
+        .and_then(Value::as_str)
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_else(|| answer.clone())
+}
+
 /// The slate row named `tool` in a register reply.
 fn slate_row<'a>(registered: &'a Value, tool: &str) -> &'a Value {
     registered["slate"]["manifest"]
@@ -602,8 +611,9 @@ fn a_method_call_fills_its_path_and_query_parameters() {
             Some(format!("Bearer {SECRET_VALUE}").as_str())
         );
         assert!(seen[0].body.is_empty(), "a GET sends no body");
-        let structured = find(&answer, "structured_content")
-            .or_else(|| find(&answer, "structuredContent"))
+        let output = verb_output(&answer);
+        let structured = find(&output, "structured_content")
+            .or_else(|| find(&output, "structuredContent"))
             .unwrap_or_else(|| panic!("no structured content: {answer}"));
         assert_eq!(structured["documentId"], "d1", "{answer}");
     });
