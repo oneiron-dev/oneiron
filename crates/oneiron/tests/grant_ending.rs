@@ -5,6 +5,8 @@
 //! - a lapsed sign-in ends the owner's agent Grant by rule, at once with a loaded key and
 //!   owed until the key loads without one;
 //! - a batch delete of a member row owes its end, carried once the key loads;
+//! - a torn row whose giving reaches the install only later stays owed until it does, and its
+//!   end then ends the line (Astra r1-r2d F3);
 //! - a hard erase and a soft delete of a member row each end its line in its writer;
 //! - a delegate stands on its admin's giving, and refuses on an install with no install key;
 //! - a house link gives each row by act, and an unlink ends each line it removes;
@@ -31,8 +33,10 @@ use oneiron::inquiry::{
 };
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::grant_act::put_keyed_member_grant;
 use oneiron::test_doors::grant_ending::{
-    batch_delete_row, load_install_carrier, standing_grant_in_family, withdraw_lapsed_agent_grant,
+    batch_delete_row, give_member_grant_act_alone, load_install_carrier, standing_grant_in_family,
+    withdraw_lapsed_agent_grant,
 };
 use oneiron::test_doors::grant_standing::{grant_line, grant_row, standing_grant_act};
 use oneiron::test_support::{bind_host_owner, provision_act_carrier, provision_engine_machines};
@@ -46,6 +50,9 @@ use oneiron_keystore::MemoryKeystore;
 use serde_json::json;
 
 const SHARED: u64 = 42;
+
+/// The terms key of a row a test puts and gives at once.
+const TERMS_KEY: [u8; 32] = [0x5a; 32];
 
 /// A rooted install whose key carries acts, its keystore and its owner.
 #[allow(dead_code, reason = "copied fixture; this stem reads no issuer")]
@@ -458,6 +465,57 @@ fn a_batch_delete_of_a_member_row_ends_its_line_once_the_key_loads() {
             .map(|(_, ended)| ended),
         Some(true),
         "the owed end ended the line once the key loaded",
+    );
+}
+
+/// Reopens the vault in `dir` with `keystore` and loads its key, which carries every end the
+/// install owes.
+fn reopen_carrying(dir: &tempfile::TempDir, keystore: &Arc<MemoryKeystore>) -> Vault {
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault again");
+    vault.install_device_keystore(keystore.clone());
+    load_install_carrier(&vault);
+    vault
+}
+
+/// Catches a torn row's debt dropped with no act because the row's giving had not reached this
+/// install yet (Astra r1-r2d F3). A member row arrives before its giving and a batch delete
+/// tears it; a key load carries the install's debts; then the giving arrives. The next carry
+/// ends the line, so no copy of the row stands on that giving.
+#[test]
+fn a_torn_row_whose_giving_arrives_later_still_ends_its_line() {
+    let install = carrier_install();
+    let member = EntityId::now();
+    person(&install.vault, member);
+    share(&install.vault, install.owner, &[(member, Role::Member)]);
+    accept(&install.vault, member, Role::Member);
+    let (_, grant) = member_row(&install.vault, member).expect("the member's grant");
+    let id = EntityId::now();
+    put_keyed_member_grant(&install.vault, id, &grant, &TERMS_KEY)
+        .expect("the row, before its giving");
+    batch_delete_row(&install.vault, id).expect("a batch delete of the row");
+    let Install {
+        dir,
+        vault,
+        keystore,
+        owner,
+        ..
+    } = install;
+    drop(vault);
+    let vault = reopen_carrying(&dir, &keystore);
+    assert_eq!(
+        grant_line(&vault, id).expect("line read"),
+        None,
+        "no act names the row before its giving arrives",
+    );
+    give_member_grant_act_alone(&vault, id, &grant, &TERMS_KEY, owner).expect("the giving arrives");
+    drop(vault);
+    let vault = reopen_carrying(&dir, &keystore);
+    assert_eq!(
+        grant_line(&vault, id)
+            .expect("line read")
+            .map(|(_, ended)| ended),
+        Some(true),
+        "the torn row's end was dropped before its giving arrived",
     );
 }
 
