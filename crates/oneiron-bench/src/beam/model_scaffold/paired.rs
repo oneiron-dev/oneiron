@@ -18,16 +18,23 @@ pub(in crate::beam) enum Regime {
     FixedTotalTokens,
 }
 
-/// One score in two columns. `beam-fixed` is the float nugget score with
-/// half credit, from a judge shown the real question: the column a claim
-/// rests on. The int-cast column drops a 0.5 to 0 over the same verdicts. It
-/// is not `beam-replicate@3e12035`, whose judge sees a placeholder question.
+/// One score in two columns, three when the judge pins the replicate pass.
+/// `beam-fixed` is the float nugget score with half credit, from a judge
+/// shown the real question: the column a claim rests on. The int-cast column
+/// drops a 0.5 to 0 over the same verdicts. It is not
+/// `beam-replicate@3e12035`, which int-casts the verdicts of a separate pass
+/// whose judge sees the placeholder question.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 pub(in crate::beam) struct BeamColumns {
     #[serde(rename = "int-cast-saw-question")]
     pub int_cast: f64,
     #[serde(rename = "beam-fixed")]
     pub fixed: f64,
+    #[serde(
+        rename = "beam-replicate@3e12035",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replicate: Option<f64>,
 }
 
 impl BeamColumns {
@@ -35,6 +42,30 @@ impl BeamColumns {
         Self {
             int_cast: score.official_int_cast,
             fixed: score.fixed_float_clamped,
+            replicate: score.replicate_int_cast,
+        }
+    }
+
+    /// The mean of each column. The replicate column is kept only when every
+    /// score carries it.
+    pub(in crate::beam) fn mean(columns: &[Self]) -> Self {
+        let n = columns.len() as f64;
+        Self {
+            int_cast: columns.iter().map(|c| c.int_cast).sum::<f64>() / n,
+            fixed: columns.iter().map(|c| c.fixed).sum::<f64>() / n,
+            replicate: columns
+                .iter()
+                .map(|c| c.replicate)
+                .sum::<Option<f64>>()
+                .map(|sum| sum / n),
+        }
+    }
+
+    /// A zero in every column this score carries.
+    fn zero_like(self) -> Self {
+        Self {
+            replicate: self.replicate.map(|_| 0.0),
+            ..Self::default()
         }
     }
 }
@@ -45,6 +76,7 @@ impl std::ops::Sub for BeamColumns {
         Self {
             int_cast: self.int_cast - other.int_cast,
             fixed: self.fixed - other.fixed,
+            replicate: self.replicate.zip(other.replicate).map(|(a, b)| a - b),
         }
     }
 }
@@ -131,11 +163,14 @@ pub(super) fn paired_rows(
                     let rate =
                         |f: &dyn Fn(&ModelRow) -> bool| mean(&|row, _| f64::from(u8::from(f(row))));
                     let score = |row: &ModelRow| regime_score(regime, effort, row);
-                    let columns =
-                        |f: &dyn Fn(BeamColumns, BeamColumns) -> BeamColumns| BeamColumns {
-                            int_cast: mean(&|row, solo| f(score(row), score(solo)).int_cast),
-                            fixed: mean(&|row, solo| f(score(row), score(solo)).fixed),
-                        };
+                    let columns = |f: &dyn Fn(BeamColumns, BeamColumns) -> BeamColumns| {
+                        BeamColumns::mean(
+                            &pairs
+                                .iter()
+                                .map(|(row, solo)| f(score(row), score(solo)))
+                                .collect::<Vec<_>>(),
+                        )
+                    };
                     out.push(PairedRow {
                         regime,
                         answerer: arm.model.model_id.clone(),
@@ -209,7 +244,9 @@ pub(super) fn picks(paired: &[PairedRow], efforts: &[Effort]) -> Vec<ReaderPick>
                 tier: best
                     .filter(|row| matches!(row.arm, ArmKind::Deterministic | ArmKind::Agentic))
                     .map(|_| crate::beam::arms::BEAM_PACK_VIEW.1),
-                paired_difference: best.map_or(BeamColumns::default(), |row| row.paired_difference),
+                paired_difference: best.map_or(first.paired_difference.zero_like(), |row| {
+                    row.paired_difference
+                }),
             }
         })
         .collect()
@@ -224,14 +261,15 @@ fn over_allowance(effort: &Effort, row: &ModelRow) -> bool {
 }
 
 fn regime_score(regime: Regime, effort: &Effort, row: &ModelRow) -> BeamColumns {
-    if regime == Regime::FixedTotalTokens && over_allowance(effort, row) {
-        return BeamColumns::default();
-    }
-    BeamColumns::of(
+    let columns = BeamColumns::of(
         &row.scoring
             .beam
             .as_ref()
             .expect("FixedBeamScorer produces BEAM columns")
             .aggregate,
-    )
+    );
+    if regime == Regime::FixedTotalTokens && over_allowance(effort, row) {
+        return columns.zero_like();
+    }
+    columns
 }

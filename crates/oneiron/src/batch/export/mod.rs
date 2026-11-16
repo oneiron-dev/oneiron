@@ -5,7 +5,7 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{
-    export_released_record, released_body_for, served_messagepack_json,
+    export_file_body_admitted, export_released_record, released_body_for, served_messagepack_json,
     served_stored_messagepack_json,
 };
 pub(crate) use oneiron_store::batch::export::agent_knowledge_format;

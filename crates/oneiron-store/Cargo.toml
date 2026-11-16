@@ -24,6 +24,7 @@ oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }

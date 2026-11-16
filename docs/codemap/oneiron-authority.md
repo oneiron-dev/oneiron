@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `src/authority/act_rule.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 const | Admitted, Direction, Permitted | The authority rule: what an act may do to the row it moves |
 | `src/authority/agent_grant_act.rs` | src | m | 1 struct · 1 enum · 2 fn · 2 const · 2 crate-vis | AgentGrantActRecord, AgentGrantChange | The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its… |
 | `src/authority/agent_grant_act/git_push.rs` | src | s | 6 crate-vis | — | The owner's mint of a `git_push` Grant in his one signed Grant act (FIX 6867, G1-PUSH): the same… |
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 2 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
@@ -33,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 8 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
 | `src/authority/membership_execution.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | MembershipExecution, MembershipExecutionCause, MembershipHandover | A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)… |
-| `src/authority/mod.rs` | src | s | 39 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 40 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `src/authority/origin_cut.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | OriginCut | The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: "Refs are… |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 3 enum · 7 fn · 1 const · 2 crate-vis | ActBy, ActSurface, OwnerAct, OwnerActKind | The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner addition or handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043… |
@@ -79,4 +80,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/working_view_bounds.rs` | src | s | 1 struct · 2 fn · 1 const | WorkingViewEditBounds | The owner working view an agent Grant edits (row 6 WORKING-VIEW-EDIT, ruling CODECUSTODY-VIEW-BUILD Q1 = A)… |
 | `src/lib.rs` | src | s | 9 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
 | `src/share_travel.rs` | src | s | 1 struct · 2 enum · 6 fn · 1 type | BornWithField, TravelChoice, TravelKind | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
+| `tests/act_rule.rs` | test | s | — | — | The authority rule's table (`oneiron_authority::authority::Permitted`): what each reading admits, the lesser… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |
