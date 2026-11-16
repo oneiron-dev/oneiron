@@ -3,6 +3,7 @@
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::store::gate_reason::GateReceiptOutcome;
 use sha2::Digest;
 use std::collections::BTreeSet;
 
@@ -48,6 +49,7 @@ pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
 pub(crate) use history::{ShareView, read_share_history_in_txn};
+pub(crate) use revoke::owner_revokes_every_share_in_txn;
 pub(crate) use view_link::{
     authorize_share_link_in_txn, live_share_for_holder_in_txn, share_prompt_sources,
 };
@@ -456,7 +458,24 @@ pub(crate) fn read_share_in_txn(
     let Some(issuer) = admission.issuer else {
         return Ok(None);
     };
-    if gate.outcome != "allow"
+    let allowed = match gate.gate_outcome() {
+        Some(GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !allowed
         || gate.redacted_at.is_some()
         || gate.content_kind != "external_effect"
         || gate.actor_ref.as_deref() != Some(issuer.entity_ref().to_hex().as_str())

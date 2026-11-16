@@ -287,6 +287,36 @@ impl Vault {
         .map(|(loaded, _)| loaded)
     }
 
+    /// A live run's own load through its host door (`vault.skills.pack.load`,
+    /// FIX [SKILL-HUB-PROMOTION-VERBS]): the shared load under the lease the
+    /// host sealed in `binding`, checked again in the load's transaction with
+    /// the loadable check, for the attempt's own agent (its resident-bound
+    /// fork, else shared skills). The first executor stamps the attempt, as
+    /// the callable door's does; the manifest entry lands with the load.
+    /// Beside the pack, the rows its instructions were read from.
+    pub(crate) fn load_bound_skill_pack(
+        &self,
+        binding: &crate::task_verb::HostBinding,
+        skill: &EntityId,
+        executor: &str,
+        at: u64,
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
+        let stamped = AttemptQueue::new(self)
+            .get(binding.parent())?
+            .ok_or(Error::EntityNotFound)?
+            .executor_model
+            .is_some();
+        self.load_skill_pack_bound(
+            binding.parent(),
+            skill,
+            LoadResident::Attempt,
+            binding.lease_owner(),
+            binding.attempt_count(),
+            (!stamped).then_some(executor),
+            at,
+        )
+    }
+
     /// Loads the exact revision a frozen plan names, in the caller's own
     /// lease generation (DOOR-111 S4c-3): `skill` itself at `version`, read
     /// as [`Self::exact_workflow_pack_in_txn`] reads it. No exploration

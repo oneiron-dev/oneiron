@@ -177,19 +177,8 @@ pub struct CodeFixDraft {
     pub fix: Option<String>,
 }
 
-/// A candidate fix the deployment's publisher supplied and its operator
-/// pinned: an instruction the replay adds to the failing agent's own, or an
-/// engine build or patch the host's shadow runner runs in a sandboxed arm
-/// (FIX 1661, 2144). It is tried in the vault only; nothing fetches or
-/// installs it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublisherCandidate {
-    /// The token its result exports under, naming the pinned artifact by its
-    /// whole digest.
-    pub id: String,
-    /// What it is.
-    pub kind: PublisherCandidateKind,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::code_fix::PublisherCandidate;
 
 /// The host's models, inside the vault's boundary.
 pub trait CodeFixHost {

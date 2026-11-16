@@ -78,11 +78,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
 | `src/organ.rs` | src | L | 1 struct · 12 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect` and `seal.prepare` (schema 1), run… |
 | `src/organ/report.rs` | src | s | 2 crate-vis | — | A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision… |
-| `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
+| `tests/esign_host_e2e.rs` | test | XL | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
 | `tests/support/mod.rs` | test | m | 45 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
-| `tests/support/rogue_seal_organ.rs` | test | L | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |
+| `tests/support/rogue_evidence.rs` | test | s | 1 crate-vis | — | What a test hands the hostile seal organ's evidence modes (feature `hostile-organ-tests`): a timestamp… |
+| `tests/support/rogue_seal_organ.rs` | test | XL | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |
