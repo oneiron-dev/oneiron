@@ -120,6 +120,18 @@ pub fn grant_row_scope(vault: &Vault, id: EntityId) -> Result<Option<Scope>> {
         .map(|row| row.grant().authority_scope.clone()))
 }
 
+/// The authority scope the sync selector export filters the window by under the live Grant row
+/// `id` (`sync::selector::standing_federation_grant`, which `filter_window_doc` reads).
+///
+/// # Errors
+///
+/// The export's refusal of a row that backs no selector, or a store or authority-fold read
+/// failure.
+#[cfg(feature = "sync")]
+pub fn selector_export_scope(vault: &Vault, id: EntityId) -> Result<Scope> {
+    Ok(crate::sync::selector::standing_federation_grant(vault, &id)?.authority_scope)
+}
+
 /// The ids of the Grant rows over shared vault `vault_id` that confer to a membership reader at
 /// the vault clock (`Vault::shared_vault_grants_in_txn`), in id order.
 ///

@@ -74,7 +74,7 @@ pub(super) fn authorize_sync_selector_at(
 /// not stand behind gives nothing (pass 28 R3d,
 /// [`Vault::grant_row_stands_in_txn`]). The transaction closes before the
 /// caller folds authority on its own.
-fn standing_federation_grant(vault: &Vault, id: &EntityId) -> Result<FederationGrant> {
+pub(crate) fn standing_federation_grant(vault: &Vault, id: &EntityId) -> Result<FederationGrant> {
     let txn = vault.store.env.read_txn()?;
     let raw = live_federation_grant_in(vault, &txn, id)?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];

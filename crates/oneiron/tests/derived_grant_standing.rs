@@ -42,7 +42,7 @@ use oneiron::test_doors::coach::{
 use oneiron::test_doors::derive::narrow_steward_grant_to_project;
 use oneiron::test_doors::grant_act::put_unkeyed_member_grant;
 use oneiron::test_doors::grant_standing::{
-    grant_row_scope, grant_row_verbs, shared_vault_grant_ids,
+    grant_row_scope, grant_row_verbs, selector_export_scope, shared_vault_grant_ids,
 };
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, STEWARD_VERBS, dreamer, open_owner_carrier_vault, receive_steward_grant_row,
@@ -393,5 +393,34 @@ fn a_default_shape_row_reaches_no_record_the_agents_standing_rows_do_not_reach()
             .map(|scope| scope.audience),
         Some(held),
         "a row no act gives reaches only the projects the agent's standing rows reach together"
+    );
+}
+
+/// Catches a door that asks only whether a row stands, then judges by the stored row's own
+/// scope (review r4c P2-1): the sync selector export filters a default-shape row no act gives
+/// by the projects the agent's standing rows reach together, not by the row's whole axes.
+#[test]
+fn the_selector_export_reads_a_default_shape_row_within_the_agents_reach() {
+    let (_dir, vault, owner, dreamer) = defaults_vault();
+    let (default, _) = dreamer_default(&vault, owner, dreamer);
+    narrow_steward_grant_to_project(&vault, default, EntityId::now())
+        .expect("the default row held to one project");
+    let held = grant_row_scope(&vault, default)
+        .expect("the fold reader")
+        .expect("the default row stands")
+        .audience;
+    assert_ne!(
+        held,
+        ScopeAxis::All,
+        "FIXTURE: the default row holds one project"
+    );
+    let forged = receive_steward_grant_row(&vault, dreamer, &STEWARD_VERBS).expect("the row lands");
+
+    assert_eq!(
+        selector_export_scope(&vault, forged)
+            .expect("the row backs the export filter")
+            .audience,
+        held,
+        "the export filters a row no act gives by the projects the agent's standing rows reach"
     );
 }
