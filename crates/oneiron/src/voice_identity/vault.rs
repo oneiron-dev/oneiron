@@ -608,8 +608,9 @@ impl Vault {
 ///
 /// Test-only seam for the ILD-3 interlocutor gates, which need a roster of a
 /// given SHAPE (owner print, contact print, invite elimination, residual) far
-/// more cheaply than a full enrollment fixture would supply one.
-#[cfg(test)]
+/// more cheaply than a full enrollment fixture would supply one, and for the
+/// room-call door (`test_doors::voice_roster`, UNBUILT-02 PR 4).
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn put_voice_roster_for_test(
     vault: &Vault,
     roster: &VoiceSessionRosterV1,
