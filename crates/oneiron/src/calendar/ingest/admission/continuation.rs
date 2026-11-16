@@ -160,6 +160,7 @@ pub(super) fn enqueue_property_continuation_in_txn(
             now,
         },
     )
+    .map(drop)
 }
 
 /// Runs one queued property continuation: the event's next pass of property
