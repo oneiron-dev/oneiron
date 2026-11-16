@@ -101,8 +101,9 @@ impl ExecutorStorage<'_> {
         child: EntityId,
         output: &CodeRunRawOutput,
         lent: &[DelegatedSource],
+        scoped: bool,
     ) -> Result<std::result::Result<serde_json::Value, &'static str>> {
-        let _ = lent;
+        let _ = (lent, scoped);
         let card = crate::code_run::result_card(self, child, output, None)?;
         if card["taint"]["state"] != "clean" {
             return Ok(Err("finding_tainted"));

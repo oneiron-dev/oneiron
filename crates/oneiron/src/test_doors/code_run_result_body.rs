@@ -217,7 +217,8 @@ pub fn lent_result_source(
 
 /// The card reader child `child_run`'s exact owned occurrence `finding`
 /// reports as its finding, as its host admits the report, the child lent
-/// every source in `lent`; or the report's refusal.
+/// every source in `lent` and `scoped` when it is a scoped child; or the
+/// report's refusal.
 ///
 /// # Errors
 ///
@@ -227,10 +228,28 @@ pub fn reader_finding_card(
     child_run: EntityId,
     finding: EntityId,
     lent: &[DelegatedSource],
+    scoped: bool,
 ) -> Result<std::result::Result<serde_json::Value, String>> {
     let output = result_output(vault, child_run, finding)?;
     let storage = ExecutorStorage::Canonical(vault);
     Ok(storage
-        .reader_finding_card(child_run, &output, lent)?
+        .reader_finding_card(child_run, &output, lent, scoped)?
         .map_err(str::to_owned))
+}
+
+/// Whether any read of this exact owned occurrence shows its body, as
+/// `self.spawn` checks a source before it lends it to a Read child.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, body or view storage errors.
+pub fn result_shows_body(vault: &Vault, run_id: EntityId, occurrence: EntityId) -> Result<bool> {
+    let output = result_output(vault, run_id, occurrence)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    match ResultRead::new(&storage, run_id, output, None, None, false)? {
+        Ok(read) => read.shows_body(&storage),
+        Err(_) => Err(Error::InvariantViolation(
+            "a whole-body result read refuses no range",
+        )),
+    }
 }

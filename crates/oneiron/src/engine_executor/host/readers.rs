@@ -261,7 +261,7 @@ impl RecordingJsHost<'_, '_> {
             )
         };
         if let Some(child) = self.gated_write.reader_child() {
-            let lent = child.lent_sources();
+            let (lent, scoped) = (child.lent_sources(), child.scoped.is_some());
             let storage = self.storage.ok_or(Error::InvalidConfig(
                 "executor result storage unavailable".into(),
             ))?;
@@ -272,7 +272,7 @@ impl RecordingJsHost<'_, '_> {
             else {
                 return Ok(failed("finding_not_own"));
             };
-            if let Err(code) = storage.reader_finding_card(self.run_id, &output, &lent)? {
+            if let Err(code) = storage.reader_finding_card(self.run_id, &output, &lent, scoped)? {
                 return Ok(failed(code));
             }
             report.bound = Some(ReaderFindingRef {

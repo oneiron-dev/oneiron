@@ -257,6 +257,12 @@ impl ResultRead {
         })
     }
 
+    /// Whether a source read so is lent to a Read child: it is clean.
+    pub(crate) fn shows_body(&self, storage: &ExecutorStorage<'_>) -> Result<bool> {
+        let _ = storage;
+        Ok(!self.is_tainted())
+    }
+
     /// Runs `read` over the body this read shows in `storage`, and whether
     /// that is its redacted view: the stored bytes of a clean or withheld
     /// occurrence, else each secret span blanked (L6-31). A body that has
