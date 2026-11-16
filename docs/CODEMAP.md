@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7614 | 1360 | 266 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7614 | 1362 | 267 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 71 | 3 | 0 |
@@ -34,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 38 | 11 | 3 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
 | [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 10 | 1 | 0 |
-| [oneiron-gen](codemap/oneiron-gen.md) | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… | 8 | 0 | 0 |
+| [oneiron-gen](codemap/oneiron-gen.md) | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… | 11 | 2 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 12 | 3 | 0 |
 | [oneiron-hex](codemap/oneiron-hex.md) | Hex text for bytes: encode, decode and check in one place | 1 | 0 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 5 | 1 |
@@ -42,7 +42,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-lens-wire](codemap/oneiron-lens-wire.md) | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… | 25 | 4 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 8 | 1 | 0 |
 | [oneiron-linkedin-policy](codemap/oneiron-linkedin-policy.md) | LinkedIn seat policy values consumed by outbound admission | 2 | 0 | 0 |
-| [oneiron-llm](codemap/oneiron-llm.md) | Text model wire adapters for Oneiron's [`oneiron::LlmBackend`] seam, one module per wire protocol (ARCH-0036… | 45 | 6 | 1 |
+| [oneiron-llm](codemap/oneiron-llm.md) | Text model wire adapters for Oneiron's [`oneiron::LlmBackend`] seam, one module per wire protocol (ARCH-0036… | 44 | 7 | 0 |
 | [oneiron-mail-pack](codemap/oneiron-mail-pack.md) | `oneiron-mail-pack`: the lifted half of `oneiron::mail_pack` (core split; plan… | 5 | 0 | 0 |
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 8 | 3 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 54 | 8 | 0 |
@@ -60,10 +60,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-sdk-build](codemap/oneiron-sdk-build.md) | The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1) | 1 | 0 | 0 |
 | [oneiron-sdk-generator](codemap/oneiron-sdk-generator.md) | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… | 38 | 0 | 15 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 63 | 12 | 5 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1892 | 272 | 64 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1893 | 272 | 64 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-speech](codemap/oneiron-speech.md) | Speech wire adapters for Oneiron's voice cascade seams, one module per wire protocol (ARCH-0036 `#adapters`… | 11 | 1 | 1 |
+| [oneiron-speech](codemap/oneiron-speech.md) | Speech wire adapters for Oneiron's voice cascade seams, one module per wire protocol (ARCH-0036 `#adapters`… | 13 | 2 | 1 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 653 | 13 | 1 |
 | [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 28 | 12 | 3 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
@@ -626,6 +626,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `comfyui` | file | 1 | m | Self-hosted ComfyUI image adapter |
 | `gemini` | dir | 3 | m | Gemini API media wires for the `ai.*` calls past text |
+| `openai_compat` | file+dir | 4 | m | OpenAI-compatible image and video job wires: images (`/v1/images/generations`, `/v1/images/edits`) and video… |
 | `openrouter` | dir | 3 | s | OpenRouter Image API adapter |
 
 ## oneiron-guest
@@ -709,7 +710,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `gemini` | dir | 5 | s | Gemini wire adapter |
 | `local` | dir | 7 | s | Local in-process adapter for Oneiron's `LlmBackend` seam |
 | `oneiron_rpc` | dir | 10 | m | Own-server LlmBackend |
-| `openai_compat` | dir | 16 | L | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+| `openai_compat` | dir | 15 | m | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 | `systemone` | dir | 3 | m | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
 
 ## oneiron-mail-pack
@@ -1063,7 +1064,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `managed_owner_check` | file | 1 | s | This server's check that a managed vault's attested owner is its live owner, which his queued work runs… |
 | `mcp` | dir | 31 | L | MCP connector actor registry |
 | `model_artifacts` | dir | 6 | m | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
-| `models` | dir | 152 | XL | The one provider abstraction: `[models]` in, one backend per seat out |
+| `models` | dir | 153 | XL | The one provider abstraction: `[models]` in, one backend per seat out |
 | `oauth_relay` | file | 1 | L | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `oneironer` | dir | 46 | m | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `owner` | dir | 49 | L | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
@@ -1106,9 +1107,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `asr` | dir (no mod.rs) | 1 | s | — |
+| `asr` | dir (no mod.rs) | 2 | s | — |
 | `design` | dir (no mod.rs) | 3 | s | — |
-| `tts` | dir (no mod.rs) | 6 | L | — |
+| `tts` | dir (no mod.rs) | 7 | L | — |
 
 ## oneiron-store
 

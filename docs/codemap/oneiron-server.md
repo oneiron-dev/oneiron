@@ -1633,7 +1633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/worker_lease.rs` | src | s | 3 crate-vis | — | A rung's managed worker (FIX 8315, DESIGN-V2 R2): the call waits for it and holds its lease from before… |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/llama_identity.rs` | src | m | 12 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
-| `src/models/media.rs` | src | L | 3 struct · 1 fn · 11 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
+| `src/models/media.rs` | src | L | 3 struct · 1 fn · 12 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/agent.rs` | src | s | 5 crate-vis | — | Call-local agent attribution and frozen model lists for media calls |
 | `src/models/media/asked_jobs.rs` | src | s | 2 crate-vis | — | The video jobs an agent asked for under the owner's `ai.video` Grant (FIX 3208) |
 | `src/models/media/bindings.rs` | src | s | 7 fn · 10 crate-vis | — | Media voice bindings, clone queries and retry hints |
@@ -1644,6 +1644,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/job_lifecycle.rs` | src | s | 4 crate-vis | — | A kept job's end and its delete, in one order (FIX 9511, FIX 9513) |
 | `src/models/media/jobs.rs` | src | m | 23 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
 | `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
+| `src/models/media/openai_compat.rs` | src | s | 1 crate-vis | — | An OpenAI-compatible provider's media backend (ARCH-0036 `#adapters`, MED-1 = A) |
 | `src/models/media/options.rs` | src | s | 7 fn · 3 crate-vis | — | Media seat queries and model option rows |
 | `src/models/media/replay.rs` | src | m | 1 fn · 12 crate-vis | — | A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465) |
 | `src/models/media/run_line.rs` | src | m | 1 fn · 22 crate-vis | — | A program's media jobs on its run's line (FIX 780, FIX 6083) |

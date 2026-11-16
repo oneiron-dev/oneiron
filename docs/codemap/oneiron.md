@@ -1309,7 +1309,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_provider/workspace_connector/wire.rs` | src | m | 2 struct · 2 enum · 2 trait · 14 fn · 5 crate-vis | WorkspaceBrokerCall, WorkspaceBrokerHost, WorkspaceContent, WorkspaceEndpoint, WorkspaceWireOutcome, WorkspaceWireRequest | The workspace wire (FIX 4862; L3-17): each call's exact REST request, and the host seam that sends it… |
 | `src/channel_identity_selection/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Relationship-context channel-identity selection law (ONE-1826) |
 | `src/channel_identity_selection/selection_codec.rs` | src | m | 3 crate-vis | — | Strict canonical MessagePack codec for the stored selection rule set |
-| `src/channel_identity_selection/selection_resolution.rs` | src | s | 3 struct · 1 enum · 4 fn · 1 re-export | ChannelIdentityCandidate, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery, ChannelIdentityThreadPin | Resolution law for channel-identity selection: scope ladder, builtins, compile overlay, resolve query |
+| `src/channel_identity_selection/selection_resolution.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 re-export | ChannelIdentityCandidate, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery, ChannelIdentityThreadPin | Resolution law for channel-identity selection: scope ladder, builtins, compile overlay, resolve query |
 | `src/channel_identity_selection/selection_rules.rs` | src | s | 1 struct · 3 fn · 1 re-export · 3 crate-vis | ChannelIdentitySelectionWriter | Rule and rule-set types for channel-identity selection law |
 | `src/channel_identity_selection/selection_storage.rs` | src | s | 3 fn · 2 crate-vis | — | Vault persistence and amendment for the channel-identity selection rule set |
 | `src/channel_identity_selection/tables.rs` | src | s | — | — | The side tables `channel_identity_selection` keeps (core split slice 1): each row declares one, and the… |
@@ -4152,7 +4152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/answer_landing.rs` | src | s | 1 crate-vis | — | FIX 1825 (OF-506): the one landing stamp a saved question's answer takes, read from the version that asked it |
 | `src/llm/decision/questions/answer_scope.rs` | src | m | 8 fn | — | OF-506 (FIX 1712, 1857, 11827, 12060, 12171, 12285): a caller reads its own standing question, its answers… |
 | `src/llm/decision/questions/answers.rs` | src | s | 1 fn | — | `vault.questions.answers` (FIX 1585, FIX 2337): one reader for every door that serves it |
-| `src/llm/decision/questions/arrival.rs` | src | m | 18 crate-vis | — | Outcome arrival projection in the materializing transaction |
+| `src/llm/decision/questions/arrival.rs` | src | L | 23 crate-vis | — | Outcome arrival projection in the materializing transaction |
 | `src/llm/decision/questions/artifact_refresh.rs` | src | m | 2 struct · 2 fn · 4 re-export · 5 crate-vis | ArtifactRefreshBatch, ArtifactRefreshFailure | Standing artifact questions (ARCH-0076, OF-506): a question whose adapter is [`ARTIFACT_ADAPTER`] asks each… |
 | `src/llm/decision/questions/artifact_refresh/ask_selection.rs` | src | s | 1 crate-vis | — | The ask run a standing artifact question's selection builds |
 | `src/llm/decision/questions/artifact_refresh/changes.rs` | src | s | 1 crate-vis | — | Sparse changed-unit reads for standing artifact questions |
@@ -8480,6 +8480,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/carried_pin_awaits_owner.rs` | test | s | — | — | CARRIED-PIN (HOSTED-CARRIER-FIRST-PIN = D, the lead 14 Nov 22:3x; Engine RULING 22:29): a pin request… |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |
 | `tests/change_actor_attribution.rs` | test | m | — | — | Who made a change, on the reads the app shows changes from (FIX [UI-GATE-PREVIEW] phase 3; GENUI-WIRE-GAPS… |
+| `tests/channel_selection_worked_example.rs` | test | m | — | — | ARCH-0063 [INB-01] worked example (Engine RULING INB-01-WORKED-EXAMPLE = A, 15 Nov): the selection law's… |
 | `tests/charter_citation.rs` | test | s | — | — | Census L8-64: a gate receipt that a connector charter decided cites the charter stamp behind it |
 | `tests/check_in/fixture.rs` | test | s | 18 crate-vis | — | The P2.2 check-in tests' shared fixture (`check_in_pending_handle.rs`, `check_in_rung_waits.rs`): a vault on… |
 | `tests/check_in/ladder.rs` | test | s | 8 crate-vis | — | The ladder fixture of the check-in tests (ROLES-CHECKIN P2.2c, used by `check_in_ladder.rs` and… |
@@ -8886,6 +8887,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/safe_read_asset_validity.rs` | test | s | — | — | [`safe_read_asset_text`] as a diagnostic record: the strict read's text with the `_validity` flag bag, one… |
 | `tests/sandbox_backend_selection.rs` | test | s | — | — | Slice 5b.1 (the SandboxBackends inversion): a sandbox run selects its backend through the `SandboxBackends`… |
 | `tests/sandbox_backends_per_vault.rs` | test | s | — | — | F1-6 (lead, Tue 10 Nov 06:5x): the isolating backends ride on the vault, read through its `RuntimeHandle`… |
+| `tests/saved_question_outcome_lane.rs` | test | L | — | — | SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE: a learning question saved under a world-bound read lane takes an… |
 | `tests/scoped_community_prior.rs` | test | s | — | — | A narrowed Uniform expansion takes the configured community prior (RECALL-SCOPED-PPR-DROPS-COMMUNITY-PRIOR… |
 | `tests/seal_check_decide.rs` | test | m | — | — | DECIDE-BYPASS-2 (ARCH-0076 #decide-required: "Every such call goes through decide()"): the seal checker's… |
 | `tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs` | test | s | — | — | (a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and… |

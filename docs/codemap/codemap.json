@@ -15055,7 +15055,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityCandidate",
@@ -48865,13 +48865,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 23
      }
     },
     {
@@ -98762,6 +98762,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/channel_selection_worked_example.rs",
+     "purpose": "ARCH-0063 [INB-01] worked example (Engine RULING INB-01-WORKED-EXAMPLE = A, 15 Nov): the selection law's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102040,6 +102048,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/saved_question_outcome_lane.rs",
+     "purpose": "SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE: a learning question saved under a world-bound read lane takes an…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104500,10 +104516,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 266,
+   "over_bar": 267,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7614,
-   "test_files": 1360
+   "test_files": 1362
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -117761,8 +117777,61 @@
      "path": "src/lib.rs",
      "purpose": "Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol…",
      "surface": {
-      "mod": 3
+      "mod": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpenAiGenBackend"
+     ],
+     "path": "src/openai_compat.rs",
+     "purpose": "OpenAI-compatible image and video job wires: images (`/v1/images/generations`, `/v1/images/edits`) and video…",
+     "surface": {
+      "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DirectOpenAiImageBackend",
+      "OpenAiImageBody",
+      "OpenAiImageHttpRequest",
+      "OpenAiImageHttpResponse",
+      "OpenAiImageTransport"
+     ],
+     "path": "src/openai_compat/image.rs",
+     "purpose": "Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 1,
+      "struct": 3,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/openai_compat/prepare.rs",
+     "purpose": "The OpenAI-compatible image and video calls' pure builders (FIX 8614, FIX 8616): every check a call's send…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/openai_compat/tests.rs",
+     "purpose": "The direct image wire's reply decoding",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -117805,6 +117874,14 @@
      "surface": {
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/openai_compat_family.rs",
+     "purpose": "L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -117822,6 +117899,13 @@
      "layout": "dir",
      "purpose": "Gemini API media wires for the `ai.*` calls past text"
     },
+    "openai_compat": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "OpenAI-compatible image and video job wires: images (`/v1/images/generations`, `/v1/images/edits`) and video…"
+    },
     "openrouter": {
      "files": 3,
      "impl_vault": false,
@@ -117832,8 +117916,8 @@
    },
    "over_bar": 0,
    "purpose": "Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol…",
-   "source_files": 8,
-   "test_files": 0
+   "source_files": 11,
+   "test_files": 2
   },
   "oneiron-guest": {
    "files": [
@@ -119798,42 +119882,22 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "DirectOpenAiImageBackend",
-      "OpenAiImageBody",
-      "OpenAiImageHttpRequest",
-      "OpenAiImageHttpResponse",
+      "OpenAiEmbedBackend",
       "OpenAiImagePart",
-      "OpenAiImageTransport"
-     ],
-     "path": "src/openai_compat/image.rs",
-     "purpose": "Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned",
-     "surface": {
-      "crate-vis": 7,
-      "enum": 1,
-      "fn": 1,
-      "struct": 4,
-      "trait": 1,
-      "type": 1
-     }
-    },
-    {
-     "bucket": "L",
-     "kind": "src",
-     "notable": [
-      "OpenAiMediaBackend",
       "OpenAiMediaBody",
+      "OpenAiMediaClient",
       "OpenAiMediaHttpRequest",
       "OpenAiMediaHttpResponse",
       "OpenAiMediaMethod",
       "OpenAiMediaTransport"
      ],
      "path": "src/openai_compat/media.rs",
-     "purpose": "OpenAI-compatible media wires for the `ai.*` calls past text: images (`/v1/images/generations`…",
+     "purpose": "The OpenAI-compatible media wire's shared seam, and its embeddings (`/v1/embeddings`)",
      "surface": {
       "enum": 2,
-      "fn": 2,
-      "re-export": 1,
-      "struct": 3,
+      "fn": 10,
+      "re-export": 2,
+      "struct": 5,
       "trait": 1,
       "type": 1
      }
@@ -119858,7 +119922,8 @@
      "path": "src/openai_compat/media/prepare.rs",
      "purpose": "The OpenAI-compatible media calls' pure builders (FIX 8614, FIX 8616): every check a call's send makes on…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 3,
+      "fn": 4
      }
     },
     {
@@ -119868,7 +119933,7 @@
      "path": "src/openai_compat/mod.rs",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
      "surface": {
-      "re-export": 8
+      "re-export": 7
      }
     },
     {
@@ -120044,6 +120109,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/openai_compat_family.rs",
+     "purpose": "L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/remote_transport.rs",
      "purpose": "Own-server conformance through the shipped HTTP transport, not a trait-only fake",
      "surface": {}
@@ -120079,9 +120152,9 @@
      "purpose": "Own-server LlmBackend"
     },
     "openai_compat": {
-     "files": 16,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam"
     },
@@ -120093,10 +120166,10 @@
      "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`"
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "Text model wire adapters for Oneiron's [`oneiron::LlmBackend`] seam, one module per wire protocol (ARCH-0036…",
-   "source_files": 45,
-   "test_files": 6
+   "source_files": 44,
+   "test_files": 7
   },
   "oneiron-mail-pack": {
    "files": [
@@ -155670,7 +155743,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1,
       "struct": 3
      }
@@ -155775,6 +155848,16 @@
      "purpose": "A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/openai_compat.rs",
+     "purpose": "An OpenAI-compatible provider's media backend (ARCH-0036 `#adapters`, MED-1 = A)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -161599,7 +161682,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 152,
+     "files": 153,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -161776,7 +161859,7 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1892,
+   "source_files": 1893,
    "test_files": 272
   },
   "oneiron-skill-attribution": {
@@ -161901,6 +161984,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OpenAiAsrBackend"
+     ],
+     "path": "src/asr/openai_compat.rs",
+     "purpose": "The OpenAI-compatible transcription wire (`/v1/audio/transcriptions`)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SonioxAsrClient",
       "SonioxTransport",
       "SonioxUpdate"
@@ -161958,7 +162054,7 @@
      "path": "src/lib.rs",
      "purpose": "Speech wire adapters for Oneiron's voice cascade seams, one module per wire protocol (ARCH-0036 `#adapters`…",
      "surface": {
-      "mod": 12
+      "mod": 14
      }
     },
     {
@@ -162041,6 +162137,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OpenAiTtsBackend"
+     ],
+     "path": "src/tts/openai_compat.rs",
+     "purpose": "The OpenAI-compatible speech wire (`/v1/audio/speech`)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "RenderReply",
       "Transcript",
       "TranscriptPlacement"
@@ -162054,6 +162163,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/openai_compat_family.rs",
+     "purpose": "L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -162064,7 +162181,7 @@
    ],
    "modules": {
     "asr": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir (no mod.rs)",
@@ -162078,7 +162195,7 @@
      "purpose": "—"
     },
     "tts": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir (no mod.rs)",
@@ -162087,8 +162204,8 @@
    },
    "over_bar": 1,
    "purpose": "Speech wire adapters for Oneiron's voice cascade seams, one module per wire protocol (ARCH-0036 `#adapters`…",
-   "source_files": 11,
-   "test_files": 1
+   "source_files": 13,
+   "test_files": 2
   },
   "oneiron-store": {
    "files": [
