@@ -151,6 +151,11 @@ pub const CALENDAR_ICS_IMPORT_ACTOR: &[u8] = b"oneiron:calendar-ics-import-actor
 /// No parts.
 pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor:v1";
 
+/// A meeting follow-up draft claim (`calendar::follow_up::meeting_follow_up_claim_id`,
+/// CAL-08). Parts: the transcript SESSION, the recipient PERSON (16 bytes
+/// each), the draft's words (UTF-8).
+pub const MEETING_FOLLOW_UP: &[u8] = b"oneiron:calendar-meeting-follow-up:v1";
+
 /// The raw-feed BLOB artifact of one ICS feed (`calendar::ingest::fetch`). Parts:
 /// feed dedupe key.
 pub const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
@@ -211,6 +216,10 @@ pub const TASK_ASK_FORWARD_RESULT: &[u8] = b"oneiron.tasks.ask.forward_result.v1
 /// intent key. The store-local vault id is left out on purpose: every replica
 /// of one vault holds its own, and one post must name one TASK on all of them.
 pub const TASK_POST: &[u8] = b"oneiron.tasks.post.v1";
+
+/// The SESSION an approved plan's run hangs off its approving turn, derived
+/// from the run TASK's id, so a revision approved again keeps one session.
+pub const PLAN_RUN_SESSION: &[u8] = b"oneiron.plans.run_session.v1";
 
 /// The TASK a settled create proposal names (`task_verb::proposal_create`).
 /// Parts: the proposal claim id.
@@ -477,7 +486,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 72] = [
+pub(crate) const ALL: [&[u8]; 73] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -512,6 +521,7 @@ pub(crate) const ALL: [&[u8]; 72] = [
     TASK_ASK_FORWARD_INTENT,
     TASK_ASK_FORWARD_RESULT,
     TASK_POST,
+    PLAN_RUN_SESSION,
     TASK_SETTLE,
     COMM_CONNECTOR_SEND_EVENT,
     OUTBOUND_RECEIPT_RECORD,

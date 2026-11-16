@@ -1,0 +1,231 @@
+//! Moved from `crates/oneiron/src/context_board/memories.rs` (lib split R2: record types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use serde::Deserialize;
+use serde::Serialize;
+
+/// Stable MEMORIES section slot names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySlot {
+    Claims,
+    Turns,
+    Summaries,
+    Facets,
+    Other,
+}
+
+impl MemorySlot {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claims => "claims",
+            Self::Turns => "turns",
+            Self::Summaries => "summaries",
+            Self::Facets => "facets",
+            Self::Other => "other",
+        }
+    }
+
+    #[must_use]
+    pub const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Claims => 0,
+            Self::Turns => 1,
+            Self::Summaries => 2,
+            Self::Facets => 3,
+            Self::Other => 5,
+        }
+    }
+}
+
+/// Source section for one memory-board row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySource {
+    Result,
+    Neighbor,
+}
+
+impl MemorySource {
+    #[must_use]
+    pub const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Result => 0,
+            Self::Neighbor => 1,
+        }
+    }
+}
+
+/// Per-slot row caps for a MEMORIES section.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoriesBudget {
+    pub claims: usize,
+    pub turns: usize,
+    pub summaries: usize,
+    pub facets: usize,
+    pub other: usize,
+    /// One additional cap shared by every world. Pinned rows are never shed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_total: Option<usize>,
+}
+
+impl MemoriesBudget {
+    #[must_use]
+    pub const fn new(
+        claims: usize,
+        turns: usize,
+        summaries: usize,
+        facets: usize,
+        other: usize,
+    ) -> Self {
+        Self {
+            claims,
+            turns,
+            summaries,
+            facets,
+            other,
+            shared_total: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_shared_total(mut self, total: usize) -> Self {
+        self.shared_total = Some(total);
+        self
+    }
+
+    #[must_use]
+    pub const fn get(self, slot: MemorySlot) -> usize {
+        match slot {
+            MemorySlot::Claims => self.claims,
+            MemorySlot::Turns => self.turns,
+            MemorySlot::Summaries => self.summaries,
+            MemorySlot::Facets => self.facets,
+            MemorySlot::Other => self.other,
+        }
+    }
+
+    pub fn increment(&mut self, slot: MemorySlot) {
+        let counter = match slot {
+            MemorySlot::Claims => &mut self.claims,
+            MemorySlot::Turns => &mut self.turns,
+            MemorySlot::Summaries => &mut self.summaries,
+            MemorySlot::Facets => &mut self.facets,
+            MemorySlot::Other => &mut self.other,
+        };
+        *counter = counter.saturating_add(1);
+    }
+}
+
+/// Companion scope that influenced MEMORIES assembly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CompanionAssembly {
+    pub caller: Option<String>,
+    pub scope: Option<String>,
+    pub scope_source: Option<String>,
+    pub person_ref: Option<String>,
+    /// The PERSON at the relationship's other end (FIX 871).
+    pub counterpart_person_ref: Option<String>,
+    pub expression: Option<String>,
+}
+
+/// Content-detail tier, independent of the source-trust label.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTier {
+    Pinned,
+    #[default]
+    Snippet,
+    IndexOnly,
+}
+
+/// One stable row in the MEMORIES section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoryRow {
+    pub row_index: usize,
+    pub slot: MemorySlot,
+    pub source: MemorySource,
+    pub id: String,
+    pub short_id: String,
+    pub content_hash: String,
+    pub entity_type: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_ref: Option<String>,
+    pub score: f32,
+    /// Engine-decoded source; missing source is unknown, never first-party.
+    #[serde(default)]
+    pub claim_source: Option<oneiron_contracts::claim::ClaimSource>,
+    #[serde(default)]
+    pub world: Option<String>,
+    /// The row's world cannot be proven (`record_world_in` places it
+    /// nowhere): it renders under `MEMORIES world=unknown`, never under
+    /// base's `unscoped` (FIX 9744; on the wire since FIX 10563).
+    #[serde(default)]
+    pub world_unproven: bool,
+    #[serde(default)]
+    pub tier: MemoryTier,
+    #[serde(default)]
+    pub snippet: Option<String>,
+    /// `<pack>/<hook>` when a hook block pins this row (ARCH-0080 §11,
+    /// OI-1 = A): the tag the board shows beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<String>,
+    /// The room's pin record when the board's room pins this row
+    /// (ROOM-SCOPED-PINS P2): the PERSON who pinned it, the agent that acted
+    /// for that PERSON and when. Only an admitted row carries it; absent
+    /// from the wire otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_pin: Option<oneiron_store::conversation_body::RoomPin>,
+    /// The exact revision this row's body was served at, where the read
+    /// pinned one. Board history records it, never LIVE in its place. Not on
+    /// the wire: board refs stay as they were.
+    #[serde(skip)]
+    pub source_revision: Option<oneiron_store::revision_ref::RevisionRef>,
+    /// A claim row's question key, so the projection keeps an observed row
+    /// below a stated row of its question (OF-023). Not on the wire.
+    #[serde(skip)]
+    pub question: Option<[u8; 32]>,
+    /// The FICTION fence: this row's WORLD is admitted and its kind is not
+    /// `base` (FIX 7756). Set from the WORLD, never the row's text. Not on
+    /// the wire.
+    #[serde(skip)]
+    pub fiction: bool,
+    /// A claim in a constraint namespace, which sorts above every other row
+    /// of its tier (FIX 7983). Not on the wire.
+    #[serde(skip)]
+    pub constraint: bool,
+}
+
+/// Session-scoped retrieval cursor returned by MEMORIES surfaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoriesCursor {
+    pub session_id: String,
+    pub revision: u64,
+    pub query_count: u64,
+    pub last_retrieval_run_id: Option<String>,
+    pub last_result_ids: Vec<String>,
+}
+
+impl MemoriesCursor {
+    #[must_use]
+    pub fn new(session_id: impl Into<String>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            revision: 0,
+            query_count: 0,
+            last_retrieval_run_id: None,
+            last_result_ids: Vec::new(),
+        }
+    }
+}
+
+impl Default for MemoriesCursor {
+    fn default() -> Self {
+        Self::new("default")
+    }
+}

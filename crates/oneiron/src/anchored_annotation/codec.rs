@@ -4,8 +4,8 @@
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
     ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_CODE,
-    FORMAT_DOCX, FORMAT_DOCX_STORY, FORMAT_HTML, FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator,
-    TaskBrief, ThreadState,
+    FORMAT_DOCX, FORMAT_DOCX_STORY, FORMAT_HTML, FORMAT_IMAGE_OBJECT, FORMAT_IMAGE_PIXEL,
+    FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -32,6 +32,8 @@ const KEY_DRIFTED_AT_VERSION: &str = "drifted_at_version";
 const KEY_PINNED_VERSION: &str = "pinned_version";
 
 const KEY_BODY: &str = "body";
+
+const KEY_SUB_SESSION_ID: &str = "sub_session_id";
 
 const KEY_FRONTIER: &str = "frontier";
 
@@ -75,6 +77,16 @@ const KEY_PATH: &str = "path";
 
 const KEY_FILE_HASH: &str = "file_hash";
 
+const KEY_X: &str = "x";
+
+const KEY_Y: &str = "y";
+
+const KEY_W: &str = "w";
+
+const KEY_H: &str = "h";
+
+const KEY_OVERLAY: &str = "overlay";
+
 /// Task role byte for the productivity `role` body ("role": <byte>).
 const TASK_BODY_ROLE_KEY: &str = "role";
 
@@ -90,6 +102,8 @@ pub(super) struct ThreadHead {
     pub(super) locator: Locator,
     pub(super) drift: Option<DriftMarker>,
     pub(super) body: Option<BodyAnchor>,
+    /// The sub-session of the plan run this thread's approval started.
+    pub(super) sub_session: Option<EntityId>,
 }
 
 pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
@@ -181,6 +195,17 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_CHAR_START), Value::from(*char_start)),
             (Value::from(KEY_CHAR_END), Value::from(*char_end)),
         ]),
+        Locator::ImagePixel { x, y, w, h } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_IMAGE_PIXEL)),
+            (Value::from(KEY_X), Value::from(*x)),
+            (Value::from(KEY_Y), Value::from(*y)),
+            (Value::from(KEY_W), Value::from(*w)),
+            (Value::from(KEY_H), Value::from(*h)),
+        ]),
+        Locator::ImageObject { overlay } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_IMAGE_OBJECT)),
+            (Value::from(KEY_OVERLAY), Value::from(*overlay)),
+        ]),
     }
 }
 
@@ -265,6 +290,13 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let char_end = map_u64(value, KEY_CHAR_END)?;
             Locator::code(commit, path, file_hash, char_start, char_end)
         }
+        FORMAT_IMAGE_PIXEL => Locator::image_pixel(
+            map_u32(value, KEY_X)?,
+            map_u32(value, KEY_Y)?,
+            map_u32(value, KEY_W)?,
+            map_u32(value, KEY_H)?,
+        ),
+        FORMAT_IMAGE_OBJECT => Ok(Locator::image_object(map_u32(value, KEY_OVERLAY)?)),
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",
         ))),
@@ -315,6 +347,12 @@ pub(super) fn encode_thread_head_value(head: &ThreadHead) -> Value {
             ]),
         ));
     }
+    if let Some(sub_session) = head.sub_session {
+        entries.push((
+            Value::from(KEY_SUB_SESSION_ID),
+            Value::Binary(sub_session.as_bytes().to_vec()),
+        ));
+    }
     Value::Map(entries)
 }
 
@@ -350,6 +388,10 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
             })
         }
     };
+    let sub_session = match map_get(value, KEY_SUB_SESSION_ID) {
+        None | Some(Value::Nil) => None,
+        Some(_) => Some(map_entity(value, KEY_SUB_SESSION_ID)?),
+    };
     Ok(ThreadHead {
         thread_id,
         origin_version,
@@ -358,6 +400,7 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
         locator,
         drift,
         body,
+        sub_session,
     })
 }
 
@@ -473,6 +516,11 @@ fn map_u64(value: &Value, key: &'static str) -> Result<u64> {
     map_get(value, key)
         .and_then(Value::as_u64)
         .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(key)))
+}
+
+fn map_u32(value: &Value, key: &'static str) -> Result<u32> {
+    u32::try_from(map_u64(value, key)?)
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor(key)))
 }
 
 fn map_entity(value: &Value, key: &'static str) -> Result<EntityId> {
