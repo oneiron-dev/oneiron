@@ -298,7 +298,8 @@ impl Vault {
     }
 
     /// One due job: checked and marked started in one write, run, and its result written in
-    /// another.
+    /// another. The result lands only on the row the run started on: a row armed again while the
+    /// run ran keeps its new arming.
     fn run_one(&self, key: &[u8], due_at: u64, pass: &JobPass<'_>) -> Result<JobRun> {
         let (job, subject) = parse_row_key(key).unwrap_or_default();
         let mut run = JobRun {
@@ -375,7 +376,13 @@ impl Vault {
                 return Ok(());
             };
             let end = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let next = finished(spec, row.clone(), &ran, due_at, end);
+            let next = if row.started_at.is_some() && row.trigger == armed.trigger {
+                finished(spec, row.clone(), &ran, end)
+            } else {
+                // Armed again while it ran, by another write or by the run's own: the run's
+                // outcome is the old arming's, and the new one stands.
+                Some(armed_again(spec, row.clone(), end))
+            };
             store_row_in_txn(&self.store, txn, key, Some(&row), next.as_ref())
         })?;
         Ok(run)
@@ -404,7 +411,7 @@ impl Vault {
             let next = ScheduleRow {
                 started_at: None,
                 failures,
-                next_due_at: started.saturating_add(retry),
+                resume_at: Some(started.saturating_add(retry)),
                 ..row.clone()
             };
             store_row_in_txn(&self.store, txn, key, Some(&row), Some(&next))?;
@@ -414,14 +421,12 @@ impl Vault {
             && now.saturating_sub(due_at) > after_secs
             && row.requested_at.is_none_or(|requested| requested > due_at)
         {
-            let next = row
-                .trigger
-                .next_due(due_at, now, &EngineZones)
-                .map(|next_due_at| ScheduleRow {
-                    next_due_at,
-                    requested_at: None,
-                    ..row.clone()
-                });
+            let next = next_occurrence(&row, now).map(|next_due_at| ScheduleRow {
+                next_due_at,
+                requested_at: None,
+                resume_at: None,
+                ..row.clone()
+            });
             store_row_in_txn(&self.store, txn, key, Some(&row), next.as_ref())?;
             return Ok(Err(JobOutcome::Lapsed));
         }
@@ -476,23 +481,32 @@ impl Vault {
     }
 }
 
+/// The occurrence after the one `row` serves, once that one ran or was dropped at `now`: the
+/// same occurrence while it is still ahead (a run now, or its retry, came before it); else the
+/// trigger's next after `now`, counted from it, so the trigger's grid never moves; `None` once a
+/// deadline is served.
+fn next_occurrence(row: &ScheduleRow, now: u64) -> Option<u64> {
+    if row.next_due_at > now {
+        Some(row.next_due_at)
+    } else {
+        row.trigger.next_due(row.next_due_at, now, &EngineZones)
+    }
+}
+
 /// The row after a run that ended at `end`, or `None` when the job is done for good.
-/// - done: a repeating job is next due at its next occurrence after now, or at the run's `due_by`
-///   when that is earlier but never sooner than its first retry after the end; a deadline is
-///   done, unless its run answered a `due_by`, at which it is due again, never sooner than its
-///   first retry after the end; either way its failures, cursor and answered request cleared;
+/// - done: the next occurrence ([`next_occurrence`]): a repeating job is due at its next
+///   occurrence after now, or at the run's `due_by` when that is earlier but never sooner than its
+///   first retry after the end; a deadline is done, unless its run answered a `due_by`, at which
+///   it is due again, never sooner than its first retry after the end; either way its failures,
+///   cursor and answered request cleared;
 /// - more: due again at once, going on from its cursor;
 /// - items failed: due again after the backoff, its cursor cleared;
 /// - failed: due again after the backoff, its cursor kept.
 ///
-/// A run that did not end done leaves the request it answered for the run that goes on.
-fn finished(
-    spec: &JobSpec,
-    row: ScheduleRow,
-    result: &JobResult,
-    due_at: u64,
-    end: u64,
-) -> Option<ScheduleRow> {
+/// A run that did not end done leaves the request it answered for the run that goes on. A retry
+/// or a resumed run keeps the occurrence it serves (`resume_at`), so neither moves the trigger's
+/// grid.
+fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> Option<ScheduleRow> {
     let row = ScheduleRow {
         started_at: None,
         finished_at: end,
@@ -504,12 +518,13 @@ fn finished(
             let due_by = result
                 .due_by
                 .map(|due_by| due_by.max(end.saturating_add(spec.retry_first_secs)));
-            let next_due_at = match (row.trigger.next_due(due_at, end, &EngineZones), due_by) {
+            let next_due_at = match (next_occurrence(&row, end), due_by) {
                 (Some(next), Some(due_by)) => Some(due_by.min(next)),
                 (next, due_by) => next.or(due_by),
             };
             next_due_at.map(|next_due_at| ScheduleRow {
                 next_due_at,
+                resume_at: None,
                 failures: 0,
                 cursor: None,
                 answering: false,
@@ -517,7 +532,7 @@ fn finished(
             })
         }
         Ran::More { cursor } => Some(ScheduleRow {
-            next_due_at: end,
+            resume_at: Some(end),
             cursor: Some(cursor.clone()),
             ..row
         }),
@@ -529,7 +544,7 @@ fn finished(
                 spec.retry_cap(&row.trigger),
             );
             Some(ScheduleRow {
-                next_due_at: end.saturating_add(retry),
+                resume_at: Some(end.saturating_add(retry)),
                 failures,
                 cursor: None,
                 ..row
@@ -543,10 +558,24 @@ fn finished(
                 spec.retry_cap(&row.trigger),
             );
             Some(ScheduleRow {
-                next_due_at: end.saturating_add(retry),
+                resume_at: Some(end.saturating_add(retry)),
                 failures,
                 ..row
             })
         }
+    }
+}
+
+/// A row armed again while a run of its earlier arming ran, after that run ended at `end`: the
+/// new arming stands, due no sooner than the run's first retry after its end, so a job that arms
+/// itself again at once never runs in a loop. Its occurrence stays where the arming put it.
+fn armed_again(spec: &JobSpec, row: ScheduleRow, end: u64) -> ScheduleRow {
+    let floor = end.saturating_add(spec.retry_first_secs);
+    if row.resume_at.unwrap_or(row.next_due_at) >= floor {
+        return row;
+    }
+    ScheduleRow {
+        resume_at: Some(floor),
+        ..row
     }
 }
