@@ -80,7 +80,8 @@ fn retire_wait_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &WaitKey) -
     }
     DELIVERIES.delete(&vault.store, txn, &key.row())?;
     TRAPS.delete(&vault.store, txn, &key.row())?;
-    Ok(())
+    // The run resumed: a wait it came back from with no delivery returns here (L2-37).
+    crate::idle_fold::record_resumed_in_txn(vault, txn, key)
 }
 
 fn reply_text(reply: &serde_json::Value) -> Result<String> {
@@ -181,6 +182,7 @@ fn deliver_in_txn(
     } else {
         DELIVERIES.put(&vault.store, txn, &key.row(), settled)?;
     }
+    crate::idle_fold::record_returned_in_txn(vault, txn, key, settled.delivered_at_ms)?;
     if let Some(trap) = TRAPS.get(&vault.store, txn, &key.row())? {
         wake_bound_trap_in_txn(vault, txn, key, &trap, settled.delivered_at_ms)?;
     }
@@ -206,7 +208,8 @@ pub fn bind_wait_trap(vault: &Vault, key: &WaitKey, trap: &TrapRef, now_ms: u64)
 /// the run's parked wait, in one commit (OF-533): [`bind_wait_trap`] with the
 /// park beside it, so no crash can leave a park that no delivery wakes. A
 /// reply already delivered wakes the trap here; `true` when it woke. Consent, peer and human
-/// traps carry the exact wait key as a typed park wait in the same transaction.
+/// traps carry the exact wait key as a typed park wait in the same transaction. The wait's
+/// wall-clock record (L2-37) parks in it too, and one a reply already came for returns at once.
 pub fn park_and_bind_wait_trap(
     vault: &Vault,
     park: crate::dreamer_runner::ParkDreamerAttempt,
@@ -215,15 +218,18 @@ pub fn park_and_bind_wait_trap(
     now_ms: u64,
 ) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
+        let attempt = park.attempt_id;
         crate::DreamerRunnerStore::new(vault).park_attempt_with_wait_in_txn(
             txn,
             park,
             answer_wait(trap.kind, *key),
         )?;
         TRAPS.put(&vault.store, txn, &key.row(), trap)?;
+        crate::idle_fold::record_parked_in_txn(vault, txn, key, trap.kind, attempt, now_ms)?;
         if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
             return Ok(false);
         }
+        crate::idle_fold::record_returned_in_txn(vault, txn, key, now_ms)?;
         wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok(true)
     })
