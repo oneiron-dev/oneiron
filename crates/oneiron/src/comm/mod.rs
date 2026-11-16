@@ -67,7 +67,7 @@ pub(crate) use self::descriptor::{
 };
 pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, claim_class_descriptor_in_txn,
-    is_restrictive_comm_predicate, seed_claim_class_descriptors,
+    enforced_claim_classes_in_txn, is_restrictive_comm_predicate, seed_claim_class_descriptors,
 };
 pub(crate) use self::descriptor::{
     import_claim_class_descriptor_in_txn, imported_claim_class_descriptor,

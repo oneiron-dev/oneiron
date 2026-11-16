@@ -54,6 +54,26 @@ impl Memory<'_> {
             .with_read_filter(self.read_filter.as_ref()))
     }
 
+    /// [`Self::read_lane`], its key also held, in every snapshot that serves
+    /// a row, to the live agent Grants that name this handle's actor, each
+    /// alone ([`ScopedReadActorKey::bound_by_live_agent_grants`]): a read that
+    /// stays inside the actor's own owner Grants whatever else admits the
+    /// row, as a credential-backed read already does (Astra review of #8340,
+    /// F2). It only narrows.
+    pub(crate) fn read_lane_within_own_agent_grants(
+        &self,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self
+            .actor_read_key()?
+            .bound_by_live_agent_grants(self.actor);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
+    }
+
     /// Opens only a bound brief view. A view-only slip cannot enter any
     /// general read verb; its holder need not be enrolled in this vault.
     pub(crate) fn shared_brief_read_lane(
@@ -442,6 +462,33 @@ impl Memory<'_> {
             return Ok(());
         };
         if ids.iter().all(|id| readable.contains(id)) {
+            return Ok(());
+        }
+        Err(MemoryError::from(Error::EntityNotFound))
+    }
+
+    /// Refuses unless a handle bound to a read credential reads `artifact`
+    /// and `rows`, the rows one of its versions is, all judged in one
+    /// snapshot by the lane, as the export door admits a version for a
+    /// credential with record caveats (FIX 7645). The artifact covers its
+    /// own version rows for the records check alone (FIX 8245); every other
+    /// check judges each row. A row the lane does not read is absent. A
+    /// handle bound to no credential reads as its actor's own verbs do.
+    pub(crate) fn require_credential_version_reads(
+        &self,
+        artifact: EntityId,
+        rows: &[EntityId],
+    ) -> MemoryResult<()> {
+        if self.read_proof.is_none() {
+            return Ok(());
+        }
+        let ids: Vec<EntityId> = std::iter::once(artifact)
+            .chain(rows.iter().copied())
+            .collect();
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_artifact_records_cover(&[artifact]);
+        if lane.all_refs_readable(&ids).map_err(MemoryError::from)? {
             return Ok(());
         }
         Err(MemoryError::from(Error::EntityNotFound))
