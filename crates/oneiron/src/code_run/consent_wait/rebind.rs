@@ -12,7 +12,6 @@ use super::rebind_types::{
     CodeConsentRebind, CodeConsentRebindPrepared, CodeConsentRebindProposal,
     CodeConsentRebindTarget,
 };
-use super::settle::now_ms;
 use super::types::{CodeConsentPrincipal, CodeConsentWaitRow};
 
 impl Vault {
@@ -146,7 +145,7 @@ impl Vault {
                     .as_ref()
                     .ok_or(Error::EntityNotFound)?
                     .intent_id,
-                proposed_at_ms: now_ms(),
+                proposed_at_ms: crate::unix_millis_now(),
             };
             let prepared = CodeConsentRebindPrepared {
                 proposal_id: proposal.id,
@@ -284,7 +283,7 @@ impl Vault {
                 } else {
                     receipt.decision_id()
                 },
-                confirmed_at_ms: now_ms(),
+                confirmed_at_ms: crate::unix_millis_now(),
             };
             row.rebind_proposal = None;
             row.rebinds.push(rebind.clone());
