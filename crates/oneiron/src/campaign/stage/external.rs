@@ -75,7 +75,12 @@ pub(crate) fn apply_external_stage_evidence_in_txn(
     if hook.evidence.basis == EvidenceBasis::OwnerAttested {
         require_owner_attestable(definition, rule)?;
     }
-    require_source_evidence(vault, txn, hook.evidence.class, &hook.evidence.evidence_refs)?;
+    require_source_evidence(
+        vault,
+        txn,
+        hook.evidence.class,
+        &hook.evidence.evidence_refs,
+    )?;
     project_stage_transition_in_txn(
         vault,
         txn,

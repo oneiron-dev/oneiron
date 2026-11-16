@@ -176,8 +176,7 @@ fn live_stage_count(vault: &Vault) -> usize {
         .into_iter()
         .filter_map(|id| vault.get_claim(&id).unwrap())
         .filter(|body| {
-            body.predicate == PREDICATE_CRM_STAGE
-                && body.lifecycle == ClaimLifecycleStatus::Active
+            body.predicate == PREDICATE_CRM_STAGE && body.lifecycle == ClaimLifecycleStatus::Active
         })
         .count()
 }
