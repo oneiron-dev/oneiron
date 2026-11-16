@@ -38,6 +38,5 @@ pub mod claim_refinement;
 pub mod osv;
 pub mod pack_catalog;
 pub mod ref_sync;
-pub mod refinement_custody;
 pub mod shared_gate;
 pub mod shared_merge_queue;

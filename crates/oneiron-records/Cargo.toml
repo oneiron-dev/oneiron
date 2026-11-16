@@ -14,7 +14,6 @@ doctest = false
 base64 = "0.22"
 blake3 = { workspace = true, features = ["zeroize"] }
 ed25519-dalek = { workspace = true }
-heed = { workspace = true }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }

@@ -29,6 +29,5 @@ pub mod heal_context;
 pub mod healer_host;
 pub mod receipt_serde;
 pub mod repair;
-pub mod scheduled;
 pub mod session_text;
 pub mod tripwires;

@@ -9,25 +9,6 @@ use serde::Serialize;
 /// The one hold a pass retries: the reservation found no room.
 pub const BUDGET_HELD: &str = "budget";
 
-/// Which campaign work a continuation carries out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchWork {
-    /// Measure the unmeasured incumbent root on the search split.
-    Bootstrap,
-    /// Carry out selection round `n`'s fork.
-    Round(u64),
-}
-
-impl ResearchWork {
-    fn key(self) -> u64 {
-        match self {
-            Self::Bootstrap => 0,
-            Self::Round(round) => round.saturating_add(1),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchSplit {
@@ -51,24 +32,4 @@ pub enum ResearchTask {
     Basis { candidate: AttemptId },
     /// Spend the sealed confirmation shot and run the referee on it.
     Confirm { candidate: AttemptId },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchContinuationState {
-    Open,
-    Held { reason: String },
-    Done { note: String },
-    Failed { reason: String },
-}
-
-impl ResearchContinuationState {
-    /// Open, or held for budget: the states a pass takes up.
-    fn live(&self) -> bool {
-        match self {
-            Self::Open => true,
-            Self::Held { reason } => reason == BUDGET_HELD,
-            Self::Done { .. } | Self::Failed { .. } => false,
-        }
-    }
 }

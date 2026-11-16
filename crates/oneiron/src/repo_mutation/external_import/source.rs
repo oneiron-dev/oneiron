@@ -51,11 +51,33 @@ const OBSERVATION_DOMAIN: &[u8] = b"oneiron:external-import-observation:v1";
 const REF_DOMAIN: &[u8] = b"oneiron:external-import-ref:v1";
 
 #[doc(hidden)]
-use oneiron_records::repo_mutation::external_import::source::SCHEMA_VERSION;
+pub(crate) use oneiron_records::repo_mutation::external_import::source::ImportOutcome;
 #[doc(hidden)]
-pub(crate) use oneiron_records::repo_mutation::external_import::source::{
-    ImportOutcome, ImportStep,
-};
+use oneiron_records::repo_mutation::external_import::source::SCHEMA_VERSION;
+
+/// Which part of an import a fact is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ImportStep {
+    Base,
+    Fetch,
+    Seed,
+    Head,
+    /// The Git-LFS objects the fetched history names (FIX 19084).
+    Lfs,
+}
+
+impl ImportStep {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Fetch => "fetch",
+            Self::Seed => "seed",
+            Self::Head => "head",
+            Self::Lfs => "lfs",
+        }
+    }
+}
 
 /// What the credential broker did for an `Lfs` step once its exchanges
 /// ended: no actor, no value, no diagnostics.
