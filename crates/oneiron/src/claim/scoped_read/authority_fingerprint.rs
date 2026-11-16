@@ -367,6 +367,12 @@ impl ScopedReadActorKey {
         if self.owner_authority_withheld() {
             hasher.update(b"owner_authority_withheld");
         }
+        // Last, and only when set: a key rebuilt under a saved lane's floor
+        // basis, beside which the owner alternative stands (blind review
+        // round 1 P1 on #8065).
+        if self.rebuilt_under_floor_basis() {
+            hasher.update(b"rebuilt_under_floor_basis");
+        }
         *hasher.finalize().as_bytes()
     }
 }
