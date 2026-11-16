@@ -1,0 +1,1691 @@
+//! DEC-0005 #private-world-vectors: a private world's optional small local model
+//! owns its text vectors; its rows never fall back to the vault or a hosted embedder.
+//!
+//! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test world_small_embedding_model`
+#![cfg(all(feature = "sync", oneiron_test_support))]
+
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use oneiron::authority::{
+    ActSurface, MachineOwnership, MachineRole, ModelOrder, ReadLocation, SealedCopies,
+    WORLD_MODEL_ROUTE_MAX_BYTES, WorldPrivacy,
+};
+use oneiron::claim::{base_world_id, default_project_id};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::embed::{
+    EMBEDDING_SPACE_ID_MAX_LEN, EgressDecision, EgressPredicate, Embedder, EmbedderLocality,
+    EmbeddingSpace, InputKind, MediaEmbedder, MediaEmbeddingInput, PendingEmbeddingInput,
+    PendingEmbeddingReconcileReport, PendingEmbeddingReconciler, RemoteRung, SpaceRef,
+    payload_text,
+};
+use oneiron::memory::{
+    AllRelationships, AssetIngestRequest, ClaimInput, ClaimRelationships, ClaimScope,
+    IndexedRevisionEmbedder, IndexedRevisionInput, ScopedClaimInput,
+};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
+use oneiron::store::GateDecisionId;
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
+use serde_json::json;
+
+const WORLD_SPACE_ID: &str = "local/tiny-test@0123456789abcdef0123456789abcdef01234567@device";
+const VAULT_MODEL_ID: &str = "test/vault-text@v1";
+const DIMENSIONS: usize = 8;
+
+fn text_vector(bytes: &[u8]) -> Vec<f32> {
+    let mut vector = vec![1.0; DIMENSIONS];
+    for (index, byte) in bytes.iter().enumerate() {
+        vector[index % DIMENSIONS] += f32::from(*byte) / 256.0;
+    }
+    vector
+}
+
+struct RecordingVaultEmbedder {
+    locality: EmbedderLocality,
+    seen: Mutex<Vec<EntityId>>,
+}
+
+impl RecordingVaultEmbedder {
+    fn new(locality: EmbedderLocality) -> Self {
+        Self {
+            locality,
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn seen(&self) -> Vec<EntityId> {
+        self.seen
+            .lock()
+            .expect("text embedder recording lock")
+            .clone()
+    }
+}
+
+impl Embedder for RecordingVaultEmbedder {
+    fn model_id(&self) -> &str {
+        VAULT_MODEL_ID
+    }
+
+    fn dimensions(&self) -> usize {
+        DIMENSIONS
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        self.locality
+    }
+
+    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> oneiron::Result<Vec<Vec<f32>>> {
+        self.seen
+            .lock()
+            .expect("record text embedder inputs")
+            .extend(inputs.iter().map(|input| input.entity_id));
+        inputs
+            .iter()
+            .map(|input| payload_text(&input.payload).map(|text| text_vector(text.as_bytes())))
+            .collect()
+    }
+}
+
+#[derive(Default)]
+struct FixedTextEmbedder {
+    seen: Mutex<Vec<EntityId>>,
+}
+
+impl MediaEmbedder for FixedTextEmbedder {
+    fn space_id(&self) -> &str {
+        WORLD_SPACE_ID
+    }
+
+    fn dimensions(&self) -> usize {
+        DIMENSIONS
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+
+    fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<Vec<f32>>> {
+        self.seen
+            .lock()
+            .expect("record world-space embedder inputs")
+            .extend(inputs.iter().map(|input| input.entity_id));
+        Ok(inputs
+            .iter()
+            .map(|input| text_vector(input.bytes))
+            .collect())
+    }
+}
+
+/// The idle publisher's embedder: records the row of every revision it is handed.
+#[derive(Default)]
+struct RecordingIndexedEmbedder {
+    seen: Mutex<Vec<EntityId>>,
+}
+
+impl RecordingIndexedEmbedder {
+    fn seen(&self) -> Vec<EntityId> {
+        self.seen
+            .lock()
+            .expect("idle embedder recording lock")
+            .clone()
+    }
+}
+
+impl IndexedRevisionEmbedder for RecordingIndexedEmbedder {
+    fn embed_revision(&self, input: &IndexedRevisionInput) -> oneiron::Result<Vec<f32>> {
+        self.seen
+            .lock()
+            .expect("record idle embedder inputs")
+            .push(input.entity);
+        Ok(text_vector(&input.body))
+    }
+}
+
+/// A vault embedder that, at its first call, names W's own text space and runs a second text
+/// pass, as another process may while this pass's model call runs.
+struct OrderNamingEmbedder {
+    vault: Arc<Vault>,
+    owner: AuthenticatedOwner,
+    world: EntityId,
+    named: AtomicBool,
+    inner: Mutex<Option<PendingEmbeddingReconcileReport>>,
+}
+
+impl Embedder for OrderNamingEmbedder {
+    fn model_id(&self) -> &str {
+        VAULT_MODEL_ID
+    }
+
+    fn dimensions(&self) -> usize {
+        DIMENSIONS
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+
+    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> oneiron::Result<Vec<Vec<f32>>> {
+        if !self.named.swap(true, Ordering::SeqCst) {
+            self.vault
+                .set_world_privacy_as(
+                    &self.owner,
+                    ActSurface::ThisInstall,
+                    self.world,
+                    private_settings(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()])),
+                    None,
+                )
+                .expect("owner names W's space while the first pass's model call runs");
+            let inner = PendingEmbeddingReconciler::new(
+                Arc::clone(&self.vault),
+                Arc::new(RecordingVaultEmbedder::new(EmbedderLocality::OnDevice)),
+            )
+            .reconcile_once()
+            .expect("a second text pass while the first one's model call runs");
+            *self.inner.lock().expect("second pass report") = Some(inner);
+        }
+        inputs
+            .iter()
+            .map(|input| payload_text(&input.payload).map(|text| text_vector(text.as_bytes())))
+            .collect()
+    }
+}
+
+struct AllowAll;
+
+impl EgressPredicate for AllowAll {
+    fn decide(&self, _input: &PendingEmbeddingInput) -> EgressDecision {
+        EgressDecision::Allow
+    }
+}
+
+fn text_space(id: &str) -> EmbeddingSpace {
+    EmbeddingSpace {
+        id: id.to_owned(),
+        dimensions: DIMENSIONS,
+        accepts: BTreeSet::from([InputKind::Text]),
+        query_towers: BTreeSet::from([InputKind::Text]),
+        evidence: None,
+    }
+}
+
+fn private_settings(models: ModelOrder) -> WorldPrivacy {
+    WorldPrivacy {
+        read: ReadLocation::MyMachines,
+        sealed: SealedCopies::MyMachines,
+        models,
+    }
+}
+
+/// A picture in the fixture's world W and its caption, written while W inherits: the caption
+/// takes a vault-index vector from its writer. A caption carries its picture's worlds, and the
+/// pending worker does not embed it.
+fn inheriting_world_caption(fixture: &WorldSpaceFixture) -> EntityId {
+    let at = fixture.vault.now_recorded_at();
+    let range = TimeRange { start: at, end: at };
+    let picture = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &picture,
+            ENTITY_TYPE_ASSET,
+            range,
+            at,
+            b"a picture in the private world",
+        )
+        .edge(&picture, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner stores a picture in W");
+    let caption = EntityId::now();
+    let caption_text = "caption of the private-world picture";
+    let caption_body =
+        rmp_serde::to_vec_named(&json!({ "content": caption_text })).expect("caption body");
+    fixture
+        .vault
+        .batch()
+        .put(&caption, ENTITY_TYPE_ASSET_TEXT, range, at, &caption_body)
+        .text(&caption, &[("content", caption_text)])
+        .vector(&caption, &text_vector(caption_text.as_bytes()))
+        .edge(&caption, EdgeKind::DerivedFrom, &picture, 1.0)
+        .commit()
+        .expect("owner stores the picture's caption with its vector");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_some(),
+        "the caption holds a vault-index vector while W inherits",
+    );
+    caption
+}
+
+struct WorldSpaceFixture {
+    vault: Arc<Vault>,
+    owner: AuthenticatedOwner,
+    world: EntityId,
+    world_claim: EntityId,
+    base_claim: EntityId,
+    primary: Arc<RecordingVaultEmbedder>,
+    _dir: tempfile::TempDir,
+}
+
+impl WorldSpaceFixture {
+    fn reconciler(&self) -> PendingEmbeddingReconciler {
+        PendingEmbeddingReconciler::new(Arc::clone(&self.vault), self.primary.clone())
+    }
+
+    fn set_models(&self, models: ModelOrder) {
+        self.vault
+            .set_world_privacy_as(
+                &self.owner,
+                ActSurface::ThisInstall,
+                self.world,
+                private_settings(models),
+                None,
+            )
+            .expect("owner updates the world's model order");
+    }
+}
+
+fn world_space_fixture() -> WorldSpaceFixture {
+    let dir = tempfile::tempdir().expect("temporary world-space vault directory");
+    let mut config = VaultConfig::device();
+    config.dimensions = DIMENSIONS;
+    config.embedding_model = Some(VAULT_MODEL_ID.to_owned());
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("fresh world-space vault"));
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .expect("install signing key");
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let issuer = vault
+        .bootstrap_host_slip_issuer()
+        .expect("host slip issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+        .expect("this install is one of the owner's machines");
+    let owner = vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("authenticated owner");
+    let at = vault.now_recorded_at();
+    let world = vault
+        .create_world(&owner, "Private text world", at)
+        .expect("owner creates the private world");
+    vault
+        .declare_embedding_space(&owner, text_space(WORLD_SPACE_ID))
+        .expect("owner declares the small on-device text space");
+    let fixture = WorldSpaceFixture {
+        vault,
+        owner,
+        world,
+        world_claim: EntityId::now(),
+        base_claim: EntityId::now(),
+        primary: Arc::new(RecordingVaultEmbedder::new(EmbedderLocality::OnDevice)),
+        _dir: dir,
+    };
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    // The normal opener seeds claims; settle those before the two rows under test exist.
+    fixture
+        .reconciler()
+        .with_batch_size(usize::MAX)
+        .reconcile_once()
+        .expect("embed bootstrap claims before writing A and B");
+    fixture
+        .primary
+        .seen
+        .lock()
+        .expect("clear bootstrap inputs")
+        .clear();
+    let facet = fixture.vault.default_facet().expect("owner default facet");
+    for (id, world_id, text) in [
+        (
+            fixture.world_claim,
+            world,
+            "private-world text for the small model",
+        ),
+        (
+            fixture.base_claim,
+            base_world_id(),
+            "base-world text for the vault model",
+        ),
+    ] {
+        fixture
+            .vault
+            .memory(person, EdgeActorClass::Human)
+            .with_owner_authorship(&fixture.owner)
+            .claim_upsert_scoped(&ScopedClaimInput {
+                id: Some(id.to_hex()),
+                predicate: "profile.preference".to_owned(),
+                subject_ref: person.to_hex(),
+                value: json!(text),
+                confidence: 1.0,
+                source: "user_stated".to_owned(),
+                scope: ClaimScope {
+                    world_id: world_id.to_hex(),
+                    scope_facet_id: facet.to_hex(),
+                    scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                    scope_project_id: default_project_id().to_hex(),
+                },
+                sensitivity: None,
+                evidence_turn_refs: Vec::new(),
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(at),
+                learned_at: Some(at),
+                salience: None,
+            })
+            .expect("owner writes a text claim in its requested world");
+    }
+    fixture
+}
+
+#[test]
+fn world_rows_embed_only_in_their_own_small_space() {
+    let fixture = world_space_fixture();
+    let report = fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("vault text pass");
+    assert_eq!(
+        report.world_space, 1,
+        "A stays pending for its world's space"
+    );
+    assert_eq!(report.embedded, 1, "only base claim B uses the vault index");
+    assert_eq!(report.leased, 1, "A is not leased for the vault index");
+    assert_eq!(fixture.primary.seen(), vec![fixture.base_claim]);
+
+    let bindings = fixture
+        .vault
+        .kind_slot_bindings()
+        .expect("kind slot bindings");
+    assert_eq!(bindings.space_for(InputKind::Text), None);
+    assert_eq!(bindings.space_for(InputKind::Image), None);
+    assert_eq!(bindings.space_for(InputKind::Audio), None);
+    let fixed = FixedTextEmbedder::default();
+    let media = fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills without a kind slot binding");
+    assert_eq!(
+        media.embedded, 1,
+        "only world claim A fills the small space"
+    );
+    assert_eq!(
+        *fixed.seen.lock().expect("world-space embedder inputs"),
+        vec![fixture.world_claim],
+        "B is never handed to the world's embedder",
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space"),
+        Some(text_space(WORLD_SPACE_ID)),
+    );
+    let inheriting = fixture
+        .vault
+        .create_world(
+            &fixture.owner,
+            "Inheriting world",
+            fixture.vault.now_recorded_at(),
+        )
+        .expect("owner creates a world that inherits");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(inheriting)
+            .expect("inherited text space"),
+        None
+    );
+}
+
+#[test]
+fn world_space_never_falls_back() {
+    let fixture = world_space_fixture();
+    let remote = Arc::new(RecordingVaultEmbedder::new(EmbedderLocality::ThirdParty));
+    let reconciler = fixture
+        .reconciler()
+        .with_remote_rung(RemoteRung::new(remote.clone(), Arc::new(AllowAll)))
+        .expect("public remote rung with an allow-all egress predicate");
+    let report = reconciler
+        .reconcile_once()
+        .expect("text pass with a remote rung");
+    assert_eq!(
+        report.world_space, 1,
+        "A never reaches any vault-index rung"
+    );
+    assert_eq!(report.leased, 1, "only B is leased");
+    assert_eq!(report.embedded, 1);
+    assert_eq!(
+        report.routed_remote, 1,
+        "B proves the remote rung is active"
+    );
+    assert_eq!(
+        remote.seen(),
+        vec![fixture.base_claim],
+        "the remote rung never sees A"
+    );
+    assert!(
+        fixture.primary.seen().is_empty(),
+        "A never falls back to the primary either"
+    );
+}
+
+#[test]
+fn order_back_to_inherit_requeues_for_vault_index() {
+    let fixture = world_space_fixture();
+    let reconciler = fixture.reconciler();
+    let before = reconciler
+        .reconcile_once()
+        .expect("text pass with a world space");
+    assert_eq!(before.world_space, 1, "A stays pending for the small model");
+    assert_eq!(before.embedded, 1, "only B embeds before the order change");
+    assert_eq!(fixture.primary.seen(), vec![fixture.base_claim]);
+
+    fixture.set_models(ModelOrder::Inherit);
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("inherited world text space"),
+        None
+    );
+    let after = reconciler
+        .reconcile_once()
+        .expect("text pass after inheriting");
+    assert_eq!(after.world_space, 0);
+    assert_eq!(after.embedded, 1, "A now embeds without a lease wait");
+    assert_eq!(after.leased, 1);
+    assert_eq!(after.active_leases, 0);
+    assert_eq!(
+        fixture.primary.seen(),
+        vec![fixture.base_claim, fixture.world_claim]
+    );
+}
+
+#[test]
+fn long_space_id_fits_world_route() {
+    let fixture = world_space_fixture();
+    let suffix = "@0123456789abcdef0123456789abcdef01234567@device";
+    let model_padding = "m".repeat(200 - "local/".len() - suffix.len());
+    let space_id = format!("local/{model_padding}{suffix}");
+    assert_eq!(space_id.len(), 200, "the route is exactly 200 ASCII bytes");
+    fixture
+        .vault
+        .declare_embedding_space(&fixture.owner, text_space(&space_id))
+        .expect("owner declares a valid 200-byte text space");
+    let result = fixture.vault.set_world_privacy_as(
+        &fixture.owner,
+        ActSurface::ThisInstall,
+        fixture.world,
+        private_settings(ModelOrder::Ordered(vec![space_id.clone()])),
+        None,
+    );
+    assert!(
+        result.is_ok(),
+        "a declared 200-byte space fits a world route: {result:?}"
+    );
+    assert_eq!(WORLD_MODEL_ROUTE_MAX_BYTES, EMBEDDING_SPACE_ID_MAX_LEN);
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("long world text space"),
+        Some(text_space(&space_id)),
+    );
+}
+
+#[test]
+fn a_space_off_the_device_is_not_a_world_text_space() {
+    let fixture = world_space_fixture();
+    let space_id = "local/tiny-test@0123456789abcdef0123456789abcdef01234567@openai";
+    fixture
+        .vault
+        .declare_embedding_space(&fixture.owner, text_space(space_id))
+        .expect("owner declares a text space off this device");
+    fixture.set_models(ModelOrder::Ordered(vec![space_id.to_owned()]));
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("off-device world text space"),
+        None
+    );
+    let report = fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("ordinary vault text pass");
+    assert_eq!(report.world_space, 0, "a hosted space does not redirect A");
+    assert_eq!(report.leased, 2, "A and B both use the vault index");
+    assert_eq!(report.embedded, 2);
+    let seen = fixture.primary.seen();
+    assert_eq!(seen.len(), 2);
+    assert!(
+        seen.contains(&fixture.world_claim),
+        "A is sent to the vault embedder"
+    );
+    assert!(
+        seen.contains(&fixture.base_claim),
+        "B is sent to the vault embedder"
+    );
+}
+
+#[test]
+fn order_change_moves_world_vectors() {
+    let fixture = world_space_fixture();
+    let reconciler = fixture.reconciler();
+    let in_world_space = |id: &EntityId| {
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, id)
+            .expect("world-space vector read")
+            .is_some()
+    };
+    let in_vault_index = |id: &EntityId| {
+        fixture
+            .vault
+            .get_vector(id)
+            .expect("vault-index vector read")
+            .is_some()
+    };
+
+    // While W inherits, A and B take the vault's index.
+    fixture.set_models(ModelOrder::Inherit);
+    let inherited = reconciler
+        .reconcile_once()
+        .expect("text pass while W inherits");
+    assert_eq!(inherited.embedded, 2, "A and B embed into the vault index");
+    assert!(in_vault_index(&fixture.world_claim));
+    assert!(in_vault_index(&fixture.base_claim));
+
+    // W's order names S: A's vault-index vector goes at the next text pass, and A stays
+    // pending for S, which the media pass then fills.
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    let named = reconciler
+        .reconcile_once()
+        .expect("text pass after W names its space");
+    assert_eq!(
+        named.world_space_index_drops, 1,
+        "the pass drops A's vault-index vector"
+    );
+    assert_eq!(named.world_space, 1, "A is queued again, pending for S");
+    assert_eq!(named.embedded, 0, "nothing embeds into the vault index");
+    assert!(
+        !in_vault_index(&fixture.world_claim),
+        "A left the vault index"
+    );
+    assert!(
+        in_vault_index(&fixture.base_claim),
+        "B keeps its vault-index vector"
+    );
+    let fixed = FixedTextEmbedder::default();
+    let media = fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert_eq!(media.embedded, 1, "S takes A");
+    assert_eq!(
+        *fixed.seen.lock().expect("world-space embedder inputs"),
+        vec![fixture.world_claim],
+    );
+    assert!(in_world_space(&fixture.world_claim));
+
+    // W inherits again: A's S vector goes at the next text pass, which embeds A into the
+    // vault index again.
+    fixture.set_models(ModelOrder::Inherit);
+    let back = reconciler
+        .reconcile_once()
+        .expect("text pass after W inherits again");
+    assert_eq!(
+        back.world_space_vector_drops, 1,
+        "the pass drops A's S vector"
+    );
+    assert_eq!(back.world_space_index_drops, 0);
+    assert_eq!(back.world_space, 0);
+    assert_eq!(back.embedded, 1, "A embeds into the vault index again");
+    assert!(
+        !in_world_space(&fixture.world_claim),
+        "A left the world's space"
+    );
+    assert!(in_vault_index(&fixture.world_claim));
+    assert_eq!(
+        fixture.primary.seen().last(),
+        Some(&fixture.world_claim),
+        "the vault's model embedded A last"
+    );
+
+    // Nothing changed since: the next pass moves nothing.
+    let quiet = reconciler.reconcile_once().expect("quiet text pass");
+    assert_eq!(quiet.world_space_index_drops, 0);
+    assert_eq!(quiet.world_space_vector_drops, 0);
+}
+
+#[test]
+fn a_world_rewrite_publishes_at_idle_without_the_vault_embedder() {
+    let fixture = world_space_fixture();
+    let in_world_space = |id: &EntityId| {
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, id)
+            .expect("world-space vector read")
+            .is_some()
+    };
+    let text = fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("vault text pass");
+    assert_eq!(text.world_space, 1, "A stays pending for its world's space");
+    let fixed = FixedTextEmbedder::default();
+    let media = fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert_eq!(media.embedded, 1, "S takes A");
+    assert!(in_world_space(&fixture.world_claim));
+
+    // The owner's raw door rewrites A in place: its new revision waits for idle publication.
+    let mut body = fixture
+        .vault
+        .get_claim(&fixture.world_claim)
+        .expect("read A")
+        .expect("A is stored");
+    body.value = rmpv::Value::from("rewritten private-world text for the small model");
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(
+            &fixture.world_claim,
+            &body,
+            TimeRange { start: at, end: at },
+            at,
+        )
+        .expect("rewrite A in place");
+    let live = fixture
+        .vault
+        .pin_entity_revision(&fixture.world_claim)
+        .expect("pin A's rewrite");
+    assert_ne!(
+        fixture
+            .vault
+            .indexed_revision(&fixture.world_claim)
+            .expect("A's indexed revision"),
+        Some(live),
+        "the rewrite waits for idle publication",
+    );
+
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    let published = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle publication");
+    assert!(
+        !idle.seen().contains(&fixture.world_claim),
+        "idle publication handed A to the vault's embedder: {published:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&fixture.world_claim)
+            .expect("vault-index vector read")
+            .is_none(),
+        "A gets no vault-index vector at idle",
+    );
+    assert!(
+        published.refreshed.contains(&(fixture.world_claim, live)),
+        "A's rewrite still publishes its text: {published:?}",
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .indexed_revision(&fixture.world_claim)
+            .expect("A's published revision"),
+        Some(live),
+    );
+    assert!(
+        in_world_space(&fixture.world_claim),
+        "the world's space keeps A's vector"
+    );
+}
+
+#[test]
+fn a_swap_never_refills_a_world_row_into_the_vault_index() {
+    let mut fixture = world_space_fixture();
+    fixture.set_models(ModelOrder::Inherit);
+    let caption = inheriting_world_caption(&fixture);
+
+    // A swap drops every vault-index vector and leaves the caption to the idle refill; then
+    // W's order names its own text space.
+    Arc::get_mut(&mut fixture.vault)
+        .expect("the test holds the only vault handle")
+        .refill_embedding_space()
+        .expect("same-model embedding-space refill");
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    let refill = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle refill while W names S");
+    assert!(
+        !idle.seen().contains(&caption),
+        "the idle refill handed W's caption to the vault's embedder: {refill:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_none(),
+        "the idle refill gave W's caption a vault-index vector",
+    );
+
+    // W inherits again: the caption kept its refill, and the vault's index takes it.
+    fixture.set_models(ModelOrder::Inherit);
+    let back = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle refill after W inherits again");
+    assert!(
+        idle.seen().contains(&caption),
+        "the caption is refilled once W inherits: {back:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_some(),
+        "the vault's index takes the caption again",
+    );
+}
+
+#[test]
+fn a_world_caption_gets_its_vault_vector_back_when_the_world_inherits() {
+    let fixture = world_space_fixture();
+    let reconciler = fixture.reconciler();
+    fixture.set_models(ModelOrder::Inherit);
+    let caption = inheriting_world_caption(&fixture);
+    reconciler
+        .reconcile_once()
+        .expect("text pass while W inherits");
+    let in_vault_index = |id: &EntityId| {
+        fixture
+            .vault
+            .get_vector(id)
+            .expect("vault-index vector read")
+            .is_some()
+    };
+    assert!(in_vault_index(&caption));
+
+    // W's order names S: the next text pass drops the caption's vault-index vector.
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    let named = reconciler
+        .reconcile_once()
+        .expect("text pass after W names its space");
+    assert!(
+        named.world_space_index_drops >= 1,
+        "the pass drops W's vault-index vectors: {named:?}",
+    );
+    assert!(
+        !in_vault_index(&caption),
+        "the caption left the vault index"
+    );
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle pass while W names S");
+    assert!(
+        !idle.seen().contains(&caption),
+        "the vault's idle embedder never sees W's caption while W names S",
+    );
+    assert!(!in_vault_index(&caption));
+
+    // W inherits again: the caption's published revision is embedded into the vault index again.
+    fixture.set_models(ModelOrder::Inherit);
+    reconciler
+        .reconcile_once()
+        .expect("text pass after W inherits again");
+    let back = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle pass after W inherits again");
+    assert!(
+        idle.seen().contains(&caption),
+        "the idle refill embeds the caption once W inherits: {back:?}",
+    );
+    assert!(
+        in_vault_index(&caption),
+        "the vault's index takes the caption again"
+    );
+}
+
+#[test]
+fn a_fill_leased_before_the_order_names_the_space_never_lands() {
+    let fixture = world_space_fixture();
+    fixture.set_models(ModelOrder::Inherit);
+    let embedder = Arc::new(OrderNamingEmbedder {
+        vault: Arc::clone(&fixture.vault),
+        owner: fixture.owner.clone(),
+        world: fixture.world,
+        named: AtomicBool::new(false),
+        inner: Mutex::new(None),
+    });
+    let in_vault_index = |id: &EntityId| {
+        fixture
+            .vault
+            .get_vector(id)
+            .expect("vault-index vector read")
+            .is_some()
+    };
+    // While W inherits, the pass leases A and B; during the model call W names S and a second
+    // pass sweeps on the new map before A's vector exists.
+    let first = PendingEmbeddingReconciler::new(Arc::clone(&fixture.vault), embedder.clone())
+        .reconcile_once()
+        .expect("text pass leased while W inherits");
+    let inner = embedder
+        .inner
+        .lock()
+        .expect("second pass report")
+        .take()
+        .expect("the model call ran the second pass");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space"),
+        Some(text_space(WORLD_SPACE_ID)),
+    );
+    assert!(
+        !in_vault_index(&fixture.world_claim),
+        "A's vault vector landed after W named its space: first {first:?}, second {inner:?}",
+    );
+    assert!(
+        in_vault_index(&fixture.base_claim),
+        "B still embeds into the vault index"
+    );
+
+    // A stays pending for W's space, and the space takes it.
+    let next = fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("text pass after the late fill");
+    assert_eq!(next.world_space, 1, "A is pending for its world's space");
+    assert!(!in_vault_index(&fixture.world_claim));
+    let fixed = FixedTextEmbedder::default();
+    let media = fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert_eq!(media.embedded, 1, "S takes A");
+}
+
+#[test]
+fn a_world_caption_published_at_idle_before_the_sweep_comes_back_on_inherit() {
+    let fixture = world_space_fixture();
+    let reconciler = fixture.reconciler();
+    fixture.set_models(ModelOrder::Inherit);
+    let caption = inheriting_world_caption(&fixture);
+    reconciler
+        .reconcile_once()
+        .expect("text pass while W inherits");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_some(),
+        "the caption holds a vault-index vector while W inherits",
+    );
+
+    // A same-id put keeps the caption's picture link; its text and writer vector wait at idle.
+    let caption_text = "rewritten caption of the private-world picture";
+    let caption_body = rmp_serde::to_vec_named(&json!({ "content": caption_text }))
+        .expect("rewritten caption body");
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &caption,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: at, end: at },
+            at,
+            &caption_body,
+        )
+        .text(&caption, &[("content", caption_text)])
+        .vector(&caption, &text_vector(caption_text.as_bytes()))
+        .commit()
+        .expect("rewrite the caption in place with a staged writer vector");
+    let live = fixture
+        .vault
+        .pin_entity_revision(&caption)
+        .expect("pin the caption's rewrite");
+    assert_ne!(
+        fixture
+            .vault
+            .indexed_revision(&caption)
+            .expect("caption's indexed revision"),
+        Some(live),
+        "the rewrite waits for idle publication",
+    );
+
+    // Publish before a text pass can sweep the changed map and mark the caption's old vector.
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    let published = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle publication before the world-space sweep");
+    assert!(
+        !idle.seen().contains(&caption),
+        "idle publication handed the caption to the vault's embedder: {published:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_none(),
+        "the caption gets no vault-index vector at idle while W names S",
+    );
+    assert!(
+        published.refreshed.contains(&(caption, live)),
+        "the caption's rewrite still publishes its text: {published:?}",
+    );
+    reconciler
+        .reconcile_once()
+        .expect("text pass after idle publication while W names S");
+
+    fixture.set_models(ModelOrder::Inherit);
+    reconciler
+        .reconcile_once()
+        .expect("text pass after W inherits again");
+    let back = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle refill after W inherits again");
+    assert!(
+        idle.seen().contains(&caption),
+        "the idle refill embeds the caption published while W named S: {back:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_some(),
+        "the vault's index takes the caption again",
+    );
+}
+
+#[test]
+fn a_writer_vector_at_birth_never_enters_the_vault_index() {
+    let fixture = world_space_fixture();
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    let at = fixture.vault.now_recorded_at();
+    let range = TimeRange { start: at, end: at };
+    let picture = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &picture,
+            ENTITY_TYPE_ASSET,
+            range,
+            at,
+            b"a picture in the private world",
+        )
+        .edge(&picture, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner stores a picture in W");
+    let caption_text = "writer caption at birth";
+    let caption_body =
+        rmp_serde::to_vec_named(&json!({ "content": caption_text })).expect("caption body");
+    let caption_vector_before_link = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &caption_vector_before_link,
+            ENTITY_TYPE_ASSET_TEXT,
+            range,
+            at,
+            &caption_body,
+        )
+        .text(&caption_vector_before_link, &[("content", caption_text)])
+        .vector(
+            &caption_vector_before_link,
+            &text_vector(caption_text.as_bytes()),
+        )
+        .edge(
+            &caption_vector_before_link,
+            EdgeKind::DerivedFrom,
+            &picture,
+            1.0,
+        )
+        .commit()
+        .expect("owner stores W's caption with its vector before its link");
+    let caption_link_before_vector = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &caption_link_before_vector,
+            ENTITY_TYPE_ASSET_TEXT,
+            range,
+            at,
+            &caption_body,
+        )
+        .text(&caption_link_before_vector, &[("content", caption_text)])
+        .edge(
+            &caption_link_before_vector,
+            EdgeKind::DerivedFrom,
+            &picture,
+            1.0,
+        )
+        .vector(
+            &caption_link_before_vector,
+            &text_vector(caption_text.as_bytes()),
+        )
+        .commit()
+        .expect("owner stores W's caption with its link before its vector");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption_vector_before_link)
+            .expect("read W's caption vector written before its link")
+            .is_none(),
+        "a writer's vector at birth entered the vault's index for W's caption (vector before its link)",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption_link_before_vector)
+            .expect("read W's caption vector written after its link")
+            .is_none(),
+        "a writer's vector at birth entered the vault's index for W's caption (link before its vector)",
+    );
+
+    let unscoped_picture = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &unscoped_picture,
+            ENTITY_TYPE_ASSET,
+            range,
+            at,
+            b"a picture in no world",
+        )
+        .commit()
+        .expect("owner stores a picture in no world");
+    let unscoped_caption = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &unscoped_caption,
+            ENTITY_TYPE_ASSET_TEXT,
+            range,
+            at,
+            &caption_body,
+        )
+        .text(&unscoped_caption, &[("content", caption_text)])
+        .vector(&unscoped_caption, &text_vector(caption_text.as_bytes()))
+        .edge(
+            &unscoped_caption,
+            EdgeKind::DerivedFrom,
+            &unscoped_picture,
+            1.0,
+        )
+        .commit()
+        .expect("owner stores an unscoped caption with its writer's vector");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&unscoped_caption)
+            .expect("unscoped caption vector read")
+            .is_some(),
+        "a caption in no world keeps its writer's vector",
+    );
+
+    fixture
+        .vault
+        .put_vector(
+            &fixture.world_claim,
+            &text_vector(b"writer vector for the world claim"),
+        )
+        .expect("owner writes a vector for W's claim");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&fixture.world_claim)
+            .expect("world claim vector read after put_vector")
+            .is_none(),
+        "put_vector entered the vault's index for W's claim",
+    );
+
+    fixture.set_models(ModelOrder::Inherit);
+    fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("text pass after W inherits");
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle refill after W inherits");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption_vector_before_link)
+            .expect("caption vector read after W inherits")
+            .is_some(),
+        "the idle refill gives W's caption its vault vector once W inherits",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&fixture.world_claim)
+            .expect("world claim vector read after W inherits")
+            .is_some(),
+        "the vault's index takes W's claim once W inherits",
+    );
+}
+
+fn ingest_text_asset(fixture: &WorldSpaceFixture, id: EntityId, bytes_b64: &str) -> EntityId {
+    let person = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let request = AssetIngestRequest {
+        asset_ref: Some(id.to_hex()),
+        embedding_kind: InputKind::Text,
+        mime_type: "text/plain".to_owned(),
+        bytes_b64: bytes_b64.to_owned(),
+        text: None,
+        occurred_at: fixture.vault.now_recorded_at(),
+    };
+    fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner)
+        .ingest_asset(&request)
+        .expect("owner ingests a text asset");
+    id
+}
+
+#[test]
+fn abandoning_a_text_move_keeps_a_world_named_space() {
+    let fixture = world_space_fixture();
+    fixture.set_models(ModelOrder::Ordered(vec![
+        WORLD_SPACE_ID.to_owned(),
+        "cloud-route".to_owned(),
+    ]));
+    fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("vault text pass");
+    let fixed = FixedTextEmbedder::default();
+    fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    fixture
+        .vault
+        .begin_space_move(&fixture.owner, WORLD_SPACE_ID, SpaceRef::TextIndex, None)
+        .expect("owner begins a text move to the world's space");
+    fixture
+        .vault
+        .abandon_space_move(&fixture.owner, WORLD_SPACE_ID)
+        .expect("owner abandons the text move");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space read"),
+        Some(text_space(WORLD_SPACE_ID)),
+        "W still names its text space after a text move to it is abandoned",
+    );
+    assert!(
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, &fixture.world_claim)
+            .expect("world-space vector read")
+            .is_some(),
+        "S keeps A's vector through the move cleanup",
+    );
+    let report = fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("text pass after the move cleanup");
+    assert_eq!(
+        report.world_space, 1,
+        "A stays pending for its world's space"
+    );
+    assert!(
+        !fixture.primary.seen().contains(&fixture.world_claim),
+        "the vault's embedder never sees A",
+    );
+}
+
+#[test]
+fn retiring_a_world_named_space_is_refused() {
+    let fixture = world_space_fixture();
+    fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("vault text pass");
+    let fixed = FixedTextEmbedder::default();
+    fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    let retired = fixture
+        .vault
+        .retire_embedding_space(&fixture.owner, WORLD_SPACE_ID);
+    assert!(
+        retired.is_err(),
+        "retiring a space a world names is refused",
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space read"),
+        Some(text_space(WORLD_SPACE_ID)),
+        "W still names its space after the refused retire",
+    );
+}
+
+/// The host seeds the world's space again at the same width without text, a system move with
+/// no owner behind it. While W's order names the space, the space keeps text, so A stays held
+/// for it and reaches neither the vault's embedder nor a remote rung that allows it. Once the
+/// order no longer names the space, a redeclaration without text applies as declared.
+#[test]
+fn redeclaring_a_world_named_space_without_text_keeps_its_text() {
+    let fixture = world_space_fixture();
+    let image_only = EmbeddingSpace {
+        accepts: BTreeSet::from([InputKind::Image]),
+        query_towers: BTreeSet::from([InputKind::Image]),
+        ..text_space(WORLD_SPACE_ID)
+    };
+    fixture
+        .vault
+        .seed_embedding_space(image_only.clone())
+        .expect("the host seeds the world's space again without text");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space read"),
+        Some(EmbeddingSpace {
+            accepts: BTreeSet::from([InputKind::Text, InputKind::Image]),
+            query_towers: BTreeSet::from([InputKind::Text, InputKind::Image]),
+            ..text_space(WORLD_SPACE_ID)
+        }),
+        "W's order names the space, so the redeclaration keeps its text",
+    );
+    let remote = Arc::new(RecordingVaultEmbedder::new(EmbedderLocality::ThirdParty));
+    let report = fixture
+        .reconciler()
+        .with_remote_rung(RemoteRung::new(remote.clone(), Arc::new(AllowAll)))
+        .expect("public remote rung with an allow-all egress predicate")
+        .reconcile_once()
+        .expect("text pass after the redeclaration");
+    assert_eq!(
+        report.world_space, 1,
+        "A stays pending for its world's space"
+    );
+    assert_eq!(
+        remote.seen(),
+        vec![fixture.base_claim],
+        "the remote rung never sees A"
+    );
+    assert!(
+        fixture.primary.seen().is_empty(),
+        "the vault's embedder never sees A"
+    );
+
+    fixture.set_models(ModelOrder::Inherit);
+    fixture
+        .vault
+        .declare_embedding_space(&fixture.owner, image_only.clone())
+        .expect("owner declares the space again without text");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space read"),
+        None,
+        "W inherits, so it names no text space",
+    );
+    assert!(
+        fixture
+            .vault
+            .embedding_spaces()
+            .expect("declared spaces")
+            .contains(&image_only),
+        "with no world naming the space, the redeclaration applies as declared",
+    );
+}
+
+#[test]
+fn joining_a_world_drops_the_vault_index_vector() {
+    let fixture = world_space_fixture();
+    let asset = ingest_text_asset(
+        &fixture,
+        EntityId::now(),
+        "b3dlbidzIHVuc2NvcGVkIHRleHQgYXNzZXQ=",
+    );
+    fixture
+        .vault
+        .put_vector(&asset, &text_vector(b"owen's unscoped text asset"))
+        .expect("owner writes a vector for the unscoped asset");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&asset)
+            .expect("asset vector read")
+            .is_some(),
+        "A holds a vault-index vector while unscoped",
+    );
+    fixture
+        .vault
+        .batch()
+        .edge(&asset, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner moves A into W");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&asset)
+            .expect("asset vector read after joining W")
+            .is_none(),
+        "a row that joins a world with its own text space keeps no vault-index vector",
+    );
+    let fixed = FixedTextEmbedder::default();
+    fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert!(
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, &asset)
+            .expect("world-space vector read")
+            .is_some(),
+        "W's asset gets its vector in S after the media pass",
+    );
+}
+
+/// Pipeline review round 2 of #8280 (P1, world_space.rs:288): a claim a model wrote from a
+/// prompt that carried a row carries that row's worlds (FIX 8192), so when the row joins a world
+/// with its own text space by an edge alone, the claim's vault-index vector goes too.
+#[test]
+fn a_claim_prompted_by_a_row_that_joins_a_world_drops_the_vault_index_vector() {
+    let fixture = world_space_fixture();
+    let asset = ingest_text_asset(
+        &fixture,
+        EntityId::now(),
+        "YSB0ZXh0IGFzc2V0IGEgbW9kZWwgcHJvbXB0IGNhcnJpZWQ=",
+    );
+    let person = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let claim = EntityId::now();
+    let text = "a model's words from a prompt that carried the unscoped asset";
+    fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner)
+        .claim_propose_prompted(
+            &ClaimInput {
+                id: Some(claim.to_hex()),
+                predicate: "profile.preference".to_owned(),
+                subject_ref: person.to_hex(),
+                value: json!(text),
+                confidence: 1.0,
+                source: "tool_output".to_owned(),
+                world_ref: None,
+                relationship_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: None,
+                learned_at: None,
+                salience: None,
+                confidence_details: None,
+            },
+            "test.prompted_claim",
+            &[asset],
+            &[b"a text asset a model prompt carried"],
+        )
+        .expect("a base claim whose birth names the asset as a prompt input");
+    fixture
+        .vault
+        .put_vector(&claim, &text_vector(text.as_bytes()))
+        .expect("owner writes a vector for the prompted claim");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&claim)
+            .expect("claim vector read")
+            .is_some(),
+        "C holds a vault-index vector while its prompt input is unscoped",
+    );
+    fixture
+        .vault
+        .batch()
+        .edge(&asset, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner moves the prompt input into W");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&claim)
+            .expect("claim vector read after its prompt input joined W")
+            .is_none(),
+        "a claim whose prompt carried a row that joins a world with its own text space keeps no vault-index vector",
+    );
+}
+
+#[test]
+fn leaving_a_world_drops_the_world_space_vector() {
+    let fixture = world_space_fixture();
+    let asset = ingest_text_asset(
+        &fixture,
+        EntityId::now(),
+        "eXVraSdzIHRleHQgYXNzZXQgbGVhdmVzIGl0cyB3b3JsZA==",
+    );
+    fixture
+        .vault
+        .batch()
+        .edge(&asset, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner moves A into W");
+    let fixed = FixedTextEmbedder::default();
+    fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert!(
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, &asset)
+            .expect("world-space vector read")
+            .is_some(),
+        "A holds a vector in S while in W",
+    );
+    fixture
+        .vault
+        .batch()
+        .delete_edge(&asset, EdgeKind::InWorld, &fixture.world)
+        .commit()
+        .expect("owner moves A out of W");
+    assert!(
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, &asset)
+            .expect("world-space vector read after leaving W")
+            .is_none(),
+        "a row that leaves its world keeps no vector in the world's text space",
+    );
+    fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("text pass after leaving W");
+    assert!(
+        fixture.primary.seen().contains(&asset),
+        "the vault's embedder takes A again",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&asset)
+            .expect("asset vector read after leaving W")
+            .is_some(),
+        "the vault's index takes A again",
+    );
+}
+
+#[test]
+fn a_world_caption_gets_its_vector_in_the_world_space() {
+    let fixture = world_space_fixture();
+    let at = fixture.vault.now_recorded_at();
+    let range = TimeRange { start: at, end: at };
+    let picture = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &picture,
+            ENTITY_TYPE_ASSET,
+            range,
+            at,
+            b"owen's picture in the private world",
+        )
+        .edge(&picture, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner stores a picture in W");
+    let caption = EntityId::now();
+    let caption_text = "owen's caption of the private-world picture";
+    let caption_body =
+        rmp_serde::to_vec_named(&json!({ "content": caption_text })).expect("caption body");
+    fixture
+        .vault
+        .batch()
+        .put(&caption, ENTITY_TYPE_ASSET_TEXT, range, at, &caption_body)
+        .text(&caption, &[("content", caption_text)])
+        .edge(&caption, EdgeKind::DerivedFrom, &picture, 1.0)
+        .commit()
+        .expect("owner stores the picture's caption with no vector");
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle publication");
+    let fixed = FixedTextEmbedder::default();
+    fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert!(
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, &caption)
+            .expect("world-space vector read")
+            .is_some(),
+        "W's caption gets its vector in S after idle publication and the media pass",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("vault-index vector read")
+            .is_none(),
+        "the vault index stays out of W's caption",
+    );
+}
+
+#[test]
+fn a_world_note_gets_its_vector_in_the_world_space() {
+    let fixture = world_space_fixture();
+    let person = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let receipt = fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner)
+        .create_note("research", "yuki's note in the private world")
+        .expect("owner writes a NOTE");
+    let note = EntityId::from_hex(&receipt.id_hex).expect("NOTE id");
+    fixture
+        .vault
+        .batch()
+        .edge(&note, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner moves the NOTE into W");
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle publication");
+    let fixed = FixedTextEmbedder::default();
+    fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert!(
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, &note)
+            .expect("world-space vector read")
+            .is_some(),
+        "W's NOTE gets its vector in S after idle publication and the media pass",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&note)
+            .expect("vault-index vector read")
+            .is_none(),
+        "the vault index stays out of W's NOTE",
+    );
+}
