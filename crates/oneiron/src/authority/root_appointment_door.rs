@@ -209,7 +209,7 @@ fn unsigned_appointment(
 ) -> Result<AuthorityLogEntry> {
     let proof = successor.sign_appointment_challenge(&vault_id, &pin.id, &parents)?;
     let anchor_key = AuthorityKey::Ed25519(anchor.verifying_key().to_bytes());
-    let mut entry = AuthorityLogEntry {
+    let entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(vault_id),
         seq,
