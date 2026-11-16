@@ -86,6 +86,11 @@ impl Vault {
     /// are excluded; a record a cleanup archive filed away goes with its
     /// retained body (FIX 21912). No caller can disable nulling.
     ///
+    /// Each TASK's authority facts go with it byte-exact: one true archive
+    /// keeps them, where a sync window bound for another vault withholds
+    /// them, and another chain's import refuses them (Engine ruling
+    /// TASK-FACT-ARCHIVE-CROSSING = A; `ForeignAuthorityChain`).
+    ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
     /// all your data"); then each custody record goes as its handle only.
