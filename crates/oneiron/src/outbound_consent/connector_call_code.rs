@@ -40,9 +40,11 @@ use crate::task_verb::sdk::AgentVerb;
 
 use super::connector_call::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, PENDING_CALLS,
-    PendingConnectorCall, SettledConnectorCall, Step, connector_call_ref, now_ms, refused,
+    PendingConnectorCall, SettledConnectorCall, Step, connector_call_ref, refused,
 };
-use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+use super::connector_call_pending::{
+    connector_call_lifetime_words, connector_call_pending_ttl_secs_in_txn,
+};
 use super::scope::ScopedMcpCallContext;
 use super::tool_call::PreparedToolCall;
 
@@ -385,7 +387,10 @@ impl Vault {
             .map(|choice| choice.as_str().replace('_', " "))
             .collect::<Vec<_>>()
             .join(", ");
-        let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
+        let lifetime = connector_call_lifetime_words(connector_call_pending_ttl_secs_in_txn(
+            &self.store,
+            &txn,
+        )?);
         let standing = row
             .binding
             .standing_offer
@@ -396,7 +401,7 @@ impl Vault {
         Ok(format!(
             "A code run asks before it calls tool \"{tool}\" on connector \"{name}\" (code \
              consent wait {wait}). Its own gate held the call because: {reasons}. Answer one of: \
-             {choices}. Nothing is sent until you answer, and the call expires {days} days after \
+             {choices}. Nothing is sent until you answer, and the call expires {lifetime} after \
              it was held.{standing}",
             tool = clip(&call.tool),
             name = clip(&call.name),
@@ -435,7 +440,9 @@ impl Vault {
         }
         // Expiry commits an existing held row with its wait. Keep the
         // receipt-only fallback when that row disappeared before the writer.
-        if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
+        if let Some(expired) =
+            self.expire_connector_call_if_due(call_ref, &pending, crate::unix_millis_now())?
+        {
             self.settle_code_wait(wait_id, &expired, pending.source_rows.as_deref())?;
             return Ok((expired, pending.source_rows));
         }

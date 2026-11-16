@@ -104,16 +104,10 @@ fn decode_charset(bytes: &[u8], charset: Option<&str>) -> String {
     }
 }
 
-fn hex_value(byte: u8) -> Option<u8> {
-    char::from(byte)
-        .to_digit(16)
-        .and_then(|digit| u8::try_from(digit).ok())
-}
-
 /// The byte a `=XX` or `%XX` escape at `at` names.
 fn hex_pair(bytes: &[u8], at: usize) -> Option<u8> {
-    let high = hex_value(*bytes.get(at + 1)?)?;
-    let low = hex_value(*bytes.get(at + 2)?)?;
+    let high = oneiron_hex::nibble_any_case(*bytes.get(at + 1)?)?;
+    let low = oneiron_hex::nibble_any_case(*bytes.get(at + 2)?)?;
     Some((high << 4) | low)
 }
 

@@ -968,7 +968,6 @@ impl Vault {
                 "gate.connector_key.slate_narrow",
                 &record,
                 policy.read_frontier_hash()?,
-                at,
             )?;
             Ok(slate)
         })
