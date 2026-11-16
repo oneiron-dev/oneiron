@@ -10,6 +10,13 @@ readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 
+# The mail doors over a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded
+# by `oneiron/test-support`).
+[[test]]
+name = "vault_mail_doors"
+path = "tests/vault_mail_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[bin]]
 name = "oneiron-server"
 path = "src/main.rs"
