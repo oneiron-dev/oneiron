@@ -3,12 +3,14 @@
 //! parked, and is set when the owner answers a quota question
 //! `use_fallback`. This is owner policy, kept apart from the deployment's
 //! runtime cooldowns: a checkpoint keeps it, and a restore keeps the live
-//! vault's rows. The Responses `store` switch (OF-602) lives here too.
+//! vault's rows. The Responses `store` switch (OF-602) is the catalogue key
+//! `models.responses_store` (`settings::setting_keys`).
 
 use crate::Vault;
-use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::side_table::{self, Raw, SideTable};
+
+use super::setting_keys::RESPONSES_STORE;
 
 /// The owner's standing fallback for each offer, by the offer's key: the
 /// engine model id its calls go to while it is parked. Key: hex64.
@@ -18,10 +20,6 @@ const FALLBACKS: SideTable<String, String, Raw> = SideTable::new(&side_table::MO
 pub(crate) fn model_owner_fallback_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<String, Raw>(bytes)
 }
-
-/// Whether providers keep Responses (`store`). Absent is off.
-const RESPONSES_STORE: SideTable<(), bool, Named> =
-    SideTable::new(&side_table::MODEL_OWNER_RESPONSES_STORE);
 
 impl Vault {
     /// The engine id of the model the owner named for the offer whose key is
@@ -42,19 +40,10 @@ impl Vault {
     }
 
     /// Whether the owner lets a provider keep each Responses turn (`store`),
-    /// so a reconnected socket resumes its chain. Off by default.
+    /// so a reconnected socket resumes its chain. Off by default, and off
+    /// for a row that does not decode.
     pub fn responses_store(&self) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(RESPONSES_STORE
-            .get(&self.store, &rtxn, &())?
-            .unwrap_or(false))
-    }
-
-    /// The owner turns the Responses `store` switch on or off.
-    pub fn set_responses_store(&self, owner: &AuthenticatedOwner, on: bool) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            RESPONSES_STORE.put(&self.store, txn, &(), &on)
-        })
+        Ok(RESPONSES_STORE.read_in_txn(self, &rtxn, &[], None)?.value)
     }
 }
