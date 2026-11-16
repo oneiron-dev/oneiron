@@ -331,6 +331,19 @@ pub struct CodeRunReplayGeneration {
     pub pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN],
 }
 
+/// What a guarded append reads from the stored row it replaces (FIX 16):
+/// the row's generation, and the run, birth world and bridge calls
+/// [`CodeRunReplayRecord::over_held`] keeps. It is decoded from the stored
+/// bytes in place; the row's outputs, bindings and earlier checkpoints are
+/// never decoded.
+#[derive(Debug)]
+pub(crate) struct CodeRunReplayHeld {
+    pub(crate) run_id: EntityId,
+    pub(crate) birth_world: Option<EntityId>,
+    pub(crate) bridge_calls: Vec<CodeRunBridgeCall>,
+    pub(crate) generation: CodeRunReplayGeneration,
+}
+
 impl CodeRunReplayGeneration {
     fn for_record(record: &CodeRunReplayRecord) -> Result<Self> {
         Ok(Self {
@@ -446,7 +459,7 @@ impl CodeRunReplayRecord {
     /// the same request, or when its request names a lifted handle, the form
     /// the wall left the same call's request in. Otherwise the live row stays,
     /// so the record keeps the call that ran, not the one it replaced.
-    pub(crate) fn over_held(&self, held: Option<&Self>) -> Cow<'_, Self> {
+    pub(crate) fn over_held(&self, held: Option<&CodeRunReplayHeld>) -> Cow<'_, Self> {
         let Some(held) = held.filter(|held| held.run_id == self.run_id) else {
             return Cow::Borrowed(self);
         };

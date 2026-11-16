@@ -277,5 +277,5 @@ pub(super) fn request_digest(request: &rmpv::Value) -> String {
     if rmpv::encode::write_value(&mut encoded, request).is_err() {
         encoded.clear();
     }
-    crate::entity_id::bytes_to_hex_lower(blake3::hash(&encoded).as_bytes())
+    oneiron_contracts::fingerprint::ContentHash::of(&encoded).to_hex()
 }

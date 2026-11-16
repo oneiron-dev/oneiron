@@ -30,6 +30,7 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
@@ -94,12 +95,25 @@ struct ReleasedTick {
 }
 
 impl ReleasedTick {
+    /// The tick's input hash: the TASK, then its due time. The run key
+    /// starts with it, so it keeps its bytes (K, PLAN-UC-04 stage 6.3).
     fn input_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron.hook-tick.v1");
-        hasher.update(self.task.as_bytes());
-        hasher.update(&self.due_at.to_be_bytes());
-        *hasher.finalize().as_bytes()
+        LegacyDigest::new(purposes::runtime_hooks::TICK_INPUT)
+            .raw(self.task.as_bytes())
+            .raw(&self.due_at.to_be_bytes())
+            .finish()
     }
+}
+
+/// The input hash of a tick of `task` due at `due_at`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn tick_input_hash_for_test(task: EntityId, due_at: u64) -> [u8; 32] {
+    ReleasedTick {
+        task,
+        due_at,
+        recorded_at: 0,
+    }
+    .input_hash()
 }
 
 /// What a tick adds to its hook's input.

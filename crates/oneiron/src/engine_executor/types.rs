@@ -548,6 +548,17 @@ pub struct EngineExecutorOutcome {
 }
 
 impl EngineExecutorOutcome {
+    /// This outcome with the resume-preflight report of the pending step its entry resumed,
+    /// when the entry resumed one and then committed it or parked it again (L8-23).
+    #[must_use]
+    pub(super) fn with_resume_preflight(
+        mut self,
+        resume_preflight: &Option<ResumePreflightReport>,
+    ) -> Self {
+        self.resume_preflight = resume_preflight.clone();
+        self
+    }
+
     /// The wait a Waiting run parked on, keyed as its reply is delivered;
     /// `None` for any other status.
     #[must_use]
