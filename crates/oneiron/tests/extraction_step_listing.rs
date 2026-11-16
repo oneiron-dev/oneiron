@@ -126,7 +126,7 @@ fn listed_reply(subject: &str, quote: &str) -> String {
         "persons": [],
         "candidates": [{
             "subject": subject,
-            "predicate": "likes",
+            "predicate": "preference.food",
             "value": "tea",
             "confidence": 0.9,
             "evidence_refs": [{"source": "T1", "quote": quote}],

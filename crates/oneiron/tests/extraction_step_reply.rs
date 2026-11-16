@@ -88,7 +88,10 @@ fn a_valid_bound_reply_decodes() -> ExtractionStepTestResult<()> {
     );
     assert_eq!(decoded["candidates"][0]["subject"], json!({"declared": 1}));
     assert_eq!(decoded["candidates"][0]["index"], json!(0));
-    assert_eq!(decoded["candidates"][0]["predicate"], json!("likes"));
+    assert_eq!(
+        decoded["candidates"][0]["predicate"],
+        json!("preference.food")
+    );
     assert_eq!(decoded["candidates"][0]["value"], json!("tea"));
     assert_eq!(
         decoded["candidates"][0]["evidence"],

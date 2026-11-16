@@ -118,7 +118,7 @@ pub(crate) fn step_plain_reply() -> String {
         "persons": [{"id": "new:P1", "name": "owen", "evidence_turn_refs": ["T1"]}],
         "candidates": [{
             "subject": "new:P1",
-            "predicate": "likes",
+            "predicate": "preference.food",
             "value": "tea",
             "confidence": 0.9,
             "evidence_refs": [{"source": "T1", "quote": "owen likes tea"}],
