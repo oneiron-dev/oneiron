@@ -599,7 +599,9 @@ pub struct GuestSession {
     /// The directory holding this guest's `pids.events`, once resolved:
     /// from the fence proof's inspect at a fenced start, else at the first
     /// pressure read whose inspect answered. `Some(None)`: the container
-    /// names no readable one. Later reads read the file alone.
+    /// names no readable one, and that stays this session's answer (an
+    /// inspect of a running container found no pids cgroup, as on a
+    /// cgroup v1 host). Later reads read the file alone.
     #[cfg(target_os = "linux")]
     pressure_dir: std::sync::OnceLock<Option<PathBuf>>,
 }

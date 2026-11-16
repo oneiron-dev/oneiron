@@ -202,7 +202,10 @@ impl QueueCheckExecutor {
             .iter()
             .map(OsString::from)
             .collect();
-        let transport = match backend.start_session(
+        // The helper leaves after its terminal frame. A held session keeps
+        // its container, and so its cgroup, until the helper's input closes
+        // (FIX 8013).
+        let transport = match backend.start_session_until_stdin_closes(
             &spec,
             &command,
             Arc::clone(&relay) as Arc<dyn EgressRelay>,
@@ -229,10 +232,10 @@ impl QueueCheckExecutor {
             inputs,
             stop,
         )?;
-        // The helper runs until its input closes, so its container's cgroup
-        // still reads here: the run's manifest carries the pressure its
-        // guest showed (FIX 8013). Then its input closes, as it did at the
-        // drive's end.
+        // The held container outlives its helper until the helper's input
+        // closes, so its cgroup still reads here: the run's manifest carries
+        // the pressure its guest showed (FIX 8013). Then its input closes,
+        // as it did at the drive's end, and the container ends.
         let pressure = lease.observe_pressure();
         drop(input);
         let abandoned = lease.abandoned() || relay.abandoned.load(Ordering::Acquire);
@@ -745,8 +748,11 @@ impl EgressRelay for QueueCheckRelay {
 /// isolated check with no commands on `lease`, a guest session the test
 /// started and whose start `manifest` names, and answers what the run came
 /// to. An in-process helper answers on the session's pipes as `checker.py`
-/// does for an empty tree: the input digests and the terminal frame, then
-/// it waits until its input closes.
+/// does for an empty tree: the input digests and the terminal frame. Then
+/// it reads on until its input closes, as a held container's launcher
+/// does. The session goes only to a held start
+/// (`start_session_until_stdin_closes`): a plain start is refused, so a
+/// checker that does not ask for the hold does not complete.
 ///
 /// # Errors
 /// An engine failure of the run, or of the door's own pipes.
@@ -756,9 +762,10 @@ pub(crate) fn run_empty_isolated_check(
     manifest: SessionManifest,
 ) -> oneiron::Result<QueueCheckExecution> {
     use oneiron::code_sandbox::microvm::{
-        ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle, NoSandboxBackends, backend_error,
+        CredentialResolver, ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle,
+        NoSandboxBackends, backend_error,
     };
-    use oneiron::code_sandbox::{SandboxBoundaryContract, SandboxMountTable};
+    use oneiron::code_sandbox::{SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
     use oneiron::merge_queue::{QueueCheckFile, QueueCheckTreeSource};
     use oneiron_container::SessionTransport;
     use std::os::unix::net::UnixStream;
@@ -779,11 +786,23 @@ pub(crate) fn run_empty_isolated_check(
         }
     }
 
-    /// Hands out the test's one session, once.
+    /// Hands out the test's one session, once, to a held start.
     struct HandedSession(Mutex<Option<SessionTransport>>);
 
     impl MicroVmBackend for HandedSession {
         fn start_session(
+            &self,
+            _spec: &GuestSpec,
+            _command: &[OsString],
+            _relay: Arc<dyn EgressRelay>,
+        ) -> oneiron::Result<SessionTransport> {
+            Err(backend_error(
+                self.name(),
+                "a checker guest must outlive its helper until its input closes",
+            ))
+        }
+
+        fn start_session_until_stdin_closes(
             &self,
             _spec: &GuestSpec,
             _command: &[OsString],
@@ -814,6 +833,23 @@ pub(crate) fn run_empty_isolated_check(
             _image: &GuestImage,
             _budget: ExecutionBudget,
         ) -> oneiron::Result<MicroVmExit> {
+            Err(backend_error(self.name(), "sessions only"))
+        }
+
+        fn collect_overlay_delta(
+            &self,
+            _vm: &MicroVmHandle,
+        ) -> oneiron::Result<Vec<SandboxProposalWrite>> {
+            Err(backend_error(self.name(), "sessions only"))
+        }
+
+        fn cleanup(&self, _vm: &MicroVmHandle) {}
+
+        fn proxy_credentials(
+            &self,
+            _vm: &MicroVmHandle,
+            _resolver: &dyn CredentialResolver,
+        ) -> oneiron::Result<()> {
             Err(backend_error(self.name(), "sessions only"))
         }
     }
@@ -893,6 +929,8 @@ pub(crate) fn run_empty_isolated_check(
         tree: &tree,
     };
     let ran = executor.execute_isolated(&invocation, &inputs, &|| false);
+    // A session never handed out closes its pipes here, so the helper ends.
+    drop(executor);
     let _ = helper.join();
     ran
 }

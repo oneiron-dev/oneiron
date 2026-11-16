@@ -51,6 +51,20 @@ pub trait MicroVmBackend: Send + Sync {
         ))
     }
 
+    /// [`start_session`](Self::start_session) whose guest's container
+    /// outlives the guest until the host closes the session's input (FIX
+    /// 8013), so the host still reads the container's cgroup after the
+    /// guest's last frame. A backend with no such hold starts a plain
+    /// session.
+    fn start_session_until_stdin_closes(
+        &self,
+        spec: &oneiron_container::GuestSpec,
+        command: &[std::ffi::OsString],
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<oneiron_container::SessionTransport> {
+        self.start_session(spec, command, relay)
+    }
+
     /// Stable backend label for diagnostics.
     fn name(&self) -> &'static str;
 
@@ -164,6 +178,14 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
         relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
     ) -> Result<oneiron_container::SessionTransport> {
         (**self).start_session(spec, command, relay)
+    }
+    fn start_session_until_stdin_closes(
+        &self,
+        spec: &oneiron_container::GuestSpec,
+        command: &[std::ffi::OsString],
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<oneiron_container::SessionTransport> {
+        (**self).start_session_until_stdin_closes(spec, command, relay)
     }
 
     fn name(&self) -> &'static str {

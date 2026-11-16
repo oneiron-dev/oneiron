@@ -163,9 +163,10 @@ pub(super) fn native_mail_authorization(
 }
 
 /// Starts one browser session the way a code run does, and closes it. The
-/// evidence is the digest of what the guest's fence proved. Each phase's
-/// outcome moves `readiness` (FIX 7670), and leaves the check's own answer
-/// as it was. The session's sockets and threads charge `floor`, the vault's
+/// evidence is the digest of its manifest: what the guest's fence proved,
+/// and the pids-limit hits it showed by its close, if any (FIX 8013). Each
+/// phase's outcome moves `readiness` (FIX 7670), and leaves the check's own
+/// answer as it was. The session's sockets and threads charge `floor`, the vault's
 /// host floor (FIX 6300). Its backend comes from `backends`, the set the
 /// vault carries (F1-6).
 fn browser_session_ready(

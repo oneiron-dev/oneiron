@@ -1,11 +1,14 @@
 //! A merge-queue checker guest's pids-limit hits reach the completed run's
 //! session manifest ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013
 //! follow-up). The isolated executor reads the guest's cgroup `pids.events`
-//! through the session's lease after the helper's terminal frame, while the
-//! helper still runs (it ends when its input closes), and the run's receipt
-//! carries what it read. The session here is a container session on a fake
-//! runtime whose `inspect` names a scratch cgroup directory.
-#![cfg(target_os = "linux")]
+//! through the session's lease after the helper's terminal frame, while its
+//! container still runs (a held session: it ends when the helper's input
+//! closes), and the run's receipt carries what it read. The door hands its
+//! session only to a held start. The session here is a container session on
+//! a fake runtime whose `inspect` names a scratch cgroup directory; the real
+//! launcher's hold is proven by `oneiron-container`'s
+//! `fence_launcher_stdin_hold` test.
+#![cfg(all(oneiron_test_support, target_os = "linux"))]
 
 use oneiron::merge_queue::QueueCheckExecution;
 use oneiron_container::{
