@@ -3016,7 +3016,7 @@ fn a_federation_lane_does_not_release_a_saved_update_of_a_row_turned_stale() {
     use oneiron::sync::client::{SyncClient, SyncClientConfig};
     use oneiron::sync::federation_burst::FederationPeer;
     use oneiron::sync::manager::WindowManager;
-    use oneiron::test_doors::sync_frame_release::frame_withheld;
+    use oneiron::test_doors::world_follow::frame_withheld;
 
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault"));
