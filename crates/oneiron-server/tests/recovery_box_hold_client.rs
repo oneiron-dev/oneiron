@@ -295,3 +295,73 @@ fn cancel_fails_on_every_other_answer() {
         .cancel_pending_box_release()
         .expect_err("no supervisor is no cancel");
 }
+
+#[test]
+fn recovery_wait_report_and_cancel_refusals_carry_their_code_and_never_the_token() {
+    let (_dir, socket, supervisor) =
+        supervisor(Answer::Line(r#"{"held":false,"error":"stale_generation"}"#));
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let error = client
+        .report_recovery_wait(Duration::from_secs(60))
+        .expect_err("a refusal fails the report")
+        .to_string();
+    assert!(
+        error.contains("was refused by the supervisor (stale_generation)"),
+        "{error}"
+    );
+    assert!(
+        !error.contains(&token()),
+        "the token never reaches an error"
+    );
+    supervisor.join().expect("supervisor");
+
+    let (_dir, socket, supervisor) =
+        supervisor(Answer::Line(r#"{"held":false,"error":"wrong_node"}"#));
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let error = client
+        .cancel_pending_box_release()
+        .expect_err("a refusal fails the cancel")
+        .to_string();
+    assert!(
+        error.contains("was refused by the supervisor (wrong_node)"),
+        "{error}"
+    );
+    assert!(
+        !error.contains(&token()),
+        "the token never reaches an error"
+    );
+    supervisor.join().expect("supervisor");
+
+    // what hypsock answers a line it reads as a ledger page: not a cancel answer
+    let (_dir, socket, supervisor) = supervisor(Answer::Line(
+        r#"{"ok":false,"error":"missing field `page`","report":null,"offset":null,"committed":false}"#,
+    ));
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    client
+        .cancel_pending_box_release()
+        .expect_err("a ledger ack is not a cancel answer");
+    supervisor.join().expect("supervisor");
+}
+
+#[test]
+fn recovery_wait_report_and_cancel_with_a_malformed_token_are_never_sent() {
+    for cancel in [false, true] {
+        let (_dir, socket, supervisor) = supervisor(Answer::Line(r#"{"held":true}"#));
+        let client = hold_client(&socket, VAULT, "not-a-token", BOUND);
+        if cancel {
+            client
+                .cancel_pending_box_release()
+                .expect_err("a request the supervisor would refuse is not sent");
+        } else {
+            client
+                .report_recovery_wait(Duration::from_secs(60))
+                .expect_err("a request the supervisor would refuse is not sent");
+        }
+        drop(UnixStream::connect(&socket).expect("connect to release the supervisor"));
+        assert_eq!(
+            supervisor.join().expect("supervisor"),
+            "",
+            "cancel={cancel}"
+        );
+    }
+}

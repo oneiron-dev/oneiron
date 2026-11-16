@@ -96,6 +96,10 @@ fn recovery_box_wait_and_cancel_wires_are_exact() {
             "ab".repeat(TOKEN_LEN)
         )
     );
+    let wait_line = serde_json::to_string(&wait).unwrap();
+    let smuggled = wait_line.replace("\"wait_secs\"", "\"kit_only\":true,\"wait_secs\"");
+    assert!(serde_json::from_str::<RecoveryBoxWait>(&smuggled).is_err());
+    assert!(!format!("{wait:?}").contains(&"ab".repeat(TOKEN_LEN)));
     let mut over = wait.clone();
     over.wait_secs = RECOVERY_BOX_WAIT_MAX_SECS + 1;
     assert!(over.validate().is_err());
