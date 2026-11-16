@@ -42,11 +42,13 @@ pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod contact_family_heads;
 pub mod conversation_membership_index;
+pub mod conversation_training_fold;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;
+pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
 pub mod dreamer_attempt_binding;
@@ -56,6 +58,7 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod fingerprint_keep_hook_digests;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
@@ -66,9 +69,11 @@ pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
+pub mod held_answer_confirm;
 pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
+pub mod home_pick_fold;
 #[cfg(feature = "sync")]
 pub mod home_sections;
 #[cfg(feature = "sync")]
@@ -106,6 +111,7 @@ pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod own_device_message_replay;
+pub mod owner_key_release;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
@@ -142,6 +148,8 @@ pub mod split_phrase_carrier;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
+#[cfg(feature = "sync")]
+pub mod sync_parted_row_binding;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod turn_words;

@@ -60,13 +60,16 @@ use serde::Serialize;
 /// train assigned this one.
 /// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
 /// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
-/// 41: each covered row's sequence floor comes from the covered rows, not from the order
+/// 41: a carried machine answer that needed an owner key's proof and carried none is held
+/// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
+/// CARRIER-OWNER-PROOF).
+/// 42: each covered row's sequence floor comes from the covered rows, not from the order
 /// they arrived in, and a row that only takes away is never floored (FIX
 /// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 41;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
