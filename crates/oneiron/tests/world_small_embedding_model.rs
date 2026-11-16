@@ -450,3 +450,93 @@ fn a_space_off_the_device_is_not_a_world_text_space() {
         "B is sent to the vault embedder"
     );
 }
+
+#[test]
+fn order_change_moves_world_vectors() {
+    let fixture = world_space_fixture();
+    let reconciler = fixture.reconciler();
+    let in_world_space = |id: &EntityId| {
+        fixture
+            .vault
+            .media_embedding_provenance(WORLD_SPACE_ID, id)
+            .expect("world-space vector read")
+            .is_some()
+    };
+    let in_vault_index = |id: &EntityId| {
+        fixture
+            .vault
+            .get_vector(id)
+            .expect("vault-index vector read")
+            .is_some()
+    };
+
+    // While W inherits, A and B take the vault's index.
+    fixture.set_models(ModelOrder::Inherit);
+    let inherited = reconciler
+        .reconcile_once()
+        .expect("text pass while W inherits");
+    assert_eq!(inherited.embedded, 2, "A and B embed into the vault index");
+    assert!(in_vault_index(&fixture.world_claim));
+    assert!(in_vault_index(&fixture.base_claim));
+
+    // W's order names S: A's vault-index vector goes at the next text pass, and A stays
+    // pending for S, which the media pass then fills.
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    let named = reconciler
+        .reconcile_once()
+        .expect("text pass after W names its space");
+    assert_eq!(
+        named.world_space_index_drops, 1,
+        "the pass drops A's vault-index vector"
+    );
+    assert_eq!(named.world_space, 1, "A is queued again, pending for S");
+    assert_eq!(named.embedded, 0, "nothing embeds into the vault index");
+    assert!(
+        !in_vault_index(&fixture.world_claim),
+        "A left the vault index"
+    );
+    assert!(
+        in_vault_index(&fixture.base_claim),
+        "B keeps its vault-index vector"
+    );
+    let fixed = FixedTextEmbedder::default();
+    let media = fixture
+        .vault
+        .reconcile_media_embeddings(&fixed, 64)
+        .expect("the world's text space fills");
+    assert_eq!(media.embedded, 1, "S takes A");
+    assert_eq!(
+        *fixed.seen.lock().expect("world-space embedder inputs"),
+        vec![fixture.world_claim],
+    );
+    assert!(in_world_space(&fixture.world_claim));
+
+    // W inherits again: A's S vector goes at the next text pass, which embeds A into the
+    // vault index again.
+    fixture.set_models(ModelOrder::Inherit);
+    let back = reconciler
+        .reconcile_once()
+        .expect("text pass after W inherits again");
+    assert_eq!(
+        back.world_space_vector_drops, 1,
+        "the pass drops A's S vector"
+    );
+    assert_eq!(back.world_space_index_drops, 0);
+    assert_eq!(back.world_space, 0);
+    assert_eq!(back.embedded, 1, "A embeds into the vault index again");
+    assert!(
+        !in_world_space(&fixture.world_claim),
+        "A left the world's space"
+    );
+    assert!(in_vault_index(&fixture.world_claim));
+    assert_eq!(
+        fixture.primary.seen().last(),
+        Some(&fixture.world_claim),
+        "the vault's model embedded A last"
+    );
+
+    // Nothing changed since: the next pass moves nothing.
+    let quiet = reconciler.reconcile_once().expect("quiet text pass");
+    assert_eq!(quiet.world_space_index_drops, 0);
+    assert_eq!(quiet.world_space_vector_drops, 0);
+}
