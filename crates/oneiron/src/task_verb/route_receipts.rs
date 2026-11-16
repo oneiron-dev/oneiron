@@ -2,89 +2,20 @@
 //! Entry [`TaskRouteLane`]; driven by `lifecycle_facade` through dispatch.
 //! Owned by `task_verb`; assignee kinds resolve via `verb_kind`, never here.
 use crate::attempt_queue::AttemptId;
+use crate::check_in::CheckInMode;
 use crate::claim::ClaimApprovalStatus;
 use crate::context_board::TasksSection;
 use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
 use crate::lens::RecordRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
-use crate::run_tree::RunTreeStatus;
 
 use super::terminal_state::TaskTerminalDisposition;
 
-/// The lanes `TASK.assignee` routes over: three pluggable EXECUTION lanes, plus
-/// the human lane, which executes nothing at all (ONE-1708).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskRouteLane {
-    Dreamer,
-    AgentDefinition,
-    PeerActor,
-    ChildActor,
-    /// A person was asked. Nothing realizes the task; the Dreamer follows up.
-    HumanAssignee,
-    /// A watch TASK (FIX 22121). Nothing realizes it: the hooks on its due
-    /// tick do its work, and that tick settles it.
-    Watch,
-}
-
-/// What routing one created TASK actually did. The peer variant naming zero
-/// attempts is the point: the synced entity IS the transport. The human variant
-/// names zero attempts for a different reason — a person is not a worker. The
-/// watch variant names none because its due tick's hooks do the work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum TaskRouteOutcome {
-    DreamerAttempt {
-        attempt_ref: AttemptId,
-    },
-    AgentDispatch {
-        attempt_ref: AttemptId,
-        agent_def_ref: EntityId,
-    },
-    PeerSyncedOnly {
-        actor_ref: EntityId,
-    },
-    ChildAddressed {
-        actor_ref: EntityId,
-    },
-    HumanFollowup {
-        actor_ref: EntityId,
-    },
-    /// A watch TASK queued no work; its tick at `due_at` (Unix seconds)
-    /// runs its hooks and settles it (FIX 22121).
-    WatchTick {
-        due_at: u64,
-    },
-}
-
-impl TaskRouteOutcome {
-    /// The lane this outcome came from.
-    #[must_use]
-    pub const fn lane(self) -> TaskRouteLane {
-        match self {
-            Self::DreamerAttempt { .. } => TaskRouteLane::Dreamer,
-            Self::AgentDispatch { .. } => TaskRouteLane::AgentDefinition,
-            Self::PeerSyncedOnly { .. } => TaskRouteLane::PeerActor,
-            Self::HumanFollowup { .. } => TaskRouteLane::HumanAssignee,
-            Self::ChildAddressed { .. } => TaskRouteLane::ChildActor,
-            Self::WatchTick { .. } => TaskRouteLane::Watch,
-        }
-    }
-
-    /// The local realizing attempt, or `None` on the peer, human and watch
-    /// lanes.
-    #[must_use]
-    pub const fn local_attempt(self) -> Option<AttemptId> {
-        match self {
-            Self::DreamerAttempt { attempt_ref } | Self::AgentDispatch { attempt_ref, .. } => {
-                Some(attempt_ref)
-            }
-            Self::PeerSyncedOnly { .. }
-            | Self::ChildAddressed { .. }
-            | Self::HumanFollowup { .. }
-            | Self::WatchTick { .. } => None,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::route_receipts::{
+    TaskCancelReceipt, TaskRouteLane, TaskRouteOutcome,
+};
 
 /// Result of one `tasks.create` invocation.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -137,63 +68,25 @@ pub struct TaskResultInput {
     pub finished_at: u64,
 }
 
-/// Vocabulary over the existing two-state approval ceiling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskCancelMode {
-    Auto,
-    FullAccess,
-    Manual,
-}
-
-impl TaskCancelMode {
-    /// All ladder vocabulary tokens in protocol sort order.
-    pub const ALL: [Self; 3] = [Self::Auto, Self::FullAccess, Self::Manual];
-
-    /// Stable vocabulary token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::FullAccess => "full-access",
-            Self::Manual => "manual",
-        }
-    }
-
-    pub(super) const fn ceiling(self) -> PolicyApprovalCeiling {
-        match self {
-            Self::Auto | Self::FullAccess => PolicyApprovalCeiling::Auto,
-            Self::Manual => PolicyApprovalCeiling::Proposed,
-        }
+/// The approval ceiling a cancel runs under in check-in `mode` (ROLES-CHECKIN
+/// PR 3, P3.6: the cancel's own mode type is folded into [`CheckInMode`], and
+/// its wire tokens `auto`, `full-access` and `manual` are check-in's). `auto`
+/// and `full-access` map to the Auto ceiling, `manual` to Proposed.
+pub(super) const fn cancel_ceiling(mode: CheckInMode) -> PolicyApprovalCeiling {
+    match mode {
+        CheckInMode::AskWhenUnsure | CheckInMode::NeverAsk => PolicyApprovalCeiling::Auto,
+        CheckInMode::AlwaysAsk => PolicyApprovalCeiling::Proposed,
     }
 }
 
-/// Default ladder vocabulary for own-task and own-spawn cancellation.
-pub const DEFAULT_TASK_CANCEL_MODE: TaskCancelMode = TaskCancelMode::Auto;
+/// Default check-in mode for own-task and own-spawn cancellation: `auto`.
+pub const DEFAULT_TASK_CANCEL_MODE: CheckInMode = CheckInMode::AskWhenUnsure;
 
 /// A TASK entity or agent-dispatch spawn addressed by `cancel`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskCancelTarget {
     Task(EntityId),
     Spawn(AttemptId),
-}
-
-/// Result of one `cancel` invocation.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TaskCancelReceipt {
-    pub approval: ClaimApprovalStatus,
-    pub effected: bool,
-    pub proposal_ref: Option<EntityId>,
-    pub gate_decision_ref: Option<String>,
-    pub status: Option<RunTreeStatus>,
-    /// ONE-1896: a RUNNING realization was asked to land rather than killed.
-    /// Deliberately not folded into `effected`, which stays the honest "work
-    /// actually stopped" bit — a request is a question, and the worker may
-    /// still refuse it.
-    pub cancel_requested: bool,
-    /// ONE-1896 rung 2: a verified owner took the nonrefusable path and the
-    /// runtime authored terminal cancellation receipts. Always false for the
-    /// cooperative verb, which cannot force by construction.
-    pub forced: bool,
 }
 
 /// Result of one `tasks.update`. Without a report it records the

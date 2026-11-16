@@ -51,8 +51,8 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::serialize::{SerializeConfig, serialize_pack};
 use oneiron_model::llm::BudgetLease;
 
-/// Chat uses the same closed five-level effort vocabulary as retrieval.
-pub type ChatDepth = Effort;
+#[doc(hidden)]
+pub use oneiron_records::memory::chat::{ChatAbstentionReason, ChatDepth};
 
 /// The row the answer boundary's receipts name: chat has no verb-table row,
 /// so its receipts name the engine's `.chat` door.
@@ -99,22 +99,6 @@ pub struct ChatOptions<'a> {
     /// An agent definition whose memory profile sizes the rendering when
     /// `token_budget` is omitted (FIX 9962); it grants no read.
     pub reader_agent_ref: Option<&'a str>,
-}
-
-/// Why a `.chat` call answered nothing. Each reason is a fact about the
-/// evidence or the composer, so a caller can tell "the vault does not know"
-/// apart from "the host would not say".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatAbstentionReason {
-    /// The retrieval carried nothing, or the proposed answer could not be
-    /// tied to the pack it was built from.
-    InsufficientEvidence,
-    /// Document scope: not one of the named refs resolved, so there was
-    /// nothing in scope to read — and ranked retrieval is not a fallback.
-    NoInScopeDocuments,
-    /// The composer declined to answer.
-    BackendDeclined,
 }
 
 /// One `.chat` outcome: answered with its evidence, or abstained with a

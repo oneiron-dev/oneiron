@@ -67,6 +67,7 @@ pub(super) fn evaluate(
     input: String,
     now: u64,
     catch_runtime_panic: bool,
+    max_budget_ms: u32,
 ) -> PreparedRun {
     evaluate_in_snapshot(
         runtime,
@@ -78,11 +79,13 @@ pub(super) fn evaluate(
         input,
         now,
         catch_runtime_panic,
+        max_budget_ms,
     )
 }
 
 /// Evaluate only after Allow, with the real lane and body guard prepared before
-/// the caller's writer. This entry owns neither that writer nor its commit.
+/// the caller's writer. This entry owns neither that writer nor its commit. The caller
+/// reads `max_budget_ms` from the vault's key before the snapshot, in its own transaction.
 pub(super) fn evaluate_in_txn(
     runtime: &dyn HookBodyRuntime,
     host: Option<&dyn HookVerdict>,
@@ -93,6 +96,7 @@ pub(super) fn evaluate_in_txn(
     input: String,
     now: u64,
     catch_runtime_panic: bool,
+    max_budget_ms: u32,
 ) -> PreparedRun {
     evaluate_in_snapshot(
         runtime,
@@ -104,6 +108,7 @@ pub(super) fn evaluate_in_txn(
         input,
         now,
         catch_runtime_panic,
+        max_budget_ms,
     )
 }
 
@@ -117,9 +122,11 @@ fn evaluate_in_snapshot(
     input: String,
     now: u64,
     catch_runtime_panic: bool,
+    max_budget_ms: u32,
 ) -> PreparedRun {
     let started = Instant::now();
-    let mut context = HookRunContext::new(run.binding.selector.budget_ms);
+    let mut context =
+        HookRunContext::new(run.binding.selector.budget_ms).with_max_budget_ms(max_budget_ms);
     let deadline = context.deadline();
     let mut pins = Vec::new();
     let mut verdicts = VerdictPins::new();

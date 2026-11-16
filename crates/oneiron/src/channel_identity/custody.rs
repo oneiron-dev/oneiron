@@ -46,6 +46,7 @@ pub use self::scopes::{
     delegated_custody_scopes_for_grant, delegated_custody_subject_scope,
 };
 
+use oneiron_contracts::register::Register;
 #[doc(hidden)]
 use oneiron_verb_wire::channel_identity::custody::{
     MAX_DELEGATED_GRANT_REF_BYTES, MAX_DELEGATED_GRANT_SCOPES,
@@ -73,9 +74,11 @@ use oneiron_verb_wire::channel_identity::custody::{
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
+#[register("delegated.grant.scope")]
 pub enum DelegatedGrantScope {
     /// Read message bodies in the granted mailbox.
     #[serde(rename = "mail.read")]
@@ -90,22 +93,8 @@ pub enum DelegatedGrantScope {
 
 impl DelegatedGrantScope {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::MailRead => "mail.read",
-            Self::MailMetadata => "mail.metadata",
-            Self::MailSend => "mail.send",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "mail.read" => Some(Self::MailRead),
-            "mail.metadata" => Some(Self::MailMetadata),
-            "mail.send" => Some(Self::MailSend),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
