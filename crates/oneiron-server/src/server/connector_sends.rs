@@ -195,3 +195,14 @@ fn send_pass(
     }
     vault.next_connector_send_ready_at()
 }
+
+/// One [`send_pass`] with fresh send clients, as a commit signal (not a
+/// timer) starts it: the drain's own pass, for the integration-test door
+/// `crate::test_doors::connector_sends`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn send_pass_once(
+    vault: &Vault,
+    line_push_allowance: u32,
+) -> oneiron::Result<Option<u64>> {
+    send_pass(vault, line_push_allowance, &mut None, false)
+}
