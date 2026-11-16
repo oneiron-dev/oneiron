@@ -1,19 +1,22 @@
 //! An ordinary room's witness lands every turn it mints on the room's trunk,
 //! and the room's threads live on its conversation DAG. So a witness turn
-//! whose message names a thread's TURN as its reply parent
+//! whose message names a PRIVATE thread's TURN as its reply parent
 //! (`room_reply_to`) or its thread anchor (`room_thread_of`) is refused,
-//! rather than shown to the whole room (CHAT-ORDINARY-ROOM-REPLY-TO-TRUNK).
-//! Chat's `reply_to`, a `rooms.speak` reply and an offer accepted on a thread
-//! all stamp those keys, and all reach this witness.
+//! rather than shown to the whole room (CHAT-ORDINARY-ROOM-REPLY-TO-TRUNK;
+//! RULING CHAT-THREAD-REPLY-REFUSAL-SCOPE = B). Chat's `reply_to`, a
+//! `rooms.speak` reply and an offer accepted on a thread all stamp those
+//! keys, and all reach this witness; these cases speak through
+//! `rooms.speak`. A reply aimed at a room-wide thread, and one to a trunk
+//! TURN, still land on the trunk, as before.
 //!
 //! Fixture: owen, the vault's owner, who reads the vault's records under
 //! the default policy manifest, in an ordinary group room he holds alone.
 //! A trunk witness turn is the anchor. owen's DAG replies on it open a
 //! private thread (audience owen) and a room-wide thread.
 //!
-//! Red on main (by assertion): there the witness lands each reply on the
-//! trunk, a row that answers no turn and names no thread. The trunk control
-//! passes on both.
+//! Red on main (by assertion): there the witness lands each private-thread
+//! reply on the trunk, a row that answers no turn and names no thread. The
+//! room-wide thread and trunk controls pass on both.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test ordinary_room_thread_reply_refused`.
@@ -249,25 +252,54 @@ fn a_reply_to_a_private_threads_root_is_refused() -> TestResult {
     assert_refused_and_unlanded(&fixture, turn, spoken, "private thread root")
 }
 
-/// A reply to a later TURN of a room-wide thread is refused too: the
-/// witness never places a turn in an ordinary room's thread.
+/// A reply to a later TURN of a private thread is refused: that TURN reads
+/// its thread's audience through its root.
 #[test]
-fn a_reply_to_a_later_turn_of_a_room_wide_thread_is_refused() -> TestResult {
+fn a_reply_to_a_later_turn_of_a_private_thread_is_refused() -> TestResult {
     let fixture = open_fixture()?;
     let anchor = anchor(&fixture)?;
-    let root = thread_reply(&fixture, anchor, None)?;
+    let root = thread_reply(&fixture, anchor, Some(BTreeSet::from([fixture.owen])))?;
+    // A reply naming no audience continues the thread owen reads.
     let later = thread_reply(&fixture, anchor, None)?;
-    assert_ne!(root, later, "the second reply continues the thread");
+    assert_ne!(root, later);
+    let work = fixture
+        .vault
+        .turn_room_work(later)?
+        .ok_or("the later reply sits in no thread")?;
+    assert_eq!(
+        work.branch,
+        Some(root),
+        "the later reply continues the thread"
+    );
     let (turn, spoken) = speak(
         &fixture,
         serde_json::json!({"room_reply_to": later.to_hex()}),
     );
-    assert_refused_and_unlanded(&fixture, turn, spoken, "room-wide thread turn")
+    assert_refused_and_unlanded(&fixture, turn, spoken, "private thread later turn")
 }
 
-/// A turn naming a thread's TURN as its thread anchor is refused.
+/// Control, green on main too: a reply aimed at a room-wide thread still
+/// lands on the trunk, as before (RULING CHAT-THREAD-REPLY-REFUSAL-SCOPE =
+/// B: misplaced, but read by no one the thread hides it from).
 #[test]
-fn a_turn_naming_a_thread_turn_as_its_anchor_is_refused() -> TestResult {
+fn a_reply_to_a_room_wide_thread_still_lands_on_the_trunk() -> TestResult {
+    let fixture = open_fixture()?;
+    let anchor = anchor(&fixture)?;
+    let root = thread_reply(&fixture, anchor, None)?;
+    let (turn, spoken) = speak(
+        &fixture,
+        serde_json::json!({"room_reply_to": root.to_hex()}),
+    );
+    spoken?;
+    let landed = row(&fixture, turn)?.ok_or("the room-wide thread reply keeps no room row")?;
+    assert_eq!(landed.thread_of, None);
+    assert_eq!(landed.reply_to, None);
+    Ok(())
+}
+
+/// A turn naming a private thread's TURN as its thread anchor is refused.
+#[test]
+fn a_turn_naming_a_private_thread_turn_as_its_anchor_is_refused() -> TestResult {
     let fixture = open_fixture()?;
     let anchor = anchor(&fixture)?;
     let root = thread_reply(&fixture, anchor, Some(BTreeSet::from([fixture.owen])))?;
