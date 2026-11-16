@@ -75,6 +75,18 @@ fn scrub_optional(field: &mut Option<String>, actor: &EntityId) -> bool {
     field.as_mut().is_some_and(|field| scrub(field, actor))
 }
 
+/// Scrubs the asker a check-in decision names: the one whose approved
+/// check-in an Owner applied on their own proof (P24-SHAPE Q7 = A). The
+/// decision, its basis and the spent check-in stay.
+fn scrub_decision(
+    decision: &mut Option<crate::check_in::CheckInDecision>,
+    actor: &EntityId,
+) -> bool {
+    decision
+        .as_mut()
+        .is_some_and(|decision| scrub_optional(&mut decision.requester, actor))
+}
+
 /// Scrubs the people a change names. A record's target id stays.
 fn scrub_change(change: &mut SharedVaultChange, actor: &EntityId) -> bool {
     match change {
@@ -107,6 +119,7 @@ fn scrub_receipt(receipt: &mut SharedActExecutionReceipt, actor: &EntityId) -> b
     changed |= scrub_optional(&mut receipt.authorizer, actor);
     changed |= scrub_optional(&mut receipt.proposer, actor);
     changed |= scrub_change(&mut receipt.change, actor);
+    changed |= scrub_decision(&mut receipt.check_in, actor);
     if let Some(export) = &mut receipt.export {
         changed |= scrub(&mut export.member, actor);
         for read in &mut export.diary_reads {
@@ -236,9 +249,11 @@ fn scrub_plan<P: serde::Serialize + serde::de::DeserializeOwned>(
     Ok(true)
 }
 
-/// Scrubs a pending act's starter, its objections and its plan's operands.
+/// Scrubs a pending act's starter, its objections, its plan's operands and
+/// the asker its check-in decision names.
 fn scrub_pending_act(act: &mut PendingAuthorityAct, actor: &EntityId) -> Result<bool> {
     let mut changed = scrub(&mut act.starter, actor);
+    changed |= scrub_decision(&mut act.check_in, actor);
     if act.objections.iter().any(|id| names(id, actor)) {
         act.objections.retain(|id| !names(id, actor));
         act.objections.insert(ERASED_CALL_IDENTITY.to_owned());

@@ -917,6 +917,7 @@ impl Vault {
             locator,
             drift: None,
             body: None,
+            sub_session: thread.sub_session_id,
         };
         let new_head_id = self.write_thread_head_in_txn(
             wtxn,

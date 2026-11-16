@@ -1,5 +1,4 @@
 //! Owner-configured class aging in the existing trusted default policy manifest.
-use serde::{Deserialize, Serialize};
 
 use super::{body_in_txn, decode_fields, encode_fields, invalid, record};
 use crate::claim::ClaimAgingProfiles;
@@ -8,25 +7,10 @@ use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 pub(crate) const CLAIM_AGING_PROFILES_KEY: &str = "claim_aging_profiles";
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimAgingProfilesConfigureRequest {
-    pub expected_body_hash: String,
-    pub profiles: ClaimAgingProfiles,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClaimAgingProfilesView {
-    pub manifest_ref: String,
-    pub body_hash: String,
-    pub profiles: ClaimAgingProfiles,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClaimAgingProfilesReceipt {
-    pub configuration: ClaimAgingProfilesView,
-    pub receipt_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::policy_manifest_doors::claim_aging::{
+    ClaimAgingProfilesConfigureRequest, ClaimAgingProfilesReceipt, ClaimAgingProfilesView,
+};
 
 pub(crate) fn decode_claim_aging_profiles(
     fields: &[(rmpv::Value, rmpv::Value)],

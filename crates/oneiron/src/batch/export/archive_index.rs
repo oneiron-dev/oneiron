@@ -132,6 +132,9 @@ pub(crate) enum Tag {
     /// TURN or CONVERSATION id → (): an archived MESSAGE joins it, so it
     /// comes back stamped imported (FIX 7777).
     MessageContainer,
+    /// CONVERSATION id → (): a TURN no archived MESSAGE joins speaks in it,
+    /// so a foreign archive's import marks it as one (FIX 15412).
+    InlineSpeechConversation,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,

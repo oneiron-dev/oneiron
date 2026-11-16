@@ -1,0 +1,16 @@
+{
+  "name": "vault.check_in.answer",
+  "description": "A person pinned on a pending check-in's current rung approves or denies the exact effect it waits on, on their own human proof; the first answer settles it, and the same answer again returns that settlement.",
+  "input": "crate::task_verb::sdk::CheckInAnswerRequest",
+  "output": "crate::task_verb::sdk::CheckInSettlement",
+  "call": "crate::task_verb::sdk::check_in_answer(memory, input)?",
+  "host_door": true,
+  "scope": "Write",
+  "grant_class": "the answering person's own human credential, pinned on the ask's current rung, with a live Grant (or the owner role) whose own check-in admits the act",
+  "act_class": "unstated",
+  "admission": {
+    "credential_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "check_in_holder"
+}
