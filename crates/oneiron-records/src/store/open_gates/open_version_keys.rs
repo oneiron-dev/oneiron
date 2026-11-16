@@ -3,6 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v34 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
+/// authority fold schema moves 41 -> 42, and a stored checkpoint image
+/// written before it no longer decodes. The fold names a roster with no live
+/// root key (`NoRootKey`), and it counts a root appointment that the pinned
+/// root's anchor signed: the appointment's line folds as its own ancestry's
+/// fold did. Stored authority-log rows keep their bytes. No old-meaning
+/// reader or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
+///
 /// v33 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
 /// authority-log rows keep their bytes and change meaning. A carried machine
 /// answer that makes a machine the owner's stands only with an owner key's
@@ -174,7 +183,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 33;
+pub const STORAGE_ABI_VERSION: u16 = 34;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
