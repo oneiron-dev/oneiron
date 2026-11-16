@@ -825,11 +825,12 @@ impl Vault {
         id: EntityId,
         body: &[u8],
     ) -> Result<Option<FederationGrant>> {
-        // The creation door does not reserve the residence's id: on a vault shared under it, a
-        // device paired while the vault was personal keeps its own-device row at the shared
-        // scope, and a selector over the residence reads that row as on a personal vault
-        // (review #8943 P1-2). A reader of a member's role still reads every row at the shared
-        // scope as a member row ([`grant_row_in_fold`]).
+        // The creation doors refuse the residence's id (FIX [SHARED-VAULT-ID-7-OWN-DEVICE-ALIAS]),
+        // but a creation row a restore carries may name it: on a vault shared under it, a device
+        // paired while the vault was personal keeps its own-device row at the shared scope, and
+        // a selector over the residence reads that row as on a personal vault (review #8943
+        // P1-2). A reader of a member's role still reads every row at the shared scope as a
+        // member row ([`grant_row_in_fold`]).
         let shared_scope = self
             .shared_vault_scope_in_txn(txn)?
             .filter(|scope| !is_own_device_row_at(body, scope));
