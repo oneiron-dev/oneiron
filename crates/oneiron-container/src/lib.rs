@@ -446,7 +446,8 @@ impl ContainerRuntime {
             session.manifest.fence_proof = Some(proof);
             session.manifest.fence_unproven = false;
             session.supervisor = Some(guard);
-            let _ = session.pressure_dir.set(pressure_dir);
+            // MUTATION (red proof only): the proof's cgroup is not handed over.
+            let _ = pressure_dir;
             Ok(session)
         }
         #[cfg(not(target_os = "linux"))]
