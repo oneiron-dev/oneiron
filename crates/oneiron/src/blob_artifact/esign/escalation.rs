@@ -67,9 +67,10 @@ pub enum HeldSigningState {
     /// Held; the host's next pass asks its first role.
     Held,
     /// Waits in the role ask queue under `question` (hex). `wait` is the
-    /// role the ask's wait is timed at and since when, set at each climb;
-    /// none while it waits at the role it was first asked at, timed from
-    /// the ask.
+    /// role the ask's wait is timed at and since when: the role its ask was
+    /// put to, from the ask, then set at each climb. A hold asked before
+    /// that first role was recorded has none: its climb times it from the
+    /// ask, and its lapse from when a pass first sees it at the owners.
     Asked {
         question: String,
         wait: Option<HeldAskWait>,
@@ -292,10 +293,15 @@ impl Vault {
             .and_then(|row| EntityId::from_hex(&row.actor.actor).ok()))
     }
 
-    /// Marks one hold as asked: its question waits in the role ask queue.
+    /// Marks one hold as asked: its question waits in the role ask queue,
+    /// and its wait is timed at the role its newest ask was put to, from
+    /// when it was asked. Another door that moves the ask on (a holder
+    /// passing it up) leaves that wait behind, so the ask's wait at its new
+    /// role starts when a pass first sees it there.
     ///
     /// # Errors
-    /// The hold is no longer open, or the write failed.
+    /// The hold is no longer open, the asks could not be read, or the write
+    /// failed.
     pub fn esign_hold_asked(
         &self,
         document: &str,
@@ -305,9 +311,18 @@ impl Vault {
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
             let mut held = open_hold(self, txn, document, recipient, held_at)?;
+            let wait = self
+                .question_decision_asks_in_txn(&*txn, question)?
+                .pop()
+                .and_then(|ask| {
+                    ask.role.map(|at| HeldAskWait {
+                        role: at.role,
+                        since: ask.asked_at,
+                    })
+                });
             held.state = HeldSigningState::Asked {
                 question: question.to_hex(),
-                wait: None,
+                wait,
             };
             HELD.put(&self.store, txn, &key(document, recipient), &held)
         })
@@ -319,9 +334,9 @@ impl Vault {
     /// of a multi-hop chain waits its own hours. A person who never answers
     /// passes the question on, through the climb that keeps the ask's
     /// natural-person filter and ceiling. An ask another door moved after
-    /// its last climb (a holder passing it on, a role left unheld) starts
-    /// its wait when this pass first sees it there. An ask at no live holder
-    /// waits on; one at the vault owners waits for
+    /// it was asked or last climbed (a holder passing it on, a role left
+    /// unheld) starts its wait when this pass first sees it there. An ask
+    /// at no live holder waits on; one at the vault owners waits for
     /// [`Self::lapse_stale_esign_ask`]. `true` when it climbed.
     ///
     /// # Errors
@@ -358,9 +373,11 @@ impl Vault {
     /// queue, so a later answer is refused, and each vault owner gets an
     /// inbox notice. A lapse never signs: the document stays unsigned and
     /// the recipient's turn stays open for the document's sender, as after a
-    /// decline. An ask another door moved to the owners after its wait was
-    /// timed starts its wait when this pass first sees it there. `true` when
-    /// it lapsed.
+    /// decline. An ask another door moved to the owners (a holder passing
+    /// it on) starts its wait there when this pass first sees it there, and
+    /// so does one whose hold was asked before its first role was recorded:
+    /// the time it waited at another role never counts. `true` when it
+    /// lapsed.
     ///
     /// # Errors
     /// The setting's read (a row that does not decode included: the hold
@@ -374,6 +391,12 @@ impl Vault {
             return Ok(false);
         };
         let now = self.now_recorded_at();
+        // With no first role recorded, an ask first put to the owners and one
+        // another door moved there look alike, so neither counts from the ask.
+        if matches!(held.state, HeldSigningState::Asked { wait: None, .. }) {
+            self.esign_hold_waits(held, &at.role, now)?;
+            return Ok(false);
+        }
         let Some(since) = self.esign_ask_waits_since(held, ask, &at.role, now)? else {
             return Ok(false);
         };
@@ -439,9 +462,10 @@ impl Vault {
     }
 
     /// When `held`'s unanswered `ask` began its wait at `role`, the rung it
-    /// waits at: the hold's timed wait there, or with none timed, when it
-    /// was asked. `None` when another door moved the ask since its wait was
-    /// timed: its wait at `role` starts at `now`, and this pass waits.
+    /// waits at: the hold's timed wait there, or with none timed (a hold
+    /// asked before its first role was recorded), when it was asked. `None`
+    /// when another door moved the ask since its wait was timed: its wait at
+    /// `role` starts at `now`, and this pass waits.
     fn esign_ask_waits_since(
         &self,
         held: &HeldSigning,
@@ -562,8 +586,8 @@ impl Vault {
 /// An erased actor's held-ask waits forget it (FIX 5223): a wait timed at
 /// `AskRole::Responsible` naming the actor names no one
 /// ([`AnswerActor::Erased`]), keeping its project, rank and `since`, so the
-/// climb still walks that project's boards. A hold asked at its first role
-/// (`wait: None`), at another role, or already settled is left as it is; the
+/// climb still walks that project's boards. A hold with no timed wait, one
+/// whose wait is at another role, or one already settled is left as it is; the
 /// signed audit trail is never rewritten, and an erased allower still lands
 /// nothing (the [`HeldSigningAnswer::Allow`] refusal). A row that does not
 /// decode names no one and stays.
