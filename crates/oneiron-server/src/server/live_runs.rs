@@ -49,10 +49,9 @@ use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::OwnedMutexGuard;
 
 use super::self_brief_custody::{BriefKey, BriefOwner, SelfBriefCustody};
-use crate::ai_host::HeldAnsweringRung;
+use crate::ai_host::{HeldAnsweringRung, KeptPrefix};
 use crate::config::models::PlannerSettings;
 use crate::lens_frames::LensFrameStore;
-use crate::models::AnsweringRung;
 
 /// An action on a live-run row named no handle.
 pub(crate) const LIVE_RUN_REQUIRED: &str = "live_run_required";
@@ -201,7 +200,7 @@ pub(crate) struct LiveRunEntry {
     /// pass's Keep refresh: what the hold's latest was when the run parked
     /// with a cached prefix. Cleared when the run runs again or its idle
     /// calls end.
-    parked_prefix: Mutex<Option<AnsweringRung>>,
+    parked_prefix: Mutex<Option<KeptPrefix>>,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
     /// Minimal request provenance belongs to one exact credential attachment,
     /// never to a later rebind or a different lease of this run.
@@ -257,7 +256,7 @@ impl LiveRunEntry {
 
     /// The run's parked answering rung, for the idle pass's Keep refresh
     /// (L2-37 PR-3).
-    pub(crate) fn parked_prefix(&self) -> Option<AnsweringRung> {
+    pub(crate) fn parked_prefix(&self) -> Option<KeptPrefix> {
         lock(&self.parked_prefix).clone()
     }
 
