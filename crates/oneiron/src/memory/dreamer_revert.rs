@@ -16,6 +16,7 @@ use crate::dreamer_consolidation::{
 use crate::dreamer_runner::maintenance::MaintenanceTarget;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 const REVERT_KIND: &str = "dreamer_change_revert";
 const REVERT_REASON: &str = "gate.memory.dreamer_change_revert";
@@ -87,7 +88,7 @@ impl Memory<'_> {
             let revert = self.vault.revert_dreamer_maintenance(
                 owner,
                 MaintenanceTarget::Finding(change),
-                now / 1_000,
+                oneiron_contracts::RecordedSeconds::from_millis(now).secs(),
             )?;
             let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Maintenance);
             reverted.retracted = std::iter::once(change).chain(revert.closed).collect();
@@ -109,19 +110,16 @@ impl Memory<'_> {
             let receipt = decision(
                 actor,
                 REVERT_KIND,
-                "approved",
+                GateReceiptOutcome::Approved,
                 REVERT_REASON,
                 Some(change),
                 change.as_bytes().to_vec(),
-                now,
             );
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(DreamerRevertReceipt {
                 change,
                 reverted,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             })
         })
     }

@@ -392,12 +392,16 @@ impl BatchBuilder<'_> {
             // writer gives it (ARCH-0053:20), before anything stages. It runs
             // after the reader's admission, which judges each put against the
             // stored row it names: a put the writer makes a proposed change
-            // moves to the proposal's own id.
-            if let Err(err) =
-                vault.bound_agent_authored_puts_in_txn(&*wtxn, agent_authoring.as_ref(), &mut ops)
-            {
-                return Rows::Discard(Err(err.into()));
-            }
+            // moves to the proposal's own id. Each definition the batch
+            // creates is stamped with its author once the batch has applied.
+            let creates = match vault.bound_agent_authored_puts_in_txn(
+                &*wtxn,
+                agent_authoring.as_ref(),
+                &mut ops,
+            ) {
+                Ok(creates) => creates,
+                Err(err) => return Rows::Discard(Err(err.into())),
+            };
             // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             if handed_on_human
                 && let Err(err) =
@@ -525,6 +529,9 @@ impl BatchBuilder<'_> {
             };
             match applied {
                 Ok((changes_claims, tasks, approved_vad_ids, pad_windows, routed_rows)) => {
+                    if let Err(err) = vault.stamp_agent_authored_creates_in_txn(wtxn, creates) {
+                        return Rows::Discard(Err(Refused::from(err)));
+                    }
                     #[cfg(feature = "sync")]
                     rows.extend(routed_rows);
                     #[cfg(not(feature = "sync"))]
@@ -669,6 +676,10 @@ fn apply_admitted(
         })
         .collect();
     let mut derived = crate::embed::repo_derived_batch(&batch.ops);
+    // An edge that binds a TURN's words, read before the apply, re-dirties
+    // that TURN after it (ARCH-0026 #sieve-open).
+    let rewired =
+        crate::dreamer_consolidation::redirty::RewiredTurnEdges::before(vault, wtxn, &batch.ops)?;
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -679,6 +690,7 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    rewired.redirty_in_txn(vault, wtxn)?;
     // Each NOTE's document is born with its core row (FIX 7783).
     for (id, markdown) in &batch.note_births {
         crate::note::birth_document_in_txn(vault, wtxn, *id, markdown)?;

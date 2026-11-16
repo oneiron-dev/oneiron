@@ -44,32 +44,8 @@ pub use oneiron_verb_wire::task_verb::brief::{
 #[doc(hidden)]
 pub(crate) use oneiron_verb_wire::task_verb::brief::{decode_hex, hex32};
 
-/// A context pack pinned by digest: a pack ref promises no immutability, so
-/// the brief keeps what it read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PinnedPack {
-    pub pack_ref: EntityId,
-    #[serde(default)]
-    pub context_version: Option<u64>,
-    #[serde(default)]
-    pub retrieval_run_id: Option<EntityId>,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub digest: [u8; 32],
-}
-
-/// One read-first handle pinned by digest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PinnedRef {
-    pub target: EntityId,
-    #[serde(default)]
-    pub frontier: Option<Vec<u8>>,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub digest: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::brief::{BriefStamp, ComposerStamp, PinnedPack, PinnedRef};
 
 /// Handles, never pasted bodies (ARCH-0079).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -217,20 +193,6 @@ pub struct EscalationRule {
     pub question_ref: Option<ConsultPayloadRef>,
 }
 
-/// Provenance of a model-composed brief. Excluded from the digest: who
-/// drafted a brief never changes what it asks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ComposerStamp {
-    pub seat: String,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub one_liner_digest: [u8; 32],
-    #[serde(default)]
-    pub lens_refs: Vec<EntityId>,
-    pub at: u64,
-}
-
 /// The typed brief one TASK carries: objective, intent, constraints, context
 /// pack, success criteria and escalation rule (workbench-engine-asks.md:76).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -267,18 +229,6 @@ pub struct StoredBrief {
     #[serde(with = "hex32")]
     pub digest: [u8; 32],
     pub brief: QueueTaskBrief,
-}
-
-/// The version one try was leased under. ATTEMPT payloads and receipts carry
-/// it, so a running try is never retargeted by a later revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BriefStamp {
-    pub rev: u32,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub digest: [u8; 32],
-    pub type_ref: TypeRef,
 }
 
 impl StoredBrief {

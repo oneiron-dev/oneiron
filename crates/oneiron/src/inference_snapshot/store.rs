@@ -25,7 +25,6 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::MutexGuard;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::RwTxn;
 use sha2::{Digest, Sha256};
@@ -76,14 +75,6 @@ pub struct SnapshotReconcile {
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("inference snapshot")
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
-        .unwrap_or(0)
 }
 
 /// The SHA-256 of `bytes`, as the worker hashes its serialized state.
@@ -249,7 +240,7 @@ impl Vault {
                 return Err(error);
             }
         };
-        let now = now_ms();
+        let now = crate::unix_millis_now();
         let record = SnapshotRecord {
             schema: SNAPSHOT_RECORD_SCHEMA,
             id,
@@ -465,7 +456,7 @@ impl Vault {
         let mut wtxn = store.env.write_txn()?;
         if let Some(mut record) = CATALOG.get(store, &wtxn, id)? {
             record.reuse_count = record.reuse_count.saturating_add(1);
-            record.last_used_ms = now_ms();
+            record.last_used_ms = crate::unix_millis_now();
             CATALOG.put(store, &mut wtxn, id, &record)?;
         }
         wtxn.commit()?;

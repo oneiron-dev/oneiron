@@ -158,6 +158,7 @@ use utoipa::OpenApi;
         core_run_tree,
         core_run_tree_observe,
         core_run_tree_intervene,
+        super::facade::run_read_doors::get_core_job,
         submit_core_surface_event,
         super::phone_line::submit_core_phone_line_arrival,
         get_core_surface_event,

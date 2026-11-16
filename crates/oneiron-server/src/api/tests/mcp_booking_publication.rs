@@ -37,6 +37,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -99,6 +100,32 @@ fn claim(predicate: &str, subject: oneiron::EntityId, value: serde_json::Value) 
     }
 }
 
+/// The four-axis `spec` `vault.claims.upsert` takes: `input` reshaped to the
+/// verb's closed `ScopedClaimInput` (base world, the vault's default facet,
+/// every relationship, the default project). A raw `ClaimInput` names
+/// `world_ref`, which the advertised schema closes out (`tool_args_invalid`).
+fn scoped_spec(vault: &oneiron::Vault, input: &ClaimInput) -> serde_json::Value {
+    json!({
+        "id": input.id.clone(),
+        "predicate": input.predicate.clone(),
+        "subject_ref": input.subject_ref.clone(),
+        "value": input.value.clone(),
+        "confidence": input.confidence,
+        "source": input.source.clone(),
+        "scope": {
+            "world_id": oneiron::claim::base_world_id().to_hex(),
+            "scope_facet_id": vault.default_facet().expect("default facet").to_hex(),
+            "scope_relationship_id": "all",
+            "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+        },
+        "valid_from": input.valid_from,
+        "valid_to": input.valid_to,
+        "occurred_at": input.occurred_at,
+        "learned_at": input.learned_at,
+        "salience": input.salience,
+    })
+}
+
 async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -> StatusCode {
     let request = Request::builder()
         .method("GET")
@@ -151,24 +178,28 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
     }
     crate::test_credentials::bind_owner(&server.vault, "secret", owner);
     let config = config(host);
+    let mut config_claim = ClaimBody::new(
+        BOOKING_EVENT_TYPE_PREDICATE,
+        ClaimSubject::Entity(page),
+        encode_event_type_claim_value(&BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: page,
+            config: config.clone(),
+        })
+        .expect("config value"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("config claim");
+    // A CLAIM is born only under a stored FACET (FIX 7757); the page's derived
+    // facet is none, so the claim takes the vault's default facet.
+    config_claim.scope_facet = server.vault.default_facet().expect("default facet");
     server
         .vault
         .put_claim(
             &seeded_test_entity_id(0x0024_7104),
-            &ClaimBody::new(
-                BOOKING_EVENT_TYPE_PREDICATE,
-                ClaimSubject::Entity(page),
-                encode_event_type_claim_value(&BookingEventTypeClaimValue {
-                    schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
-                    page_ref: page,
-                    config: config.clone(),
-                })
-                .expect("config value"),
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )
-            .expect("config claim"),
+            &config_claim,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
         )
@@ -239,7 +270,7 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
             oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str(),
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "write_memory"),
-                json!({"arguments": {"spec": input}}),
+                json!({"arguments": {"spec": scoped_spec(&server.vault, input)}}),
             ),
         )
     };
