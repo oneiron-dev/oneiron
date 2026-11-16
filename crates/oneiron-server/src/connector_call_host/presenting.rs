@@ -52,6 +52,15 @@ enum Door {
     Unresolved,
 }
 
+/// One exchange a send runs inside the door of the credential it presents:
+/// an HTTP connector's MCP session, or a stdio connector's call, whose
+/// child's upstream door holds the header while it is in flight.
+pub(super) trait DoorExchange {
+    /// The exchange, presenting `auth`, its answer cleared of `value`;
+    /// both `None` when the send presents nothing.
+    fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent;
+}
+
 /// One send's credential, known before its exchange is declared.
 pub(super) struct Presenting {
     effector: String,
@@ -176,6 +185,11 @@ impl Intake {
 }
 
 impl Presenting {
+    /// Whether the send presents a credential.
+    pub(super) const fn presents(&self) -> bool {
+        self.door.is_some()
+    }
+
     /// Runs `exchange` with this credential, inside its door, and clears
     /// what came back there. `presented` is what the door released. `row`
     /// is the call's governing key and tool: their durable issuer binding is
@@ -187,7 +201,7 @@ impl Presenting {
     pub(super) fn send(
         self,
         vault: &Vault,
-        exchange: &Exchange<'_>,
+        exchange: &dyn DoorExchange,
         row: Option<(&EntityId, &str)>,
         presented: &mut Option<SentPresentation>,
     ) -> Sent {
