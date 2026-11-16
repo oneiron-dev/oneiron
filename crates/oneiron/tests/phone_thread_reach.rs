@@ -1627,33 +1627,84 @@ fn a_restricted_selector_does_not_carry_a_row_written_from_a_kept_call_as_eviden
     );
 }
 
-/// An ordinary CLAIM whose birth names A's kept MESSAGE as one input of
-/// `role` never rides the Member's restricted selector; its control, born
-/// the same way from the ordinary MESSAGE, does.
+/// Astra review of R1+R2, finding 1: a CLAIM whose birth names caller A's
+/// kept MESSAGE as its evidence (`Input`, as the scoped CLAIM upsert names
+/// its evidence TURNs) carries A's words with no mark of its own, so B's
+/// call does not read it, although the call's scope admits every CLAIM of
+/// the world. One born the same way from B's own MESSAGE reads in B's call,
+/// and so does one born from an ordinary MESSAGE. The owner and the line
+/// agent's ordinary key read all three.
 #[cfg(all(feature = "sync", feature = "test-hooks"))]
-fn assert_selector_withholds_a_claim_born_from_a_kept_call(
-    role: oneiron::provenance::made_by::MadeByInputRole,
-) {
-    use oneiron::provenance::birth::RowBirth;
-    use oneiron::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByProcess};
-    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
-    use oneiron::sync::client::ImportTier;
-    use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
-    use oneiron::write_envelope::claim_body::encode_claim_body;
-    use oneiron::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    };
-    use rmpv::Value;
+#[test]
+fn a_claim_learned_from_caller_a_does_not_read_in_caller_bs_call() {
+    use oneiron::provenance::made_by::MadeByInputRole;
 
     let reach = reach_fixture(custom_base());
-    let vault = &reach.fixture.vault;
-    let owner = reach.fixture.owner;
+    let subject = ordinary_subject_person(&reach.fixture.vault);
+    let from_a = claim_born_from(
+        &reach,
+        subject,
+        reach.msg_a_caller,
+        MadeByInputRole::Input,
+        "from_a",
+    );
+    let from_b = claim_born_from(
+        &reach,
+        subject,
+        reach.msg_b_caller,
+        MadeByInputRole::Input,
+        "from_b",
+    );
+    let from_control = claim_born_from(
+        &reach,
+        subject,
+        reach.control_msg,
+        MadeByInputRole::Input,
+        "from_control",
+    );
+    for (key, who) in [
+        (&reach.owner_key, "the owner"),
+        (&reach.l_key, "L's ordinary key"),
+    ] {
+        let reader = reach.fixture.vault.scoped_read(key.clone());
+        for (id, label) in [
+            (&from_a, "from_a"),
+            (&from_b, "from_b"),
+            (&from_control, "from_control"),
+        ] {
+            assert!(
+                reader.is_entity_readable(id).expect("reads the CLAIM"),
+                "precondition: {who} reads the CLAIM {label}",
+            );
+        }
+    }
+    let call = reach.fixture.vault.scoped_read(reach.b_call_key.clone());
+    for (id, label) in [(&from_b, "from_b"), (&from_control, "from_control")] {
+        assert!(
+            call.is_entity_readable(id)
+                .expect("B's call reads the CLAIM"),
+            "precondition: B's call reads the CLAIM {label}",
+        );
+    }
+    assert!(
+        !call
+            .is_entity_readable(&from_a)
+            .expect("B's call reads from_a"),
+        "LEAK: B's call reads a CLAIM learned from caller A's words",
+    );
+}
+
+/// An ordinary subject PERSON, never a phone row: the lineage walks follow
+/// a CLAIM's subject, so it must be clean for a control CLAIM to ride or
+/// read.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn ordinary_subject_person(vault: &Vault) -> EntityId {
+    use oneiron::registry::ENTITY_TYPE_PERSON;
+
     let at = TimeRange {
         start: OCCURRED_AT,
         end: OCCURRED_AT,
     };
-    // An ordinary subject PERSON, never a phone row: the walk follows a
-    // CLAIM's subject, so it must be clean for the control to ride.
     let subject = EntityId::now();
     vault
         .put_entity(
@@ -1665,68 +1716,108 @@ fn assert_selector_withholds_a_claim_born_from_a_kept_call(
                 .expect("subject PERSON body"),
         )
         .expect("FIXTURE: an ordinary subject PERSON");
-    // One open CLAIM per input, as
-    // `selector_born_with_prompt_label::open_record_with_prompts` builds
-    // them, adapted to a single input of `role` in this window.
-    let prompt_claim = |prompt: EntityId, label: &str| {
-        let row = EntityId::now();
-        let mut body = ClaimBody::new(
-            "profile.name",
-            ClaimSubject::Entity(subject),
-            Value::from("a profile fact"),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )
-        .expect("FIXTURE: an open CLAIM body");
-        body.source = Some(ClaimSource::UserStated);
-        assert!(
-            body.rel.is_none() && body.world.is_none(),
-            "FIXTURE: the output CLAIM itself names no relationship or world",
-        );
-        let body_bytes = encode_claim_body(&body).expect("FIXTURE: encode the open CLAIM");
-        let prompt_row = vault
-            .get(&prompt)
-            .expect("FIXTURE: read the prompt row")
-            .expect("FIXTURE: the prompt row exists");
-        let birth = RowBirth {
-            made_by: MadeBy {
-                inputs: vec![MadeByInput { row: prompt, role }],
-                process: MadeByProcess {
-                    actor: owner,
-                    class: MadeByClass::Stated,
-                    identity: "selector.prompt_fixture".to_owned(),
-                    version: "1".to_owned(),
-                    params_hash: "0".repeat(64),
-                },
-                at: OCCURRED_AT,
-                trigger: None,
-            },
-            content_hash: RowBirth::content_hash_of(&[prompt_row.as_slice()]),
-            withheld: Vec::new(),
-            room_evidence: None,
-        };
-        replay_entity_with_birth(
-            vault,
-            ReplicatedEntity {
-                id: row,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: at,
-                learned_at: OCCURRED_AT,
-                row_version: 0,
-                body: &body_bytes,
-            },
-            Some(&birth),
-            ImportTier::OwnDevice,
-        )
-        .expect("FIXTURE: replay the open CLAIM with its birth");
-        assert_eq!(
-            vault.row_birth(&row).expect("FIXTURE: read the row birth"),
-            Some(birth),
-            "FIXTURE: the {label} CLAIM retains the exact birth with one {role:?} input",
-        );
-        row
+    subject
+}
+
+/// One open CLAIM about `subject` whose birth names `prompt` as its one
+/// input of `role`, as
+/// `selector_born_with_prompt_label::open_record_with_prompts` builds them,
+/// replayed with that birth from the owner's own device.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn claim_born_from(
+    reach: &Reach,
+    subject: EntityId,
+    prompt: EntityId,
+    role: oneiron::provenance::made_by::MadeByInputRole,
+    label: &str,
+) -> EntityId {
+    use oneiron::provenance::birth::RowBirth;
+    use oneiron::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByProcess};
+    use oneiron::registry::ENTITY_TYPE_CLAIM;
+    use oneiron::sync::client::ImportTier;
+    use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
+    use oneiron::write_envelope::claim_body::encode_claim_body;
+    use oneiron::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     };
+    use rmpv::Value;
+
+    let vault = &reach.fixture.vault;
+    let owner = reach.fixture.owner;
+    let at = TimeRange {
+        start: OCCURRED_AT,
+        end: OCCURRED_AT,
+    };
+    let row = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        Value::from("a profile fact"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("FIXTURE: an open CLAIM body");
+    body.source = Some(ClaimSource::UserStated);
+    assert!(
+        body.rel.is_none() && body.world.is_none(),
+        "FIXTURE: the output CLAIM itself names no relationship or world",
+    );
+    let body_bytes = encode_claim_body(&body).expect("FIXTURE: encode the open CLAIM");
+    let prompt_row = vault
+        .get(&prompt)
+        .expect("FIXTURE: read the prompt row")
+        .expect("FIXTURE: the prompt row exists");
+    let birth = RowBirth {
+        made_by: MadeBy {
+            inputs: vec![MadeByInput { row: prompt, role }],
+            process: MadeByProcess {
+                actor: owner,
+                class: MadeByClass::Stated,
+                identity: "selector.prompt_fixture".to_owned(),
+                version: "1".to_owned(),
+                params_hash: "0".repeat(64),
+            },
+            at: OCCURRED_AT,
+            trigger: None,
+        },
+        content_hash: RowBirth::content_hash_of(&[prompt_row.as_slice()]),
+        withheld: Vec::new(),
+        room_evidence: None,
+    };
+    replay_entity_with_birth(
+        vault,
+        ReplicatedEntity {
+            id: row,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: at,
+            learned_at: OCCURRED_AT,
+            row_version: 0,
+            body: &body_bytes,
+        },
+        Some(&birth),
+        ImportTier::OwnDevice,
+    )
+    .expect("FIXTURE: replay the open CLAIM with its birth");
+    assert_eq!(
+        vault.row_birth(&row).expect("FIXTURE: read the row birth"),
+        Some(birth),
+        "FIXTURE: the {label} CLAIM retains the exact birth with one {role:?} input",
+    );
+    row
+}
+
+/// An ordinary CLAIM whose birth names A's kept MESSAGE as one input of
+/// `role` never rides the Member's restricted selector; its control, born
+/// the same way from the ordinary MESSAGE, does.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn assert_selector_withholds_a_claim_born_from_a_kept_call(
+    role: oneiron::provenance::made_by::MadeByInputRole,
+) {
+    let reach = reach_fixture(custom_base());
+    let subject = ordinary_subject_person(&reach.fixture.vault);
+    let prompt_claim =
+        |prompt: EntityId, label: &str| claim_born_from(&reach, subject, prompt, role, label);
     let prompted_phone = prompt_claim(reach.msg_a_caller, "prompted_phone");
     let prompted_control = prompt_claim(reach.control_msg, "prompted_control");
     let carried = member_selector_carries(&reach, |source| {

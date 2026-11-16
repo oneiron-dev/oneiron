@@ -192,8 +192,7 @@ impl ScopedRead<'_> {
         // in its current caller's call (VOICE-PHONE-AGENT-REACH R1): each phone
         // ceiling must name the row's thread as its current caller's thread.
         // A withheld number names no stored thread, so every marked row is
-        // refused. Only marked rows are affected; every other row is judged
-        // as today.
+        // refused. Every other row meets its phone lineage below.
         if caller_rule
             && matches!(
                 header.entity_type,
@@ -275,6 +274,31 @@ impl ScopedRead<'_> {
             };
             if !facets {
                 return Ok(false);
+            }
+        }
+        // Under the current-caller rule, a row whose words came from a phone
+        // thread reads only in that thread's caller's call, as a marked row
+        // does (Astra review of R1+R2, finding 1): a CLAIM learned from
+        // caller A's TURNs carries A's words with no mark of its own, picked
+        // or not. Its lineage is the restricted selector's, to its end
+        // (`voice_call::phone_lineage_threads_in`); a lineage that does not
+        // read here refuses.
+        if caller_rule {
+            let Some(threads) =
+                crate::voice_call::phone_lineage_threads_in(self.vault, txn, id, raw)?
+            else {
+                return Ok(false);
+            };
+            if !threads.is_empty() {
+                let Some(currents) = self.current_caller_threads_in(txn)? else {
+                    return Ok(false);
+                };
+                if threads
+                    .iter()
+                    .any(|thread| currents.iter().any(|current| thread != current))
+                {
+                    return Ok(false);
+                }
             }
         }
         Ok(true)
