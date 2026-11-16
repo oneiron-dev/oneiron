@@ -16,6 +16,7 @@ pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
+pub(crate) mod replay_rows;
 mod response_erase;
 mod response_owners;
 mod routing;
@@ -144,6 +145,9 @@ pub(crate) use self::program_resume::{
     program_resume_call, program_resume_calls_in_txn, program_resume_head_in_txn,
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
+// L2-37: a parked run's idle fold rechecks its park and lands in one write.
+pub(crate) use self::folds::{base_code_run_folds_in_txn, land_code_run_folds_in_txn};
+pub(crate) use self::wait_delivery::wait_still_parked_in_txn;
 pub(crate) use self::wait_holders::{
     WaitReply, erase_settled_reply_of_erased_run_in_txn, release_settled_for_caller_in_txn,
     wait_delivery_owners, wait_reply_in_txn,

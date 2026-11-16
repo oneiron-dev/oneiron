@@ -235,7 +235,7 @@ pub(crate) fn certificate(
 }
 
 fn hex(value: &[u8; 32], limits: &WorkLimits<'_>) -> Result<String> {
-    admitted(value.iter().map(|v| format!("{v:02x}")).collect(), limits)
+    admitted(oneiron_hex::encode(value), limits)
 }
 
 fn escaped(value: &str, limits: &WorkLimits<'_>) -> Result<String> {
