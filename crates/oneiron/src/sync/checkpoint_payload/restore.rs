@@ -24,11 +24,10 @@ use loro::checkpoint::{
 };
 use loro::{LoroDoc, LoroValue};
 
+use super::descriptor::{root_entry, withheld_part_key};
 use super::joined_turns::{Transport, derived_atom};
 use super::operations::{export_slice, holds_slice};
-use super::owners::{
-    key_fill, root_entry, root_fill, withheld_client_key, withheld_key, withheld_part_key,
-};
+use super::owners::{key_fill, root_fill, withheld_client_key, withheld_key};
 use super::{
     DerivedRole, DerivedSlot, JoinedTurn, KindPlacement, LoroCarrier, LoroSlot, LoroVerdict,
     OpenedAtom, OpenedSyncAtoms, Placement, SlotCopy, SyncCarrier, SyncPayloadOwners,

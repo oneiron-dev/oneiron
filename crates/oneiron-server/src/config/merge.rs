@@ -37,9 +37,11 @@ use super::{
     MergeQueueCheckerConfig, NativeMailConfig, embedder, remote_embedder,
 };
 
+mod file_admission;
 mod sections;
 mod validation;
 
+pub(crate) use self::file_admission::read_config_file;
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
 use self::validation::{validate_embedder_config, validate_serve_config};
@@ -277,25 +279,25 @@ pub(crate) fn settle_managed_settings(
 }
 
 /// The config file's `[backup]` table alone: a mistyped setting elsewhere in
-/// the file does not stop it being read. A file that does not parse names
-/// only itself and the place it failed (FIX 9477).
+/// the file does not stop it being read. A file that is not admitted is not
+/// read (`file_admission`), and one that does not parse names only itself
+/// and the place it failed (FIX 9477).
 fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverride>> {
     /// The file with every key but `[backup]` skipped unread.
     #[derive(Deserialize)]
     struct BackupOnly {
         backup: Option<BackupConfigOverride>,
     }
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read config file {}", path.display()))?;
+    let raw = read_config_file(path)?;
     let file: BackupOnly = super::parse_toml(path, &raw)?;
     Ok(file.backup)
 }
 
-/// The config file's layer. A file that does not parse names only itself
-/// and the place it failed (FIX 9477).
+/// The config file's layer. A file that is not admitted is not read
+/// (`file_admission`), and one that does not parse names only itself and
+/// the place it failed (FIX 9477).
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read config file {}", path.display()))?;
+    let raw = read_config_file(path)?;
     let mut config: FileServeConfig = super::parse_toml(path, &raw)?;
     let models = config
         .models

@@ -99,6 +99,35 @@ base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
 
+A rung of `rungs` may keep daily hours, such as a GPU box at home that runs
+batch models at night (`hours = { start, end, utc_offset | iana_timezone }`,
+the type and checks of `[[gpu.pods]] hours`, section 12):
+
+```toml
+[models.roles.dreamer_current]
+rungs = [
+  { model = "claude:claude-sonnet-4-5" },
+  { model = "gpubox:qwen3.8-27b", hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" } },
+]
+
+[models.providers.gpubox]               # the GPU box's OpenAI-compatible server
+kind = "local-openai-compat"
+base_url = "http://gpubox.lan:8000"
+```
+
+Inside its hours the seat's walk tries that rung before the rungs without
+hours, wherever the ladder lists it; a failure hands the call on as usual.
+Outside them the walk passes it at once, with no wait for the hours to open,
+and the receipt's `passed_over` row for it reads `"passed": "outside_hours"`.
+A run's live compaction fork is bound to the rung that answered the run only
+while the walk would take that rung, so never outside its hours.
+A model the vault's model manifest pins for the role is served at any hour:
+the pin names that one model, so there is no walk. A ladder whose every rung
+keeps hours is refused, so a call outside them always has a rung, as is
+`hours` on a role's single `model`. The hours say when, not where: the rung's
+provider is the owner's own entry, and `leave_device` applies to it as to any
+rung.
+
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
 the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at
@@ -291,9 +320,11 @@ extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
-A `key_secret` provider answers whole chat replies only for now: a streamed chat
-call to it is refused before it starts. Its media calls go through the same
-broker (§10).
+A streamed chat call to a `key_secret` provider goes through the broker as
+the provider's event request; the broker strips each form of the key from
+the events as they pass, and the call keeps its permit and digest binding.
+A Gemini model streams this way too when its entry declares `streaming`. Its
+media calls go through the same broker (§10).
 
 A self-hosted `serve` takes `--settings-file <path>` too: a TOML file in its
 config file's schema, read as one more config file over `--config` and under
@@ -724,11 +755,12 @@ the broker sends plain until restart. A `key_secret` entry takes no
 Our own model servers decode compressed bodies once built or started for it
 (OF-604): the house model's `exl3_server.py`, a `llama-server` built by
 `deploy/house-model/build-llama.sh` (cpp-httplib's zstd and zlib support on),
-a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
-(deploy/house-model/README.md, "Compressed requests"), and the VoxCPM2 worker.
+and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
+(deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
-whose server does not decode stays plain. A `voxcpm2` entry compresses its
-`/render` uploads, and an opted-in provider's media JSON bodies compress by
+whose server does not decode stays plain. A `voxcpm2` entry takes none (its
+loopback voice socket carries no codec frame) and an entry that sets it is
+refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.
@@ -2043,9 +2075,9 @@ Gemini file's one redirect is followed only under the API's own origin.
 
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
 key in `key_env` or `key_secret` (sent as `x-goog-api-key`). Its chat rungs send
-`models/{model}:generateContent`, streamed as `streamGenerateContent` on a direct key
-when the model declares it; a `key_secret` chat goes through the credential broker as
-a whole reply, like its media calls do. A configured `max_output_tokens` is sent as
+`models/{model}:generateContent`, streamed as `streamGenerateContent?alt=sse` when the
+model declares `streaming`; a `key_secret` chat, whole or streamed, goes through the
+credential broker, like its media calls do. A configured `max_output_tokens` is sent as
 `generationConfig.maxOutputTokens` on both paths. It also serves the image and video
 seats. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
@@ -2968,18 +3000,31 @@ id = "home-gpu"
 url = "https://home-gpu.example:8000/v1"
 capacity = 2
 hours = { start = "22:00", end = "07:00", utc_offset = "+09:00" }
+
+# A box in a zone with daylight saving: its hours follow the zone's clock.
+[[gpu.pods]]
+id = "berlin-gpu"
+url = "https://berlin-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" }
 ```
 
 A pod with `hours` takes new batches only inside them (CROSS-ARCH-0024
 #my-network 07: embeddings can run on the GPU box at night). `start` is the
-first minute in and `end` the first minute out, both `"HH:MM"` in
-`utc_offset`; a start later than the end runs across midnight. The offset is
-required and fixed, so it does not follow daylight-saving changes. A batch
-that took its lease inside the hours keeps it until the batch ends. Outside
-every pod's hours, batches go to the `[embedder]` endpoint, as with no
-healthy pod. A pod without `hours` takes batches at any hour. `serve` refuses
-a time that is not `"HH:MM"`, a start equal to the end, and an offset beyond
-14:00.
+first minute in and `end` the first minute out, both `"HH:MM"`; a start later
+than the end runs across midnight. The hours are read on exactly one clock:
+`utc_offset`, a fixed offset that does not follow daylight-saving changes, or
+`iana_timezone`, an IANA zone in its canonical spelling, read in the engine's
+embedded zone database (the calendar's), so the hours move with the zone's
+daylight-saving changes. In a zone, on the night the clocks jump forward the
+skipped minutes never occur, so a start inside the gap opens at the first
+minute after it; on the night they fall back, the repeated hour is in or out
+both times. A batch that took its lease inside the hours keeps it until the
+batch ends. Outside every pod's hours, batches go to the `[embedder]`
+endpoint, as with no healthy pod. A pod without `hours` takes batches at any
+hour. `serve` refuses a time that is not `"HH:MM"`, a start equal to the end,
+an offset beyond 14:00, a zone the database does not hold, and hours with no
+clock or with both.
 
 `serve` polls each pod at start and then every `poll_seconds`. A pod is
 healthy when it answers at all (transport), answers `health_path` with a 2xx

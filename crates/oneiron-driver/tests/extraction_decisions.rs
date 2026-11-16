@@ -97,12 +97,13 @@ fn run_case(
     single_valued: &[&str],
 ) -> TestResult<Run> {
     let (_dir, vault) = support::open_vault()?;
-    if !single_valued.is_empty() {
-        support::seed_single_valued(&vault, single_valued)?;
-    }
     let subject = support::seed_person(&vault, "owen")?;
     for &(predicate, value) in heads {
         support::land_head(&vault, subject, predicate, value, ClaimSource::Generated)?;
+    }
+    // The Generated permit rewrite starts from shipped policy, so the seed lands after it.
+    if !single_valued.is_empty() {
+        support::seed_single_valued(&vault, single_valued)?;
     }
     let turns = support::witness_turns(&vault, words)?;
     let (counts, recorded, reasoner) = keyed(script);
