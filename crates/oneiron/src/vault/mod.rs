@@ -42,7 +42,7 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
-pub(crate) use self::actors_memory::is_named_agent_principal_body;
+pub(crate) use self::actors_memory::{is_named_agent_principal_body, named_agent_principal_name};
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
@@ -71,7 +71,8 @@ pub(crate) use self::entities::{
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
 pub(crate) use self::open::{
-    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+    EMBEDDED_OWNER_ACTOR_NAME, EngineSeedIdentities, embedded_owner_actor_id,
+    encode_embedded_owner_actor_body,
 };
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
