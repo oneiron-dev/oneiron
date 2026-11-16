@@ -101,7 +101,9 @@ impl Vault {
             let Some((due_at, key)) = due else {
                 break;
             };
-            report.runs.push(self.run_one(&key, due_at, deadline)?);
+            if let Some(run) = self.run_one(&key, due_at, deadline)? {
+                report.runs.push(run);
+            }
         }
         Ok(report)
     }
@@ -131,23 +133,28 @@ impl Vault {
     /// One due job: checked and marked started in one write, run, and its result written in
     /// another. The result lands only on the row the run started on: a row armed again while the
     /// run ran keeps its new arming.
-    fn run_one(&self, key: &[u8], due_at: u64, deadline: &Deadline) -> Result<JobRun> {
+    ///
+    /// The run's first write reads the row again and goes by the row's due time, not by the
+    /// index entry `indexed_due` the pass read before it: another write may have armed the job
+    /// again in between. A row armed for later is not due yet: nothing runs, nothing is
+    /// reported (`None`), and the index entry the pass read, no longer the row's own, goes
+    /// (review round 2 of #8026, P1 on this file).
+    fn run_one(&self, key: &[u8], indexed_due: u64, deadline: &Deadline) -> Result<Option<JobRun>> {
         let (job, subject) = parse_row_key(key).unwrap_or_default();
-        let mut run = JobRun {
-            job: job.clone(),
-            subject: subject.map(|subject| subject.to_hex()),
-            due_at,
-            outcome: JobOutcome::Done,
-        };
         let started = self.with_write_txn_grouped(|txn| {
             let row = ROWS.get(&self.store, txn, &key.to_vec())?;
             let Some(row) = row else {
                 // A stale index entry: its row went in a write that missed it.
-                DUE.delete(&self.store, txn, &due_key(due_at, key))?;
-                return Ok(Err(JobOutcome::UnknownJob));
+                DUE.delete(&self.store, txn, &due_key(indexed_due, key))?;
+                return Ok(Some((indexed_due, Err(JobOutcome::UnknownJob))));
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            match job_named(&job) {
+            let due_at = row.due_at();
+            if due_at > now {
+                DUE.delete(&self.store, txn, &due_key(indexed_due, key))?;
+                return Ok(None);
+            }
+            let started = match job_named(&job) {
                 None => {
                     // Parked until a build that knows the job: due again in a day through
                     // `resume_at`, which stands in for the occurrence's due time (the park also
@@ -160,16 +167,26 @@ impl Vault {
                         ..row.clone()
                     };
                     store_row_in_txn(&self.store, txn, key, Some(&row), Some(&parked))?;
-                    Ok(Err(JobOutcome::UnknownJob))
+                    Err(JobOutcome::UnknownJob)
                 }
-                Some(spec) => self.start_in_txn(txn, spec, key, row, due_at, now),
-            }
+                Some(spec) => self.start_in_txn(txn, spec, key, row, due_at, now)?,
+            };
+            Ok(Some((due_at, started)))
         })?;
+        let Some((due_at, started)) = started else {
+            return Ok(None);
+        };
+        let mut run = JobRun {
+            job,
+            subject: subject.map(|subject| subject.to_hex()),
+            due_at,
+            outcome: JobOutcome::Done,
+        };
         let (spec, armed) = match started {
             Ok(started) => started,
             Err(outcome) => {
                 run.outcome = outcome;
-                return Ok(run);
+                return Ok(Some(run));
             }
         };
         let ran = catch_unwind(AssertUnwindSafe(|| (spec.run)(self, &armed, deadline)));
@@ -203,7 +220,7 @@ impl Vault {
             };
             store_row_in_txn(&self.store, txn, key, Some(&row), next.as_ref())
         })?;
-        Ok(run)
+        Ok(Some(run))
     }
 
     /// The checks before a run, and its start marker, in the run's first write: an interrupted
