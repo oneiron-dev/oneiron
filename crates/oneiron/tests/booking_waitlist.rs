@@ -376,6 +376,7 @@ fn fixture_config(min_notice_secs: u64) -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
