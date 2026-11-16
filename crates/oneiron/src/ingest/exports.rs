@@ -20,6 +20,12 @@ pub enum ExportLayout {
     AgentArchive,
     SessionArchive,
     MemoryArchive,
+    /// A Slack workspace export: many files, read whole by
+    /// [`super::history::slack::decode`] and landed only by `oneiron import
+    /// slack`, which binds each conversation to the members the source
+    /// shares it with (ARCH-0027 #import-audience). A one-text parse here
+    /// would land its rows with no sharing, so it is refused.
+    SlackWorkspace,
 }
 
 /// Each registry entry is an independent IngestSource; identity is catalog data.
@@ -52,6 +58,7 @@ impl IngestSource for ExportSource {
             ExportLayout::MemoryDirectory | ExportLayout::HookTranscript => {
                 self.parse_memory_directory_layout(&mut out, recorded_at, input)?
             }
+            ExportLayout::SlackWorkspace => return Err(IngestError::UnsupportedInput),
             layout => {
                 let doc = self.json(input)?;
                 match layout {
@@ -222,7 +229,7 @@ impl ExportSource {
                     }
                     .into(),
                     content: message.text,
-                    speaker_id: message.said_by.map(str::to_owned),
+                    speaker_id: message.said_by,
                     occurred_at: message.at_ms.map(|ms| ms / 1000),
                     recorded_at,
                     character_card: None,
