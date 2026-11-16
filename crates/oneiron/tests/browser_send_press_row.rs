@@ -14,7 +14,8 @@
 //! - A grant naming a project covers only the sends in it (FIX 10422).
 //! - With no row naming the send, the agent's role decides, as at the Gate:
 //!   an agent holding Owner sends with no press; a Deputy keeps its press,
-//!   since a guest has no unsure test.
+//!   since a guest has no unsure test, and so do a Member and an agent of a
+//!   vault that is not shared (Engine ruling L403-NO-ROW-ROLE = A).
 //! - A person's own browser sends, and a run's policy before its first call
 //!   names its caller, take no check-in.
 //! - A budgeted grant never puts a press back on a class the row released.
@@ -365,22 +366,27 @@ fn an_agent_holding_owner_sends_in_the_browser_with_no_press_when_no_row_names_t
 }
 
 #[test]
-fn a_deputy_or_unshared_agent_keeps_its_browser_send_press_when_no_row_names_the_send() {
-    let (_dir, vault, agent) = vault_under(waits_only());
-    let unshared = policy_for(&vault, Some(&scope_of(agent, EdgeActorClass::Agent, None)));
-    share_with(&vault, agent, FederationGrantRole::Deputy);
+fn a_deputy_member_or_unshared_agent_keeps_its_browser_send_press_when_no_row_names_the_send() {
+    for role in [
+        None,
+        Some(FederationGrantRole::Deputy),
+        Some(FederationGrantRole::Member),
+    ] {
+        let (_dir, vault, agent) = vault_under(waits_only());
+        if let Some(role) = role {
+            share_with(&vault, agent, role);
+        }
 
-    let deputy = policy_for(&vault, Some(&scope_of(agent, EdgeActorClass::Agent, None)));
+        let policy = policy_for(&vault, Some(&scope_of(agent, EdgeActorClass::Agent, None)));
 
-    for policy in [&unshared, &deputy] {
         for class in SEND_CLASSES {
             assert_eq!(
                 policy.mode_for(class),
                 PressMode::PerSend,
-                "{class}: {policy:?}"
+                "{role:?} {class}: {policy:?}"
             );
         }
-        assert!(policy.sources.is_empty(), "{policy:?}");
+        assert!(policy.sources.is_empty(), "{role:?}: {policy:?}");
     }
 }
 
