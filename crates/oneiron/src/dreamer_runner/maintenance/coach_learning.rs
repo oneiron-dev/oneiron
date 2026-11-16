@@ -153,7 +153,15 @@ fn improver_cell(vault: &Vault, proposal: &EntityId) -> Result<Option<LearningCe
     else {
         return Ok(None);
     };
-    let Some(revision) = improver_revision(vault, &entry.version)? else {
+    // The entity whose body loaded, as the load pinned it (FIX 10110): a
+    // copy restored later at the same version never takes the outcome of
+    // the copy that drafted the proposal. An unpinned load falls back to
+    // the revision of that name and version.
+    let revision = match entry.revision {
+        Some((pinned, _)) => vault.get_skill_record(&pinned)?.map(|_| pinned),
+        None => improver_revision(vault, &entry.version)?,
+    };
+    let Some(revision) = revision else {
         return Ok(None);
     };
     let cell = LearningCell::new(LearningPredicate::Reliability, revision)
@@ -163,22 +171,18 @@ fn improver_cell(vault: &Vault, proposal: &EntityId) -> Result<Option<LearningCe
     Ok(Some(cell))
 }
 
-/// The shared improver revision at `version`: the one the Coach loads now,
-/// then the shipped one, when it is that version; else the one SKILL record
-/// of that name and version. `None` when none, or more than one, is.
+/// The shared improver revision at `version`: the shipped one when it is
+/// that version, else the one SKILL record of that name and version. `None`
+/// when none, or more than one, is.
 fn improver_revision(vault: &Vault, version: &str) -> Result<Option<EntityId>> {
     let pinned =
         |record: &SkillRecord| record.skill_id == COACH_IMPROVER_SKILL && record.version == version;
-    for known in [
-        coach_improver_skill_in_force(vault)?,
-        coach_improver_skill_id()?,
-    ] {
-        if vault
-            .get_skill_record(&known)?
-            .is_some_and(|record| pinned(&record))
-        {
-            return Ok(Some(known));
-        }
+    let shipped = coach_improver_skill_id()?;
+    if vault
+        .get_skill_record(&shipped)?
+        .is_some_and(|record| pinned(&record))
+    {
+        return Ok(Some(shipped));
     }
     let mut found = None;
     for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
