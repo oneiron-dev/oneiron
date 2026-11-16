@@ -4399,7 +4399,7 @@
      "path": "src/authority/entry_transition_predicates.rs",
      "purpose": "The per-entry consent and retired-op predicates; `entry_transition` re-exports them",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -13049,7 +13049,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2,
-      "mod": 10,
+      "mod": 11,
       "re-export": 2,
       "struct": 1
      }
@@ -13485,6 +13485,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "OneClickUnsubscribeOutcome"
+     ],
+     "path": "src/campaign/one_click_unsubscribe.rs",
+     "purpose": "The one-click unsubscribe link a bulk campaign email carries (ARCH-0059 #opt-out; RFC 8058; FIX…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/campaign/presets/content.rs",
      "purpose": "Ratified consultancy-preset content: stage order, reply codes, and brief dials",
@@ -13570,7 +13585,7 @@
      "path": "src/campaign/sender.rs",
      "purpose": "One campaign program step's send through the served channel transports (FIX 11513)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -13696,7 +13711,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 5,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -24593,7 +24608,7 @@
      "path": "src/consent_graduation/api.rs",
      "purpose": "Typed consent-graduation public door",
      "surface": {
-      "fn": 11,
+      "fn": 9,
       "re-export": 1,
       "struct": 10
      }
@@ -35988,7 +36003,7 @@
      "path": "src/edit_distance/graduation/mod.rs",
      "purpose": "ED-05 (ONE-1761, ARCH-0056 §6 · OF-399 · DEC-0006): the graduation POLICY and the offer-answer UX above…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -36036,6 +36051,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/graduation/setting_keys.rs",
+     "purpose": "The catalogue key `edit_distance::graduation` declares (DESIGN 15-setting-primitive, stage 4): the owner's…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -36054,7 +36077,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 5,
-      "fn": 9,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -51713,6 +51736,7 @@
       "CampaignDefinition",
       "CampaignLifecycle",
       "CampaignRecord",
+      "CampaignSendMode",
       "CopyReviewMode",
       "CreateCampaignRequest",
       "UpdateCampaignRequest"
@@ -51721,8 +51745,8 @@
      "purpose": "Versioned cohort records, lifecycle values and owner-bound request shapes",
      "surface": {
       "const": 1,
-      "enum": 2,
-      "fn": 5,
+      "enum": 3,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -89648,7 +89672,7 @@
      "path": "src/test_doors/campaign_opt_out_line.rs",
      "purpose": "Door for `tests/campaign_opt_out_line.rs` (L3-02, ARCH-0059 #opt-out): the campaign sender's sealing of one…",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -99123,6 +99147,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/campaign_bulk_send_mode.rs",
+     "purpose": "Campaign send mode (ARCH-0059 #opt-out; FIX [CAMPAIGN-BULK-SEND-MODE], Engine ruling L3-02-SEND-MODE-SCOPE =…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -101397,6 +101429,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/list_limit_rules.rs",
+     "purpose": "Pinned limit answers of the twelve paged lists (UC-13 PR 4a)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102431,6 +102471,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/roster_arrival_order.rs",
+     "purpose": "A roster key's rows fold to the same roster on every install, whatever order they arrive in…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102750,6 +102798,14 @@
      "notable": [],
      "path": "tests/serving_scoped_credentials.rs",
      "purpose": "Serving keeps the owner's current view while an admitted agent receives the scoped export's typed Nulled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/setting_keyed_a_4.rs",
+     "purpose": "DESIGN 15-setting-primitive, stage 4, lane SETTING-KEYED-A, PR K3b: the owner's graduation threshold rows…",
      "surface": {}
     },
     {
@@ -103662,7 +103718,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -104082,7 +104138,7 @@
      "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
-     "files": 88,
+     "files": 89,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -105190,8 +105246,8 @@
    },
    "over_bar": 267,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7645,
-   "test_files": 1397
+   "source_files": 7647,
+   "test_files": 1401
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -113386,7 +113442,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 29,
+      "mod": 30,
       "re-export": 4
      }
     },
@@ -113542,6 +113598,19 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Register"
+     ],
+     "path": "src/register.rs",
+     "purpose": "Registers: the engine's closed lists of names (Fable pass 25, the Register pattern)",
+     "surface": {
+      "re-export": 1,
+      "trait": 1
      }
     },
     {
@@ -113859,6 +113928,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/register_derive.rs",
+     "purpose": "`#[derive(Register)]` writes, for every row, the name serde writes for the same enum: under each of serde's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/widened_seams.rs",
      "purpose": "Direct calls into the items `oneiron-contracts` made `pub` so `oneiron` can reach them across the crate split",
      "surface": {}
@@ -113998,6 +114077,13 @@
      "layout": "file",
      "purpose": "`RecordedSeconds`: a time on the vault's recording clock, in whole seconds since the UNIX epoch"
     },
+    "register": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Registers: the engine's closed lists of names (Fable pass 25, the Register pattern)"
+    },
     "registry": {
      "files": 8,
      "impl_vault": false,
@@ -114071,8 +114157,8 @@
    },
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 69,
-   "test_files": 6
+   "source_files": 70,
+   "test_files": 7
   },
   "oneiron-crypto": {
    "files": [
@@ -114679,7 +114765,17 @@
      "path": "src/lib.rs",
      "purpose": "Proc-macro derives of the oneiron workspace, one module per derive",
      "surface": {
-      "fn": 1
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/register.rs",
+     "purpose": "`#[derive(Register)]` for `oneiron_contracts::register::Register`: a closed list of names is declared once…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -114694,6 +114790,13 @@
     }
    ],
    "modules": {
+    "register": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "`#[derive(Register)]` for `oneiron_contracts::register::Register`: a closed list of names is declared once…"
+    },
     "side_key": {
      "files": 1,
      "impl_vault": false,
@@ -114704,7 +114807,7 @@
    },
    "over_bar": 0,
    "purpose": "Proc-macro derives of the oneiron workspace, one module per derive",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 0
   },
   "oneiron-docedit": {
@@ -138448,6 +138551,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/argument_parser.rs",
+     "purpose": "The generator's argument parser: Python's `argparse` for the binary's four options, with the refusals it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -138694,7 +138807,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/generate/rows.rs",
@@ -138702,6 +138815,24 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/rows/sets.rs",
+     "purpose": "The row sets of the module level: the host sets, the callable sets and the checked sets, each made by one…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/generate/rows/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -138739,7 +138870,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/main.rs",
@@ -138853,6 +138984,13 @@
     }
    ],
    "modules": {
+    "argument_parser": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The generator's argument parser: Python's `argparse` for the binary's four options, with the refusals it…"
+    },
     "catalog_fragment": {
      "files": 1,
      "impl_vault": false,
@@ -138875,7 +139013,7 @@
      "purpose": "The facade's wire types, read from the Rust serde types every facade row names"
     },
     "generate": {
-     "files": 17,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -138910,10 +139048,10 @@
      "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order"
     }
    },
-   "over_bar": 12,
+   "over_bar": 10,
    "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
-   "source_files": 38,
-   "test_files": 3
+   "source_files": 40,
+   "test_files": 4
   },
   "oneiron-seal": {
    "files": [
@@ -142974,7 +143112,7 @@
      "path": "src/api/esign_qr.rs",
      "purpose": "The public QR page a sealed document's certificate names (ARCH-0064a section 6, [SGN-05])…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -143894,7 +144032,7 @@
      "path": "src/api/facade/graduation_doors.rs",
      "purpose": "Consent-graduation host doors, under the consent lifecycle's owner proof",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 9
      }
     },
     {
@@ -146534,7 +146672,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 65
+      "crate-vis": 66
      }
     },
     {
@@ -146625,6 +146763,16 @@
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/one_click_unsubscribe.rs",
+     "purpose": "The public one-click unsubscribe door a bulk campaign email's List-Unsubscribe names (ARCH-0059 #opt-out…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -155072,7 +155220,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/managed/state_serve/route_selection_tests.rs",
@@ -160495,7 +160643,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 24
+      "mod": 25
      }
     },
     {
@@ -160506,6 +160654,16 @@
      "purpose": "Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/one_click_wire_counter.rs",
+     "purpose": "Door for `tests/campaign_one_click_unsubscribe.rs`: runs a closure while the wire window's counter lock is…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -161276,7 +161434,8 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 15,
+      "const": 1,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
@@ -161300,7 +161459,7 @@
      "path": "src/wire_telemetry/http.rs",
      "purpose": "The HTTP observer every routed request passes, and the tick that keeps the observed window",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -161439,6 +161598,14 @@
      "notable": [],
      "path": "tests/calendar_ics_hosted_egress.rs",
      "purpose": "CAL-02: an ICS feed goes out through the one shared network boundary (ARCH-0060 :130, \"The adapter keeps no…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/campaign_one_click_unsubscribe.rs",
+     "purpose": "The one-click unsubscribe link a bulk campaign email carries (ARCH-0059 #opt-out, RFC 8058; FIX…",
      "surface": {}
     },
     {
@@ -162491,7 +162658,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 791,
+     "files": 792,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -162988,7 +163155,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -163053,8 +163220,8 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1897,
-   "test_files": 290
+   "source_files": 1899,
+   "test_files": 291
   },
   "oneiron-setting-contract": {
    "files": [
@@ -179418,15 +179585,13 @@
       "GraduationOutcome",
       "GraduationPolicies",
       "GraduationPolicy",
-      "GraduationPolicyClearRequest",
-      "GraduationPolicySetRequest",
       "GraduationSnooze"
      ],
      "path": "src/consent_graduation/api.rs",
      "purpose": "Moved from `crates/oneiron/src/consent_graduation/api.rs` (lib split W3: wire types below the lib)",
      "surface": {
       "enum": 5,
-      "struct": 5
+      "struct": 3
      }
     },
     {
