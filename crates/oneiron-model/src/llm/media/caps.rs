@@ -3,10 +3,14 @@
 //! Definitions: this module; the parent re-exports the old paths.
 
 use super::{BTreeSet, Deserialize, NativeRate, Serialize};
+use oneiron_contracts::register::Register;
 
 /// One call of the `ai.*` family, by the output it asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("ai.operation")]
 pub enum AiOperation {
     /// `ai.text`: text out, through the text seats' ladders.
     Text,
@@ -32,18 +36,6 @@ impl AiOperation {
         Self::Transcribe,
         Self::Embed,
     ];
-
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Image => "image",
-            Self::Video => "video",
-            Self::Speech => "speech",
-            Self::Transcribe => "transcribe",
-            Self::Embed => "embed",
-        }
-    }
 
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
@@ -98,27 +90,17 @@ impl AiOperation {
 }
 
 /// A kind of content a call takes in or puts out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("modality")]
 pub enum Modality {
     Text,
     Image,
     Audio,
     Video,
     Embedding,
-}
-
-impl Modality {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Image => "image",
-            Self::Audio => "audio",
-            Self::Video => "video",
-            Self::Embedding => "embedding",
-        }
-    }
 }
 
 /// A unit a provider counts media work in.
