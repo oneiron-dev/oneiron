@@ -132,6 +132,7 @@ fn create_cohorts(vault: &Vault) -> Cohorts {
                     reply_snooze_policy: None,
                     voice_guide_ref: None,
                     copy_review: None,
+                    send_mode: None,
                 },
                 10,
             )

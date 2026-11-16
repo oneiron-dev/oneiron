@@ -345,9 +345,7 @@ impl Vault {
             if change.origin
                 == ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
             {
-                crate::memory::explicit_claim_override_in_txn(
-                    self, wtxn, *actor, old_id, &body, learned_at,
-                )?;
+                crate::memory::explicit_claim_override_in_txn(self, wtxn, *actor, old_id, &body)?;
             } else {
                 crate::memory::require_claim_self_grant_in_txn(
                     self,
@@ -573,9 +571,7 @@ impl Vault {
             ));
         }
         self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
-        crate::memory::explicit_claim_override_in_txn(
-            self, &mut wtxn, *actor, *claim_id, &head, now,
-        )?;
+        crate::memory::explicit_claim_override_in_txn(self, &mut wtxn, *actor, *claim_id, &head)?;
 
         // Every direct predecessor is read and judged in this one write
         // (FIX 8657): the count only feeds the advisory EdgePeerRows check.
