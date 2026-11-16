@@ -11,10 +11,6 @@
 use std::collections::BTreeSet;
 
 use super::principal_standing::grant_pact_standing_lapsed_in_txn;
-use super::withdrawn_grant::grant_known_withdrawn_in_txn;
-use crate::federation::decode_federation_grant_body;
-use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use oneiron_authority::federation::ScopeAxis;
 
@@ -26,9 +22,10 @@ pub(crate) const AI_GRANT_VERB_PREFIX: &str = "ai.";
 
 impl Vault {
     /// The `ai.*` operations, by wire name, that a live Grant of `agent`
-    /// names now (FIX 3208): a FEDERATION_GRANT row the owner minted his
-    /// agent (`owner_agent`), whose member is `agent`, that confers now, is
-    /// not known withdrawn (FIX 5107), lists `ai.<operation>` among an
+    /// names now (FIX 3208): an owner's agent Grant standing on his counted
+    /// mint (pass 28 R3; a row put back after its revoke, FIX 5107, or a row
+    /// no mint gives is none), whose member is `agent`, that confers now,
+    /// lists `ai.<operation>` among an
     /// explicit verb set or names a verb class that lists it (its own
     /// spelling or the owner's row for it, FIX 8735), and whose pact
     /// membership, on a shared vault, still stands (FIX 7548). Empty for an
@@ -42,24 +39,9 @@ impl Vault {
         let now = self.instant_in_txn(&txn)?.secs();
         let mut operations = BTreeSet::new();
         let mut class_rows: Option<crate::federation::AgentVerbClasses> = None;
-        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &self.store,
-            &txn,
-            ENTITY_TYPE_FEDERATION_GRANT,
-            None,
-        )? {
-            let id = id?;
-            let LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-                body,
-            } = live_entity_row_in_txn(&self.store, &txn, &id)?
-            else {
-                continue;
-            };
-            let Ok(grant) = decode_federation_grant_body(&body) else {
-                continue;
-            };
-            if !grant.owner_agent || grant.member_ref != agent {
+        for standing in self.agent_grants_in_txn(&txn)? {
+            let (id, grant) = (standing.id, standing.grant);
+            if grant.member_ref != agent {
                 continue;
             }
             if !grant.verb_classes.is_empty() && class_rows.is_none() {
@@ -93,7 +75,6 @@ impl Vault {
                     now,
                     classes.unwrap_or(&crate::federation::AgentVerbClasses::none()),
                 )
-                || grant_known_withdrawn_in_txn(&self.store, &txn, id)
                 || grant_pact_standing_lapsed_in_txn(self, &txn, id, grant.scope, grant.member_ref)
             {
                 continue;

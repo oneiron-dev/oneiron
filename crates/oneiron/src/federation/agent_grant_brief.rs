@@ -3,7 +3,8 @@
 //! signed act that minted it.
 //!
 //! One read transaction carries the clock, the live-agent check, the Grant
-//! census, each Grant's standing and the authority-log mint evidence. It
+//! census (each Grant standing on the owner's counted mint, pass 28 R3),
+//! each Grant's standing for the agent and the mint's log time. It
 //! writes nothing: no mint, no fold write, no clock floor. A census that
 //! could not judge some row is unavailable, never a list that claims to be
 //! complete. Every other federation Grant that names the agent is judged by
@@ -13,58 +14,10 @@
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use crate::authority::{AgentGrantActRecord, AgentGrantChange, AuthorityEntryHash, AuthorityOp};
+use crate::authority::{AgentGrantChange, AuthorityEntryHash, AuthorityOp};
 use crate::context_board::{BriefGrant, BriefGrants};
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
-
-use super::agent_grant::AgentGrantStanding;
-
-/// One retained, counted mint act of an agent Grant.
-struct MintEvidence {
-    hash: AuthorityEntryHash,
-    record: AgentGrantActRecord,
-    /// The log row's recording time (Unix seconds).
-    recorded_at: u64,
-}
-
-impl MintEvidence {
-    /// Whether this act signed exactly the Grant `standing` holds: its id,
-    /// owner, member, scope, expiry, repo bounds, kind, verb classes, wallet
-    /// and working view bound. An act that only names the same id is not its
-    /// evidence.
-    fn signs(&self, standing: &AgentGrantStanding) -> bool {
-        let AgentGrantChange::Mint {
-            member,
-            scope,
-            expires_at,
-            repo_bounds,
-            grant_kind,
-            git_push_bounds,
-            verb_classes,
-            wallet_ref,
-            steward,
-            working_view_bounds,
-        } = &self.record.change
-        else {
-            return false;
-        };
-        let grant = &standing.grant;
-        self.record.grant == standing.id
-            && *steward == (grant.role == super::FederationGrantRole::Steward)
-            && self.record.act.owner == standing.delegated_by
-            && *member == grant.member_ref
-            && *scope == grant.authority_scope
-            && *expires_at == grant.expires_at
-            && *repo_bounds == grant.repo_bounds
-            && *grant_kind == grant.kind
-            && *git_push_bounds == grant.git_push_bounds
-            && *verb_classes == grant.verb_classes
-            && *wallet_ref == grant.wallet_ref
-            && *working_view_bounds == grant.working_view_bounds
-    }
-}
 
 impl Vault {
     /// The Grants that stand for the host-bound agent `actor`, as one read
@@ -119,7 +72,7 @@ impl Vault {
             return Ok(None);
         }
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
-        let evidence = self.agent_grant_mint_evidence_in_txn(txn)?;
+        let minted_at = self.agent_grant_mint_times_in_txn(txn)?;
         let mut grants = Vec::new();
         for standing in standings {
             match standing.stands_for_any_listed_verb_in_txn(self, txn, agent, now, &owners) {
@@ -135,19 +88,10 @@ impl Vault {
                     return Ok(None);
                 }
             }
-            let mut signing = evidence
-                .get(&standing.id)
-                .into_iter()
-                .flatten()
-                .filter(|mint| mint.signs(&standing));
-            let mint = match (signing.next(), signing.next()) {
-                (Some(mint), None) => Some(mint),
-                _ => None,
-            };
             grants.push(BriefGrant {
                 id: standing.id,
-                act_hash: mint.map(|mint| crate::entity_id::bytes_to_hex_lower(&mint.hash)),
-                minted_at: mint.map(|mint| mint.recorded_at),
+                act_hash: Some(crate::entity_id::bytes_to_hex_lower(&standing.act)),
+                minted_at: minted_at.get(&standing.act).copied(),
                 scope: standing.grant.authority_scope,
                 repo_bounds: standing.grant.repo_bounds,
             });
@@ -155,28 +99,25 @@ impl Vault {
         Ok(Some(grants))
     }
 
-    /// Each retained mint act the authority fold counted, by the Grant it
-    /// names.
-    fn agent_grant_mint_evidence_in_txn(
+    /// The log row time of each retained mint act the authority fold
+    /// counted, by its entry hash: a Grant's mint is the act its line stands
+    /// on ([`super::agent_grant::AgentGrantStanding::act`]), and a mint an
+    /// adopted checkpoint covers has no resident row and no time here.
+    fn agent_grant_mint_times_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-    ) -> Result<BTreeMap<EntityId, Vec<MintEvidence>>> {
-        let mut evidence: BTreeMap<EntityId, Vec<MintEvidence>> = BTreeMap::new();
-        for act in self.counted_grant_acts_in_txn(txn)? {
-            let AuthorityOp::AgentGrantAct(record) = act.op else {
-                continue;
-            };
-            if matches!(record.change, AgentGrantChange::Mint { .. }) {
-                evidence
-                    .entry(record.grant)
-                    .or_default()
-                    .push(MintEvidence {
-                        hash: act.hash,
-                        record,
-                        recorded_at: act.recorded_at,
-                    });
-            }
-        }
-        Ok(evidence)
+    ) -> Result<BTreeMap<AuthorityEntryHash, u64>> {
+        Ok(self
+            .counted_grant_acts_in_txn(txn)?
+            .into_iter()
+            .filter(|act| {
+                matches!(
+                    &act.op,
+                    AuthorityOp::AgentGrantAct(record)
+                        if matches!(record.change, AgentGrantChange::Mint { .. })
+                )
+            })
+            .map(|act| (act.hash, act.recorded_at))
+            .collect())
     }
 }

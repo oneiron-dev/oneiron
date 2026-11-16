@@ -78,18 +78,43 @@ impl StandingGrant {
         if grant.expires_at.is_some_and(|expires_at| now >= expires_at) {
             return None;
         }
-        let line = fold
-            .grant_line(id)
-            .filter(|line| !line.ended && line.family.is_some_and(|f| families.contains(&f)))?;
-        let (act, terms) = line.giving.as_ref()?;
-        terms
-            .matches_row(id, &grant, terms_key.as_ref())
-            .then_some(Self {
-                id,
-                grant,
-                act: *act,
-            })
+        let act = given_in_fold(fold, id, &grant, terms_key.as_ref(), families)?;
+        Some(Self { id, grant, act })
     }
+}
+
+/// The counted act that gives the Grant row `id`, holding `grant` under `terms_key`, in one
+/// of `families`, while no counted act ended its line and the giving states exactly the row;
+/// `None` for every other row. Expiry is not read here.
+fn given_in_fold(
+    fold: &AuthorityFold,
+    id: EntityId,
+    grant: &FederationGrant,
+    terms_key: Option<&GrantTermsKey>,
+    families: &[GrantFamily],
+) -> Option<AuthorityEntryHash> {
+    let line = fold
+        .grant_line(id)
+        .filter(|line| !line.ended && line.family.is_some_and(|f| families.contains(&f)))?;
+    let (act, terms) = line.giving.as_ref()?;
+    terms.matches_row(id, grant, terms_key).then_some(*act)
+}
+
+/// The owner's counted mint that gives his agent Grant row `id` (an `owner_agent` row, a git
+/// push Grant or a Steward mint's row), holding `grant` under `terms_key`: the line is given
+/// in [`GrantFamily::OwnerAgent`], no counted act ended it, and the mint states the row, term
+/// for term. `None` for a row no counted mint gives, one put back after its revoke and one
+/// whose terms are not its mint's. Expiry is the reader's: a lister of the owner's agent
+/// Grants (backfill, a grantless agent, the default mint) asks which Grants name a holder,
+/// expired or not, and each conferring reader reads the expiry at its own time.
+#[must_use]
+pub(crate) fn owner_agent_mint_in_fold(
+    fold: &AuthorityFold,
+    id: EntityId,
+    grant: &FederationGrant,
+    terms_key: Option<&GrantTermsKey>,
+) -> Option<AuthorityEntryHash> {
+    given_in_fold(fold, id, grant, terms_key, &[GrantFamily::OwnerAgent])
 }
 
 /// The families an act gives a Grant row over a shared vault in, read from the row's shape;

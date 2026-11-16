@@ -64,7 +64,7 @@ use crate::{TimeRange, Vault};
 use super::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
     FederationGrantScope, RepoAccessBounds, Scope, ScopeAxis, decode_federation_grant_body,
-    encode_federation_grant_body, own_device_residence_scope,
+    decode_federation_grant_body_keyed, encode_federation_grant_body, own_device_residence_scope,
 };
 
 mod backfill;
@@ -104,7 +104,9 @@ fn default_agent_grant_scope(slip: &Scope) -> Scope {
     authority_scope
 }
 
-/// One owner's agent grant as its live row holds it.
+/// One owner's agent grant as its live row holds it, standing on his counted mint (pass 28
+/// R3): only the agent Grant list ([`Vault::agent_grants_in_txn`]) and the mint's own writer
+/// build one.
 #[derive(Debug, Clone)]
 pub(crate) struct AgentGrantStanding {
     pub(crate) id: EntityId,
@@ -113,9 +115,22 @@ pub(crate) struct AgentGrantStanding {
     pub(crate) delegated_by: EntityId,
     /// Recording time of the mint (Unix seconds).
     pub(crate) created_at: u64,
+    /// The owner's counted mint that gives it: the entry hash of its `AgentGrantAct`.
+    pub(crate) act: AuthorityEntryHash,
 }
 
 impl AgentGrantStanding {
+    /// `row`, standing on the owner's counted mint `act`.
+    fn of(row: AgentGrantRow, act: AuthorityEntryHash) -> Self {
+        Self {
+            id: row.id,
+            grant: row.grant,
+            delegated_by: row.delegated_by,
+            created_at: row.created_at,
+            act,
+        }
+    }
+
     /// Whether it still stands at `now`: no expiry, or one not reached.
     pub(crate) fn stands_at(&self, now: u64) -> bool {
         self.grant
@@ -350,6 +365,7 @@ impl Vault {
                 grant,
                 delegated_by,
                 created_at: now,
+                act: *act.as_bytes(),
             },
             act,
             confers,
@@ -606,8 +622,11 @@ impl Vault {
         Ok(acts)
     }
 
-    /// Every live agent grant of this vault, in id order. A row that does
-    /// not decode is no agent grant here.
+    /// Every live agent grant of this vault that stands on the owner's
+    /// counted mint, in id order, expired or not ([`AgentGrantStanding::stands_at`]
+    /// is the reader's). A row no counted mint gives, one put back after its
+    /// revoke, one whose terms are not its mint's and one that does not decode
+    /// are no agent grant here (pass 28 R3).
     pub(crate) fn agent_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -622,15 +641,45 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
-        agent_grants_reporting_for_store_in_txn(&self.store, txn, false)
+        agent_grants_reporting_for_store_in_txn(&self.store, txn)
+    }
+
+    /// The owner's agent Grant row `id` standing on his counted mint
+    /// ([`Self::agent_grants_in_txn`] for one id), expired or not: `None`
+    /// for a row that is not live, does not decode, is no owner's agent
+    /// Grant or does not stand.
+    ///
+    /// # Errors
+    /// A store or authority-fold read failure.
+    pub(crate) fn agent_grant_standing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<AgentGrantStanding>> {
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &id)?
+        else {
+            return Ok(None);
+        };
+        let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(&body) else {
+            return Ok(None);
+        };
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(
+            agent_grant_row_decoded(&self.store, &fold, txn, id, grant, terms_key.as_ref())?
+                .and_then(|(row, act)| act.map(|act| AgentGrantStanding::of(row, act))),
+        )
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing
     /// ones, or every live one and every signed mint withdrawn on the record
-    /// with `include_revoked` (an expired grant shows as revoked). A row
-    /// re-put at a withdrawn Grant's id (FIX-LIST 5107) stands for nothing
-    /// and shows as revoked, with its revoke action, so the owner still finds
-    /// it and revokes it.
+    /// with `include_revoked` (an expired grant shows as revoked). A row no
+    /// counted mint gives (a row re-put at a withdrawn Grant's id, FIX-LIST
+    /// 5107, a forged row, a row widened in place) stands for nothing and
+    /// shows as revoked, with its revoke action, so the owner still finds it
+    /// and revokes it.
     pub(crate) fn agent_grant_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -639,27 +688,26 @@ impl Vault {
         let now = self.instant_in_txn(txn)?.secs();
         let mut rows = Vec::new();
         let mut shown = BTreeSet::new();
-        let grants = agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0;
+        let grants = agent_grant_rows_for_review_in_txn(&self.store, txn)?;
         let classes = super::AgentVerbClasses::for_grants_in_txn(
             &self.store,
             txn,
-            grants.iter().map(|standing| &standing.grant),
+            grants.iter().map(|(review, _)| &review.grant),
         )?;
-        for standing in grants {
-            let withdrawn =
-                crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id);
-            if !include_revoked && (withdrawn || !standing.stands_at(now)) {
+        for (review, stands) in grants {
+            let withdrawn = !stands;
+            if !include_revoked && (withdrawn || !review.stands_at(now)) {
                 continue;
             }
             let mut row =
-                crate::consent::ConsentRegistryRow::from_agent_grant(&standing, now, &classes);
+                crate::consent::ConsentRegistryRow::from_agent_grant(&review, now, &classes);
             if withdrawn {
                 row.status = crate::consent::ConsentGrantStatus::Revoked;
                 if let Some(agent_grant) = &mut row.agent_grant {
                     agent_grant.confers = false;
                 }
             }
-            shown.insert(standing.id);
+            shown.insert(review.id);
             rows.push(row);
         }
         if include_revoked {
@@ -770,26 +818,83 @@ impl Vault {
 }
 
 /// [`Vault::agent_grants_in_txn`] for a reader that holds a `Store` and no
-/// `Vault` (FIX 7461): the same live agent grants, in id order. A row that
-/// does not decode is no agent grant here, and neither is one positively
-/// known withdrawn, whatever row stands at its id now (FIX-LIST 5107).
+/// `Vault` (FIX 7461): the same agent grants standing on the owner's counted
+/// mint, in id order.
 pub(crate) fn agent_grants_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<AgentGrantStanding>> {
-    Ok(agent_grants_reporting_for_store_in_txn(store, txn, false)?.0)
+    Ok(agent_grants_reporting_for_store_in_txn(store, txn)?.0)
 }
 
-/// [`Vault::agent_grants_reporting_in_txn`], read through `store`; with
-/// `keep_withdrawn`, a row re-put at a withdrawn Grant's id is listed too,
-/// for the owner's registry review alone, which never reads standing from
-/// it.
+/// [`Vault::agent_grants_reporting_in_txn`], read through `store`.
 fn agent_grants_reporting_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-    keep_withdrawn: bool,
 ) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
-    let mut grants = Vec::new();
+    let (rows, undecoded) = agent_grant_rows_in_txn(store, txn)?;
+    Ok((
+        rows.into_iter()
+            .filter_map(|(row, act)| act.map(|act| AgentGrantStanding::of(row, act)))
+            .collect(),
+        undecoded,
+    ))
+}
+
+/// The owner's agent Grant rows for his registry review alone, which never
+/// reads standing from a row: each beside whether it stands on his counted
+/// mint here.
+fn agent_grant_rows_for_review_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(AgentGrantRow, bool)>> {
+    Ok(agent_grant_rows_in_txn(store, txn)?
+        .0
+        .into_iter()
+        .map(|(row, act)| (row, act.is_some()))
+        .collect())
+}
+
+/// An owner's agent Grant row as it is stored, whether or not it stands: the
+/// registry's review of it.
+#[derive(Debug, Clone)]
+pub(crate) struct AgentGrantRow {
+    pub(crate) id: EntityId,
+    pub(crate) grant: FederationGrant,
+    /// The owner the row names as its granter (`delegated_by`).
+    pub(crate) delegated_by: EntityId,
+    /// Recording time of the row (Unix seconds).
+    pub(crate) created_at: u64,
+}
+
+impl AgentGrantRow {
+    /// Whether its expiry, if any, is not reached at `now`.
+    pub(crate) fn stands_at(&self, now: u64) -> bool {
+        self.grant
+            .expires_at
+            .is_none_or(|expires_at| now < expires_at)
+    }
+}
+
+/// Every live owner's agent Grant row, in id order, each with the owner's
+/// counted mint that gives it (`None` for a row no counted mint gives, one
+/// put back after its revoke, one whose terms are not its mint's, and one the
+/// local withdrawal marker names: an end still owed while this install could
+/// not carry it), beside the ids of the live FEDERATION_GRANT rows that did
+/// not decode.
+fn agent_grant_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(
+    Vec<(AgentGrantRow, Option<AuthorityEntryHash>)>,
+    Vec<EntityId>,
+)> {
+    let fold = crate::authority::authority_view_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    let mut rows = Vec::new();
     let mut undecoded = Vec::new();
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)? {
         let id = id?;
@@ -800,28 +905,54 @@ fn agent_grants_reporting_for_store_in_txn(
         else {
             continue;
         };
-        if !keep_withdrawn && crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
-            continue;
-        }
-        let Ok(grant) = decode_federation_grant_body(&body) else {
+        let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(&body) else {
             undecoded.push(id);
             continue;
         };
-        if !grant.owner_agent {
-            continue;
-        }
-        let Some(delegated_by) = grant.delegated_by else {
-            continue;
-        };
-        let created_at = store
-            .port_entity_record(txn, &id)?
-            .map_or(0, |row| row.learned_at);
-        grants.push(AgentGrantStanding {
+        rows.extend(agent_grant_row_decoded(
+            store,
+            &fold,
+            txn,
+            id,
+            grant,
+            terms_key.as_ref(),
+        )?);
+    }
+    Ok((rows, undecoded))
+}
+
+/// The live, decoded FEDERATION_GRANT row `id` as an owner's agent Grant row,
+/// with the counted mint it stands on ([`agent_grant_rows_in_txn`] for one
+/// row); `None` for a row that is no owner's agent Grant.
+fn agent_grant_row_decoded(
+    store: &crate::store::Store,
+    fold: &crate::authority::AuthorityFold,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    grant: FederationGrant,
+    terms_key: Option<&super::GrantTermsKey>,
+) -> Result<Option<(AgentGrantRow, Option<AuthorityEntryHash>)>> {
+    if !grant.owner_agent {
+        return Ok(None);
+    }
+    let Some(delegated_by) = grant.delegated_by else {
+        return Ok(None);
+    };
+    let act = if crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
+        None
+    } else {
+        super::owner_agent_mint_in_fold(fold, id, &grant, terms_key)
+    };
+    let created_at = store
+        .port_entity_record(txn, &id)?
+        .map_or(0, |row| row.learned_at);
+    Ok(Some((
+        AgentGrantRow {
             id,
             grant,
             delegated_by,
             created_at,
-        });
-    }
-    Ok((grants, undecoded))
+        },
+        act,
+    )))
 }
