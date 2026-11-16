@@ -162,7 +162,7 @@ pub(crate) fn is_training_swap_ask_intent(intent_key: &str) -> bool {
     intent_key.starts_with(INTENT_PREFIX)
 }
 
-fn intent_key(key: &SwapAskKey, turn: &EntityId) -> String {
+pub(crate) fn intent_key(key: &SwapAskKey, turn: &EntityId) -> String {
     let (run, owner, digest) = key;
     format!(
         "{INTENT_PREFIX}{}/{digest}/{}/{}",

@@ -412,10 +412,28 @@ mod symbol_lease_tests;
 
 #[cfg(oneiron_test_support)]
 pub(crate) use ask_record::ask_group_route;
+#[cfg(oneiron_test_support)]
+pub(crate) use code_consent_word::{
+    intent_key as code_consent_intent_key, intent_wait as code_consent_intent_wait,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use comm_widen::{
+    intent_key as comm_widen_intent_key, intent_parts as comm_widen_intent_parts,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use consult_ladder_facade::{
+    case_ask_anchor as consult_case_ask_anchor, case_intent as consult_case_intent,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use contribution_pair::{pair_handle, pair_intent_key};
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use fanout_launch::launch_override_actors_in_txn;
 pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
+#[cfg(oneiron_test_support)]
+pub(crate) use training_offer_ask::intent_key as training_offer_intent_key;
+#[cfg(oneiron_test_support)]
+pub(crate) use training_swap_ask::intent_key as training_swap_intent_key;
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;

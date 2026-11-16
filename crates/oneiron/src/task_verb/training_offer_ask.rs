@@ -132,7 +132,7 @@ fn ask_key(offer: &TrainingOffer, owner: EntityId) -> OfferAskKey {
     (offer.id, owner, offer.digest.clone())
 }
 
-fn intent_key(key: &OfferAskKey, turn: &EntityId) -> String {
+pub(crate) fn intent_key(key: &OfferAskKey, turn: &EntityId) -> String {
     let (offer, owner, digest) = key;
     format!(
         "{INTENT_PREFIX}{}/{digest}/{}/{}",

@@ -149,7 +149,7 @@ fn attempt_hex(attempt: AttemptId) -> String {
     crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
 }
 
-fn intent_key(child: AttemptId, needed: CommReach, turn: EntityId) -> String {
+pub(crate) fn intent_key(child: AttemptId, needed: CommReach, turn: EntityId) -> String {
     format!(
         "{INTENT_PREFIX}{}/{}/{}",
         attempt_hex(child),
@@ -160,7 +160,7 @@ fn intent_key(child: AttemptId, needed: CommReach, turn: EntityId) -> String {
 
 /// The tuple a comm widen intent names, read whole and in canonical form;
 /// `None` for any other key.
-fn intent_parts(intent_key: &str) -> Option<(AttemptId, CommReach, EntityId)> {
+pub(crate) fn intent_parts(intent_key: &str) -> Option<(AttemptId, CommReach, EntityId)> {
     let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
     let (Some(child), Some(needed), Some(turn), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())

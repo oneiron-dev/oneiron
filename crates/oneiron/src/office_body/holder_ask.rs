@@ -42,6 +42,8 @@ pub(crate) use live_edit::{
     LiveEditAskOutcome, live_edit_asked_owners_in, live_edit_offered_owners_in,
     resolve_live_edit_holder_ask_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use live_edit::{LiveEditRoute, is_live_edit_ask, live_edit_intent_key};
 
 /// The intent prefix of an office proposal's holder ask; with the proposal
 /// and the waiting set's revision it keys one ask, so a repeat replays it.

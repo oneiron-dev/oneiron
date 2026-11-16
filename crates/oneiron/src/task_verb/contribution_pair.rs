@@ -114,9 +114,14 @@ pub(crate) fn is_contribution_pair_ask_intent(intent_key: &str) -> bool {
     intent_key.starts_with(INTENT_PREFIX)
 }
 
+/// The intent key of the contribution pair ask for the pair `handle`.
+pub(crate) fn pair_intent_key(handle: EntityId) -> String {
+    format!("{INTENT_PREFIX}{}", handle.to_hex())
+}
+
 /// The pair handle a contribution pair ask's intent key names, in canonical
 /// form; `None` for any other key.
-fn pair_handle(intent_key: &str) -> Option<EntityId> {
+pub(crate) fn pair_handle(intent_key: &str) -> Option<EntityId> {
     canonical_id(intent_key.strip_prefix(INTENT_PREFIX)?)
 }
 
@@ -177,7 +182,7 @@ fn pair_ask_spec(pair: &OwnerPair) -> MemoryResult<TaskAskSpec> {
         actor_ref: pair.owner,
     });
     let mut spec = TaskAskSpec::shorthand(Some(who), what, None, TaskAskDefault::Hold);
-    spec.intent_key = format!("{INTENT_PREFIX}{}", pair.handle.to_hex());
+    spec.intent_key = pair_intent_key(pair.handle);
     Ok(spec)
 }
 

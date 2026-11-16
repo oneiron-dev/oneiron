@@ -34,16 +34,13 @@ use super::finish::frozen_case_in;
 const INTENT_PREFIX: &str = "consult_case/";
 
 /// The case intent of `case_ref`, which a case ask's anchor is derived for.
-fn case_intent(case_ref: EntityId) -> String {
+pub(crate) fn case_intent(case_ref: EntityId) -> String {
     format!("{INTENT_PREFIX}{}", case_ref.to_hex())
 }
 
 /// The case intent and anchor `intent_key` names when it is the intent of
 /// the case ask kept under `id`; `None` for every other ask.
-pub(in crate::task_verb) fn case_ask_anchor(
-    intent_key: &str,
-    id: EntityId,
-) -> Option<(String, EntityId)> {
+pub(crate) fn case_ask_anchor(intent_key: &str, id: EntityId) -> Option<(String, EntityId)> {
     let (case_hex, anchor_hex) = intent_key.strip_prefix(INTENT_PREFIX)?.split_once('/')?;
     let case_ref = EntityId::from_hex(case_hex).ok()?;
     let anchor = EntityId::from_hex(anchor_hex).ok()?;

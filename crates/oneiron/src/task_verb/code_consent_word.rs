@@ -35,13 +35,13 @@ const INTENT_PREFIX: &str = "code_consent/";
 /// The message type of the witnessed question.
 const QUESTION_TYPE: &str = "code_consent_question";
 
-fn intent_key(wait_id: EntityId) -> String {
+pub(crate) fn intent_key(wait_id: EntityId) -> String {
     format!("{INTENT_PREFIX}{}", wait_id.to_hex())
 }
 
 /// The wait a code consent intent names, read whole and in canonical form;
 /// `None` for any other key.
-fn intent_wait(intent_key: &str) -> Option<EntityId> {
+pub(crate) fn intent_wait(intent_key: &str) -> Option<EntityId> {
     let wait_id = EntityId::from_hex(intent_key.strip_prefix(INTENT_PREFIX)?).ok()?;
     (intent_key == self::intent_key(wait_id)).then_some(wait_id)
 }
