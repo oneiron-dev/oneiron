@@ -428,11 +428,7 @@ async fn revert(
     let locality = auth.locality();
     let reverted = blocking(move || -> OwnerResult<ChangeReverted> {
         let change = entity_id("change", &request.change)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            });
+        let now = oneiron_base::unix_millis_now();
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
         let receipt = vault
