@@ -78,6 +78,9 @@ struct Cutover<'a> {
     /// The repository's served name, for a cut through the served door: the
     /// name its manifests carry.
     served_name: Option<&'a str>,
+    /// The writer host's git door base, where a copy this host does not write
+    /// redirects a push (RA7); checked as a checkout door base is.
+    writer_door: Option<&'a str>,
 }
 /// Persisted host authorization. This is deliberately not a public deserializer
 /// for `OriginAuthorityLease`: only local admission evidence can restore it.
@@ -241,12 +244,15 @@ impl Vault {
             mirror,
             owner: None,
             served_name: None,
+            writer_door: None,
         };
         self.cut_origin_authority(repo.common_dir(), repo.repo_root(), id, cutover)
     }
     /// [`Vault::set_origin_authority`] for a repository this vault serves,
     /// named as its smart-HTTP route names it: the owner's cutover on the
     /// host itself. It takes the coordinator a push to that name takes.
+    /// `writer_door` is the writer host's git door base, where this copy
+    /// redirects a push once another host writes it.
     pub fn set_served_origin_authority(
         &self,
         repo_name: &str,
@@ -254,6 +260,7 @@ impl Vault {
         residence: OriginResidence,
         writer: EntityId,
         mirror: bool,
+        writer_door: Option<&str>,
     ) -> Result<OriginAuthority> {
         let cutover = Cutover {
             expected_epoch,
@@ -262,6 +269,7 @@ impl Vault {
             mirror,
             owner: None,
             served_name: Some(repo_name),
+            writer_door,
         };
         self.cut_served_origin_authority(repo_name, cutover)
     }
@@ -281,6 +289,7 @@ impl Vault {
         residence: OriginResidence,
         writer: EntityId,
         mirror: bool,
+        writer_door: Option<&str>,
     ) -> Result<OriginAuthority> {
         let cutover = Cutover {
             expected_epoch,
@@ -289,6 +298,7 @@ impl Vault {
             mirror,
             owner: Some((owner, surface)),
             served_name: Some(repo_name),
+            writer_door,
         };
         self.cut_served_origin_authority(repo_name, cutover)
     }
@@ -371,9 +381,14 @@ impl Vault {
         AUTHORITY.get(&self.store, txn, &repo_id)
     }
     /// The authority key of a served repository: its object store's identity,
-    /// as admission reads it before any commit is pinned.
+    /// as admission reads it before any commit is pinned. A served repository
+    /// is a git directory, so its common directory is read from the directory
+    /// itself (the path git resolves, canonicalized; the key its push
+    /// coordinator is taken on), and a push's authority read spawns no git
+    /// process (FIX 283).
     pub(in crate::origin) fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
-        let identity = GitWire::new(self)?.repository_identity(repo_root)?;
+        let common_dir = super::smart_http::repo_common_dir(repo_root)?;
+        let identity = oneiron_store::git_wire::repo::repo_identity_for(&common_dir);
         crate::origin::lfs::lfs_repo_id(&identity.as_hex())
     }
     fn cut_origin_authority(
@@ -390,7 +405,18 @@ impl Vault {
             mirror,
             owner,
             served_name,
+            writer_door,
         } = cutover;
+        // The door a former origin hands every admitted pusher: a door base
+        // as a checkout door is, with no userinfo, query or fragment. The
+        // refusal never repeats what was named.
+        if let Some(door) = writer_door
+            && crate::git_wire::validate_checkout_door(door).is_err()
+        {
+            return Err(Error::InvalidConfig(
+                "writer_door must be a git door base such as https://host.example/git (HTTP only on loopback), with no userinfo, query or fragment".to_owned(),
+            ));
+        }
         let _guard = lock_repository(common_dir)?;
         self.reconcile_receive_pack_operations(repo_root)?;
         // A re-drive of a Published row runs as its own GitWire attempt, which
@@ -450,6 +476,7 @@ impl Vault {
             residence,
             writer: writer.to_hex(),
             mirror,
+            writer_door: writer_door.map(str::to_owned),
         };
         AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
         let appended = match (actor, owner) {
