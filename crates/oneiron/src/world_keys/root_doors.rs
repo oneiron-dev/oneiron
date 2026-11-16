@@ -501,14 +501,10 @@ impl Vault {
         };
         let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id, generation)?;
         let r_key = authority_signer.authority_key();
-        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
-        // A): the owner's earlier R keys go first, so R's enrolment binds
-        // the owner on a self-hosted vault when a revoked R held their
-        // binding, as the root door's lost keys go before its successor.
-        // This kit's other generations are revoked already (the rotation
-        // revokes the one it replaces).
-        let revoked =
-            self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        // R enrols before the earlier R keys go: the enrolment's carrier,
+        // this install, may stand on an approval only an earlier R gave,
+        // which goes stale at that R's revocation once older than the
+        // stale-roster window (Sol carry F1).
         if enrol {
             self.enrol_recovery_authority_key_in_txn(
                 txn,
@@ -518,9 +514,20 @@ impl Vault {
                 predecessor,
             )?;
         }
-        // The new R carries what the revoked ones approved, so a kit change
-        // unpairs no machine (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A).
-        self.carry_recovery_authority_approvals_in_txn(txn, &revoked, &authority_signer)?;
+        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
+        // A), and R carries what the revoked ones approved, chosen before
+        // their revocation, so a kit change unpairs no machine
+        // (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A). Then R binds the
+        // owner on a self-hosted vault when a revoked R held their binding,
+        // as its enrolment would after the revocation. This kit's other
+        // generations are revoked already (the rotation revokes the one it
+        // replaces).
+        let carry =
+            self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        self.carry_recovery_authority_approvals_in_txn(txn, carry, &authority_signer)?;
+        if enrol {
+            self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
+        }
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
             RecoveryAuthoritySigner::authority_seed(seed, &vault_id, generation),

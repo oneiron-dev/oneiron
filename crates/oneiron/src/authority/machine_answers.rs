@@ -586,12 +586,14 @@ impl Vault {
             .map(Some)
     }
 
-    /// The next revision of `machine`'s live roster head, the same standing,
+    /// The next revision of `machine`'s roster head, the same standing,
     /// signed by `signer`, a live owner key of the roster held behind `sign`,
     /// in the caller's transaction: a kit change's carry of a standing the
     /// R it revokes signed ([`Self::carry_recovery_authority_approvals_in_txn`],
     /// WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A), as
-    /// [`Self::carry_machine_standing_in_txn`] carries a host re-root's.
+    /// [`Self::carry_machine_standing_in_txn`] carries a host re-root's. The
+    /// carry chose the head while it was live, before the revocation; an aged
+    /// head reads stale here, and the new revision stands again.
     ///
     /// # Errors
     /// A machine with no roster head, or a revision that does not stand.
