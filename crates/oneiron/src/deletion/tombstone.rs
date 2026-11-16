@@ -345,9 +345,16 @@ impl SideKey for PendingTombstoneKey {
         let window = head.strip_suffix(b":")?;
         Some(Self {
             window: String::from_utf8(window.to_vec()).ok()?,
-            id: EntityId::from_hex(std::str::from_utf8(hex).ok()?).ok()?,
+            id: EntityId::from_lower_hex(std::str::from_utf8(hex).ok()?).ok()?,
         })
     }
+}
+
+/// The window label and entity a [`PendingTombstoneKey`] reads from the bytes after its
+/// table prefix, or `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_pending_tombstone_key_for_test(bytes: &[u8]) -> Option<(String, EntityId)> {
+    PendingTombstoneKey::decode_key(bytes).map(|key| (key.window, key.id))
 }
 
 // ─── Local hard-delete marker (`dt:`) — durable local delete truth ──────────
