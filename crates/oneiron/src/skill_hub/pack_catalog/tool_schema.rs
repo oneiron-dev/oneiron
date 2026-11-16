@@ -156,7 +156,10 @@ impl Builder {
                     }
                     SchemaField::Literal(self.literal(value, depth + 1)?)
                 }
-                "$defs" | "properties" | "dependentSchemas" => {
+                // `patternProperties` maps each regex to a schema, as
+                // `properties` maps each name: the admission resolver and the
+                // call validator take it, and its children are parameters.
+                "$defs" | "properties" | "patternProperties" | "dependentSchemas" => {
                     let entries = value
                         .as_object()
                         .ok_or_else(|| format!("{}: {key} must be an object", id.label()))?;
@@ -206,6 +209,12 @@ impl Builder {
                 | "writeOnly" | "deprecated" | "x-mcp-header" => {
                     SchemaField::Literal(self.literal(value, depth + 1)?)
                 }
+                // FIX SCREENING-PROFILE-REFUSES-FORMAT-PATTERN: the admission
+                // resolver and the call validator take both, and most listed
+                // MCP schemas carry one (date-time, uuid). As literals their
+                // text is screened like every other literal's; `format` is
+                // shown to the agent in the tool's doc comment.
+                "format" | "pattern" => SchemaField::Literal(self.literal(value, depth + 1)?),
                 _ => return Err(format!("{}: unsupported schema keyword {key}", id.label())),
             };
             parsed.insert(key.clone(), field);
@@ -459,7 +468,9 @@ impl ResolvedToolSchema {
                                 location: id.label(),
                                 text: name.clone(),
                             });
-                            next.push((child.clone(), parameter || key == "properties"));
+                            let names_parameter =
+                                matches!(key.as_str(), "properties" | "patternProperties");
+                            next.push((child.clone(), parameter || names_parameter));
                         }
                     }
                 }

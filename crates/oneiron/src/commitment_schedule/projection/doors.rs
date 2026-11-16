@@ -54,6 +54,9 @@ impl Vault {
         if self.get_raw_in(wtxn, id)?.is_some() {
             return Err(ScheduleError::Invalid("commitment claim id already exists"));
         }
+        // The owner's text cap judges the caller's record. A minted instance copies its series'
+        // stored text, so the projector never asks.
+        crate::commitment::setting_keys::check_commitment_text_in_txn(self, wtxn, &record.content)?;
         let mut candidate = commitment_claim_candidate(record)?
             .with_validity(Some(occurred.start), Some(occurred.end));
         if let Some(evidence) = evidence {
@@ -96,6 +99,12 @@ impl Vault {
         let candidate = commitment_claim_candidate(new_record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
         self.try_with_write_txn_grouped(|wtxn| {
+            // The owner's text cap judges the caller's replacement text.
+            crate::commitment::setting_keys::check_commitment_text_in_txn(
+                self,
+                wtxn,
+                &new_record.content,
+            )?;
             self.batch_in()
                 .claim_candidate(new_id, candidate, envelope, valid_time, learned_at)
                 .apply(wtxn)?;
