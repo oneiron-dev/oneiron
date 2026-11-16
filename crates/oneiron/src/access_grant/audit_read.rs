@@ -26,8 +26,9 @@
 //! vault holds decodes as before.
 
 use crate::Vault;
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, VerifiedSlip};
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, RecordError, Result};
 use crate::ports::EntityStoreRead;
@@ -75,40 +76,81 @@ pub enum AuditReader {
     Holder(AuditHolder),
 }
 
-/// The actor a bound handle names as an audit door's reader. Only the handle
-/// builds one; the door checks its power.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The actor a bound handle names as an audit door's reader, with the
+/// credential that handle presents and the door's verb. Only the handle
+/// builds one; the door admits it again in its own read
+/// ([`AuditReader::admit_in_txn`]).
+#[derive(Debug, Clone)]
 pub struct AuditHolder {
     actor: EntityId,
+    class: EdgeActorClass,
+    credential: Option<Box<VerifiedSlip>>,
+    verb: String,
 }
 
 impl AuditHolder {
-    /// The reader `actor`, as its bound handle names it.
-    pub(crate) const fn of(actor: EntityId) -> Self {
-        Self { actor }
+    /// The reader `actor`, bound as `class`, as its handle names it for the
+    /// door `verb`, with the credential the handle presents. An embedded
+    /// handle bound to no credential presents none.
+    pub(crate) fn of(
+        actor: EntityId,
+        class: EdgeActorClass,
+        credential: Option<&VerifiedSlip>,
+        verb: &str,
+    ) -> Self {
+        Self {
+            actor,
+            class,
+            credential: credential.map(|credential| Box::new(credential.clone())),
+            verb: verb.to_owned(),
+        }
     }
 
     /// The actor this reader is.
     #[must_use]
-    pub const fn actor(self) -> EntityId {
+    pub const fn actor(&self) -> EntityId {
         self.actor
+    }
+
+    /// Whether this holder reads in `txn` (Sol review 8435 P1): the
+    /// credential its handle presents, if any, is its actor's own, as the
+    /// class the handle binds, not handed to another key, reaches the door's
+    /// verb and is live at the vault's clock; and its actor holds a live
+    /// audit_read power. A revoked or expired credential refuses at the next
+    /// read, as a revoked or expired power does.
+    ///
+    /// # Errors
+    /// The authority fold, the grant row or the clock does not read.
+    pub(crate) fn admits_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        if let Some(credential) = &self.credential {
+            let claims = credential.claims();
+            if claims.holder_ref != self.actor.to_hex()
+                || claims.actor_class.as_deref() != Some(self.class.gate_actor_class())
+                || credential.is_transferred()
+                || !crate::consent::slip_reaches_verb(credential, &self.verb)
+                || !vault.capability_slip_is_live_in_txn(txn, credential)?
+            {
+                return Ok(false);
+            }
+        }
+        vault.audit_read_live_in_txn(txn, self.actor)
     }
 }
 
 impl AuditReader {
     /// Admits this reader in the door's own read `txn` and answers the actor
-    /// it reads as: the owner's proof revalidates, or the holder's audit_read
-    /// power is live at the vault's clock.
+    /// it reads as: the owner's proof revalidates, or the holder's credential
+    /// still binds it and its audit_read power is live at the vault's clock
+    /// ([`AuditHolder::admits_in_txn`]).
     ///
     /// # Errors
-    /// The owner's proof no longer proves the vault's owner; the holder holds
-    /// no live audit_read power; or the read fails.
+    /// The owner's proof no longer proves the vault's owner; the holder's
+    /// credential no longer binds it, or it holds no live audit_read power;
+    /// or the read fails.
     pub(crate) fn admit_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
         match self {
             Self::Owner(owner) => owner.revalidate_in_txn(vault, txn),
-            Self::Holder(holder) if vault.audit_read_live_in_txn(txn, holder.actor)? => {
-                Ok(holder.actor)
-            }
+            Self::Holder(holder) if holder.admits_in_txn(vault, txn)? => Ok(holder.actor),
             Self::Holder(_) => Err(audit_read_refused()),
         }
     }

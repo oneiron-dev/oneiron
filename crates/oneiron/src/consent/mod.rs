@@ -110,6 +110,7 @@ pub use self::contact_clearance::{
     DisclosureOfferMode, contact_clearance_ref, contact_disclosure_room_channel,
     contact_disclosure_voice_channel,
 };
+pub(crate) use self::doors::slip_reaches_verb;
 pub use self::doors::{
     AuthenticatedOwner, ConsentEvaluation, ConsentRevocation, bound_catastrophe_class,
     load_active_standing_grants,
