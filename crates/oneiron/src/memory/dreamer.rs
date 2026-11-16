@@ -5,8 +5,6 @@ use super::outbound::*;
 use super::support::*;
 use super::*;
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::{
@@ -15,20 +13,8 @@ use crate::dreamer_runner::{
 };
 use crate::store::consolidation_scope::DreamerConsolidationScope;
 
-/// One Dreamer consolidation enqueue (BRIDGE-03).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsolidationAttemptInput {
-    /// Consolidation scope: `micro` | `meso` | `macro`.
-    pub scope: String,
-    /// Opaque attempt input (stored as MessagePack in the queue payload).
-    pub input: serde_json::Value,
-    /// Optional run correlation id.
-    pub run_id: Option<String>,
-    /// Optional advisory dedupe key (cost coalescer, not a lock).
-    pub dedupe_key: Option<String>,
-    /// Unix seconds; `None` ⇒ now.
-    pub now: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::dreamer::ConsolidationAttemptInput;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::dreamer::{

@@ -4,29 +4,13 @@ use crate::error::Error;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
+#[doc(hidden)]
+pub use oneiron_records::store::blob_fingerprint::{
+    BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FingerprintRung {
-    Asset,
-    TextRoot,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlobBirthDecision {
-    Unchanged(FingerprintRung),
-    Changed {
-        sections: Vec<String>,
-        blocks: Vec<String>,
-    },
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlobFingerprintSnapshot {
-    pub asset_hash: [u8; 32],
-    pub text_hash: [u8; 32],
-    pub sections: BTreeMap<String, [u8; 32]>,
-    pub blocks: BTreeMap<String, [u8; 32]>,
-}
+
 /// One section's hash and each of its blocks' hashes, by block id. The tree
 /// holds hashes and structural ids only, never source text.
 #[derive(Clone, Serialize, Deserialize)]
