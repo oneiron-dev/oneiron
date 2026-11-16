@@ -157,9 +157,10 @@ impl SealedOverlay {
 /// rows never committed.
 ///
 /// # Errors
-/// An archived vault; a subject erased here, or whose key is retired or
-/// staged to retire (an erased subject is named by no new entry); custody
-/// and crypto faults.
+/// An archived vault; an erased subject (recorded in ERASED_SUBJECT here,
+/// or a key of it retired or staged to retire, under any ref, a delivered
+/// ref with no key here among them): an erased subject is named by no new
+/// entry, and no key of it is minted; custody and crypto faults.
 pub(crate) fn seal(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -175,14 +176,19 @@ pub(crate) fn seal(
     }
     store.core.key_custody.pin_in_txn(store, txn)?;
     let custody = store.core.key_custody.bind_in_txn(store, txn)?;
+    // The whole subject, before a key is minted (blind review of #8960, P1):
+    // an erase that reached this install as delivered refs alone stages
+    // their retirement with no key here, and a fresh key must not reopen
+    // the subject, as install_key_in_txn refuses one.
+    let known = subject_keys_in_txn(store, txn, &custody, subject, &[], &[])?;
+    if subject_erased_in_txn(store, txn, &custody, subject, &known)? {
+        return Err(CustodyKind::ErasableKey.corrupt());
+    }
     let (item, secret) = custody.mint_erasable(
         ErasablePurpose::AuthorityOverlay,
         subject.as_bytes(),
         &incarnation(subject),
     )?;
-    if retirement_in_txn(store, txn, &item.subject(&custody)?)?.is_some() {
-        return Err(CustodyKind::ErasableKey.corrupt());
-    }
     let key: &[u8; 32] = secret.expose().try_into().map_err(|_| corrupt())?;
     let kek = Kek::from_bytes_ref(key);
     let params = SealParams {
@@ -901,6 +907,88 @@ mod carrier_tests {
             session,
             sealed,
         }
+    }
+
+    /// An erase that reached this install as refs alone, while it held no
+    /// key of the subject, refuses a new seal of the subject and mints no
+    /// key of it while the retirement is staged (blind review of #8960,
+    /// census L5-22, P1). After custody's finisher the subject is remembered
+    /// by the erase layer's ERASED_SUBJECT row (#8962).
+    #[test]
+    fn a_subject_erased_here_by_refs_alone_refuses_a_new_seal_while_its_retirement_is_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        let subject = EntityId::now();
+        let delivered_ref = [0x7D; 32];
+        vault
+            .with_write_txn_grouped(|txn| {
+                super::retire_subject_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &subject,
+                    &[],
+                    &[delivered_ref],
+                )
+            })
+            .unwrap();
+
+        let staged = vault.with_write_txn_grouped(|txn| {
+            seal(&vault.store, txn, &subject, &[0x5A; 32], b"overlay record")
+        });
+        assert!(
+            staged.is_err(),
+            "a subject erased here by refs alone must refuse a new seal while its retirement is staged"
+        );
+        let inventory = overlay_inventory(&vault.store).unwrap();
+        assert_eq!(
+            inventory
+                .erased
+                .get(&subject)
+                .map(|erased| erased.refs.clone()),
+            Some(BTreeSet::from([delivered_ref])),
+            "the refused seal mints no key of the erased subject"
+        );
+        assert!(
+            inventory.ready.iter().all(|(held, _)| *held != subject),
+            "no key of the erased subject is ready here"
+        );
+    }
+
+    /// The same erase after custody's finisher carried the retirement out:
+    /// no key or ref of the subject stays here, and its ERASED_SUBJECT row
+    /// still refuses a new seal, which mints no key (blind review of #8960,
+    /// census L5-22, P1).
+    #[test]
+    fn a_subject_erased_here_by_refs_alone_refuses_a_new_seal_after_the_finisher() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        let subject = EntityId::now();
+        let delivered_ref = [0x7D; 32];
+        vault
+            .with_write_txn_grouped(|txn| {
+                super::retire_subject_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &subject,
+                    &[],
+                    &[delivered_ref],
+                )
+            })
+            .unwrap();
+        vault.store.finish_erasable_retirements().unwrap();
+
+        let finished = vault.with_write_txn_grouped(|txn| {
+            seal(&vault.store, txn, &subject, &[0x5B; 32], b"overlay record")
+        });
+        assert!(
+            finished.is_err(),
+            "a subject erased here by refs alone must refuse a new seal after custody's finisher"
+        );
+        let inventory = overlay_inventory(&vault.store).unwrap();
+        assert!(
+            inventory.ready.iter().all(|(held, _)| *held != subject),
+            "no key of the erased subject is minted or ready after the finisher"
+        );
     }
 
     /// A seal to the right session opens for its own receiver and binding,
