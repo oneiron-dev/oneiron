@@ -1149,9 +1149,7 @@ fn git_smart_http_large_push_streams_without_buffering() {
 #[test]
 fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() {
     use oneiron::memory::origin_doors::OriginPublicationsRequest;
-    use oneiron::origin::lfs::{
-        LfsAssetClass, LfsOid, OriginLfsPathMatch, OriginLfsPathRule, OriginLfsPathRules,
-    };
+    use oneiron::origin::lfs::LfsOid;
     use oneiron::setting::{
         SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
     };
@@ -1187,10 +1185,7 @@ fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() 
         .first()
         .expect("the seed was published")
         .repo_id;
-    let rules = OriginLfsPathRules(vec![OriginLfsPathRule {
-        path_match: OriginLfsPathMatch::Prefix("assets".to_owned()),
-        class: LfsAssetClass::BuildRequired,
-    }]);
+    let rules = serde_json::json!([{ "match": { "prefix": "assets" }, "class": "build-required" }]);
     let outcome = vault
         .set_setting(
             SettingCaller::Owner(&proof),
@@ -1199,7 +1194,7 @@ fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() 
                 item: None,
                 scope: SettingScope::Repo(repo_id),
                 mode: SettingMode::Value,
-                value: Some(serde_json::to_value(rules).expect("rules as JSON")),
+                value: Some(rules),
                 expected_revision: Some(0),
                 why: None,
                 check_in_ref: None,
