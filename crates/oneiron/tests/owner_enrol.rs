@@ -362,6 +362,10 @@ fn a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard() {
     assert_eq!(refused.kind(), ErrorKind::LastBoundOwnerDelete, "{refused}");
 
     shared.bound_co_owner_key();
+    assert!(
+        shared.passes_owner_verbs(shared.owner),
+        "the owner keeps their own binding, so the co-Owner's is the second one"
+    );
 
     assert!(
         shared
