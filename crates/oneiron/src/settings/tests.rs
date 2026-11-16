@@ -13,10 +13,17 @@ fn layer_write_persists_and_rereads_world_layer() -> Result<()> {
     let world = EntityId::from_bytes([0x62; 16])?;
     let world_layer = WorldLayer::new(Some(world), Some("studio".to_owned()))?;
 
-    let update =
-        vault.set_customization_layer(CustomizationLayerValue::World(world_layer.clone()))?;
+    let mut settings = vault.customization_settings()?;
+    settings.world = world_layer.clone();
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+        crate::setting::SetSetting::vault_value(
+            "client.customization",
+            serde_json::to_value(settings).expect("customization setting value"),
+        ),
+    )?;
 
-    assert_eq!(update.settings.world, world_layer);
+    assert_eq!(vault.customization_settings()?.world, world_layer);
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(reopened.customization_settings()?.world, world_layer);

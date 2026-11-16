@@ -81,7 +81,15 @@ fn assert_drift_is_replanned(session_close: bool) {
         let target = seed_turn(&vault, &conversation, "user", original, 900);
         let filler = seed_turn(&vault, &conversation, "user", "ok", 901);
         vault
-            .set_prefilter_config(length_policy(before))
+            .set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "dreamer.prefilter",
+                    serde_json::to_value(length_policy(before)).expect("prefilter setting value"),
+                ),
+            )
             .expect("policy");
         let actor = EntityId::now();
         let key = vault.local_session_key(actor).expect("session key");
@@ -91,7 +99,15 @@ fn assert_drift_is_replanned(session_close: bool) {
         let watermark = read_watermark(&vault, MESO).expect("watermark");
         let dirty = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
         vault
-            .set_prefilter_config(length_policy(after))
+            .set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "dreamer.prefilter",
+                    serde_json::to_value(length_policy(after)).expect("prefilter setting value"),
+                ),
+            )
             .expect("policy drift");
         if let Some(text) = replacement {
             replace_body(&vault, &target, rmpv::Value::from(text));
@@ -171,7 +187,15 @@ fn corrupt_planned_turns_abort_public_enqueue_and_fence_session_progress() {
         seed_turn(&vault, &conversation, "user", &"detail ".repeat(40), 900);
         let broken = seed_turn(&vault, &conversation, "user", "ok", 901);
         vault
-            .set_prefilter_config(length_policy(0.5))
+            .set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "dreamer.prefilter",
+                    serde_json::to_value(length_policy(0.5)).expect("prefilter setting value"),
+                ),
+            )
             .expect("lossy");
         let actor = EntityId::now();
         let key = vault.local_session_key(actor).expect("session key");
@@ -224,7 +248,13 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
     let watermark = read_watermark(&vault, MESO).expect("watermark");
     let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
     vault
-        .set_prefilter_config(length_policy(0.5))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.5)).expect("prefilter setting value"),
+            ),
+        )
         .expect("lossy");
     enqueue_partition_attempts(&vault, MESO, &turns, &watermark, "old", 100).expect("skip");
     let receipts = extraction_receipts(&vault);
@@ -246,7 +276,13 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
         })
         .expect("dangling membership fixture");
     vault
-        .set_prefilter_config(length_policy(0.0))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.0)).expect("prefilter setting value"),
+            ),
+        )
         .expect("rescue");
     let actor = EntityId::now();
     let key = vault.local_session_key(actor).expect("session key");
@@ -282,7 +318,13 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     let watermark = read_watermark(&vault, MESO).expect("watermark");
     let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
     vault
-        .set_prefilter_config(length_policy(0.5))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.5)).expect("prefilter setting value"),
+            ),
+        )
         .expect("lossy policy");
     enqueue_partition_attempts(&vault, MESO, &turns, &watermark, "original", 100)
         .expect("screened round");
@@ -305,7 +347,15 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     // Restored membership must still retire just the overlapping decision,
     // not retain its old skip or discard the unrescanned turn's audit.
     restored
-        .set_prefilter_config(length_policy(0.0))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                &restored,
+            )),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.0)).expect("prefilter setting value"),
+            ),
+        )
         .expect("rescue policy");
     enqueue_partition_attempts(&restored, MESO, &turns[..1], &watermark, "rescan", 200)
         .expect("rescan after restore");

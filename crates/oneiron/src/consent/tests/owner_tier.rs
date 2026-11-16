@@ -49,7 +49,7 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
         group_by_facet: true,
         urgent_breakthrough: true,
     };
-    let doors: [Door<'_>; 6] = [
+    let doors: [Door<'_>; 7] = [
         ("consent: create_standing_grant", &|proof| {
             vault
                 .create_standing_grant(proof, action_bound("agent-a", "send", &["channel:email"]))
@@ -68,9 +68,45 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
                     .map(drop)
             },
         ),
-        ("dreamer maintenance: set_proactivity_cadence", &|proof| {
-            vault.set_proactivity_cadence(proof, &cadence)
-        }),
+        (
+            "dreamer maintenance: proactivity period setting",
+            &|proof| {
+                vault
+                    .set_setting(
+                        crate::setting::SettingCaller::Owner(proof),
+                        crate::setting::SetSetting::vault_value(
+                            "dreamer.proactivity.period",
+                            serde_json::to_value(
+                                crate::dreamer_runner::maintenance::digest::ProactivityPeriod(
+                                    cadence.period_secs,
+                                ),
+                            )
+                            .unwrap(),
+                        ),
+                    )
+                    .map(drop)
+            },
+        ),
+        (
+            "dreamer maintenance: proactivity delivery setting",
+            &|proof| {
+                vault
+                    .set_setting(
+                        crate::setting::SettingCaller::Owner(proof),
+                        crate::setting::SetSetting::vault_value(
+                            "dreamer.proactivity.delivery",
+                            serde_json::to_value(
+                                crate::dreamer_runner::maintenance::digest::ProactivityDelivery {
+                                    group_by_facet: cadence.group_by_facet,
+                                    urgent_breakthrough: cadence.urgent_breakthrough,
+                                },
+                            )
+                            .unwrap(),
+                        ),
+                    )
+                    .map(drop)
+            },
+        ),
         ("gate: grant_dreamer_weave", &|proof| {
             vault.grant_dreamer_weave(proof, now).map(drop)
         }),

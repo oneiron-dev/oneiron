@@ -75,21 +75,37 @@ fn normal_connector_upsert_rewrites_event_without_erasing_confirmation_context()
     });
     let owner = crate::test_util::embedded_owner_proof(&vault);
     let memory = vault.memory(owner.actor(), crate::EdgeActorClass::Human);
-    let registration = crate::calendar::connectors::door::configure(
+    vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&owner),
+            crate::setting::SetSetting {
+                item: Some("booking-sync".to_owned()),
+                ..crate::setting::SetSetting::vault_value(
+                    "calendar.connector_seat",
+                    serde_json::to_value(crate::calendar::connectors::door::CalendarSeatSetup {
+                        config: CalendarConnectorSeatConfig {
+                            seat_ref: "booking-sync".to_owned(),
+                            secret_ref: "booking-calendar".to_owned(),
+                            system: "provider-calendar".to_owned(),
+                            calendar_ref: "calendar".to_owned(),
+                            cadence_jitter_min_seconds: 30,
+                            cadence_jitter_max_seconds: 60,
+                        },
+                        endpoint: "https://provider-calendar.test/".to_owned(),
+                    })
+                    .unwrap(),
+                )
+            },
+        )
+        .unwrap();
+    let registration = crate::calendar::connectors::door::get(
         &memory,
         &owner,
-        &crate::calendar::connectors::door::CalendarConnectorConfigureRequest {
-            config: CalendarConnectorSeatConfig {
-                seat_ref: "booking-sync".to_owned(),
-                secret_ref: "booking-calendar".to_owned(),
-                system: "provider-calendar".to_owned(),
-                calendar_ref: "calendar".to_owned(),
-                cadence_jitter_min_seconds: 30,
-                cadence_jitter_max_seconds: 60,
-            },
-            endpoint: "https://provider-calendar.test/".to_owned(),
+        &crate::calendar::connectors::door::CalendarConnectorRequest {
+            seat_ref: "booking-sync".to_owned(),
         },
     )
+    .unwrap()
     .unwrap();
     let operation = crate::calendar::connectors::door::CalendarConnectorOperation::new(
         &vault,

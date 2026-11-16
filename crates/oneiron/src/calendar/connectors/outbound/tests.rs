@@ -93,15 +93,31 @@ fn seat_config() -> CalendarConnectorSeatConfig {
 fn operation(vault: &Vault) -> CalendarConnectorOperation {
     let owner = crate::test_util::embedded_owner_proof(vault);
     let memory = vault.memory(owner.actor(), crate::EdgeActorClass::Human);
-    let registration = door::configure(
+    vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&owner),
+            crate::setting::SetSetting {
+                item: Some("work-seat".to_owned()),
+                ..crate::setting::SetSetting::vault_value(
+                    "calendar.connector_seat",
+                    serde_json::to_value(door::CalendarSeatSetup {
+                        config: seat_config(),
+                        endpoint: "https://caldav.work.test/".to_owned(),
+                    })
+                    .unwrap(),
+                )
+            },
+        )
+        .expect("install connector seat");
+    let registration = door::get(
         &memory,
         &owner,
-        &door::CalendarConnectorConfigureRequest {
-            config: seat_config(),
-            endpoint: "https://caldav.work.test/".to_owned(),
+        &door::CalendarConnectorRequest {
+            seat_ref: "work-seat".to_owned(),
         },
     )
-    .expect("install connector seat");
+    .expect("read connector seat")
+    .expect("installed connector seat");
     CalendarConnectorOperation::new(vault, owner, registration).expect("seat operation")
 }
 

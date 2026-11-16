@@ -243,13 +243,23 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
         judge_label_anchor(&vault, skill, "campaign-1")?,
         vec![picked]
     );
-    vault.set_proactivity_cadence(
-        &owner,
-        &ProactivityCadence {
-            period_secs: 1,
-            group_by_facet: false,
-            urgent_breakthrough: false,
-        },
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.proactivity.period",
+            serde_json::to_value(ProactivityPeriod(1)).unwrap(),
+        ),
+    )?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.proactivity.delivery",
+            serde_json::to_value(ProactivityDelivery {
+                group_by_facet: false,
+                urgent_breakthrough: false,
+            })
+            .unwrap(),
+        ),
     )?;
     assert!(vault.proactivity_digest(&owner, 12, None)?.is_none());
     set_judge_digest_minutes(&vault, &owner, 1)?;
