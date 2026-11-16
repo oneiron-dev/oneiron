@@ -151,6 +151,23 @@ fn mount_frontier_hex(memory: &Memory<'_>, mount: GraphFsMountRequest) -> String
     frontier
 }
 
+/// The frontier the 32 hex characters `frontier` name: `sequence` then
+/// `recorded_at`, each eight bytes big-endian, as a mount answer spells it.
+fn parse_frontier(frontier: &str) -> MemoryFrontier {
+    assert_eq!(
+        frontier.len(),
+        32,
+        "a frontier is 32 hex characters: {frontier}"
+    );
+    let word = |range: std::ops::Range<usize>| {
+        u64::from_str_radix(&frontier[range], 16).expect("a frontier word is hex")
+    };
+    MemoryFrontier {
+        sequence: word(0..16),
+        recorded_at: word(16..32),
+    }
+}
+
 /// A path request for `path` on `mount`.
 fn path_request(mount: &GraphFsMountRequest, path: &str) -> GraphFsPathRequest {
     let mount_value = serde_json::to_value(mount).expect("the mount request encodes");
@@ -395,7 +412,7 @@ fn a_link_made_after_the_fork_is_absent_there() {
     let source = put_person(&vault);
     let target = put_person(&vault);
     let frontier_hex = mount_frontier_hex(&memory, live_mount_request());
-    let frontier = MemoryFrontier::from_hex(&frontier_hex).expect("the frontier hex parses");
+    let frontier = parse_frontier(&frontier_hex);
     vault
         .batch()
         .edge_with_created_at(
@@ -537,7 +554,7 @@ fn a_frontier_past_the_head_is_not_found() {
     let memory = vault.memory(owner, EdgeActorClass::Human);
     put_person(&vault);
     let frontier_hex = mount_frontier_hex(&memory, live_mount_request());
-    let frontier = MemoryFrontier::from_hex(&frontier_hex).expect("the frontier hex parses");
+    let frontier = parse_frontier(&frontier_hex);
     let past = MemoryFrontier {
         sequence: frontier.sequence.saturating_add(1),
         recorded_at: frontier.recorded_at,
@@ -562,7 +579,7 @@ fn a_row_this_machine_holds_no_bytes_of_at_the_fork_says_so() {
     let claim = EntityId::now();
     put_claim_in_world(&vault, &claim, &subject, None, "before");
     let frontier_hex = mount_frontier_hex(&memory, live_mount_request());
-    let frontier = MemoryFrontier::from_hex(&frontier_hex).expect("the frontier hex parses");
+    let frontier = parse_frontier(&frontier_hex);
     put_claim_in_world(&vault, &claim, &subject, None, "after");
     let revision = revision_at(&vault, &claim, frontier)
         .expect("read the revision the frontier names")
