@@ -81,10 +81,9 @@ fn mint_slip_id(install: &Install) -> String {
         "token agent stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let minted: Value = serde_json::from_str(
-        &String::from_utf8(output.stdout).expect("UTF-8 stdout"),
-    )
-    .expect("token agent prints its answer as JSON");
+    let minted: Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).expect("UTF-8 stdout"))
+            .expect("token agent prints its answer as JSON");
     minted["slip_id"].as_str().expect("slip id").to_owned()
 }
 
@@ -108,10 +107,9 @@ fn token_revoke_prints_json_alone_on_stdout() {
         "token revoke stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let revoked: Value = serde_json::from_str(
-        &String::from_utf8(output.stdout).expect("UTF-8 stdout"),
-    )
-    .expect("token revoke prints its JSON answer on stdout alone");
+    let revoked: Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).expect("UTF-8 stdout"))
+            .expect("token revoke prints its JSON answer on stdout alone");
     assert_eq!(revoked, json!({ "revoked": true }));
 }
 
@@ -141,9 +139,8 @@ fn lease_revoke_prints_json_alone_on_stdout() {
         "revoke stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let revoked: Value = serde_json::from_str(
-        &String::from_utf8(output.stdout).expect("UTF-8 stdout"),
-    )
-    .expect("revoke prints its JSON answer on stdout alone");
+    let revoked: Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).expect("UTF-8 stdout"))
+            .expect("revoke prints its JSON answer on stdout alone");
     assert_eq!(revoked, json!({ "revoked": false }));
 }
