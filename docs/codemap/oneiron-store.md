@@ -548,7 +548,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings/web_connector/provider.rs` | src | s | 1 struct · 3 enum · 3 fn · 1 const | FetchRoute, ResultRetention, WebProvider, WebProviderProfile | The provider registry: which providers may serve a web call, on whose key, at what declared price, and how… |
 | `src/side_table.rs` | src | s | 2 mod | — | Store-layer modules of core `side_table`; core re-exports each one at its old path |
 | `src/side_table/codec.rs` | src | s | 1 enum · 1 trait · 1 fn · 1 type | CodecError, RawValue | The value codecs a side table may declare |
-| `src/side_table/key.rs` | src | s | 1 struct · 2 trait | FixedSideKey, HexId, SideKey | Key types: what a table's key contributes after its declared prefix |
+| `src/side_table/key.rs` | src | m | 4 struct · 4 trait · 1 re-export | FieldSpelling, FixedSideKey, HexId, HexLower, HexU32, HexU64, LengthPrefix, SideKey | Key types: what a table's key contributes after its declared prefix |
 | `src/skill_attribution.rs` | src | s | 1 mod | — | Store-layer modules of core `skill_attribution`; core re-exports each one at its old path |
 | `src/skill_attribution/codec.rs` | src | s | 14 fn · 7 const | — | Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode |
 | `src/skill_hub_predicates.rs` | src | s | 2 const | — | The claim predicates the skill hub attaches |
@@ -677,4 +677,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
 | `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |
 | `tests/shared_path_acl.rs` | test | s | — | — | Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS… |
+| `tests/side_key_derive.rs` | test | m | — | — | UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace |
 | `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
