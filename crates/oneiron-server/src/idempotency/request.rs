@@ -402,17 +402,7 @@ fn api_error_response(error: ApiError, is_core_route: bool) -> Response {
 fn store_key(principal: &str, key: &str) -> String {
     format!(
         "{IDEMPOTENCY_SYNC_STATE_PREFIX}{}:{}",
-        hex(principal.as_bytes()),
-        hex(key.as_bytes())
+        oneiron_hex::encode(principal.as_bytes()),
+        oneiron_hex::encode(key.as_bytes())
     )
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
 }
