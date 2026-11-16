@@ -81,25 +81,11 @@ pub(in crate::dreamer_consolidation) enum ChargeSink<'a> {
 /// verdict shell, the role seal, the scoped ladder read and the spent prefix tally.
 /// Each generation that finished joins the sink, even when a later one traps or fails.
 /// Returns none when the step trapped: the attempt is parked.
-///
-/// A request ceiling below the decider's first rung is refused before anything is built or
-/// spent: the read answers at the first rung, so a lower ceiling names no rung that may answer.
 pub(in crate::dreamer_consolidation) async fn decide_pack_with_charges(
     read: VerdictRead<'_>,
     questions: &[DecisionQuestion],
     sink: ChargeSink<'_>,
 ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
-    let first_rung = read.decider.decisions.dial.first;
-    if let Some(cap) = read.ceiling
-        && cap < first_rung
-    {
-        let name = |rung: DecisionRung| serde_json::to_string(&rung).unwrap_or_default();
-        let (cap, first) = (name(cap), name(first_rung));
-        return Err(crate::Error::InvalidConfig(format!(
-            "the request ceiling {cap} is below {first}, the first rung the lent read answers at; name {first} or above, or omit the ceiling"
-        ))
-        .into());
-    }
     let vault = read.step.vault;
     let seal = |request: LlmRequest| -> Result<LlmRequest> {
         let mut request = vault
