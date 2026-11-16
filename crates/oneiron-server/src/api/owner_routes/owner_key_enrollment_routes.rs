@@ -507,8 +507,8 @@ fn enrol_as_host(
 /// key's compressed encoding.
 fn authority_key_hex(key: &AuthorityKey) -> String {
     match key {
-        AuthorityKey::Ed25519(bytes) => hex(bytes),
-        AuthorityKey::P256(bytes) => hex(bytes),
+        AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
+        AuthorityKey::P256(bytes) => oneiron_hex::encode(bytes),
     }
 }
 
