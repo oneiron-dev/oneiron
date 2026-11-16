@@ -12,17 +12,20 @@ impl Vault {
     /// signed-history import and the authority-log puts refuse what the ReRoot
     /// writer refuses. A gap-closing batch has no fold before its rows; the
     /// fold rule judges them (OF-469). With no arriving ReRoot the rows stage
-    /// as one batch.
+    /// as one batch. Each row's store door reads the fold beside `beside`,
+    /// every row the batch carries, as the batch's preflight did
+    /// (owner-reserve delta review F2, #8360).
     pub(in crate::authority) fn stage_authority_rows_judging_re_roots_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         rows: Vec<(BatchOp, Option<AuthorityKey>)>,
+        beside: crate::store::authority_rows::RowsBeside<'_>,
     ) -> Result<()> {
         let mut segment = Vec::with_capacity(rows.len());
         for (op, re_root_signer) in rows {
             if let Some(signer) = re_root_signer {
                 if !segment.is_empty() {
-                    self.stage_authority_ops_in_txn(txn, std::mem::take(&mut segment))?;
+                    self.stage_authority_ops_in_txn(txn, std::mem::take(&mut segment), beside)?;
                 }
                 match self.authority_fold_readonly_in_txn(txn) {
                     Ok(fold) => recovery::refuse_re_root_of_a_serving_host(&fold, &signer)?,
@@ -32,15 +35,16 @@ impl Vault {
             }
             segment.push(op);
         }
-        self.stage_authority_ops_in_txn(txn, segment)
+        self.stage_authority_ops_in_txn(txn, segment, beside)
     }
 
     fn stage_authority_ops_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         ops: Vec<BatchOp>,
+        beside: crate::store::authority_rows::RowsBeside<'_>,
     ) -> Result<()> {
-        apply_ops(
+        apply_ops_beside_authority_rows(
             &self.store,
             &self.config,
             &self.analyzer,
@@ -50,6 +54,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
+            beside,
         )
     }
 }

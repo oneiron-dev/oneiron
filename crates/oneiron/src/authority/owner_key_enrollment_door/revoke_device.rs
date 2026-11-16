@@ -13,6 +13,10 @@ const REVOKE_NOT_COUNTED: &str = "this install's fold does not count the key rev
 pub(crate) enum EntrySigner<'a> {
     /// This vault's live host root, through its slip issuer.
     Host(&'a HostSlipIssuer),
+    /// The host root with an owner key's proof beside its signature (row
+    /// HOSTED-ROOT-REVOKES-OWNER-KEY): a root that does not prove for the
+    /// owner revokes an owner key only cosigned by a key that does.
+    HostWithOwnerProof(&'a HostSlipIssuer, &'a dyn CheckpointRootSigner),
     /// A live roster key held behind the caller's signing callback, which
     /// signs the entry's authority transcript: the recovery root's
     /// authority key at the root's door.
@@ -22,7 +26,8 @@ pub(crate) enum EntrySigner<'a> {
 impl Vault {
     /// One `RevokeDevice` of `revoked_key`, signed by `signer`, in the
     /// caller's write transaction: the one writer of the act (the
-    /// membership move signs it with the host root, the recovery root's door
+    /// membership move signs it with the host root, cosigned by an owner key
+    /// where the root does not prove for the owner; the recovery root's door
     /// with the root's authority key). It joins a frontier wider than one
     /// entry names, names the main-log heads, takes the signer's next
     /// sequence, and answers the entry's hash only once the fold counts it.
@@ -39,6 +44,9 @@ impl Vault {
         let op = AuthorityOp::RevokeDevice { revoked_key };
         let (key, sign) = match signer {
             EntrySigner::Host(issuer) => return self.append_hashed_slip_op_in_txn(txn, issuer, op),
+            EntrySigner::HostWithOwnerProof(issuer, proof) => {
+                return self.append_hashed_slip_op_with_owner_proof_in_txn(txn, issuer, op, proof);
+            }
             EntrySigner::Key(key, sign) => (key, sign),
         };
         let fold = self.authority_view_readonly_in_txn(txn)?;

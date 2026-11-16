@@ -94,14 +94,16 @@ pub use self::token::{
     confirm_hold_taken_at, token_event_type, token_page_ref,
 };
 pub use self::types::{
-    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM,
-    BOOKING_RECEIPT_META_PREFIX, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
-    BOOKING_TOKEN_META_PREFIX, BOOKING_VERBS, BookingBookerContactValue, BookingEventTypeRefValue,
-    BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus, BookingStatusValue,
-    BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec,
-    ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
-    MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
+    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_CAP_OVERRIDE_PREDICATE,
+    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX, BOOKING_LIFECYCLE_ATTEMPT_KIND,
+    BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM, BOOKING_RECEIPT_META_PREFIX,
+    BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BOOKING_TOKEN_META_PREFIX,
+    BOOKING_VERBS, BookingBookerContactValue, BookingCapOverride, BookingCapOverrideValue,
+    BookingEventTypeRefValue, BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus,
+    BookingStatusValue, BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision,
+    CancelSpec, ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec,
+    LifecycleTokenScope, MAX_CAP_OVERRIDE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec,
+    RevisionReceipt, SoftHoldRow,
 };
 
 pub(crate) use self::confirmation_state::{
