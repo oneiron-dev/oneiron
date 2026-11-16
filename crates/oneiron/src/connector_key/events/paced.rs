@@ -6,7 +6,8 @@
 //! full) and the subscription's decision, which it overwrites.
 //!
 //! The item keeps the deadline of its first deferral, a held connector
-//! call's [`CONNECTOR_CALL_PENDING_TTL_MS`] later (FIX 8753): a re-deferral
+//! call's lifetime later (the owner's `connectors.calls.pending_ttl_secs` as
+//! that deferral reads it, seven days by default; FIX 8753): a re-deferral
 //! carries it unchanged, and the item is due no later than it. A claim at or
 //! past it records the wake `Expired`, with no charge and no Dreamer wake.
 //! An item lasts until it is admitted, it expires, or its subscription is
@@ -18,7 +19,6 @@ use super::{ConnectorEvent, ConnectorWakeDecision, subscriptions};
 use crate::attempt_queue::{
     AttemptQueue, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
 };
-use crate::outbound_consent::CONNECTOR_CALL_PENDING_TTL_MS;
 use crate::store::attempt_inputs::ClaimAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::{EntityId, Error, Result, Vault};
@@ -41,9 +41,10 @@ struct PacedConnectorWake {
     deadline: Option<u64>,
 }
 
-/// The deadline a wake first deferred at `now`, Unix seconds, keeps.
-pub(super) const fn paced_connector_wake_deadline(now: u64) -> u64 {
-    now.saturating_add(CONNECTOR_CALL_PENDING_TTL_MS / 1000)
+/// The deadline a wake first deferred at `now`, Unix seconds, keeps: a held
+/// connector call's lifetime `ttl_secs` later.
+pub(super) const fn paced_connector_wake_deadline(now: u64, ttl_secs: u64) -> u64 {
+    now.saturating_add(ttl_secs)
 }
 
 impl Vault {

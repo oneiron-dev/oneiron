@@ -95,6 +95,7 @@ pub(super) async fn serve_anchored(
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    warn_genesis_fragile(&vault);
     crate::owner::house::bind_house_leader_at_start(
         &vault,
         server_config.auth_secret.as_deref(),
@@ -205,6 +206,11 @@ pub(super) async fn serve_anchored(
     let mesh_server = Arc::clone(&sync_server);
     // Each socket upgraded on the API listener or the mesh sees the stop, and
     // the stop waits for it and the calls it admitted (FIX 4757).
+    // The event-loop watchdog (L8-11) reports this process's readiness on
+    // `/api/health` and sheds nothing: a self-hosted owner's requests are
+    // never refused for it. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::default());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_app(sync_server).layer(cors_layer),
         stopped.clone(),
@@ -538,6 +544,26 @@ pub(crate) fn build_embedder_on_thread(
 /// address judged is the one this path binds, before the vault opens. A dev
 /// server reachable from the LAN sets a secret instead; there is no override.
 /// Managed serve never comes here: the supervisor owns its socket.
+/// Says at each start, by the typed reason `GENESIS_FRAGILE`, that the vault
+/// holds no recovery method: a root move retired its recovery kit's key with
+/// every other key and no owner key has been enrolled since, or the owner
+/// skipped saving the genesis recovery secret (identity.md "Genesis window";
+/// L1-07-KIT-AFTER-MOVE = B). A flag, never a refusal: serve goes on.
+fn warn_genesis_fragile(vault: &oneiron::Vault) {
+    match vault.genesis_fragile_now() {
+        Ok(false) => {}
+        Ok(true) => tracing::warn!(
+            reason = oneiron::authority::GENESIS_FRAGILE_FLAG,
+            "this vault holds no recovery method; enrol a new recovery kit with \
+             `oneiron recovery-kit issue`, then `confirm`, then `enroll-authority`"
+        ),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "whether this vault holds a recovery method was not read at start"
+        ),
+    }
+}
+
 fn refuse_unauthenticated_public_bind(
     config: &ServeConfig,
     addr: SocketAddr,
