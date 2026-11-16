@@ -3,6 +3,7 @@
 //! and the PERSONs a follow-up may go to.
 
 use std::collections::BTreeSet;
+use std::fmt;
 
 use rmpv::Value;
 
@@ -19,7 +20,6 @@ use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::settings::{ReadDestination, ReleaseHold};
 
-const REVISION_DOMAIN: &[u8] = b"oneiron:meeting-follow-up-source:v1";
 /// A name shorter than this, in characters, never matches: it would match
 /// inside ordinary words' neighbours too often to name anyone.
 const MIN_NAME_CHARS: usize = 2;
@@ -103,8 +103,8 @@ impl MeetingFollowUpRequest {
 pub struct MeetingFollowUpSource {
     pub request: MeetingFollowUpRequest,
     pub session_ref: EntityId,
-    /// The stored rows' revision, not a permission or a model result.
-    pub revision: [u8; 32],
+    /// The stored rows the read stood on, not a permission or a model result.
+    pub revision: MeetingFollowUpRevision,
     pub receipt: ScopedReadReceipt,
     /// `T<n>` is `turn_refs[n - 1]`.
     pub(super) turn_refs: Vec<EntityId>,
@@ -113,9 +113,33 @@ pub struct MeetingFollowUpSource {
     /// The rows the recipients' names were read from: each PERSON, and the
     /// names-class claim when the name is a claim's.
     pub(super) name_rows: Vec<EntityId>,
-    /// The rows the owners' names were read from: which speaker is the
-    /// owner's moves with them.
-    owner_name_rows: Vec<EntityId>,
+}
+
+/// The stored rows a read stood on, each with its body (or `None` when the
+/// row is gone): the TURNs, then each listed recipient's and each owner's
+/// current name rows (the PERSON row and its current names-class claim).
+/// A rename writes a new claim and leaves the old row as it was, so the name
+/// rows are read afresh each time, never carried from the first read; which
+/// PERSONs are the owners is part of it too. Two revisions are equal when
+/// nothing a read stood on has changed.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MeetingFollowUpRevision {
+    turns: Vec<StoredRow>,
+    recipients: Vec<(EntityId, Vec<StoredRow>)>,
+    owners: Vec<(EntityId, Vec<StoredRow>)>,
+}
+
+/// One row's id and its stored body, if it is still stored.
+type StoredRow = (EntityId, Option<Vec<u8>>);
+
+impl fmt::Debug for MeetingFollowUpRevision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MeetingFollowUpRevision")
+            .field("turns", &self.turns.len())
+            .field("recipients", &self.recipients.len())
+            .field("owners", &self.owners.len())
+            .finish()
+    }
 }
 
 /// Why a read SESSION gives a model nothing to draft from.
@@ -200,7 +224,7 @@ impl Vault {
             HeardTurns::Held(hold) => return Ok(Held(hold)),
         };
         let owners = owner_persons_in_txn(self, &txn)?;
-        let (owner_names, owner_name_rows) = owner_names_in_txn(self, &txn, &owners)?;
+        let owner_names = owner_names_in_txn(self, &txn, &owners)?;
         let turns: Vec<MeetingFollowUpTurn> = heard
             .into_iter()
             .enumerate()
@@ -225,8 +249,7 @@ impl Vault {
         if request.transcript_message().len() > MEETING_FOLLOW_UP_MAX_TRANSCRIPT_BYTES {
             return Ok(Silent(MeetingFollowUpSilence::TooLong));
         }
-        let revision =
-            revision_in_txn(self, &txn, &turn_refs, &listed.name_rows, &owner_name_rows)?;
+        let revision = revision_in_txn(self, &txn, &turn_refs, &listed.recipient_refs)?;
         let receipt = reader.read_receipt_in(&txn, None, 0)?;
         Ok(Ready(MeetingFollowUpSource {
             request,
@@ -236,7 +259,6 @@ impl Vault {
             turn_refs,
             recipient_refs: listed.recipient_refs,
             name_rows: listed.name_rows,
-            owner_name_rows,
         }))
     }
 
@@ -309,25 +331,23 @@ impl Vault {
     }
 }
 
-/// The owners' casefolded names, less the embedded owner's placeholder, and
-/// every row an owner's name was read from (the placeholder's included: a
-/// name set over it moves the revision too).
+/// The owners' casefolded names, less the embedded owner's placeholder (a
+/// name set over it still moves the revision: [`revision_in_txn`] reads
+/// every owner's name rows).
 fn owner_names_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owners: &[EntityId],
-) -> Result<(Vec<String>, Vec<EntityId>)> {
+) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    let mut rows = Vec::new();
     for owner in owners {
-        for (name, row) in person_names_in_txn(vault, txn, *owner)? {
-            rows.push(row);
+        for (name, _) in person_names_in_txn(vault, txn, *owner)? {
             if name.trim() != crate::vault::EMBEDDED_OWNER_ACTOR_NAME {
                 names.push(casefold(&name));
             }
         }
     }
-    Ok((names, rows))
+    Ok(names)
 }
 
 /// The PERSONs `turns` name, less the owners, that the destination's scoped
@@ -373,11 +393,11 @@ fn listed_recipients_in_txn(
     Ok(listed)
 }
 
-/// The revision of the rows `source` was read from, read again in `txn`.
 /// Whether `source` still stands in `txn`: the SESSION retains exactly the
 /// TURNs it was read with (none withdrawn, archived or added since), none of
-/// them is in a conversation the owner keeps from the Dreamer, and every row
-/// it was read from (TURNs, recipients' and owners' name rows) is unchanged.
+/// them is in a conversation the owner keeps from the Dreamer, and its
+/// [`MeetingFollowUpRevision`] read again is unchanged (no TURN body, no
+/// recipient's or owner's current name row, and no owner moved).
 pub(super) fn source_unchanged_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -388,46 +408,55 @@ pub(super) fn source_unchanged_in_txn(
     {
         return Ok(false);
     }
-    Ok(revision_in_txn(
-        vault,
-        txn,
-        &source.turn_refs,
-        &source.name_rows,
-        &source.owner_name_rows,
-    )? == source.revision)
+    Ok(revision_in_txn(vault, txn, &source.turn_refs, &source.recipient_refs)? == source.revision)
 }
 
+/// The [`MeetingFollowUpRevision`] of a read of `turn_refs` listing
+/// `recipient_refs`, read in `txn`.
 fn revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn_refs: &[EntityId],
-    name_rows: &[EntityId],
-    owner_name_rows: &[EntityId],
-) -> Result<[u8; 32]> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REVISION_DOMAIN);
-    for (section, ids) in [
-        (b"turns".as_slice(), turn_refs),
-        (b"names".as_slice(), name_rows),
-        (b"owners".as_slice(), owner_name_rows),
-    ] {
-        hasher.update(section);
-        hasher.update(&(ids.len() as u64).to_le_bytes());
-        for id in ids {
-            hasher.update(id.as_bytes());
-            match vault.store.port_entity_record(txn, id)? {
-                Some(row) => {
-                    hasher.update(&[1]);
-                    hasher.update(&(row.body.len() as u64).to_le_bytes());
-                    hasher.update(&row.body);
-                }
-                None => {
-                    hasher.update(&[0]);
-                }
-            }
-        }
+    recipient_refs: &[EntityId],
+) -> Result<MeetingFollowUpRevision> {
+    Ok(MeetingFollowUpRevision {
+        turns: stored_rows_in_txn(vault, txn, turn_refs.iter().copied())?,
+        recipients: name_rows_in_txn(vault, txn, recipient_refs)?,
+        owners: name_rows_in_txn(vault, txn, &owner_persons_in_txn(vault, txn)?)?,
+    })
+}
+
+/// Each of `ids` with its stored body, or `None` when it is not stored.
+fn stored_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<Vec<StoredRow>> {
+    let mut rows = Vec::new();
+    for id in ids {
+        let body = vault
+            .store
+            .port_entity_record(txn, &id)?
+            .map(|row| row.body);
+        rows.push((id, body));
     }
-    Ok(*hasher.finalize().as_bytes())
+    Ok(rows)
+}
+
+/// Each of `persons` with its current name rows (see [`person_names_in_txn`]),
+/// stored as [`stored_rows_in_txn`] reads them.
+fn name_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    persons: &[EntityId],
+) -> Result<Vec<(EntityId, Vec<StoredRow>)>> {
+    let mut rows = Vec::new();
+    for person in persons {
+        let names = person_names_in_txn(vault, txn, *person)?;
+        let stored = stored_rows_in_txn(vault, txn, names.into_iter().map(|(_, row)| row))?;
+        rows.push((*person, stored));
+    }
+    Ok(rows)
 }
 
 /// The TURNs `session`'s membership rows name, by `(learned_at, id)`, less

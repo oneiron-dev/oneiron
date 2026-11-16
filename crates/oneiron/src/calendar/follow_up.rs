@@ -45,7 +45,7 @@ pub use producer::{
     MEETING_FOLLOW_UP_DRAFT_ATTEMPT_KIND, MEETING_FOLLOW_UP_INSTRUCTION,
     MEETING_FOLLOW_UP_MAX_DRAFTS, MEETING_FOLLOW_UP_MAX_RECIPIENTS,
     MEETING_FOLLOW_UP_MAX_TRANSCRIPT_BYTES, MeetingFollowUpDraftPayload, MeetingFollowUpDrafter,
-    MeetingFollowUpRead, MeetingFollowUpRecipient, MeetingFollowUpRequest,
+    MeetingFollowUpRead, MeetingFollowUpRecipient, MeetingFollowUpRequest, MeetingFollowUpRevision,
     MeetingFollowUpRunOutcome, MeetingFollowUpSilence, MeetingFollowUpSource, MeetingFollowUpTurn,
     run_meeting_follow_up_drafting,
 };

@@ -27,8 +27,8 @@ mod reply;
 mod source;
 
 pub use source::{
-    MeetingFollowUpRead, MeetingFollowUpRecipient, MeetingFollowUpRequest, MeetingFollowUpSilence,
-    MeetingFollowUpSource, MeetingFollowUpTurn,
+    MeetingFollowUpRead, MeetingFollowUpRecipient, MeetingFollowUpRequest, MeetingFollowUpRevision,
+    MeetingFollowUpSilence, MeetingFollowUpSource, MeetingFollowUpTurn,
 };
 
 use serde::{Deserialize, Serialize};
