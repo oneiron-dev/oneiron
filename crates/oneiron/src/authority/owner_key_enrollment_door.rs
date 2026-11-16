@@ -61,6 +61,24 @@ const NOT_COUNTED: &str = "this install's fold does not count the key enrollment
                            fresh, the holding machine is not live, the predecessor is no live \
                            consenting owner root, or the owner is no longer live; nothing was \
                            written";
+/// A membership move no issuer signs would leave owner authority live: the
+/// member holds an owner key or a `human` binding the move must revoke, and
+/// only the vault's live host root signs that (REVIEW-7931). Authority;
+/// nothing moved.
+const OWNER_AUTHORITY_NEEDS_HOST: &str = "the member holds an owner key or owner binding that \
+                                          this move must revoke, and this install holds no \
+                                          live host root to sign it; run the move on the \
+                                          vault's host";
+/// A membership move gives the embedded owner Owner standing back, and no
+/// issuer signs it, so the host root cannot bind them again (REVIEW-7931
+/// round 2). Authority; nothing moved.
+const OWNER_BINDING_NEEDS_HOST: &str = "the embedded owner regains Owner standing, and this \
+                                        install holds no live host root to bind them again; \
+                                        run the move on the vault's host";
+/// The host root's new binding of the embedded owner did not count.
+/// Authority; nothing moved.
+const OWNER_BINDING_NOT_RESTORED: &str = "the host root's binding of the embedded owner did not \
+                                          count; nothing moved";
 
 /// What a device hands its enrollment (CALLS "FIX 4920 enrollment API
 /// shape"): the machine that holds the key in its keystore, the key's
@@ -362,23 +380,174 @@ impl Vault {
     /// included. Empty before any enrollment.
     pub fn enrolled_owner_keys(&self) -> Result<Vec<EnrolledOwnerKey>> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.enrolled_owner_keys_in_txn(&txn)
+    }
+
+    /// [`Self::enrolled_owner_keys`] in the caller's transaction.
+    fn enrolled_owner_keys_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EnrolledOwnerKey>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
         let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             keep_enrolled(&mut keys, &fold, managed, hash, &entry);
         }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
             for (hash, entry) in evidence.carried_past(&stored) {
                 keep_enrolled(&mut keys, &fold, managed, *hash, entry);
             }
         }
         Ok(keys.into_values().collect())
+    }
+
+    /// Ends the owner authority `person` holds on this vault's log, in the
+    /// transaction of the membership move that ends their standing
+    /// (OWNER-ENROL): under `issuer`, a `RevokeDevice` for each live owner
+    /// key whose enrolment names them, which ends any binding on that key,
+    /// then a `RevokeActor` for each other live `human` binding that names
+    /// them, the host root's binding of its embedded owner among them. The
+    /// root key itself stays: only its binding ends. Each entry must count,
+    /// or the move commits nothing. A person with neither writes no entry.
+    ///
+    /// # Errors
+    /// The log's: an `issuer` that is not this vault's live host root, or an
+    /// entry the fold does not count.
+    pub(crate) fn revoke_owner_authority_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        person: EntityId,
+    ) -> Result<()> {
+        let root = issuer.public_key();
+        let keys: Vec<AuthorityKey> = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .filter(|key| key.live && key.owner == person)
+            .map(|key| AuthorityKey::Ed25519(key.public_key))
+            .filter(|key| *key != root)
+            .collect();
+        for revoked_key in keys {
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::RevokeDevice { revoked_key })?;
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let bindings: Vec<(AuthorityKey, u64)> = fold
+            .actor_bindings
+            .iter()
+            .filter(|(_, binding)| {
+                binding.status == ActorBindingStatus::Active
+                    && binding.actor_ref == person
+                    && binding.actor_class == ACTOR_CLASS_HUMAN
+            })
+            .map(|(key, binding)| (key.clone(), binding.epoch))
+            .collect();
+        for (authority_key, epoch) in bindings {
+            self.append_slip_op_in_txn(
+                txn,
+                issuer,
+                AuthorityOp::RevokeActor {
+                    authority_key,
+                    epoch,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Binds the embedded owner again under the host root, in the
+    /// transaction of the membership move that gives them Owner standing
+    /// back on a self-hosted vault (REVIEW-7931 round 2). The host root binds
+    /// its embedded owner there, as at genesis (`host_actor.rs`), and the
+    /// move that ended their standing revoked that binding
+    /// ([`Self::revoke_owner_authority_in_txn`]). The new binding is a fresh
+    /// epoch above the revoked one, which stays revoked. Nothing for another
+    /// person (an added Owner binds through their first owner key's
+    /// enrolment), a hosted or relay vault, an unrooted one, an owner a live
+    /// `human` binding names or none ever named, or a host key bound to
+    /// another actor.
+    ///
+    /// # Errors
+    /// An authority refusal when no issuer signs the move, or when the new
+    /// binding does not count; the log's.
+    pub(crate) fn restore_embedded_owner_binding_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: Option<&HostSlipIssuer>,
+        person: EntityId,
+    ) -> Result<()> {
+        if person != crate::vault::embedded_owner_actor_id()?
+            || self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal
+        {
+            return Ok(());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let was_bound = fold
+            .actor_bindings
+            .values()
+            .any(|binding| binding.actor_ref == person && binding.actor_class == ACTOR_CLASS_HUMAN);
+        if fold.vault_id.is_none()
+            || !was_bound
+            || actor_binding_is_active(&fold, &person, ACTOR_CLASS_HUMAN)
+        {
+            return Ok(());
+        }
+        let Some(issuer) = issuer else {
+            return Err(authority_refused(OWNER_BINDING_NEEDS_HOST));
+        };
+        let authority_key = issuer.public_key();
+        let held = fold.actor_bindings.get(&authority_key);
+        if held.is_some_and(|binding| binding.status == ActorBindingStatus::Active) {
+            return Ok(());
+        }
+        let epoch = held.map_or(1, |binding| binding.epoch.saturating_add(1));
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::BindActor {
+                authority_key,
+                actor_ref: person,
+                actor_class: ACTOR_CLASS_HUMAN.into(),
+                epoch,
+            },
+        )?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        if !actor_binding_is_active(&after, &person, ACTOR_CLASS_HUMAN) {
+            return Err(authority_refused(OWNER_BINDING_NOT_RESTORED));
+        }
+        Ok(())
+    }
+
+    /// Refuses a membership move no issuer signs while `person` holds owner
+    /// authority on this vault's log that the move must end: a live owner key
+    /// whose enrolment names them, or a live `human` binding that names them.
+    /// Only the vault's live host root signs their revocation
+    /// ([`Self::revoke_owner_authority_in_txn`]), so such a move runs on the
+    /// vault's host; a person with neither moves on any install (REVIEW-7931).
+    ///
+    /// # Errors
+    /// An authority refusal when they hold either; the log's read errors.
+    pub(crate) fn refuse_unrevoked_owner_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<()> {
+        let holds_key = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .iter()
+            .any(|key| key.live && key.owner == person);
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let holds_binding = fold.actor_bindings.values().any(|binding| {
+            binding.status == ActorBindingStatus::Active
+                && binding.actor_ref == person
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+        });
+        if holds_key || holds_binding {
+            return Err(authority_refused(OWNER_AUTHORITY_NEEDS_HOST));
+        }
+        Ok(())
     }
 }
 
