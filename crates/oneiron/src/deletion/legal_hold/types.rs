@@ -3,8 +3,6 @@
 //! time or a typed code: the hold log holds no memory content and no free
 //! text (C3).
 
-use serde::{Deserialize, Serialize};
-
 use crate::entity_id::EntityId;
 
 #[doc(hidden)]
@@ -90,18 +88,8 @@ pub struct LiftAndEraseOutcome {
     pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
-/// A record kept after a refused privacy erasure: it serves only the legal
-/// reason that kept it (C6, hosted only), while a standing customer hold
-/// still names it, for that hold's whole retention (FIX 8849). A host order's
-/// [`HostOrderHold::requires_non_use`] binds its clone, not this limit. Read
-/// enforcement is the scope checks' (L02).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldUseLimit {
-    pub record: EntityId,
-    pub since: u64,
-    pub reason: LegalHoldReason,
-}
+#[doc(hidden)]
+pub use oneiron_records::deletion::legal_hold::types::LegalHoldUseLimit;
 
 /// One legal-hold maintenance pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

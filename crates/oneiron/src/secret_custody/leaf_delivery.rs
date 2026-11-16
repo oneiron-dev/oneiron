@@ -42,14 +42,20 @@ use crate::authority::{
     owner_act_signer_admits,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::store::CredentialLeaf;
 use crate::world_keys::MachineSecret;
 
 mod doors;
 
-/// The wire version of an ask and of its answer.
-const LEAF_KEY_WIRE_VERSION: u8 = 1;
+#[doc(hidden)]
+pub use oneiron_records::secret_custody::leaf_delivery::LeafKeyFailureCause;
+#[doc(hidden)]
+use oneiron_records::secret_custody::leaf_delivery::{
+    ANSWER_DOMAIN, KEY_ID_LABEL, LEAF_KEY_WIRE_VERSION, REFUSED_EXPIRED, REFUSED_MALFORMED,
+    REFUSED_REPLAYED, REQUEST_DOMAIN, SEAL_BINDING_DOMAIN, encode_frame, fields_digest,
+};
+
 /// How long one ask stands, in milliseconds (ruling A: a short expiry, one
 /// policy value). The relay drops a passed one unopened.
 pub const LEAF_KEY_REQUEST_TTL_MS: u64 = 120_000;
@@ -57,10 +63,6 @@ pub const LEAF_KEY_REQUEST_TTL_MS: u64 = 120_000;
 /// in milliseconds.
 pub const LEAF_KEY_REFUSED_BACKOFF_MS: u64 = 300_000;
 
-const REQUEST_DOMAIN: &[u8] = b"oneiron/custody-leaf-key-request/v1\0";
-const ANSWER_DOMAIN: &[u8] = b"oneiron/custody-leaf-key-answer/v1\0";
-const SEAL_BINDING_DOMAIN: &[u8] = b"oneiron/custody-leaf-key-seal/v1\0";
-const KEY_ID_LABEL: &[u8] = b"custody-leaf/v1";
 const LEAF_LABEL: &[u8] = b"oneiron/custody-leaf/v1";
 const EPOCH: u64 = 1;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
@@ -68,10 +70,6 @@ const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 
 /// The carrier wire is off here: no carrier needs a live key.
 const REFUSED_WIRE_OFF: &str = "leaf_key_wire_off";
-/// The ask or answer does not decode, or names another wire version.
-const REFUSED_MALFORMED: &str = "leaf_key_malformed";
-/// The ask's expiry passed.
-const REFUSED_EXPIRED: &str = "leaf_key_expired";
 /// The ask names another install as the key's holder.
 const REFUSED_NOT_HOLDER: &str = "leaf_key_not_holder";
 /// The ask, or its answer, is not its named machine's live signature.
@@ -84,48 +82,6 @@ const REFUSED_NOT_ADMITTED: &str = "leaf_key_not_admitted";
 const REFUSED_UNKNOWN_CARRIER: &str = "leaf_key_unknown_carrier";
 /// The answer is not bound to the ask it is taken for, or does not open.
 const REFUSED_NOT_BOUND: &str = "leaf_key_answer_not_bound";
-/// No such ask is out here: answered already, expired or never made.
-const REFUSED_REPLAYED: &str = "leaf_key_replayed";
-
-/// Why an ask came back without a key, as L03's failure frame carries it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LeafKeyFailureCause {
-    /// The holder's socket is dead or absent: the ask stays pending.
-    HolderOffline,
-    /// The asker's socket is dead or absent: the ask stays pending.
-    ExecutorOffline,
-    /// The ask's expiry passed: a fresh one is minted next.
-    Expired,
-    /// The relay already carried an answer for this id: a fresh one is
-    /// minted next.
-    Replayed,
-    /// The holder refused, with its reason code: never a key or a secret.
-    /// The carrier waits [`LEAF_KEY_REFUSED_BACKOFF_MS`] before a new ask.
-    HolderRefused(String),
-    /// The holder met a fault that is no refusal (its storage or keystore):
-    /// the ask stays pending and is sent again, as for an offline holder.
-    HolderFault,
-}
-
-impl LeafKeyFailureCause {
-    /// The cause a holder's refusal of an ask travels as: an expired ask, a
-    /// replayed one, or the refusal's own reason code. `None` for a fault
-    /// that is no refusal (storage, keystore), which travels as
-    /// [`Self::HolderFault`]: the asker keeps the ask pending and sends it
-    /// again.
-    #[must_use]
-    pub fn of_refusal(error: &Error) -> Option<Self> {
-        match error {
-            Error::Record(RecordError::AuthorityRefused(reason)) => Some(match *reason {
-                REFUSED_EXPIRED => Self::Expired,
-                REFUSED_REPLAYED => Self::Replayed,
-                reason => Self::HolderRefused(reason.to_owned()),
-            }),
-            _ => None,
-        }
-    }
-}
-
 /// One install's ask for a carrier key it must open with: opaque to the
 /// relay, which routes it by its id, holder, asker and expiry alone.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,12 +140,6 @@ impl std::fmt::Debug for LeafKeyAnswer {
     }
 }
 
-/// Integers, ids and byte lists in MessagePack: never refused, so an
-/// encode that fails is the empty frame, which no decode takes.
-fn encode_frame<T: Serialize>(frame: &T) -> Vec<u8> {
-    rmp_serde::to_vec_named(frame).unwrap_or_default()
-}
-
 /// `bytes` decoded strictly: one frame, at this wire version, that encodes
 /// back to exactly `bytes`.
 fn decode_frame<T>(bytes: &[u8], version: impl Fn(&T) -> u8) -> Result<T>
@@ -202,17 +152,6 @@ where
         return Err(authority_refused(REFUSED_MALFORMED));
     }
     Ok(frame)
-}
-
-/// One digest over `fields`, each length-prefixed.
-fn fields_digest(fields: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&(fields.len() as u64).to_be_bytes());
-    for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
-        hasher.update(field);
-    }
-    *hasher.finalize().as_bytes()
 }
 
 impl LeafKeyRequest {
