@@ -282,6 +282,13 @@ name = "vault_runners_doors"
 path = "tests/vault_runners_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The owner's resume door on a node whose runner seats name an official seat (FIX
+# RUNNER-RESUME-DROPS-NODE-REGISTRY) roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "runner_resume_node_registry"
+path = "tests/runner_resume_node_registry.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
 # The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
 [[test]]
