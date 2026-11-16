@@ -4,8 +4,8 @@
 //! Every case drives the real routes in process (`build_app` + `oneshot`):
 //! `POST /v1/core/facade/<verb>` for `vault.voices.packs.put`,
 //! `.render_consent`, `.targets.provision`, `.targets.evict`, `.inspect`,
-//! `.lineage` and `.recognition.withdraw`, and the owner's voice-bank routes
-//! under `/v1/ai/voices`.
+//! `.lineage`, `.recognition.withdraw` and `.recognition.consent`, and the
+//! owner's voice-bank routes under `/v1/ai/voices`.
 //! Callers: the owner on the host root credential, whose live PERSON is the
 //! subject of the owner's own voice; a second live person on their own
 //! paired human credential; and an agent on its own paired credential, the
@@ -31,20 +31,26 @@
 //!   samples, and keeps the consent record (`oneiron-arch-0061-voice-loop-v1.md:124`,
 //!   promise-dura-13; VOICE-RECOGNITION-CONSENT-NO-DOOR): a person withdraws
 //!   their own voice, the owner any subject's, and nobody else another's.
-//!   No door grants recognition consent or enrolls a print, so these cases
-//!   enroll on the served vault through the engine's public calls;
+//!   No door enrolls a print, so these cases enroll on the served vault
+//!   through the engine's public calls;
 //! - the way out is never harder than the way in (VOICE-WITHDRAW-AGENT = C,
 //!   VOICE-WITHDRAW-AGENT-GRANT = A): an agent whose own Grant names the
 //!   consent-log verb `vault.voices.recognition.consent` logs a
 //!   counterparty's spoken withdrawal on a call, the owner is told which
 //!   consent was withdrawn, and the withdrawal only narrows;
+//! - logging voice-recognition consent enrols nothing (VOICE-CONSENT-LOG-WHO = A;
+//!   oneiron-arch-0061 "the agent logs who/when/what"): a person logs their own
+//!   voice, the owner any subject's, and an agent with the consent-log Grant a
+//!   counterparty's spoken yes on a call, telling each live owner who agreed, for
+//!   which purposes, and under which Grant; enrolment reads the door's consent;
 //! - the `/v1/ai/voices` routes are the owner's alone
 //!   (`crates/oneiron-server/src/api/ai/voices.rs` `owner_only`).
 //!
-//! These promises hold on main, but for the recognition withdrawal, whose
-//! door main does not have: its cases are red on main, and the agent's case
-//! is red on the door's first PR (#8973), which refuses every agent. The others' red proof
-//! is a seeded fault (Test rules v2, rule 5), named in the PR.
+//! These promises hold on main, but for the recognition withdrawal and consent,
+//! whose doors main does not have: their cases are red on main, the two consent
+//! cases because the route does not exist there, and the withdrawal agent's case
+//! is also red on the door's first PR (#8973), which refuses every agent.
+//! The others' red proof is a seeded fault (Test rules v2, rule 5), named in the PR.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -370,6 +376,26 @@ fn recognition_withdrawal(event_id: &str, occurred_at: u64, subject: Option<Enti
     input
 }
 
+/// The `recognition.consent` input of consent `event_id` at `occurred_at`,
+/// for `purposes`, of `subject`'s voice when one is named.
+fn recognition_consent(
+    event_id: &str,
+    occurred_at: u64,
+    subject: Option<EntityId>,
+    purposes: &[&str],
+) -> Value {
+    let mut input = json!({
+        "event_id": event_id,
+        "occurred_at": occurred_at,
+        "purposes": purposes,
+        "basis": {"ConversationalNotice": {"notice": "please learn my voice so you know it's me"}},
+    });
+    if let Some(subject) = subject {
+        input["subject"] = json!(subject.to_hex());
+    }
+    input
+}
+
 impl Served {
     fn holder(&self, caller: Caller) -> Option<&Holder> {
         match caller {
@@ -620,6 +646,22 @@ impl Served {
             .into_iter()
             .filter(|row| {
                 serde_json::to_value(row.kind).ok() == Some(json!("voice_recognition_withdrawn"))
+            })
+            .map(|row| (row.source.result, row.source.detail))
+            .collect()
+    }
+
+    /// The owner's inbox notices that a counterparty's spoken recognition
+    /// consent was logged, as (result, detail).
+    fn consent_notices(&self) -> Vec<(Option<String>, Option<String>)> {
+        self.vault
+            .memory(self.owner_person, EdgeActorClass::Human)
+            .inbox_list(None, 100)
+            .expect("the owner's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                serde_json::to_value(row.kind).ok() == Some(json!("voice_recognition_consented"))
             })
             .map(|row| (row.source.result, row.source.detail))
             .collect()
@@ -1337,6 +1379,240 @@ fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_withdrawal_and_tells
             served.withdrawal_notices().len(),
             1,
             "a replay tells no one again"
+        );
+    });
+}
+
+/// A person logs voice-recognition consent for their own voice, and only the
+/// vault owner for another subject's, such as a counterparty who holds no
+/// credential here (VOICE-CONSENT-LOG-WHO = A). The door's consent enrols no
+/// print itself, but enrolment reads it: the counterparty's print enrols on
+/// the logged event id and is recognized. A replay answers replayed, a
+/// different decision under the event id is refused, and person and owner
+/// acts tell no one.
+#[test]
+fn a_person_logs_consent_for_their_own_voice_and_the_owner_any_subjects() {
+    run_on_engine_stack("voices-recognition-consent-who", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let person = served.person.actor;
+        let counterparty = EntityId::now();
+
+        let own = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent("person-consent", now, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(own["subject"], person.to_hex(), "{own}");
+        assert_eq!(own["recorded_by"], person.to_hex(), "{own}");
+        assert_eq!(own["replayed"], false, "{own}");
+        assert_eq!(own["purposes"], json!(["meeting_attribution"]), "{own}");
+
+        let (status, body) = served
+            .post(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "person-for-counterparty",
+                    now,
+                    Some(counterparty),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "the person naming another subject is refused: {status} {body}"
+        );
+
+        let grant_id = "counterparty-consent";
+        let granted = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(grant_id, now, Some(counterparty), &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(granted["subject"], counterparty.to_hex(), "{granted}");
+        assert_eq!(
+            granted["recorded_by"],
+            owner.to_hex(),
+            "the owner records the counterparty's word: {granted}"
+        );
+        assert_eq!(granted["replayed"], false, "{granted}");
+        assert_eq!(
+            granted["purposes"],
+            json!(["meeting_attribution"]),
+            "{granted}"
+        );
+
+        served
+            .vault
+            .enroll_voice_print(&enrollment(
+                counterparty,
+                grant_id,
+                &axis_vector(2),
+                now + 10,
+            ))
+            .expect("the print enrols on the door's consent");
+        assert_eq!(
+            served.recognized("after-consent", &axis_vector(2)),
+            Some(counterparty)
+        );
+
+        let replay = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(grant_id, now, Some(counterparty), &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+
+        let (status, body) = served
+            .post(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(grant_id, now, Some(counterparty), &["live_interlocutor"]),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a different decision under the event id is refused: {status} {body}"
+        );
+
+        assert!(
+            served.consent_notices().is_empty(),
+            "person and owner acts tell no one"
+        );
+    });
+}
+
+/// An agent whose own Grant names the consent-log verb logs a
+/// counterparty's spoken consent on a call (VOICE-CONSENT-LOG-WHO = A;
+/// oneiron-arch-0061 "the agent logs who/when/what"): the agent records the
+/// consent, and the owner is told in their inbox who agreed, for which
+/// purposes, and under which Grant. An agent with no Grant, or with a
+/// conferring one that names the withdraw verb but not the consent-log verb,
+/// is refused; the consent-log Grant reaches no live owner's voice and needs
+/// a subject. A replay answers replayed and tells no one again, and the
+/// counterparty's print then enrols on the logged event id and is recognized.
+/// Logging consent enrols nothing.
+#[test]
+fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_consent_and_tells_the_owner() {
+    run_on_engine_stack("voices-recognition-consent-agent", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let agent = served.agent.actor;
+        let counterparty = EntityId::now();
+
+        // No Grant, then a conferring Grant naming the withdraw verb and not
+        // the consent-log verb: refused.
+        for (index, verb) in [None, Some(RECOGNITION_WITHDRAW)].into_iter().enumerate() {
+            if let Some(verb) = verb {
+                served.grant_agent(&[verb]).await;
+            }
+            let input = recognition_consent(
+                &format!("ungranted-{index}"),
+                now,
+                Some(counterparty),
+                &["meeting_attribution"],
+            );
+            let (status, body) = served.post(Caller::Agent, RECOGNITION_CONSENT, input).await;
+            assert_eq!(
+                error_code(&body),
+                Some("FORBIDDEN"),
+                "an agent whose Grant names {verb:?} is refused: {status} {body}"
+            );
+        }
+
+        let grant = served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        // The consent-log Grant reaches no live owner's voice and needs a subject.
+        for (index, subject) in [Some(owner), None].into_iter().enumerate() {
+            let input = recognition_consent(
+                &format!("out-of-reach-{index}"),
+                now,
+                subject,
+                &["meeting_attribution"],
+            );
+            let (status, body) = served.post(Caller::Agent, RECOGNITION_CONSENT, input).await;
+            assert!(
+                !status.is_success(),
+                "the agent on {subject:?} is refused: {status} {body}"
+            );
+        }
+        assert!(
+            served.consent_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let consent_id = "counterparty-spoken-consent";
+        let consent = recognition_consent(
+            consent_id,
+            now,
+            Some(counterparty),
+            &["meeting_attribution"],
+        );
+        let receipt = served
+            .ok(Caller::Agent, RECOGNITION_CONSENT, consent.clone())
+            .await;
+        assert_eq!(receipt["subject"], counterparty.to_hex(), "{receipt}");
+        assert_eq!(
+            receipt["recorded_by"],
+            agent.to_hex(),
+            "the agent records the counterparty's word: {receipt}"
+        );
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(
+            receipt["purposes"],
+            json!(["meeting_attribution"]),
+            "{receipt}"
+        );
+
+        // The owner is told, once, who agreed and for which purposes.
+        let notices = served.consent_notices();
+        assert_eq!(
+            notices.len(),
+            1,
+            "one notice for the one owner: {notices:?}"
+        );
+        let (result, detail) = &notices[0];
+        assert_eq!(result.as_deref(), Some(consent_id));
+        let detail = detail.as_deref().expect("the notice says who agreed");
+        assert!(
+            detail.contains("agreed to voice recognition on a call"),
+            "{detail}"
+        );
+        assert!(detail.contains("meeting_attribution"), "{detail}");
+        assert!(
+            detail.contains(&agent.to_hex()) && detail.contains(&grant),
+            "the notice names the agent and its Grant: {detail}"
+        );
+
+        let replay = served.ok(Caller::Agent, RECOGNITION_CONSENT, consent).await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        assert_eq!(
+            served.consent_notices().len(),
+            1,
+            "a replay tells no one again"
+        );
+
+        served
+            .vault
+            .enroll_voice_print(&enrollment(
+                counterparty,
+                consent_id,
+                &axis_vector(2),
+                now + 10,
+            ))
+            .expect("the print enrols on the agent-logged consent");
+        assert_eq!(
+            served.recognized("after-agent-consent", &axis_vector(2)),
+            Some(counterparty)
         );
     });
 }
