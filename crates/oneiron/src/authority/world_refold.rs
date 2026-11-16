@@ -86,7 +86,7 @@ pub(super) fn carried_request_kind(
 }
 
 /// Settlement drops every row above a main-log row it refuses (a retired
-/// signer's fence, a confirmation collision, an unsettled handoff), and the door names every main-log head as a parent, so
+/// signer's fence, an unsettled handoff), and the door names every main-log head as a parent, so
 /// a world's edits would fall with an unrelated row and the world would read
 /// wider than the owner set it (Wonder P2 round 1, W1). A world edit is judged
 /// on the main log as the fold keeps it: every edit above a main-log row the
