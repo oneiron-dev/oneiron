@@ -409,10 +409,7 @@ fn hub_sync_flagged_resync_keeps_the_approval_as_it_was() -> Result<()> {
         .get_skill_record(&id)?
         .expect("admitted skill");
     assert_eq!(admitted.lifecycle_status, SkillLifecycle::Active);
-    assert_eq!(
-        admitted.approval_status,
-        ClaimApprovalStatus::Approved
-    );
+    assert_eq!(admitted.approval_status, ClaimApprovalStatus::Approved);
     // The declared tool keeps its Low static finding; the dial at Low turns
     // the bytes' own scan into a ProposedRequired flag.
     set_skill_scan_activation_risk_threshold(&fixture.vault, ScanRiskLevel::Low)?;
