@@ -1,12 +1,12 @@
 //! Named organization administration, one-hop Delegate grants and scoped member projections.
 use serde::{Deserialize, Serialize};
 
-use crate::check_in::{AppliedCheckIn, CheckInDecision};
+use crate::check_in::AppliedCheckIn;
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
     FederationGrant, FederationGrantRole, FederationGrantScope, MemberRelationship, OrgAdminError,
-    OrgAdminPolicy, OrgAdminPower, Scope,
+    OrgAdminPolicy, Scope,
 };
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
@@ -25,36 +25,11 @@ pub struct OrgAdminConfigureRequest {
     pub check_in_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OrgAdminConfigured {
-    pub org_ref: EntityId,
-    pub configured: bool,
-    /// The decision the configuration ran on: the owner's own proof, naming
-    /// the asker's approved check-in it applied (ROLES-CHECKIN 2k8).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub check_in: Option<CheckInDecision>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OrgAdminPowersRequest {
-    pub org_ref: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OrgAdminPowers {
-    pub powers: Vec<OrgAdminPower>,
-}
-
-/// One explicit six-axis narrowing; the host, not the caller, supplies mint time.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FederationDelegateRequest {
-    pub parent_grant: EntityId,
-    pub member_ref: EntityId,
-    pub authority_scope: Scope,
-    pub expires_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::shared_admin::{
+    FederationDelegateRequest, OrgAdminConfigured, OrgAdminPowers, OrgAdminPowersRequest,
+    SharedProjectAccessReset,
+};
 
 /// Stored grant facts, not a role label that grants additional powers.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -90,13 +65,6 @@ pub struct SharedProjectAccessResetRequest {
     #[schemars(with = "String")]
     pub vault_id: u64,
     pub roster: crate::workspace_roster::ProjectRosterWriteRequest,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SharedProjectAccessReset {
-    pub project: EntityId,
-    pub installed: bool,
-    pub invitations: Vec<String>,
 }
 
 fn org_error(error: OrgAdminError) -> MemoryError {

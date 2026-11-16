@@ -9,14 +9,14 @@
 //! label, no migration, no automatic labeling.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::secret_custody::types::SECRET_NAME_MAX_BYTES;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::secret_handle_labels::LABEL;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::vault::Vault;
 
 pub use crate::store::secret_handle_labels::SecretHandleLabel;
@@ -58,15 +58,8 @@ const PREFIX_LABELS: &[(&str, &str)] = &[
     ("sk-", "OpenAI key"),
 ];
 
-/// What setting or clearing a handle's label leaves behind: the stored
-/// label (`None` after a clear), the kind suggestion the card falls back
-/// to, and the act's Gate receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretHandleLabelSet {
-    pub label: Option<String>,
-    pub suggested_label: Option<String>,
-    pub receipt: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_custody::handle_labels::SecretHandleLabelSet;
 
 /// The stored label on the custody record `custody`, if the owner set one.
 pub(crate) fn secret_handle_label_in_txn(
@@ -85,14 +78,40 @@ pub(crate) fn suggested_secret_handle_label_in_txn(
     txn: &RoTxn<'_>,
     custody: &EntityId,
 ) -> Result<Option<String>> {
+    Ok(scan_kind_in_txn(store, txn, custody)?
+        .and_then(|kind| suggest_secret_handle_label_for_kind(&kind))
+        .map(str::to_owned))
+}
+
+/// Whether the custody record `custody`'s label hint names a payment
+/// provider's key, which pre-fills the owner's payment mark (L8-60): the
+/// value-free scan kind its mask origin names is one of [`PAYMENT_KINDS`].
+/// `false` for a record an owner registered, which no scan found.
+pub(crate) fn payment_suggested_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+) -> Result<bool> {
+    Ok(scan_kind_in_txn(store, txn, custody)?
+        .is_some_and(|kind| PAYMENT_KINDS.contains(&kind.as_str())))
+}
+
+/// Scan kinds whose label hint names a payment provider's key.
+const PAYMENT_KINDS: &[&str] = &["stripe_key"];
+
+/// The value-free scan kind the custody record `custody`'s mask origin
+/// names, without the scan-reason prefix; `None` for a record no scan found.
+fn scan_kind_in_txn(store: &Store, txn: &RoTxn<'_>, custody: &EntityId) -> Result<Option<String>> {
     let Some(origin) = crate::batch::secret_scan::mask_origin_in_txn(store, txn, custody)? else {
         return Ok(None);
     };
-    let kind = origin
-        .reason
-        .strip_prefix(SCAN_REASON_PREFIX)
-        .unwrap_or(&origin.reason);
-    Ok(suggest_secret_handle_label_for_kind(kind).map(str::to_owned))
+    Ok(Some(
+        origin
+            .reason
+            .strip_prefix(SCAN_REASON_PREFIX)
+            .unwrap_or(&origin.reason)
+            .to_owned(),
+    ))
 }
 
 /// The label a scan kind suggests, if any. Generic and depth codes
@@ -197,7 +216,7 @@ impl Vault {
 
 /// The owner's proof, rechecked at the owner tier in `txn`: the acting
 /// owner.
-fn live_owner_in_txn(
+pub(super) fn live_owner_in_txn(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     txn: &RoTxn<'_>,
@@ -212,7 +231,7 @@ fn live_owner_in_txn(
     Ok(actor)
 }
 
-fn gate_ref(decision: GateDecisionId) -> String {
+pub(super) fn gate_ref(decision: GateDecisionId) -> String {
     format!("gate:{}", decision.to_hex())
 }
 
@@ -232,33 +251,21 @@ fn append_label_ruling_in_txn(
     } else {
         (HANDLE_LABEL_REASON_CLEARED, "action:cleared")
     };
-    let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id,
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: "approved".into(),
-        reason_codes: vec![reason.into()],
-        receipt_reasons: Vec::new(),
-        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-            HANDLE_LABEL_CONTENT_KIND,
-            vec![
-                format!("handle:{handle}"),
-                format!("custody:{}", custody.to_hex()),
-                action.to_owned(),
-            ],
-        ),
-        actor_class: "human".into(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: HANDLE_LABEL_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: custody.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(decision_id)
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        HANDLE_LABEL_CONTENT_KIND,
+        reason,
+        ReceiptActor::human(actor),
+        custody.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.details = vec![
+        format!("handle:{handle}"),
+        format!("custody:{}", custody.to_hex()),
+        action.to_owned(),
+    ];
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }

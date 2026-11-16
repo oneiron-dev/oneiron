@@ -593,7 +593,7 @@ pub fn valid_registry_uuid(value: &str) -> bool {
     value.len() == 36
         && value.bytes().enumerate().all(|(index, byte)| match index {
             8 | 13 | 18 | 23 => byte == b'-',
-            _ => is_lower_hex(byte),
+            _ => oneiron_hex::nibble(byte).is_some(),
         })
 }
 
@@ -644,9 +644,5 @@ fn valid_objects_dir(value: &str) -> bool {
 
 /// Whether `value` is `len` lowercase hex digits.
 fn is_hex(value: &str, len: usize) -> bool {
-    value.len() == len && value.bytes().all(is_lower_hex)
-}
-
-const fn is_lower_hex(byte: u8) -> bool {
-    byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
+    oneiron_hex::is_lower_hex(value, Some(len))
 }

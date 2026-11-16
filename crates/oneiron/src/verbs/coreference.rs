@@ -16,13 +16,10 @@ pub struct CoreferenceLinkRequest {
     pub status: CoreferenceStatus,
 }
 
-/// The link whose owner confirms or removes it. Endpoint order is immaterial.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoreferencePairRequest {
-    pub local_person: EntityId,
-    pub other_person: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::coreference::{
+    CoreferencePairRequest, CoreferenceShareConsentReceipt, CoreferenceUnlinkReceipt,
+};
 
 /// A link/status receipt, not a read grant or permission to export the link.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -46,28 +43,6 @@ pub struct CoreferenceShareConsentRequest {
     /// it (ROLES-CHECKIN 2k8). Omitted: the owner's own consent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreferenceShareConsentReceipt {
-    pub local_person: EntityId,
-    pub other_person: EntityId,
-    pub pact: String,
-    pub consent_claim: EntityId,
-    /// The decision the consent ran on: the owner's own proof, naming the
-    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub check_in: Option<crate::check_in::CheckInDecision>,
-}
-
-/// Only link metadata is retracted. Neither person's original claims change.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreferenceUnlinkReceipt {
-    pub local_person: EntityId,
-    pub other_person: EntityId,
-    pub unlinked: bool,
-    pub retracted_claims: Vec<EntityId>,
-    pub original_claims_retained: bool,
 }
 
 impl CoreferenceShareConsentRequest {

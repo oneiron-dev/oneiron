@@ -30,8 +30,8 @@ pub const MESH_PATH_RECEIPT_RETAIN_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 /// The most expired receipts one write drops.
 const PRUNE_PER_WRITE: usize = 64;
 
-/// The most receipts one read returns.
-pub const MESH_PATH_RECEIPTS_READ_MAX: usize = 1024;
+#[doc(hidden)]
+pub use oneiron_verb_wire::sync::mesh_path::MESH_PATH_RECEIPTS_READ_MAX;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::sync::mesh_path::{

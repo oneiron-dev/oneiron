@@ -106,6 +106,10 @@ pub(super) fn place_json(locator: &Locator) -> Value {
             "char_start": char_start,
             "char_end": char_end,
         } }),
+        Locator::ImagePixel { x, y, w, h } => {
+            json!({ "image_pixel": { "x": x, "y": y, "w": w, "h": h } })
+        }
+        Locator::ImageObject { overlay } => json!({ "image_object": { "overlay": overlay } }),
         _ => Value::Null,
     }
 }

@@ -190,7 +190,11 @@ impl Memory<'_> {
     /// (PR 3's act gate), and a person under their membership role, a
     /// Steward's delete of another's record in scope waiting on its own
     /// pending check-in, which that target's item names as `check_in_ref`
-    /// once approved (Engine ruling STEWARD-DELETE-WAIT = B).
+    /// once approved (Engine ruling STEWARD-DELETE-WAIT = B). That writer
+    /// reads the cleanup archive marker right after the authority, whether
+    /// or not the item names what it expects, so a record the cleanup has not
+    /// archived, or that was restored, is refused as a stale preview before
+    /// any check-in opens or is spent.
     pub(crate) fn confirm_archive_delete(
         &self,
         items: &[ArchiveConfirmItem],
@@ -205,8 +209,8 @@ impl Memory<'_> {
     }
 
     /// One target of [`Self::confirm_archive_delete`]: its expectation, its
-    /// check-in judged, then its rail, each write of which must find the
-    /// authority the judge read. A target that waits answers
+    /// archive marker and check-in judged, then its rail, each write of which
+    /// must find the authority the judge read. A target that waits answers
     /// `CHECK_IN_PENDING` naming its check-in and deletes nothing.
     fn confirm_archive_item(
         &self,
@@ -218,11 +222,19 @@ impl Memory<'_> {
         let authority = |txn: &heed::RoTxn<'_>| -> MemoryResult<DeleteAuthority> {
             self.archive_delete_authority_in(txn, &target)
         };
+        // The judge's writer reads the marker after the authority, so a
+        // caller with no authority is refused for that alone, and a record
+        // the cleanup has not archived opens no check-in and spends none.
+        let archived_authority = |txn: &heed::RoTxn<'_>| -> MemoryResult<DeleteAuthority> {
+            let admitted = authority(txn)?;
+            archive_marker(self.vault, txn, id)?;
+            Ok(admitted)
+        };
         let (judged, decision) = match self.role_delete_check_in(
             &target,
             DeleteReason::UserHardDelete,
             ARCHIVE_DELETE_VERB,
-            &authority,
+            &archived_authority,
             item.check_in_ref.as_ref(),
         )? {
             RoleDeleteCheckIn::Go {
@@ -256,7 +268,8 @@ impl Memory<'_> {
 
     /// Whether archived `id` is still what `expected` names, read in one
     /// snapshot before its delete starts: the record hash and archive
-    /// marker its preview read. Nothing expected passes.
+    /// marker its preview read. Nothing expected passes here; the judge's
+    /// writer reads the cleanup archive marker either way.
     fn expected_archive_holds(
         &self,
         id: EntityId,

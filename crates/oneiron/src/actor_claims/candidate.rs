@@ -37,9 +37,8 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ClaimError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::temporal::TimeRange;
 use crate::{
     agent_inbox_lens::AgentInboxLensItem,
@@ -52,6 +51,7 @@ use super::invalid;
 use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
 use super::validate::{actor_claim_lineage, native_actor_source};
 use super::write::{actor_claim_facet_in_txn, require_actor_entity, scope_with_lineage};
+use oneiron_contracts::RecordedSeconds;
 
 const KEY_LANE: &str = "lane";
 const KEY_ATTEMPT: &str = "attempt";
@@ -112,6 +112,15 @@ impl CraftVerdict {
         match self {
             Self::Approved => "approved",
             Self::Rejected => "rejected",
+        }
+    }
+
+    /// The outcome of this verdict's Gate receipt, the word [`Self::as_str`]
+    /// spells.
+    const fn gate_outcome(self) -> GateReceiptOutcome {
+        match self {
+            Self::Approved => GateReceiptOutcome::Approved,
+            Self::Rejected => GateReceiptOutcome::Rejected,
         }
     }
 
@@ -394,33 +403,25 @@ fn answer_in_txn(
 
     let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let verdict_id = vault.store.clock.entity_id()?;
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: at,
-        outcome: verdict.as_str().to_owned(),
-        reason_codes: vec![format!("{CRAFT_REVIEW_REASON}.{}", verdict.as_str())],
-        receipt_reasons: Vec::new(),
-        system_notices: GateSystemNoticeRecord::receipt_details(
-            CRAFT_REVIEW_CONTENT_KIND,
-            vec![
-                format!("{KEY_CANDIDATE}:{}", card.candidate_id),
-                format!("{KEY_CANDIDATE_HASH}:{}", card.content_hash),
-                format!("verdict_claim:{}", verdict_id.to_hex()),
-                format!("resident:{}", card.resident),
-            ],
-        ),
-        actor_class: "human".to_owned(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: CRAFT_REVIEW_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*candidate.as_bytes()),
-        grant_ref: None,
-        diff_handle: hash.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt),
-        redacted_at: None,
-    };
+    let mut receipt = GateReceipt::new(
+        verdict.gate_outcome(),
+        CRAFT_REVIEW_CONTENT_KIND,
+        format!("{CRAFT_REVIEW_REASON}.{}", verdict.as_str()),
+        ReceiptActor::human(actor),
+        hash.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = Some(candidate);
+    receipt.details = vec![
+        format!("{KEY_CANDIDATE}:{}", card.candidate_id),
+        format!("{KEY_CANDIDATE_HASH}:{}", card.content_hash),
+        format!("verdict_claim:{}", verdict_id.to_hex()),
+        format!("resident:{}", card.resident),
+    ];
+    receipt.context = decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt);
+    // The row, the verdict claim and the view keep one second.
+    receipt.decided_at = Some(RecordedSeconds::from_secs(at));
+    let record = vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     let receipt_ref = crate::receipt::gate_decision_receipt(&record).receipt_id;
     let Some(Value::Map(mut evidence)) = body.evidence.clone() else {
         return Err(Error::EntityNotFound);
