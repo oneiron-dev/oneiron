@@ -14,9 +14,10 @@
 //! [`Memory::tasks_can_ask`]. Asks the engine composes keep their labels.
 //!
 //! A word check stops the plain and the injected solicitation. It does not
-//! stop a deliberate paraphrase, and it refuses an ask *about* a credential
-//! too ("Rotate the API key?"): such an ask names the credential by its
-//! custody name instead.
+//! stop a deliberate paraphrase. It refuses an ask *about* a credential too
+//! ("Rotate the API key?"), and one that uses a listed word in another sense
+//! ("Pin this message?"): such an ask names the credential by its custody
+//! name, or says it in other words.
 //!
 //! [`Memory::tasks_ask`]: crate::memory::Memory::tasks_ask
 //! [`Memory::tasks_can_ask`]: crate::memory::Memory::tasks_can_ask
@@ -37,13 +38,15 @@ struct AskSecretValueKind {
 /// Every secret value kind the guard refuses, in one list. The test
 /// `crates/oneiron/tests/ask_label_secret_kind.rs` asks with every phrase.
 ///
-/// A phrase matches a run of whole words in the text. Words are split at
-/// every character that is not a letter or a digit, so `one-time code`,
-/// `api_key` and `API key` are all two or three words, and `pinned` or
-/// `opinion` never matches `pin`. A phrase word compares without case, except
-/// a word written here with a capital letter, which matches only as written:
-/// `PIN` is the acronym, and the verb in "Pin this message?" passes. The last
-/// word of a phrase also matches its plural in `s` (`API keys`, `PINs`).
+/// A phrase matches its words in order in the text, each compared without
+/// case. Words are split at every character that is not a letter or a digit,
+/// so `one-time code`, `api_key` and `API key` are all two or three words, and
+/// `pinned` or `opinion` never matches `pin`; the lone `s` a possessive leaves
+/// (`card's`) is dropped. Up to [`MAX_QUALIFIER_WORDS`] other words may stand
+/// between two words of a phrase (`private SSH key`, `one-time login code`),
+/// unless one of them is in [`FUNCTION_WORDS`]: "Run verification on the
+/// code?" names no one-time code. The last word of a phrase also matches its
+/// plural in `s` (`API keys`, `PINs`).
 const ASK_SECRET_VALUE_KINDS: &[AskSecretValueKind] = &[
     AskSecretValueKind {
         name: "password",
@@ -59,7 +62,7 @@ const ASK_SECRET_VALUE_KINDS: &[AskSecretValueKind] = &[
     },
     AskSecretValueKind {
         name: "PIN",
-        phrases: &[&["PIN"], &["pin", "code"], &["pin", "number"]],
+        phrases: &[&["pin"]],
     },
     AskSecretValueKind {
         name: "one-time code",
@@ -101,6 +104,19 @@ const ASK_SECRET_VALUE_KINDS: &[AskSecretValueKind] = &[
     },
 ];
 
+/// How many qualifier words may stand between two words of a phrase.
+const MAX_QUALIFIER_WORDS: usize = 2;
+
+/// Words that end a phrase's run when they stand between two of its words:
+/// a qualifier is a name or an adjective, never one of these.
+const FUNCTION_WORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from",
+    "has", "have", "he", "her", "his", "i", "if", "in", "into", "is", "it", "its", "me", "my",
+    "no", "not", "of", "on", "or", "our", "she", "so", "than", "that", "the", "their", "them",
+    "then", "they", "this", "to", "us", "was", "we", "were", "what", "when", "which", "who",
+    "will", "with", "you", "your",
+];
+
 /// The suggestion every refusal carries: the way a secret is asked for.
 const CUSTODY_WAY: &str = "Ask for this through custody (vault secrets), not in a question.";
 
@@ -108,40 +124,47 @@ const CUSTODY_WAY: &str = "Ask for this through custody (vault secrets), not in 
 fn named_secret_kind(text: &str) -> Option<&'static AskSecretValueKind> {
     let words: Vec<&str> = text
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
+        .filter(|word| !word.is_empty() && !word.eq_ignore_ascii_case("s"))
         .collect();
     ASK_SECRET_VALUE_KINDS.iter().find(|kind| {
-        kind.phrases.iter().any(|phrase| {
-            words
-                .windows(phrase.len())
-                .any(|run| phrase_matches(phrase, run))
-        })
+        kind.phrases
+            .iter()
+            .any(|phrase| (0..words.len()).any(|start| phrase_starts(phrase, &words[start..])))
     })
 }
 
-/// `run` is `phrase`, word for word; its last word may be a plural in `s`.
-fn phrase_matches(phrase: &[&str], run: &[&str]) -> bool {
-    let last = phrase.len() - 1;
-    phrase
-        .iter()
-        .zip(run)
-        .enumerate()
-        .all(|(at, (want, word))| {
-            word_matches(want, word)
-                || (at == last
-                    && word
-                        .strip_suffix(['s', 'S'])
-                        .is_some_and(|stem| word_matches(want, stem)))
+/// `phrase` starts at the first of `words` and goes on in order, each later
+/// phrase word after at most [`MAX_QUALIFIER_WORDS`] qualifier words.
+fn phrase_starts(phrase: &[&str], words: &[&str]) -> bool {
+    let (Some((want, rest)), Some((word, after))) = (phrase.split_first(), words.split_first())
+    else {
+        return false;
+    };
+    if !word_names(want, word, rest.is_empty()) {
+        return false;
+    }
+    rest.is_empty()
+        || (0..=MAX_QUALIFIER_WORDS.min(after.len())).any(|skip| {
+            after[..skip].iter().all(|word| !is_function_word(word))
+                && phrase_starts(rest, &after[skip..])
         })
 }
 
-/// A capitalised list word matches only as written; any other without case.
-fn word_matches(want: &str, word: &str) -> bool {
-    if want.chars().any(char::is_uppercase) {
-        want == word
-    } else {
-        want.eq_ignore_ascii_case(word)
-    }
+/// `word` is the list word `want`, without case; the last word of a phrase
+/// may also stand as its plural in `s`.
+fn word_names(want: &str, word: &str, last: bool) -> bool {
+    want.eq_ignore_ascii_case(word)
+        || (last
+            && word
+                .strip_suffix(['s', 'S'])
+                .is_some_and(|stem| want.eq_ignore_ascii_case(stem)))
+}
+
+/// `word` is one of [`FUNCTION_WORDS`], without case.
+fn is_function_word(word: &str) -> bool {
+    FUNCTION_WORDS
+        .iter()
+        .any(|function| function.eq_ignore_ascii_case(word))
 }
 
 /// Refuses `text` (the ask's `field`) when it names a secret value kind.

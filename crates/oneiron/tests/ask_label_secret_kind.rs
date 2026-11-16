@@ -10,9 +10,13 @@
 //! whose question label, option labels, option `then` or recommendation
 //! reason names such a kind, and the refusal names custody as the way.
 //!
-//! Every phrase of the guard's list is asked with here. Words that only
-//! contain a kind ("pinned", "opinion") and a reworded question about a
-//! credential are admitted.
+//! Every phrase of the guard's list is asked with here, also with a
+//! qualifier between its words ("private SSH key") and a possessive ("card's
+//! security code"). Words that only contain a kind ("pinned", "opinion"),
+//! phrase words a function word splits ("verification on the code") and
+//! reworded questions are admitted. A listed word in another sense ("Pin
+//! this message?") is refused, as a question about a credential is, and its
+//! reword is admitted.
 //!
 //! Public paths only; no test door. Red on main by assertion: main admits
 //! every one of these asks.
@@ -210,16 +214,18 @@ fn the_payment_pin_digit_ask_is_refused_at_both_doors() {
 }
 
 /// One question per phrase of the guard's list, with the kind it names.
-/// Spelling varies as people write it: hyphens, underscores, capitals,
-/// plurals and a possessive.
+/// Spelling varies as people write it: hyphens, underscores, capitals, lower
+/// case, plurals, possessives and qualifiers between a phrase's words.
 const KIND_QUESTIONS: &[(&str, &str)] = &[
     ("Type the password you use for the bank", "password"),
     ("What is the passcode of your phone?", "passcode"),
     ("Which passphrase unlocks the backup?", "passphrase"),
     ("Which PINs did the bank send you?", "PIN"),
+    ("Select digit 1 of your payment pin", "PIN"),
     ("Read me the pin code on the letter", "PIN"),
     ("Pick the last digit of your pin number", "PIN"),
     ("Enter the one-time code we texted you", "one-time code"),
+    ("Enter the one-time login code", "one-time code"),
     ("Is your OTP closer to 4 or to 7?", "one-time code"),
     (
         "Paste the verification code from the email",
@@ -233,6 +239,7 @@ const KIND_QUESTIONS: &[(&str, &str)] = &[
     ),
     ("Is the card's CVC even?", "card security code"),
     ("What is the card security code?", "card security code"),
+    ("What is the card's security code?", "card security code"),
     ("Read me the credit card number", "card number"),
     (
         "Which word starts your seed phrase?",
@@ -243,6 +250,7 @@ const KIND_QUESTIONS: &[(&str, &str)] = &[
         "seed or recovery phrase",
     ),
     ("Paste the SSH private key", "private key"),
+    ("Paste the private SSH key", "private key"),
     ("Which API keys are on the account?", "API key"),
     ("Send the OPENAI_APIKEY value", "API key"),
     ("Share the GitHub access token", "access token"),
@@ -309,24 +317,40 @@ fn every_caller_written_text_of_the_ask_is_checked() {
 }
 
 #[test]
-fn a_question_about_a_credential_is_refused_and_its_reword_is_admitted() {
-    let fx = fixture();
-    let memory = fx.memory();
-    let named = "Should I rotate the API key now?";
-    let spec = fx.labelled("rotate-named", named);
-    assert_refused_at_both_doors(&memory, &spec, "question label", "API key", named);
-    let reworded = "Should I rotate the deploy credential now?";
-    let spec = fx.labelled("rotate-reworded", reworded);
-    assert_admitted_at_both_doors(&memory, &spec, reworded);
+fn a_question_that_names_a_kind_is_refused_and_its_reword_is_admitted() {
+    for (at, (named, kind, reworded)) in [
+        (
+            "Should I rotate the API key now?",
+            "API key",
+            "Should I rotate the deploy credential now?",
+        ),
+        (
+            "Pin this message to the room?",
+            "PIN",
+            "Keep this message at the top of the room?",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // One vault each, so no ask waits beside another on the TURN.
+        let fx = fixture();
+        let memory = fx.memory();
+        let spec = fx.labelled(&format!("named-{at}"), named);
+        assert_refused_at_both_doors(&memory, &spec, "question label", kind, named);
+        let spec = fx.labelled(&format!("reworded-{at}"), reworded);
+        assert_admitted_at_both_doors(&memory, &spec, reworded);
+    }
 }
 
 #[test]
-fn words_that_only_contain_a_kind_are_admitted() {
+fn texts_that_name_no_kind_are_admitted() {
     for (at, label) in [
-        "Pin this message to the room?",
         "Keep the pinned note above the spinner?",
         "What is your opinion on the token count budget?",
         "Should the keyboard shortcut open the passport scan?",
+        "Run verification on the code before the merge?",
+        "Grant access to the token budget page?",
     ]
     .into_iter()
     .enumerate()
