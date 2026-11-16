@@ -266,7 +266,7 @@ pub(crate) fn plant_spent_credit_for_test(
         observed_at: now,
         topped_up: None,
     };
-    vault.with_write_txn_grouped(|wtxn| append_quota_in_txn(vault, wtxn, &id, &record, now))
+    vault.try_with_write_txn_grouped(|wtxn| append_quota_in_txn(vault, wtxn, &id, &record, now))
 }
 
 /// Reads the head of `seat`'s quota record: its top-up's owner, decision,
