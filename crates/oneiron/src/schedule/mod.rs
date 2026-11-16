@@ -42,13 +42,13 @@ pub use oneiron_schedule_contract::{
 };
 
 pub use self::arm::ScheduleView;
-#[cfg(oneiron_test_support)]
-pub(crate) use self::arm::plant_start_marker_in_txn;
 pub(crate) use self::arm::{
     ScheduleCaller, arm_in_txn, arm_setting_jobs, deadlines_in_txn, disarm_in_txn, due_at_in_txn,
     due_by_in_txn, erase_schedule_actor_in_txn, erase_schedule_subject_in_txn, finished_at_in_txn,
     rearm_on_change, rebuild_schedule_due_in_txn, request_runs,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::arm::{plant_start_marker_in_txn, put_due_entry_for_test};
 pub(crate) use self::jobs::{job_named, jobs};
 pub use self::run::{JobOutcome, JobRun, ScheduleRunReport};
 pub use self::zones::EngineZones;
