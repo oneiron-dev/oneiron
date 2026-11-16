@@ -1,6 +1,7 @@
 //! Named organization administration, one-hop Delegate grants and scoped member projections.
 use serde::{Deserialize, Serialize};
 
+use crate::authority::ActSurface;
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
@@ -12,6 +13,8 @@ use crate::memory::{
 };
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
+use oneiron_authority::authority::Direction;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +71,11 @@ fn org_error(error: OrgAdminError) -> MemoryError {
             "organization administration is already configured",
             &["Organization administration is fixed at setup."],
         ),
+        OrgAdminError::NotConfigured => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "organization administration is not configured",
+            &["Store the organization's setup first (vault.org_admin.configure)."],
+        ),
         OrgAdminError::Denied => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "organization administration power denied",
@@ -88,6 +96,58 @@ pub fn configure_org_admin_as_owner(
     Ok(OrgAdminConfigured {
         org_ref: input.policy.org_ref(),
         configured: true,
+    })
+}
+
+/// The owner's amend of a stored setup: the whole new policy for its org.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrgAdminAmendRequest {
+    pub policy: OrgAdminPolicy,
+}
+
+/// The amend as it landed: what it changed, and whether that widens the
+/// setup.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OrgAdminAmended {
+    pub org_ref: EntityId,
+    /// Whether the stored setup changed: an amend equal to it writes nothing.
+    pub amended: bool,
+    /// The Admins the amend seated.
+    pub added_admins: BTreeSet<EntityId>,
+    /// The Admins the amend unseated.
+    pub removed_admins: BTreeSet<EntityId>,
+    /// The named powers the amend added.
+    pub added_powers: BTreeSet<crate::federation::OrgAdminPower>,
+    /// The named powers the amend dropped.
+    pub dropped_powers: BTreeSet<crate::federation::OrgAdminPower>,
+    /// Whether the amend widens the setup (it seats an Admin or adds a
+    /// power): a loosening, which the owner confirm sheet asks for.
+    pub widens: bool,
+}
+
+/// `vault.org_admin.amend`: the owner replaces a stored setup's Admins and
+/// named powers (RULING ORG-ADMIN-SETUP-AMEND = B, the lead 16 Nov 02:1x),
+/// from `surface` (audit only). The answer names what changed (RULING
+/// ORG-ADMIN-AMEND-CONFIRM-RECEIPT = A).
+pub fn amend_org_admin_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    input: OrgAdminAmendRequest,
+) -> MemoryResult<OrgAdminAmended> {
+    let amendment = vault
+        .amend_org_admin_as_owner(owner, surface, &input.policy)
+        .map_err(org_error)?;
+    let change = amendment.change;
+    Ok(OrgAdminAmended {
+        org_ref: input.policy.org_ref(),
+        amended: !change.is_empty(),
+        added_admins: change.added_admins,
+        removed_admins: change.removed_admins,
+        added_powers: change.added_powers,
+        dropped_powers: change.dropped_powers,
+        widens: amendment.direction == Direction::Widens,
     })
 }
 

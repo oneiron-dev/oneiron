@@ -162,6 +162,13 @@ pub enum OwnerActKind {
     /// proposal lands `Proposed` under the carrying owner's principal, and
     /// only the owner accepts.
     ModelBindingPropose,
+    /// The owner's amend of an organization's stored Admin setup
+    /// (`vault.org_admin.amend`; RULING ORG-ADMIN-AMEND-CONFIRM-RECEIPT = A,
+    /// Engine 16 Nov 02:27). A local typed receipt records it in the write
+    /// that changed the setup, with the Admins and powers it added and took
+    /// away; its `target` is the organization and its `seen` zero. No Grant
+    /// line names it: no Admin or agent amends the setup.
+    OrgAdminAmend,
 }
 
 impl OwnerActKind {
@@ -191,6 +198,7 @@ impl OwnerActKind {
             Self::OriginCut => "origin_cut",
             Self::DeviceSuccession => "device_succession",
             Self::ModelBindingPropose => "model_binding_propose",
+            Self::OrgAdminAmend => "org_admin_amend",
         }
     }
 
@@ -220,6 +228,7 @@ impl OwnerActKind {
             "origin_cut" => Self::OriginCut,
             "device_succession" => Self::DeviceSuccession,
             "model_binding_propose" => Self::ModelBindingPropose,
+            "org_admin_amend" => Self::OrgAdminAmend,
             _ => return None,
         })
     }

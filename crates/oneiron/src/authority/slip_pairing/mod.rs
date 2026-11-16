@@ -19,7 +19,8 @@ const PAIRED_WRITE_FACET: SideTable<String, crate::EntityId, Raw> =
 fn write_facet_key(slip_id: &[u8; 32]) -> String {
     slip_id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-/// Immutable one-time organization-administration power grant. Key: hex32 (org_ref).
+/// One organization's administration setup, stored once and changed only by
+/// the owner's amend. Key: hex32 (org_ref).
 const ORG_ADMIN_POLICY: SideTable<String, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
