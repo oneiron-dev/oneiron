@@ -508,10 +508,11 @@ pub fn snapshot_page(
     // The rows are counted against the handle in one write, judged again
     // there: a page read at the same time may have used them (review of
     // #6964), and the handle may have ended or been erased meanwhile. The
-    // handle's end is judged at a time taken after the read, and the owner's
-    // bounds are read again in that write, so a page is never served past
-    // its handle's end (which is capped at the credential's) or past a bound
-    // lowered while it was read (FIX SNAPSHOT-PAGE-STALE-BOUNDS-NO-EXPIRY).
+    // handle's end (capped at the credential's) is judged at a time taken
+    // after the read, the closest a decision may take it to the write, and
+    // the owner's bounds are read again in that write: a page whose handle
+    // ended, or that passes a bound lowered, while it was read is refused
+    // (FIX SNAPSHOT-PAGE-STALE-BOUNDS-NO-EXPIRY).
     let judged_at = vault.store.authorization_now()?;
     let accounted = vault.with_write_txn_grouped(|txn| {
         let Some(mut held) = HANDLES.get(&vault.store, &*txn, &key)? else {
@@ -525,7 +526,8 @@ pub fn snapshot_page(
         if count > u64::from(in_force.page_rows) || bytes > in_force.page_bytes {
             return Ok(Accounted::Lowered);
         }
-        if held.rows_served.saturating_add(count) > in_force.handle_rows {
+        // A page that serves no row passes no rows per snapshot.
+        if count > 0 && held.rows_served.saturating_add(count) > in_force.handle_rows {
             return Ok(if in_force.handle_rows < bounds.handle_rows {
                 Accounted::Lowered
             } else {
@@ -556,7 +558,9 @@ pub fn snapshot_page(
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "the owner lowered the snapshot bounds while this page was read",
-                &["Ask for this page again: it is held to the bounds in force."],
+                &[
+                    "Ask for this page again under the bounds in force, or open a new one with vault.snapshot.open.",
+                ],
             ));
         }
     };

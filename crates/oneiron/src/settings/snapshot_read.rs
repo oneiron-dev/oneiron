@@ -150,7 +150,9 @@ impl Vault {
     }
 
     /// Replaces the bounds under the owner's proof. The returned bounds are
-    /// the ones this transaction stored; the next page reads them.
+    /// the ones this transaction stored; the next page reads them, and a page
+    /// being read when they change is judged against them when its rows are
+    /// counted.
     ///
     /// # Errors
     ///
