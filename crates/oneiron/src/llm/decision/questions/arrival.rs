@@ -193,20 +193,24 @@ fn predicate(source: &OutcomeSource) -> &str {
 }
 
 /// Where an outcome derivation judges the lane a question's version was
-/// saved under (FIX SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The
-/// principal's own lane needs no judgment beside its reader's. A narrowed
-/// lane is rebuilt over the principal's key, as refresh rebuilds it (OF-506).
+/// saved under (FIX SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). A live
+/// owner's own lane needs no judgment beside its reader's. Every other lane,
+/// a narrowed one or the own lane of a principal that is not a live owner
+/// (FIX OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE), is rebuilt over the
+/// principal's key, as refresh rebuilds it (OF-506).
 #[derive(Clone, Copy)]
 pub(super) enum SavedLaneJudge<'a> {
-    /// A vault handle: a narrowed lane is rebuilt in the derivation's own
+    /// A vault handle: the lane is rebuilt in the derivation's own
     /// snapshot, and each row the label rests on is read inside it.
     Vault(&'a Vault),
-    /// A materializing batch, which holds only the store: a narrowed lane
-    /// cannot be rebuilt here, so it derives no label. A fact that would
-    /// label but for that judgment is marked ([`QUESTION_DEFERRED_OUTCOME`]),
-    /// and the question pump's next pass judges it under the lane
+    /// A materializing batch, which holds only the store: the lane cannot
+    /// be rebuilt here, so it derives no label. A fact that would label but
+    /// for that judgment is marked ([`QUESTION_DEFERRED_OUTCOME`]), and the
+    /// question pump's next pass judges it under the lane
     /// ([`project_deferred_outcomes`]), whether its window is open, due or
-    /// closed. Live calibration judges every label again at each read.
+    /// closed. Live calibration judges every label again at each read; the
+    /// raw label and window reads do not yet (FIX
+    /// STORED-OUTCOME-READS-SKIP-SAVED-LANE).
     Deferred,
 }
 
@@ -215,7 +219,7 @@ pub(super) enum SavedLaneJudge<'a> {
 enum SavedLaneVerdict {
     Reads,
     Refuses,
-    /// [`SavedLaneJudge::Deferred`] could not rebuild a narrowed lane.
+    /// [`SavedLaneJudge::Deferred`] could not rebuild the lane.
     Deferred,
 }
 
@@ -230,9 +234,10 @@ enum FactJudgment {
 
 /// Called after the batch's final entity and edge state is installed, on both
 /// ordinary writes and replicated batches. Question metadata remains local.
-/// A question saved under a narrowed lane derives no label here
-/// (`SavedLaneJudge::Deferred`): its matching fact is marked for the
-/// question pump's next pass ([`project_deferred_outcomes`]).
+/// A question saved under a narrowed lane, or asked by a principal that is
+/// not a live owner, derives no label here (`SavedLaneJudge::Deferred`): its
+/// matching fact is marked for the question pump's next pass
+/// ([`project_deferred_outcomes`]).
 pub(crate) fn project_arrivals_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -618,7 +623,7 @@ fn judge_fact(
         .chain(sources)
         .chain([answer.claim])
         .collect();
-    let deferred = match saved_lane_verdict_in_txn(lane, txn, record, &rows)? {
+    let deferred = match saved_lane_verdict_in_txn(store, lane, txn, record, &rows)? {
         SavedLaneVerdict::Reads => false,
         SavedLaneVerdict::Refuses => return Ok(FactJudgment::NoLabel),
         SavedLaneVerdict::Deferred => true,
@@ -670,36 +675,43 @@ fn judge_fact(
 
 /// Whether the lane `record`'s version was saved under reads every one of
 /// `rows` in `txn`, as `lane` judges it (FIX
-/// SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The principal's own lane reads
-/// them as the question's reader judges them, so it adds nothing here. A
-/// narrowed lane is rebuilt over the principal's key as refresh rebuilds it
-/// (OF-506): held to its frozen bounds, reading nothing once its credential
-/// is no longer live. Its claims are read at every status: the derivation
-/// keeps its own status checks. Without a vault handle a narrowed lane reads
-/// nothing ([`SavedLaneJudge::Deferred`]), and so does one whose principal's
-/// row is gone.
+/// SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The own lane of a principal
+/// that is a live owner of the vault (the owners census `store` reads) reads
+/// them as the question's reader judges them, so it adds nothing here. Every
+/// other lane is rebuilt over the principal's key as refresh rebuilds it
+/// (OF-506): a narrowed one held to its frozen bounds, reading nothing once
+/// its credential is no longer live; the own lane of any other principal (an
+/// agent, a member) under its relationship access gate, which the question's
+/// positive-gate reader never applies (FIX
+/// OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE). Its claims are read at
+/// every status: the derivation keeps its own status checks. Without a vault
+/// handle such a lane reads nothing ([`SavedLaneJudge::Deferred`]), and so
+/// does one whose principal's row is gone. A census that fails to read
+/// proves no owner ([`principal_is_live_owner_in`]).
 ///
 /// # Errors
 /// A store, fold, clock or decode failure rebuilding the lane or reading a
 /// row.
 pub(super) fn saved_lane_reads_in_txn(
+    store: &Store,
     lane: SavedLaneJudge<'_>,
     txn: &heed::RoTxn<'_>,
     record: &QuestionRecord,
     rows: &[EntityId],
 ) -> Result<bool> {
-    Ok(saved_lane_verdict_in_txn(lane, txn, record, rows)? == SavedLaneVerdict::Reads)
+    Ok(saved_lane_verdict_in_txn(store, lane, txn, record, rows)? == SavedLaneVerdict::Reads)
 }
 
-/// [`saved_lane_reads_in_txn`], telling a narrowed lane
-/// [`SavedLaneJudge::Deferred`] could not rebuild apart from a refusal.
+/// [`saved_lane_reads_in_txn`], telling a lane [`SavedLaneJudge::Deferred`]
+/// could not rebuild apart from a refusal.
 fn saved_lane_verdict_in_txn(
+    store: &Store,
     lane: SavedLaneJudge<'_>,
     txn: &heed::RoTxn<'_>,
     record: &QuestionRecord,
     rows: &[EntityId],
 ) -> Result<SavedLaneVerdict> {
-    if record.read_lane.is_principal() {
+    if record.read_lane.is_principal() && principal_is_live_owner_in(store, txn, record.principal) {
         return Ok(SavedLaneVerdict::Reads);
     }
     let SavedLaneJudge::Vault(vault) = lane else {
@@ -723,6 +735,18 @@ fn saved_lane_verdict_in_txn(
         }
     }
     Ok(SavedLaneVerdict::Reads)
+}
+
+/// Whether `principal` is a live owner of the vault, by the owners census
+/// `store` reads. A census that fails to read (a shared vault left with no
+/// live Owner, an undecodable grant) proves no owner: the lane is judged as
+/// any other principal's, deferred at a fact's arrival and rebuilt under a
+/// vault handle. So a census fault here delays an owner's label rather than
+/// failing the write a fact arrives on, and never skips the saved lane.
+fn principal_is_live_owner_in(store: &Store, txn: &heed::RoTxn<'_>, principal: EntityId) -> bool {
+    store_home(store)
+        .owners_in(txn)
+        .is_ok_and(|owners| owners.contains(&principal))
 }
 
 /// Whether `answer`'s claim still stands as the prediction it recorded: live,

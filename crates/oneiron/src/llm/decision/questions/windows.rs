@@ -319,7 +319,13 @@ pub(super) fn silence_stands(
     let reader = Reader::new(store_home(store), record.principal, actor);
     Ok(reader.readable_in_txn(txn, policy, &answer.unit)?
         && arrival::answer_live(store, txn, policy, &reader, answer)?
-        && arrival::saved_lane_reads_in_txn(lane, txn, record, &[answer.unit, answer.claim])?)
+        && arrival::saved_lane_reads_in_txn(
+            store,
+            lane,
+            txn,
+            record,
+            &[answer.unit, answer.claim],
+        )?)
 }
 
 /// The value hash a silence label pins in place of a fact's.
