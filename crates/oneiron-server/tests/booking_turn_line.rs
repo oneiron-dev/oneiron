@@ -270,7 +270,9 @@ fn a_hold_dropped_during_its_write_keeps_the_line_until_the_write_settles() -> T
 /// session's one HOLD row, so B, the session's next hold, waits for it: B
 /// takes the head only once A's write has returned. Before, A's place went
 /// with its request, and B was admitted while A's write was still to
-/// replace B's hold token.
+/// replace B's hold token. The write runs through the executor's own
+/// `write_holding_line_place`; the executor's hand-off of the place to it
+/// is not run here (the door's `hold_write`).
 async fn dropped_hold_keeps_the_line_for_its_write() -> TestResult {
     let (_dir, server) = server()?;
     let seen = hold_dropped_during_its_write(&server, SESSION).await?;

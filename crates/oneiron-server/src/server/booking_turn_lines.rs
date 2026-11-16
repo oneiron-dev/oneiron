@@ -43,7 +43,8 @@ struct Line {
 /// A request's membership of its window's line, from the moment it joins
 /// until it is dropped, by whichever way its request ends: answered, past
 /// its deadline, or cancelled while it waited (a client gone before the
-/// line reached it). The last member out forgets the line.
+/// line reached it); or, for a place handed to a hold's write, until that
+/// write returns. The last member out forgets the line.
 struct LineMembership {
     lines: Lines,
     window: SessionKey,
