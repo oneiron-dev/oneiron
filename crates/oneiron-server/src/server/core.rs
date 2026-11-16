@@ -137,8 +137,8 @@ pub struct SyncServer {
     /// Authenticated booking calls per actor this minute (FIX 128-131),
     /// measured against their `[limits]` rows; never a window.
     pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
-    /// The lines authenticated booking requests wait in, one per window
-    /// (ARCH-0062 #booking-turn-divergence); never persisted.
+    /// The lines booking holds wait in or hold, one per window (ARCH-0062
+    /// #booking-turn-divergence); never persisted.
     pub(crate) booking_turn_lines: super::booking_turn_lines::BookingTurnLines,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
