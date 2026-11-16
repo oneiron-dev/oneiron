@@ -180,6 +180,8 @@ pub use thing_agent::{
     ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingPortCall, ThingPortReply,
     ThingPortRequest, ThingProposalRef,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use turn_text::MessageSpan;
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
     scoped_turn_body_text_in, scoped_turn_text_in,
