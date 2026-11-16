@@ -392,6 +392,12 @@ pub(crate) async fn execute_context_pack(
     if skip_optional_recall {
         builder = builder.skip_optional_recall();
     }
+    // A live chat turn's recall names the TURN it serves, so the engine can
+    // label its run from the user's later words (FIX
+    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP).
+    if let Some(turn) = req.retrieval_turn {
+        builder = builder.retrieval_turn(turn);
+    }
     // Reaction signals ride the same clamp as the pack they come with.
     let signal_disclosure = disclosure.clone();
 
