@@ -31,6 +31,7 @@ fn hold_spec(session_key: SessionKey) -> HoldSpec {
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: None,
+        cap_override: None,
     }
 }
 
@@ -172,6 +173,7 @@ fn booked(vault: &Vault, event: u8, start: u64) -> EntityId {
         token_hash: [event; 32],
         expires_at: NOW + 600,
         checkout_lease_hash: None,
+        cap_override: None,
     };
     booking_writer(vault, |wtxn| {
         write_booking_event(vault, wtxn, &id(event), &hold, id(0x53), NOW)

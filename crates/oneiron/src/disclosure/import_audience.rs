@@ -34,7 +34,7 @@ pub fn import_audience_rule_ref(topic: &EntityId) -> Result<EntityId> {
 
 /// Strict decode of a `disclosure.import_audience` value: the topic, its audience and
 /// the ask it answered.
-pub(super) fn decode_import_audience_value(
+pub(crate) fn decode_import_audience_value(
     value: &Value,
 ) -> Result<(EntityId, ImportAudience, u64)> {
     let Value::Map(entries) = value else {

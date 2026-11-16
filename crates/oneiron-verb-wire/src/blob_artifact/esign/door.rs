@@ -70,6 +70,29 @@ pub struct EsignDispatchRequest {
     pub idempotency_key: Option<String>,
 }
 
+/// One extension of a pending signing document's window through the
+/// dispatch gate (`vault.esign.extend`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignExtendRequest {
+    /// The pending signing document.
+    pub document_ref: String,
+    /// The recipient count the caller reviewed.
+    pub recipient_count: usize,
+    /// The new deadline, Unix seconds: later than the document's own. The
+    /// document and every recipient window not yet finished move to it; no
+    /// link lives past its own cap.
+    pub expires_at: u64,
+    /// The signing principal an agent acts for: its autonomy dial must be
+    /// `autonomous_in_envelope` for an agent's extension to land.
+    #[serde(default)]
+    pub on_behalf_of: Option<String>,
+    /// A retry under the same key answers the first dispatch's receipt, as
+    /// for [`EsignDispatchRequest`].
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
 /// One void of a signing document through the dispatch gate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
