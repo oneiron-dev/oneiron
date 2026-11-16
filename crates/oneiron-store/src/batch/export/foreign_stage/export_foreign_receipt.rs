@@ -5,6 +5,7 @@ use crate::window_protocol::FederationAdmissionRole;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 pub const VAULT_IMPORT_RECEIPT_KEY_PREFIX: &str = "vault_import_receipt:v1:";
 
@@ -49,7 +50,10 @@ pub const REMOTE_ENTITY_METADATA_CORRUPT: &str = "entity metadata";
 
 pub const VAULT_IMPORT_RECEIPT_SCHEMA_VERSION: u8 = 1;
 
-pub const VAULT_IMPORT_RECEIPT_ID_DOMAIN: &[u8] = b"oneiron/vault-import-receipt/v1\0";
+/// The tag of `oneiron_contracts::fingerprint::purposes::vault_import::RECEIPT_ID`, which
+/// writes it first in every receipt id.
+pub const VAULT_IMPORT_RECEIPT_ID_DOMAIN: &[u8] =
+    purposes::vault_import::RECEIPT_ID.tag().as_bytes();
 
 pub const MAX_FOREIGN_PLATFORM_NAME_BYTES: usize = 128;
 
@@ -161,13 +165,12 @@ pub fn receipt_id(
     window: &str,
     remote: &[u8; 32],
 ) -> Result<[u8; 32]> {
-    let mut h = blake3::Hasher::new();
-    h.update(VAULT_IMPORT_RECEIPT_ID_DOMAIN);
-    h.update(manifest);
-    h.update(&source_bytes(source)?);
-    h.update(window.as_bytes());
-    h.update(remote);
-    Ok(*h.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::vault_import::RECEIPT_ID)
+        .raw(manifest)
+        .raw(&source_bytes(source)?)
+        .raw(window.as_bytes())
+        .raw(remote)
+        .finish())
 }
 
 fn optional_digest(v: Option<[u8; 32]>) -> rmpv::Value {

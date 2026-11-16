@@ -16,10 +16,15 @@
 //! `confirm_archive_purge`); every other caller, an owner on a narrowed
 //! credential included, by its checked siblings under the caller's own
 //! delete authority (`federation::require_delete_authority_in_txn`).
+//!
+//! Each confirmed record is judged by check-in first (ROLES-CHECKIN 2k5c):
+//! its receipt records the decision. A record whose delete waits answers
+//! `CHECK_IN_PENDING` alone, its reason code naming its own pending
+//! check-in, and its item names that check-in as `check_in_ref` once a
+//! holder approves.
 
-use serde::{Deserialize, Serialize};
-
-use super::archive_purge::{ArchiveDeleteResults, ArchiveExpectation};
+use super::archive_purge::{ArchiveConfirmItem, ArchiveDeleteResults, ArchiveExpectation};
+use super::entity_delete::spends_no_check_in;
 use super::support::verify_deletion_authority_in_txn;
 use super::{
     ArchivePurgeEntry, DeleteReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -28,143 +33,13 @@ use super::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use oneiron_authority::federation::Scope;
 
-/// Explicit archived records to preview.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveDeletePreviewRequest {
-    /// 32-hex entity ids of records the cleanup archived.
-    pub targets: Vec<String>,
-}
-
-/// What a preview read of one archived record, which a confirm item may
-/// bind.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveDeleteExpectation {
-    /// 64-hex BLAKE3 hash of the record's retained bytes.
-    pub record_hash: String,
-    /// Hex of the record's exact archive marker bytes.
-    pub archive_marker: String,
-}
-
-/// One archived record to delete.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveDeleteItem {
-    /// The record's 32-hex entity id.
-    pub entity: String,
-    /// The record as a preview read it; absent, the current record is
-    /// deleted while it is still a cleanup archive.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected: Option<ArchiveDeleteExpectation>,
-}
-
-/// Explicit archived records to delete, each once.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveDeleteConfirmRequest {
-    /// The records; an id named twice is deleted once, under its first item.
-    pub items: Vec<ArchiveDeleteItem>,
-}
-
-/// One record's typed refusal or failure.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeleteError {
-    /// One of the `MEMORY_CODE_*` strings.
-    pub code: String,
-    /// What refused or failed; a refusal's own code leads it.
-    pub message: String,
-    /// Remediation hints.
-    pub suggestions: Vec<String>,
-}
-
-/// What deleting one previewed record would remove.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeletePreviewRow {
-    /// The record's retained bytes, not a filesystem-space estimate.
-    pub record_bytes: u64,
-    /// What a confirm item may bind.
-    pub expected: ArchiveDeleteExpectation,
-}
-
-/// One target's preview: its row, or why it may not be deleted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum ArchiveDeletePreviewOutcome {
-    /// The record is a cleanup archive this caller may delete.
-    Previewed(ArchiveDeletePreviewRow),
-    /// The record is refused, alone.
-    Refused {
-        /// Why, typed.
-        error: ArchiveDeleteError,
-    },
-}
-
-/// One target's preview entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeletePreviewEntry {
-    /// The record's 32-hex entity id.
-    pub entity: String,
-    /// Its row or its refusal.
-    pub result: ArchiveDeletePreviewOutcome,
-}
-
-/// The impact preview: one entry per distinct target, in id order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeletePreviewView {
-    /// Every distinct target's entry.
-    pub entries: Vec<ArchiveDeletePreviewEntry>,
-    /// The retained bytes of every previewed record.
-    pub record_bytes: u64,
-}
-
-/// One deleted record's receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeleteReceiptView {
-    /// Whether the record existed before the delete.
-    pub existed: bool,
-    /// Always `user_hard_delete`.
-    pub reason: String,
-    /// The redaction audit receipt (`redaction:<hex>`), when one was kept.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub receipt_ref: Option<String>,
-    /// The role the delete was admitted under: owner, admin, member or
-    /// agent.
-    pub role: String,
-    /// The membership grant or agent Grant that admitted it, as evidence;
-    /// absent for an owner.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_ref: Option<String>,
-}
-
-/// One target's delete: its receipt, or why it was not deleted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum ArchiveDeleteConfirmOutcome {
-    /// The record was deleted.
-    Deleted(ArchiveDeleteReceiptView),
-    /// The record was refused or its delete failed, alone.
-    Refused {
-        /// Why, typed.
-        error: ArchiveDeleteError,
-    },
-}
-
-/// One target's confirm entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeleteConfirmEntry {
-    /// The record's 32-hex entity id.
-    pub entity: String,
-    /// Its receipt or its error.
-    pub result: ArchiveDeleteConfirmOutcome,
-}
-
-/// The confirm's answer: one entry per distinct target, in id order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArchiveDeleteBatchResult {
-    /// Every distinct target's entry.
-    pub entries: Vec<ArchiveDeleteConfirmEntry>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::archive_delete_wire::{
+    ArchiveDeleteBatchResult, ArchiveDeleteConfirmEntry, ArchiveDeleteConfirmOutcome,
+    ArchiveDeleteConfirmRequest, ArchiveDeleteError, ArchiveDeleteExpectation, ArchiveDeleteItem,
+    ArchiveDeletePreviewEntry, ArchiveDeletePreviewOutcome, ArchiveDeletePreviewRequest,
+    ArchiveDeletePreviewRow, ArchiveDeletePreviewView, ArchiveDeleteReceiptView,
+};
 
 /// Previews each distinct target under the caller's delete authority.
 ///
@@ -221,12 +96,14 @@ pub fn preview_archive_delete_wire(
     Ok(view)
 }
 
-/// Deletes each distinct target under the caller's current delete authority.
+/// Deletes each distinct target under the caller's current delete authority,
+/// each judged by check-in first (2k5c).
 ///
 /// # Errors
-/// `BAD_REQUEST` for an item whose entity is no 32-hex id or whose
-/// expectation is no hex, and a failure to judge which door serves the
-/// caller; every other refusal or failure is its target's entry.
+/// `BAD_REQUEST` for an item whose entity is no 32-hex id, whose
+/// expectation is no hex or whose `check_in_ref` is no check-in id, and a
+/// failure to judge which door serves the caller; every other refusal,
+/// failure or wait is its target's entry.
 pub fn confirm_archive_delete_wire(
     memory: &Memory<'_>,
     request: &ArchiveDeleteConfirmRequest,
@@ -234,21 +111,28 @@ pub fn confirm_archive_delete_wire(
     let mut items = request
         .items
         .iter()
-        .map(
-            |item| -> MemoryResult<(EntityId, Option<ArchiveExpectation>)> {
-                Ok((
-                    entity_ref(&item.entity)?,
-                    item.expected.as_ref().map(expectation).transpose()?,
-                ))
-            },
-        )
+        .map(|item| -> MemoryResult<ArchiveConfirmItem> {
+            Ok(ArchiveConfirmItem {
+                entity: entity_ref(&item.entity)?,
+                expected: item.expected.as_ref().map(expectation).transpose()?,
+                check_in_ref: item
+                    .check_in_ref
+                    .as_deref()
+                    .map(|hex| {
+                        EntityId::from_hex(hex).map_err(|_| {
+                            MemoryError::bad_request("check_in_ref is not a check-in id")
+                        })
+                    })
+                    .transpose()?,
+            })
+        })
         .collect::<MemoryResult<Vec<_>>>()?;
-    items.sort_by_key(|(id, _)| *id);
-    items.dedup_by_key(|(id, _)| *id);
+    items.sort_by_key(|item| item.entity);
+    items.dedup_by_key(|item| item.entity);
     let rows: ArchiveDeleteResults<ArchiveDeleteReceiptView> = if owner_door_serves(memory)? {
         items
             .iter()
-            .map(|(id, expected)| (*id, owner_confirm(memory, *id, expected.as_ref())))
+            .map(|item| (item.entity, owner_confirm(memory, item)))
             .collect()
     } else {
         memory
@@ -320,14 +204,17 @@ fn owner_door_serves(memory: &Memory<'_>) -> MemoryResult<bool> {
 
 /// The owner door's delete of one record: a fresh preview, held to the
 /// item's expectation when it names one, then its confirm, which rechecks
-/// that preview in the delete's own writes.
+/// that preview in the delete's own writes. The owner's delete waits on no
+/// check-in, so an item naming one is refused (2k5c).
 fn owner_confirm(
     memory: &Memory<'_>,
-    id: EntityId,
-    expected: Option<&ArchiveExpectation>,
+    item: &ArchiveConfirmItem,
 ) -> MemoryResult<ArchiveDeleteReceiptView> {
-    let preview = memory.preview_archive_purge(&[id])?;
-    if let Some((hash, marker)) = expected
+    if item.check_in_ref.is_some() {
+        return Err(spends_no_check_in());
+    }
+    let preview = memory.preview_archive_purge(&[item.entity])?;
+    if let Some((hash, marker)) = &item.expected
         && preview
             .entries()
             .iter()
@@ -353,21 +240,11 @@ fn entity_ref(text: &str) -> MemoryResult<EntityId> {
 
 fn expectation(expected: &ArchiveDeleteExpectation) -> MemoryResult<ArchiveExpectation> {
     let invalid = || MemoryError::bad_request("expected names the hex a preview returned");
-    let hash = decode_hex(&expected.record_hash)
+    let hash = oneiron_hex::decode_vec_any_case(&expected.record_hash)
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .ok_or_else(invalid)?;
-    let marker = decode_hex(&expected.archive_marker).ok_or_else(invalid)?;
+    let marker = oneiron_hex::decode_vec_any_case(&expected.archive_marker).ok_or_else(invalid)?;
     Ok((hash, marker))
-}
-
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
 }
 
 fn preview_row(entry: &ArchivePurgeEntry) -> ArchiveDeletePreviewRow {
@@ -391,6 +268,7 @@ fn receipt_view(
         receipt_ref: receipt.receipt_ref,
         role: role.to_owned(),
         grant_ref,
+        check_in: receipt.check_in,
     }
 }
 
@@ -399,5 +277,6 @@ fn error_view(error: MemoryError) -> ArchiveDeleteError {
         code: error.code,
         message: error.message,
         suggestions: error.suggestions,
+        reason_codes: error.reason_codes,
     }
 }

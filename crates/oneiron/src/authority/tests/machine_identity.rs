@@ -548,6 +548,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 /// The vault a restore replaced, activated as a side vault of its
 /// replacement, is a second live vault: it joins as a new machine, and only
 /// the replacement answers as the machine both were (wp-keys I8).
+#[cfg(unix)]
 #[test]
 fn an_activated_archive_joins_as_a_new_machine() {
     let (_dir, vault, request) = enrolled_machine(host());
@@ -567,12 +568,7 @@ fn an_activated_archive_joins_as_a_new_machine() {
     .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
-        .swap_in_replacement(&replacement, || {
-            let between = home.with_extension("exchange");
-            std::fs::rename(&home, &between)?;
-            std::fs::rename(&staged, &home)?;
-            std::fs::rename(&between, &staged)
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .unwrap();
     drop((vault, replacement));
     let replacement = Vault::open(&home, VaultConfig::default()).unwrap();
@@ -741,11 +737,16 @@ fn a_mesh_address_bind_keeps_the_mark() {
 /// H336: an owner keeps binding mesh addresses past the 1,024 MACHINE rows
 /// the endpoint read once refused at (rule 5). Past the scan's threshold row
 /// the bind raises the owner's check. A lookup any endpoint key may make is
-/// a stranger's work: it stays bounded and raises none.
+/// a stranger's work: it stays bounded and raises none. This pins the walk,
+/// which runs only when the endpoint index cannot serve (census L3-28B;
+/// `tests/mesh_machine_endpoint_index.rs` covers the index).
 #[test]
 fn a_mesh_bind_reads_past_the_old_machine_cap() {
     const PAST_THE_OLD_CAP: usize = 1_025;
     let host = host();
+    host.vault
+        .drop_mesh_machine_endpoint_index_for_test()
+        .unwrap();
     let at = TimeRange { start: 1, end: 1 };
     for _ in 0..PAST_THE_OLD_CAP {
         host.vault

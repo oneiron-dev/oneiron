@@ -4,7 +4,9 @@
 //! local action, so no event can move it there. A run's live re-render of a
 //! card with `$state` is held through [`replace_run_card`], and its held
 //! state read back through [`held_state`]: no lens a run renders today
-//! declares `$state`.
+//! declares `$state`. [`set_owner_proof`] and [`set_weave_admin_proof`] hold
+//! a card as the owner lens and the weave Admin lens hold theirs: both
+//! render through a model route no fixture there has.
 
 use oneiron::EntityId;
 use oneiron::claim::ScopedReadActorKey;
@@ -14,7 +16,7 @@ use oneiron::lens::{
 };
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
-use crate::lens_frames::CardOwner;
+use crate::lens_frames::{CardOwner, HeldCardProof};
 use crate::server::SyncServer;
 
 /// Moves the held `$state` of card `card_id` to `state`, re-charged to the
@@ -73,4 +75,28 @@ pub async fn held_state(server: &SyncServer, card_id: &str) -> Option<GeneratedU
     let held = server.lens_frames.card(&card)?;
     let state = held.state.lock().await.clone();
     Some(state)
+}
+
+/// Holds card `card_id` as one the owner lens rendered under an Owner
+/// proof, as `/v1/owner/weave/lens` and `/v1/owner/weave/digest` hold
+/// theirs. `false` when the server holds no such card.
+pub fn set_owner_proof(server: &SyncServer, card_id: &str) -> bool {
+    LensRenderId::new(card_id)
+        .is_ok_and(|card| server.lens_frames.set_proof(&card, HeldCardProof::Owner))
+}
+
+/// Holds card `card_id` as one the weave Admin lens rendered under the
+/// Admin membership grant `membership_grant`, as `vault.weave.admin.lens`
+/// and `vault.weave.admin.digest` hold theirs. `false` when the server
+/// holds no such card.
+pub fn set_weave_admin_proof(
+    server: &SyncServer,
+    card_id: &str,
+    membership_grant: EntityId,
+) -> bool {
+    LensRenderId::new(card_id).is_ok_and(|card| {
+        server
+            .lens_frames
+            .set_proof(&card, HeldCardProof::WeaveAdmin { membership_grant })
+    })
 }

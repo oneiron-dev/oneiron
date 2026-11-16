@@ -152,9 +152,12 @@ pub(super) fn rewrite_audience_edit_in_txn(
         .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
     let erased = event_body(&binding, event)?;
     if erased != row.body {
+        // The rewrite keeps the row's own learned time, which may be a
+        // replicated row's past the store clock's ceiling: the internal door
+        // takes it, so an erase never fails on that ceiling.
         vault
             .batch_in()
-            .put(id, ENTITY_TYPE_TURN, row.occurred, row.learned_at, &erased)
+            .put_internal(id, ENTITY_TYPE_TURN, row.occurred, row.learned_at, &erased)
             .apply(txn)?;
         crate::vault::entity_revision::remove_entity_revisions(&vault.store, txn, id)?;
         let raw = vault.get_raw_in(txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -304,6 +307,7 @@ impl Memory<'_> {
                     .receipt_id
                     .map(|receipt| format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
+                check_in: None,
             }),
             None => self.safe_delete_as_owner(owner, &record.to_hex(), reason),
         }

@@ -8,10 +8,15 @@
 //!   breaks that, or names an unknown token, refuses, and the generic
 //!   Connect mint refuses the class while a read/propose grant mints as
 //!   before;
+//! - the terms hold a check-in mode for each keep (FIX
+//!   INQUIRY-STANDING-PER-KEEP): a body with a map of both keeps' modes,
+//!   or one mode token (a body minted before the per-keep modes), decodes;
+//!   a map missing a keep or naming an unknown mode refuses;
 //! - the opened scope starts empty; a statement opens, lists and closes,
 //!   and its link to the claim it was drawn from stays out of the statement
 //!   and goes with an erase of that claim; closing a statement keeps the
-//!   link another edge's statement holds to it;
+//!   link another edge's statement holds to it; a claim in a foreign WORLD
+//!   is never drawn from (FIX INQUIRY-SCOPE-DRAWN-FROM-FOREIGN);
 //! - revoking the edge withdraws the grant and leaves the member's
 //!   statements;
 //! - the company's reciprocal grant (`propose` alone over "Inquiry edge:
@@ -35,7 +40,7 @@ use oneiron::federation::{
 };
 use oneiron::inquiry::{
     INQUIRY_STATEMENT_PREDICATE, InquiryCheckInMode, InquiryEdge, InquiryEdgeRequest, InquiryKeep,
-    InquiryScopeItem, InquiryTerms, InquiryTierCeiling,
+    InquiryKeepModes, InquiryScopeItem, InquiryTerms, InquiryTierCeiling,
 };
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::store::GateDecisionId;
@@ -217,7 +222,14 @@ fn minted_edge_is_inquire_alone_over_an_empty_opened_world_at_the_member_default
         ScopeAxis::Some(BTreeSet::from([ScopeId(edge.terms.opened_world)])),
     );
     assert_eq!(edge.terms.tier_ceiling, InquiryTierCeiling::Unstamped);
-    assert_eq!(edge.terms.check_in_mode, InquiryCheckInMode::AskWhenUnsure);
+    assert_eq!(
+        edge.terms.check_in_modes,
+        InquiryKeepModes {
+            task: InquiryCheckInMode::AskWhenUnsure,
+            copy: InquiryCheckInMode::AlwaysAsk,
+        },
+        "auto for task; copy asks the member until the member saves a mode",
+    );
     assert_eq!(edge.terms.keep_allowed, InquiryKeep::Task);
     assert_eq!(edge.expires_at, None);
     assert_eq!(
@@ -310,6 +322,25 @@ fn inquiry_terms_ride_exactly_the_grants_that_carry_inquire() {
         ("keep_allowed", Value::from("forever")),
         ("opened_world", Value::from("not-an-id")),
         ("check_in_mode", Value::from(1_u64)),
+        (
+            "check_in_mode",
+            Value::Map(vec![(Value::from("task"), Value::from("auto"))]),
+        ),
+        (
+            "check_in_mode",
+            Value::Map(vec![
+                (Value::from("task"), Value::from("auto")),
+                (Value::from("copy"), Value::from("sometimes")),
+            ]),
+        ),
+        (
+            "check_in_mode",
+            Value::Map(vec![
+                (Value::from("task"), Value::from("auto")),
+                (Value::from("copy"), Value::from("manual")),
+                (Value::from("archive"), Value::from("manual")),
+            ]),
+        ),
         ("band", Value::from("unstamped")),
     ] {
         assert!(
@@ -320,17 +351,35 @@ fn inquiry_terms_ride_exactly_the_grants_that_carry_inquire() {
     for (key, token) in [
         ("check_in_mode", "manual"),
         ("check_in_mode", "full-access"),
+        ("check_in_mode", "never"),
         ("keep_allowed", "copy"),
     ] {
         let decoded =
             decode_federation_grant_body(&with_terms_entry(&bytes, key, Value::from(token)))
                 .unwrap_or_else(|error| panic!("{key} = {token} decodes: {error:?}"));
         let terms = decoded.inquiry_terms.expect("terms");
+        let one_mode = InquiryCheckInMode::from_token(token).map(InquiryKeepModes::uniform);
         assert!(
-            terms.check_in_mode.as_str() == token || terms.keep_allowed.as_str() == token,
-            "{key} = {token} reads back",
+            Some(terms.check_in_modes) == one_mode || terms.keep_allowed.as_str() == token,
+            "{key} = {token} reads back, one mode token as that mode for both keeps",
         );
     }
+    let per_keep = decode_federation_grant_body(&with_terms_entry(
+        &bytes,
+        "check_in_mode",
+        Value::Map(vec![
+            (Value::from("task"), Value::from("full-access")),
+            (Value::from("copy"), Value::from("never")),
+        ]),
+    ))
+    .expect("a map of both keeps' modes decodes");
+    assert_eq!(
+        per_keep.inquiry_terms.expect("terms").check_in_modes,
+        InquiryKeepModes {
+            task: InquiryCheckInMode::NeverAsk,
+            copy: InquiryCheckInMode::NeverAnswer,
+        },
+    );
 }
 
 #[test]
@@ -632,4 +681,48 @@ fn the_reciprocal_grant_and_the_edge_make_the_connect_pact_active_on_both_vaults
         !company_grant.confers_at(T0),
         "the reciprocal grant confers no read",
     );
+}
+
+#[test]
+fn a_statement_is_never_drawn_from_a_claim_in_a_foreign_world() {
+    let member = side(0x11);
+    let edge = mint_edge(&member, UNOPENED_COMPANY);
+    let copied = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.appointment",
+        ClaimSubject::Entity(member.owner),
+        Value::from("Chemo on Thursday"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("claim body");
+    // A WORLD id in the foreign range: a copy another vault shared here.
+    body.world = Some(EntityId::from_bytes([0xf3; 16]).expect("a foreign WORLD id"));
+    member
+        .vault
+        .put_claim(&copied, &body, TimeRange { start: T0, end: T0 }, T0)
+        .expect("a claim in a foreign WORLD");
+
+    let refused = member
+        .vault
+        .open_inquiry_scope_item(&member.proof, edge.grant, OUT_THURSDAY, Some(copied))
+        .expect_err("a foreign copy is not re-shareable");
+    assert!(
+        format!("{refused:?}").contains("foreign WORLD"),
+        "the refusal names the foreign WORLD: {refused:?}",
+    );
+    assert!(
+        member
+            .vault
+            .inquiry_scope_items(&member.proof, edge.grant)
+            .expect("list the opened scope")
+            .is_empty(),
+        "nothing was opened",
+    );
+    let own = source_claim(&member, "Out on Thursday");
+    member
+        .vault
+        .open_inquiry_scope_item(&member.proof, edge.grant, OUT_THURSDAY, Some(own))
+        .expect("a claim of this vault's own still opens");
 }

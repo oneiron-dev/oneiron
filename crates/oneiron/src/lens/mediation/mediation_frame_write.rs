@@ -2,13 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedRead;
 use crate::error::{Error, Result};
 use crate::lens::atom::{
     FiniteF64, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom,
-    GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection, LensAtom, LensText,
+    GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection, LensText,
 };
 use crate::lens::generated_ui::{
     GeneratedUiActionEvent, GeneratedUiActionTier, GeneratedUiCardPhase, GeneratedUiRender,
@@ -110,12 +108,14 @@ impl LensRenderFrame {
                 "generated-ui action event element must match its declaration".to_string(),
             ));
         }
-        let LensAtom::SelfUi(control) = &node.atom else {
+        // A `self.ui` control, a quick filter or an app component: the element has
+        // to carry the very action its declaration names.
+        let Some(action) = node.atom.action() else {
             return Err(Error::InvalidConfig(
-                "generated-ui action element must be a self.ui control".to_string(),
+                "generated-ui action element must carry an action".to_string(),
             ));
         };
-        if control.action() != &declaration.action {
+        if action != &declaration.action {
             return Err(Error::InvalidConfig(
                 "generated-ui element action must match its manifest declaration".to_string(),
             ));
@@ -522,12 +522,10 @@ pub enum LensApprovedActionArg {
     BackingRef(LensHostBackingRef),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensGateWriteChokepoint {
-    EvaluateGate,
-    CheckClaimPolicyForWrite,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_frame_write::{
+    LensGateWriteChokepoint, LensHostImport,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LensHostMediatedWrite {
@@ -544,31 +542,6 @@ impl LensHostMediatedWrite {
     #[must_use]
     pub fn chokepoint(&self) -> LensGateWriteChokepoint {
         self.chokepoint
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensHostImport {
-    ScopedRead,
-    ResolveBackingRef,
-    EmitAtom,
-    VaultWrite,
-    BatchWrite,
-    EvaluateGate,
-    CheckClaimPolicyForWrite,
-}
-
-impl LensHostImport {
-    #[must_use]
-    pub fn is_write(self) -> bool {
-        matches!(
-            self,
-            Self::VaultWrite
-                | Self::BatchWrite
-                | Self::EvaluateGate
-                | Self::CheckClaimPolicyForWrite
-        )
     }
 }
 

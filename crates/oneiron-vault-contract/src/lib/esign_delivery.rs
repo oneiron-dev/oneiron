@@ -77,11 +77,11 @@ impl EsignDeliveryCompleted {
             "unknown receipt lease owner"
         );
         anyhow::ensure!(
-            lowercase_hex(&self.attempt_id, 32),
+            oneiron_hex::is_lower_hex(&self.attempt_id, Some(32)),
             "malformed receipt attempt_id"
         );
         anyhow::ensure!(
-            lowercase_hex(&self.payload_sha256, 64),
+            oneiron_hex::is_lower_hex(&self.payload_sha256, Some(64)),
             "malformed receipt payload_sha256"
         );
         Ok(())
@@ -107,12 +107,4 @@ pub fn esign_delivery_stem(dedupe_key: &str) -> String {
     hasher.update(&[0]);
     hasher.update(dedupe_key.as_bytes());
     format!("{ESIGN_DELIVERY_FILE_PREFIX}{}", hasher.finalize().to_hex())
-}
-
-/// Whether `value` is exactly `len` lowercase hex digits.
-fn lowercase_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }

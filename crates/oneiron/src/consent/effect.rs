@@ -17,10 +17,10 @@ pub use oneiron_consent_state::consent::effect::{CatastropheClass, EffectFacts, 
 // consent.rs alone; the floor itself survives unchanged (catastrophe verbs sit
 // outside every ⊤ per OF-453 L9).
 /// Version of the closed catastrophe floor.
-pub const CATASTROPHE_FLOOR_VERSION: u16 = 2;
+pub const CATASTROPHE_FLOOR_VERSION: u16 = 3;
 
 /// The closed catastrophe floor, version 1: superseded by
-/// [`CATASTROPHE_FLOOR_V2`]. No manifest row decodes to it, so no vault's
+/// [`CATASTROPHE_FLOOR_V3`]. No manifest row decodes to it, so no vault's
 /// floor lacks a world's widen.
 pub const CATASTROPHE_FLOOR_V1: [CatastropheClass; 5] = [
     CatastropheClass::WidenOwnAuthority,
@@ -30,15 +30,18 @@ pub const CATASTROPHE_FLOOR_V1: [CatastropheClass; 5] = [
     CatastropheClass::MassSecretExport,
 ];
 
-/// The closed catastrophe floor, version 2 — the only always-gate. Version 2
-/// adds a world's privacy widen (FIX 4480).
-pub const CATASTROPHE_FLOOR_V2: [CatastropheClass; 6] = [
+/// The closed catastrophe floor, version 3 — the only always-gate. Version 2
+/// added a world's privacy widen (FIX 4480); version 3 adds a force-push,
+/// history rewrite or delete of a protected ref (L8-51). No manifest row
+/// decodes to an older version.
+pub const CATASTROPHE_FLOOR_V3: [CatastropheClass; 7] = [
     CatastropheClass::WidenOwnAuthority,
     CatastropheClass::KeyRecovery,
     CatastropheClass::VaultWideDestruction,
     CatastropheClass::SecurityControlDisable,
     CatastropheClass::MassSecretExport,
     CatastropheClass::WorldPrivacyWiden,
+    CatastropheClass::ProtectedRefRewriteOrDelete,
 ];
 
 /// The policy-manifest key of the floor's default row.
@@ -61,7 +64,7 @@ impl CatastropheFloor {
     pub fn pinned() -> Self {
         Self {
             version: CATASTROPHE_FLOOR_VERSION,
-            members: CATASTROPHE_FLOOR_V2.to_vec(),
+            members: CATASTROPHE_FLOOR_V3.to_vec(),
         }
     }
 
@@ -136,7 +139,7 @@ impl CatastropheFloor {
             .map(|member| CatastropheClass::parse(member.as_str()?))
             .collect::<Option<Vec<_>>>()?;
         let pinned = match version {
-            2 => CATASTROPHE_FLOOR_V2.to_vec(),
+            3 => CATASTROPHE_FLOOR_V3.to_vec(),
             _ => return None,
         };
         let mut sorted = pinned.clone();

@@ -15,7 +15,9 @@
 //! here. Each accepted local event moves the one held state, and the
 //! credential that rendered the card reads the card back with it
 //! ([`LensFrameStore::rendered_card`]), so a reload, and every view of the
-//! card in the same app, draws the state its events left.
+//! card in the same app, draws the state its events left. The card goes
+//! back only once the proof its render read under ([`HeldCardProof`]) holds
+//! again for that credential.
 //!
 //! Authorship (FIX 3267, Engine ruling 10-19): the credential that clicks a
 //! card authors that card's action. The card id locates the held manifest
@@ -84,6 +86,26 @@ pub(crate) struct HeldCard {
     selections: Mutex<BTreeMap<(Custody, String), LensReadHandle>>,
 }
 
+/// The proof a held card's render read under, which a reload of the card
+/// ([`LensFrameStore::rendered_card`]) proves again before the card goes
+/// back, as the card's own door proves it: a reload hands back nothing its
+/// credential could not render now. Host-only, beside the card's custody.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeldCardProof {
+    /// The rendering credential's own read, or a run's: each row the frame
+    /// binds is proved again on the credential's read, as an event's are.
+    CallerRead,
+    /// The owner lens under an Owner proof (`/v1/owner/weave/*`): the
+    /// credential is proved the vault's owner again, as those doors prove
+    /// it, before its rows are proved again.
+    Owner,
+    /// The weave Admin lens (OF-499 A3) under the Admin membership grant
+    /// `membership_grant`: the Admin proof is bound again from the request's
+    /// own slip and the step-up standing on it, as `vault.weave.admin.*`
+    /// binds it. An Admin's frame binds no row.
+    WeaveAdmin { membership_grant: EntityId },
+}
+
 /// Who owns a held card's supersession: the run that created it and the
 /// live subscription it renders for. Host-only: it is never part of a
 /// render or an answer.
@@ -147,6 +169,8 @@ struct Entry {
     /// The run and subscription that own its supersession, when a run
     /// rendered it.
     owner: Option<CardOwner>,
+    /// The proof its render read under, proved again on a reload.
+    proof: HeldCardProof,
 }
 
 impl LensFrameStore {
@@ -167,8 +191,9 @@ impl LensFrameStore {
     }
 
     /// Holds `frame` and the `render` it is about to hand `auth`'s caller,
-    /// for that caller's events on the card. A renderer calls this once per
-    /// card, before its response leaves, with the very render it returns.
+    /// for that caller's events on the card, beside the `proof` the render
+    /// read under. A renderer calls this once per card, before its response
+    /// leaves, with the very render it returns.
     ///
     /// The card is charged to the retained line. Where the line refuses it,
     /// the oldest held cards are evicted until it fits; a card that still
@@ -179,8 +204,10 @@ impl LensFrameStore {
         auth: &CoreAuth,
         frame: LensRenderFrame,
         render: GeneratedUiRender,
+        proof: HeldCardProof,
     ) -> MemoryResult<()> {
-        self.hold(Custody::of(auth), frame, render, None).map(drop)
+        self.hold(Custody::of(auth), frame, render, None, proof)
+            .map(drop)
     }
 
     /// [`Self::record`] for a run's successful render of a live
@@ -197,8 +224,9 @@ impl LensFrameStore {
         frame: LensRenderFrame,
         render: GeneratedUiRender,
         owner: CardOwner,
+        proof: HeldCardProof,
     ) -> MemoryResult<GeneratedUiRender> {
-        self.replace_held(Custody::of(auth), frame, render, owner)
+        self.replace_held(Custody::of(auth), frame, render, owner, proof)
             .await
     }
 
@@ -214,8 +242,14 @@ impl LensFrameStore {
         render: GeneratedUiRender,
         owner: CardOwner,
     ) -> MemoryResult<GeneratedUiRender> {
-        self.replace_held(Custody::of_run(run), frame, render, owner)
-            .await
+        self.replace_held(
+            Custody::of_run(run),
+            frame,
+            render,
+            owner,
+            HeldCardProof::CallerRead,
+        )
+        .await
     }
 
     /// Holds a card with `owner` under `custody`, then closes every other
@@ -232,6 +266,7 @@ impl LensFrameStore {
         frame: LensRenderFrame,
         mut render: GeneratedUiRender,
         owner: CardOwner,
+        proof: HeldCardProof,
     ) -> MemoryResult<GeneratedUiRender> {
         let card = render.card_id.clone();
         let previous = self.newest_superseded(&custody, &owner, &card);
@@ -243,7 +278,7 @@ impl LensFrameStore {
             render.carry_state(state);
         }
         let answered = render.clone();
-        if !self.hold(custody.clone(), frame, render, Some(owner.clone()))? {
+        if !self.hold(custody.clone(), frame, render, Some(owner.clone()), proof)? {
             return Ok(answered);
         }
         let mut frames = self.lock();
@@ -313,14 +348,15 @@ impl LensFrameStore {
         owned.len()
     }
 
-    /// Holds one card with its `owner`; `false` when the retained line could
-    /// not hold it.
+    /// Holds one card with its `owner` and `proof`; `false` when the
+    /// retained line could not hold it.
     fn hold(
         &self,
         custody: Custody,
         frame: LensRenderFrame,
         render: GeneratedUiRender,
         owner: Option<CardOwner>,
+        proof: HeldCardProof,
     ) -> MemoryResult<bool> {
         if &render.card_id != frame.render_id() {
             return Err(MemoryError::new(
@@ -361,6 +397,7 @@ impl LensFrameStore {
                 bytes,
                 card,
                 owner,
+                proof,
             },
         );
         Ok(true)
@@ -375,21 +412,34 @@ impl LensFrameStore {
             .map(|entry| Arc::clone(&entry.card))
     }
 
-    /// The card `card` when `auth`'s caller rendered it here: the custody
-    /// that reads a card back with its current `$state` (GENUI-STATE-PERSIST),
-    /// as it closes the card. `None` when it is not held or another credential
-    /// rendered it.
+    /// The card `card` when `auth`'s caller rendered it here, with the proof
+    /// its render read under: the custody that reads a card back with its
+    /// current `$state` (GENUI-STATE-PERSIST), as it closes the card, once
+    /// that proof holds again. `None` when it is not held or another
+    /// credential rendered it.
     pub(crate) fn rendered_card(
         &self,
         auth: &CoreAuth,
         card: &LensRenderId,
-    ) -> Option<Arc<HeldCard>> {
+    ) -> Option<(Arc<HeldCard>, HeldCardProof)> {
         let custody = Custody::of(auth);
         self.lock()
             .cards
             .get(card)
             .filter(|entry| entry.custody == custody)
-            .map(|entry| Arc::clone(&entry.card))
+            .map(|entry| (Arc::clone(&entry.card), entry.proof))
+    }
+
+    /// Sets the proof held card `card` was rendered under to `proof`, for
+    /// `tests/lens_frame_state_door.rs`: no fixture there renders an owner
+    /// or a weave Admin lens. `false` when the store holds no such card.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn set_proof(&self, card: &LensRenderId, proof: HeldCardProof) -> bool {
+        self.lock()
+            .cards
+            .get_mut(card)
+            .map(|entry| entry.proof = proof)
+            .is_some()
     }
 
     /// Retains a handle `auth`'s caller proved on `held`, beside its frame
