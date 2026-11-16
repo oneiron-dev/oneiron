@@ -137,7 +137,35 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
-            Some((owner, surface, ownership)),
+            Some((owner, surface, Some(ownership))),
+            None,
+            None,
+        )
+    }
+    /// The owner links a hosted node (L10-16): the cloud's machine of this
+    /// vault, the always-on peer `oneiron link` adds. The single-use link
+    /// keeps his approval and his act as [`Self::issue_machine_pairing_link`]
+    /// does, and redeeming it enrols the machine as a
+    /// [`MachineRole::HostedNode`] in the same transaction as its slip. A
+    /// hosted node is no answer to whose a machine is: it starts not-mine
+    /// (DEC-0005), so its link takes none of his three answers, and it is
+    /// never mine and never a wrap recipient.
+    pub fn issue_hosted_node_pairing_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        surface: ActSurface,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+    ) -> Result<PairingLink> {
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            Some(owner),
+            Some((owner, surface, None)),
             None,
             None,
         )
@@ -190,7 +218,7 @@ impl Vault {
         answer: Option<(
             &crate::consent::AuthenticatedOwner,
             ActSurface,
-            MachineOwnership,
+            Option<MachineOwnership>,
         )>,
         share: Option<(
             crate::EntityId,
@@ -234,7 +262,7 @@ impl Vault {
                         owner: actor,
                         by: ActBy::Owner,
                         surface,
-                        kind: OwnerActKind::Pairing,
+                        kind: pairing_act_kind(ownership),
                         ownership,
                     })
                 }
