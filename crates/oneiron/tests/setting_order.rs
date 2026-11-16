@@ -16,6 +16,9 @@
 //!   of their own choice and is refused a loosening;
 //! - the owner's equal value over a row the owner did not set writes, and the row becomes the
 //!   owner's: on a key that reads one row, its holder then asks even to tighten it;
+//! - an agent's ask spends only the yes of someone who could make the change themselves, read at
+//!   the spend: a non-owner's yes to clear the owner's pin spends nothing, and a person's yes on
+//!   their own row spends (FIX SETTING-PENDING-ANSWER-NEEDS-CURRENT-OWNER);
 //! - every catalogue key states an order its read can keep, and the list shows it.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_order`.
@@ -26,10 +29,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
-use oneiron::check_in::HolderAnswer;
+use oneiron::check_in::{
+    CheckInTransition, DEFAULT_RUNG_WAIT_SECS, HolderAnswer, HolderKind, Rung, RungHolder,
+    RungMembers,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{EngineControlClass, Scope, ScopeAxis};
 use oneiron::memory::Memory;
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::setting::{
     ChangeDirection, Order, Quorum, ScopeKind, SetSetting, SetSettingOutcome, Setter, SettingScope,
     SettingSource, catalogue,
@@ -43,7 +50,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
@@ -55,7 +62,7 @@ const T0: u64 = 1_790_000_000;
 
 struct Fixture {
     vault: Vault,
-    _clock: Arc<ManualClock>,
+    clock: Arc<ManualClock>,
     _dir: tempfile::TempDir,
     _issuer: HostSlipIssuer,
     owner: EntityId,
@@ -88,7 +95,7 @@ impl Fixture {
             .expect("owner proof");
         Self {
             vault,
-            _clock: clock,
+            clock,
             _dir: dir,
             _issuer: issuer,
             owner,
@@ -242,6 +249,72 @@ fn holder(fx: &Fixture) -> EntityId {
     fx.grant(agent, &[SET, GET]);
     fx.controls(agent, EngineControlClass::WorkBudget);
     agent
+}
+
+/// A live person who is not the vault's owner, with their proof.
+fn person(fx: &Fixture) -> (EntityId, AuthenticatedOwner) {
+    let id = EntityId::now();
+    fx.vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("a live person");
+    let proof = fx
+        .vault
+        .authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
+        .expect("a person proof");
+    (id, proof)
+}
+
+/// Past the first rung's wait, the ask `outcome` names climbs to a rung that pins `answerer`, who
+/// approves it; its check-in handle. The ladder from verified records pins the owner first (the
+/// agent's Grant is the owner's); the test chain stands in for a later rung whose holder the
+/// ladder admitted, as it admits a former owner kept as Admin.
+fn approved_by(fx: &Fixture, outcome: &Value, answerer: (EntityId, &AuthenticatedOwner)) -> String {
+    use oneiron::test_doors::check_in::{FixedChain, advance, answer};
+    let handle = outcome["check_in"].as_str().expect("a handle").to_owned();
+    let id = EntityId::from_hex(&handle).expect("hex id");
+    fx.clock.set(T0 + DEFAULT_RUNG_WAIT_SECS + 3_600);
+    let chain = FixedChain::default().with(
+        Rung::ChainHolders,
+        RungMembers::Holders(vec![RungHolder {
+            principal: answerer.0,
+            kind: HolderKind::Person,
+        }]),
+    );
+    assert_eq!(
+        advance(&fx.vault, &id, &chain).expect("the ask climbs"),
+        Some(CheckInTransition::Climbed(Rung::ChainHolders)),
+    );
+    let row = fx
+        .vault
+        .pending_check_in(&id)
+        .expect("read")
+        .expect("the pending check-in");
+    answer(
+        &fx.vault,
+        answerer.1,
+        &id,
+        &row.effect_digest,
+        HolderAnswer::Approve,
+    )
+    .expect("the pinned person approves");
+    handle
+}
+
+/// Whether the check-in `handle` names was spent.
+fn spent(fx: &Fixture, handle: &str) -> bool {
+    let id = EntityId::from_hex(handle).expect("hex id");
+    fx.vault
+        .pending_check_in(&id)
+        .expect("read")
+        .expect("the pending check-in")
+        .consumed_at
+        .is_some()
 }
 
 #[test]
@@ -611,4 +684,76 @@ fn over_a_row_the_owner_set_a_person_tightens_it_and_is_refused_a_loosening() {
         "{refused:?}"
     );
     assert_eq!(get(&me, key, json!([scope]))["value"], json!(true));
+}
+
+#[test]
+fn a_yes_from_someone_who_could_not_make_the_change_does_not_spend() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let key = "test.owner_number";
+    call(
+        &me,
+        SET,
+        json!({ "key": key, "scope": vault_scope(), "pin": true, "value": 5 }),
+    );
+    let agent = fx.agent();
+    fx.grant(agent, &[SET, GET]);
+    let them = fx.as_agent(agent);
+    let ask = json!({ "key": key, "scope": vault_scope(), "pin": true });
+    let pending = call(&them, SET, ask.clone());
+    assert_eq!(
+        status(&pending),
+        "pending",
+        "clearing the owner's pin asks: {pending}"
+    );
+
+    let (other, proof) = person(&fx);
+    let handle = approved_by(&fx, &pending, (other, &proof));
+    let mut spend = ask;
+    spend["check_in_ref"] = json!(handle);
+    let refused = refused(&them, SET, spend);
+    assert!(
+        refused.contains("cannot make this change"),
+        "a person who is not the owner cannot clear the owner's pin, so their yes spends \
+         nothing: {refused}"
+    );
+    assert!(!spent(&fx, &handle), "the check-in stays unspent");
+    assert_eq!(
+        get(&me, key, json!([]))["value"],
+        json!(5),
+        "the owner's pin stands"
+    );
+}
+
+#[test]
+fn a_yes_from_a_person_who_could_make_the_change_spends() {
+    let fx = Fixture::rooted();
+    let key = "test.person_quiet";
+    let (other, proof) = person(&fx);
+    let their_row = json!({ "kind": "person", "id": other.to_hex() });
+    let agent = fx.agent();
+    fx.grant(agent, &[SET, GET]);
+    let them = fx.as_agent(agent);
+    let ask = set(key, their_row.clone(), json!(true));
+    let pending = call(&them, SET, ask.clone());
+    assert_eq!(
+        status(&pending),
+        "pending",
+        "an agent asks to set another's row: {pending}"
+    );
+
+    let handle = approved_by(&fx, &pending, (other, &proof));
+    let mut spend = ask;
+    spend["check_in_ref"] = json!(handle);
+    let applied = call(&them, SET, spend);
+    assert_eq!(
+        status(&applied),
+        "applied",
+        "the person may set their own row, so their yes spends: {applied}"
+    );
+    assert!(spent(&fx, &handle));
+    assert_eq!(
+        get(&fx.as_owner(), key, json!([their_row]))["value"],
+        json!(true)
+    );
 }
