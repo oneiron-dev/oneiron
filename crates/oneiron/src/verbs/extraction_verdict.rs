@@ -132,7 +132,7 @@ pub struct TurnEvidence {
 }
 
 /// One listed or prior claim pin: the claim reference with the version the job read.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedClaim {
     /// The claim as 32 lowercase hexadecimal digits.

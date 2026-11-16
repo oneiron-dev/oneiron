@@ -16,9 +16,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::batch::{
-    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence,
-    DerivedEvidenceSpans as BatchSpans, DerivedSameAs, DerivedSettle, DerivedSettlement,
-    DerivedSupersede, DerivedTopology, ItemRef,
+    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedConflict,
+    DerivedConflictMember, DerivedEvidence, DerivedEvidenceSpans as BatchSpans, DerivedSameAs,
+    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -26,7 +26,7 @@ use crate::EntityId;
 use crate::dreamer_consolidation::selection::StrengthSignals;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::SourceVersion;
-use crate::verbs::IdentityProposedOp;
+use crate::verbs::{CandidateOperand, IdentityProposedOp, PinnedClaim};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::derive::wire::{
@@ -76,6 +76,47 @@ pub struct DeriveTopologyInput {
     pub apply: bool,
 }
 
+/// One member of a conflict: one candidate of the set, exactly the operand a
+/// bound Resolution read of `ai.verdict` takes, with the confidence and the
+/// prospective query hints a kept alternative lands with. Neither enters the
+/// candidate's id.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeriveConflictMember {
+    /// The candidate, exactly the operand the Resolution read takes.
+    pub candidate: CandidateOperand,
+    /// Its confidence, in `[0, 1]`; a number outside it is refused, never
+    /// clamped.
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub confidence: f64,
+    /// The prospective query hints a kept alternative lands with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prospective_queries: Vec<String>,
+}
+
+/// A conflict to open: the set a bound Resolution read of `ai.verdict`
+/// names, opened instead of asked. Its operands are that read's operands.
+/// The item names no row by a batch-local name, and its source versions are
+/// inside its operands, not in the request's `sources`. A later Settle item
+/// of the batch names the marker this item opens by its local name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeriveConflictInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The conflict's candidates, 1..n.
+    pub members: Vec<DeriveConflictMember>,
+    /// The stored heads the set stands against, each with the version the
+    /// job read: what a Resolution read names as `priors`. The engine
+    /// rebuilds the heads itself; these must equal them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub heads: Vec<PinnedClaim>,
+    /// As the pack's `set_members`: the candidate indexes of the one set to
+    /// open, when the members form more than one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_members: Option<Vec<usize>>,
+}
+
 /// One wire item: `{"kind": "<kind>", "spec": {...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
@@ -92,6 +133,7 @@ pub enum DeriveItemInput {
     SameAs(DeriveSameAsInput),
     Topology(DeriveTopologyInput),
     Archive(DeriveArchiveInput),
+    Conflict(DeriveConflictInput),
 }
 
 impl DeriveItemInput {
@@ -159,6 +201,28 @@ impl DeriveItemInput {
                 policy_pin: archive.policy_pin,
                 config_pin: archive.config_pin,
             }),
+            Self::Conflict(conflict) => {
+                let mut members = Vec::with_capacity(conflict.members.len());
+                for member in conflict.members {
+                    if !(0.0..=1.0).contains(&member.confidence) {
+                        return Err(MemoryError::bad_request(
+                            "a conflict member's confidence is a number from 0 to 1",
+                        ));
+                    }
+                    members.push(DerivedConflictMember {
+                        operand: member.candidate,
+                        // In range, so the narrowing loses only precision.
+                        confidence: member.confidence as f32,
+                        prospective_queries: member.prospective_queries,
+                    });
+                }
+                DerivationItem::Conflict(DerivedConflict {
+                    local: conflict.local,
+                    members,
+                    heads: conflict.heads,
+                    set_members: conflict.set_members,
+                })
+            }
         })
     }
 }

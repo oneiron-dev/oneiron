@@ -46,7 +46,7 @@ pub use extraction_inputs::{
 };
 pub(crate) use extraction_inputs::{
     extraction_inputs_page_bound, extraction_reader_scope_in_txn, extraction_turn_in_txn,
-    extraction_turn_read, queued_extraction_branch_in_txn,
+    extraction_turn_read, queued_extraction_branch_in_txn, queued_extraction_branch_opt_in_txn,
 };
 pub(crate) use extraction_observations::extraction_observations_page_bound;
 pub use extraction_observations::{
