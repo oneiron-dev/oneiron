@@ -13,7 +13,8 @@
 use oneiron::EntityId;
 use oneiron::authority::{
     CarrierReading, MachineDeviceClass, MachineOwnership, MachineRole, RecoveryRootId,
-    held_answer_prompt, pin_request_prompt, recovery_root_code,
+    held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
+    recovery_root_code,
 };
 
 const ROOT: RecoveryRootId = RecoveryRootId([0xA5; 32]);
@@ -176,5 +177,36 @@ fn a_held_answer_is_asked_by_what_it_asks_for_then_who_carried_it() {
         held_answer_prompt(yours, MachineDeviceClass::Phone, Some(&my_computer), true),
         "Add a phone as one of your devices? It names different keys than this machine has. \
          Dismiss it."
+    );
+}
+
+/// A hosted node and an execution node are asked by what the machine will
+/// do, not by a role noun.
+#[test]
+fn a_held_answer_for_a_node_asks_whether_the_machine_may_run_work() {
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let my_computer = reading(yours, MachineDeviceClass::Computer, true);
+    for role in [MachineRole::HostedNode, MachineRole::ExecutionNode] {
+        assert_eq!(
+            held_answer_prompt(
+                role,
+                MachineDeviceClass::Computer,
+                Some(&my_computer),
+                false
+            ),
+            "Let a computer run work for this vault? Your computer asked for it."
+        );
+    }
+}
+
+/// A machine key's code is derived as a recovery root's code is, so the
+/// owner compares like with like; the line under a held answer's question
+/// shows it.
+#[test]
+fn a_machine_key_code_is_derived_as_a_root_code_is() {
+    assert_eq!(machine_key_code(&ROOT.0), ROOT_CODE);
+    assert_eq!(
+        machine_code_line(&ROOT.0),
+        format!("Code shown on that machine: {ROOT_CODE}")
     );
 }

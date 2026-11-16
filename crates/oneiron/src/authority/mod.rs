@@ -276,7 +276,9 @@ pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
 };
-pub use carrier_prompt::{held_answer_prompt, pin_request_prompt, recovery_root_code};
+pub use carrier_prompt::{
+    held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt, recovery_root_code,
+};
 pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{

@@ -47,7 +47,15 @@ const ADD_AS_YOURS: &str = "Add a {machine} as one of your devices?";
 const ADD_AS_WORK_SCHOOL: &str = "Add a {machine} as a work or school machine?";
 const ADD_AS_RENTED: &str = "Add a {machine} as a rented machine?";
 const REMOVE_MACHINE: &str = "Remove a {machine} from this vault?";
+/// A hosted node or an execution node: what the machine will do, not a role
+/// noun (HELD-MACHINE-PROMPT-WORDING = A).
+const RUN_WORK: &str = "Let a {machine} run work for this vault?";
+/// A role the wording ruling did not name (an answer back to unanswered).
 const CHANGE_MACHINE: &str = "Change what a {machine} is to this vault?";
+/// The line under a held answer's question: its machine key as a code
+/// ([`machine_key_code`]), for the owner to compare with the code that
+/// machine shows.
+const MACHINE_CODE: &str = "Code shown on that machine: {code}";
 /// In place of who asked, for a held answer a confirm refuses
 /// ([`AuthorityFold::replaces_standing_keys`]).
 const NAMES_OTHER_KEYS: &str = "It names different keys than this machine has. Dismiss it.";
@@ -60,8 +68,29 @@ const NAMES_OTHER_KEYS: &str = "It names different keys than this machine has. D
 /// pin door takes.
 #[must_use]
 pub fn recovery_root_code(root: &RecoveryRootId) -> String {
+    first_128_bits_code(&root.0)
+}
+
+/// A machine key's code, in the form and by the derivation of a recovery
+/// root's code ([`recovery_root_code`]): the key's first 128 bits as 26
+/// symbols. The owner compares it with the code the machine itself shows
+/// before he confirms a held answer about it.
+#[must_use]
+pub fn machine_key_code(machine_key: &[u8; 32]) -> String {
+    first_128_bits_code(machine_key)
+}
+
+/// The line a surface shows under a held answer's question: the answer's
+/// machine key as its code.
+#[must_use]
+pub fn machine_code_line(machine_key: &[u8; 32]) -> String {
+    MACHINE_CODE.replace("{code}", &machine_key_code(machine_key))
+}
+
+/// The first 128 bits of `id` as 26 Crockford base32 symbols.
+fn first_128_bits_code(id: &[u8; 32]) -> String {
     let mut head = [0; 16];
-    head.copy_from_slice(&root.0[..16]);
+    head.copy_from_slice(&id[..16]);
     super::machine_identity::code_text(&head)
 }
 
@@ -127,9 +156,8 @@ pub fn held_answer_prompt(
         MachineRole::Owned(MachineOwnership::WorkSchool) => ADD_AS_WORK_SCHOOL,
         MachineRole::Owned(MachineOwnership::Rented) => ADD_AS_RENTED,
         MachineRole::Removed => REMOVE_MACHINE,
-        MachineRole::HostedNode | MachineRole::ExecutionNode | MachineRole::Unanswered => {
-            CHANGE_MACHINE
-        }
+        MachineRole::HostedNode | MachineRole::ExecutionNode => RUN_WORK,
+        MachineRole::Unanswered => CHANGE_MACHINE,
     };
     let asked_by = if replaces_keys {
         NAMES_OTHER_KEYS.to_owned()

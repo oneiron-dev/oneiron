@@ -542,6 +542,14 @@ struct ListedHeldAnswer {
     /// asks for, then who carried it by this install's reading of the key
     /// that signed it ([`oneiron::authority::held_answer_prompt`]).
     prompt: String,
+    /// `machine_key` as a code, 26 symbols, in the form of a recovery kit's
+    /// code ([`oneiron::authority::machine_key_code`]): what the owner
+    /// compares with the code that machine shows. `machine_key` in full
+    /// stays the detail.
+    machine_code: String,
+    /// The line a surface shows under the question: "Code shown on that
+    /// machine: " and `machine_code`.
+    machine_code_text: String,
 }
 
 /// The list as the wire spells it.
@@ -564,6 +572,12 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 carrier_is_yours: listed.carrier_is_mine,
                 dismissed: listed.dismissed,
                 prompt: listed.prompt(),
+                machine_code: oneiron::authority::machine_key_code(
+                    &listed.answer.profile.machine_key,
+                ),
+                machine_code_text: oneiron::authority::machine_code_line(
+                    &listed.answer.profile.machine_key,
+                ),
             })
             .collect(),
         waiting_choices: listing.waiting_choices.iter().map(revision_hex).collect(),
