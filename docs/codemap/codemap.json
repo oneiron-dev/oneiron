@@ -9655,10 +9655,10 @@
      "path": "src/blob_artifact/esign/escalation.rs",
      "purpose": "The sign act the dial does not open goes up its role chain (ARCH-0064 D6, ARCH-0064a, ARCH-0076…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -9751,7 +9751,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 3,
       "re-export": 27
      }
@@ -10141,6 +10141,16 @@
       "re-export": 1,
       "struct": 1,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/setting_keys.rs",
+     "purpose": "E-sign's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -38400,7 +38410,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 4,
       "re-export": 11
      }
@@ -38426,7 +38436,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EnteredRun"
@@ -38434,7 +38444,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "fn": 2,
       "struct": 1
      }
@@ -74026,7 +74036,7 @@
      "path": "src/skill_attribution/late_credit.rs",
      "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1,
       "struct": 1
@@ -74039,7 +74049,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 22
      }
     },
@@ -75298,6 +75308,7 @@
      "path": "src/skill_hub/pack_catalog/slack_install.rs",
      "purpose": "Pending Slack OAuth installs (OF-519): the owner's proof snapshot waiting under one single-use state for…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 2
      }
@@ -90330,6 +90341,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StepState"
+     ],
+     "path": "src/test_doors/fingerprint_keep_executor_cohort_credit.rs",
+     "purpose": "Door for `tests/fingerprint_keep_executor_cohort_credit.rs` (PLAN-UC-04 3.4b): the two executor digests and…",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/fingerprint_keep_hook_digests.rs",
      "purpose": "Door for `tests/fingerprint_keep_hook_digests.rs` (PLAN-UC-04 stage 6.3d): the input hashes of the hook fact…",
@@ -90756,7 +90780,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 147,
+      "mod": 149,
       "re-export": 1
      }
     },
@@ -91147,6 +91171,16 @@
      "purpose": "Door for `tests/primitive_a_skill_reader.rs` (#6976 review round 2): holds a skill read by a caller other…",
      "surface": {
       "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/slack_install_rows.rs",
+     "purpose": "Door for `tests/slack_install_sweep.rs` (UC-12 PR 1): the states the pending Slack install table holds…",
+     "surface": {
       "fn": 1
      }
     },
@@ -99596,22 +99630,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_answer_settlements.rs",
-     "purpose": "ROLES-CHECKIN P2.3c, piece 2l (ARCH-0082 #ladder and \"When nobody answers\"; Engine ruling P23-SHAPE Q7, Q8…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_custody_drain_effects.rs",
-     "purpose": "ROLES-CHECKIN P2.5, row 2k3b (ARCH-0082 #act-table \"Key recovery (C)\" and #owner-own-acts; Engine ruling…",
-     "surface": {}
-    },
-    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -99647,14 +99665,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/check_in_fanout_modes.rs",
-     "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/check_in_history_erase_effects.rs",
      "purpose": "ROLES-CHECKIN P2.5, row 2k2b (ARCH-0082 #act-table \"Erase (C)\" and #owner-own-acts; Engine ruling P25-SHAPE…",
      "surface": {}
@@ -99665,14 +99675,6 @@
      "notable": [],
      "path": "tests/check_in_key_recovery_effects.rs",
      "purpose": "ROLES-CHECKIN P2.5, row 2k3a (ARCH-0082 #act-table \"Key recovery (C)\" and #owner-own-acts; Engine ruling…",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_ladder.rs",
-     "purpose": "ROLES-CHECKIN P2.2, piece 2c (ARCH-0082 #ladder; Engine ruling P22-SHAPE Q3, Q4 and Q9 = A): the ladder from…",
      "surface": {}
     },
     {
@@ -99721,46 +99723,6 @@
      "notable": [],
      "path": "tests/check_in_probe_delete_effects.rs",
      "purpose": "ROLES-CHECKIN P2.5, row 2k5a (ARCH-0082 #act-table \"Delete items\" and #owner-own-acts; Engine ruling…",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_rung_waits.rs",
-     "purpose": "ROLES-CHECKIN P2.2, piece 2d (ruling R2; Engine rulings PR2-SPLIT = B and P22-SHAPE Q3, Q5-Q7 = A): the wait…",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_tables.rs",
-     "purpose": "ROLES-CHECKIN PR 1 (ONEIRON-ARCH-0082): the check-in modes, the act table, the role defaults and the…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_thread_delete.rs",
-     "purpose": "ROLES-CHECKIN P2.5, row 2k5d (ARCH-0082 #act-table \"Delete items\", #role-defaults and #owner-own-acts…",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_verb_census.rs",
-     "purpose": "ROLES-CHECKIN PR 2, P2.1 (ONEIRON-ARCH-0082 #act-table): every verb row states its act class, by the ruled…",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/check_in_waiter_resume.rs",
-     "purpose": "ROLES-CHECKIN P2.3a, piece 2e (ARCH-0082 #waits and \"When nobody answers\"; Engine ruling P23-SHAPE Q2-Q5 =…",
      "surface": {}
     },
     {
@@ -100033,6 +99995,14 @@
      "notable": [],
      "path": "tests/comm_unprojected_stop_clear.rs",
      "purpose": "A STOP recorded after an opt-out-clear request supersedes that request whether or not the projector has…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/comm_widen_stop_asking_revoke.rs",
+     "purpose": "The revoke row of a recorded approve-and-stop-asking choice (FIX-LIST row COMM-WIDEN-REVOKE-EFFECT-NO-DOOR)…",
      "surface": {}
     },
     {
@@ -100617,6 +100587,17 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_executor_cohort_credit.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.4b: the executor's config and step checkpoint hashes, the claim…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_hook_digests.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.3d: the runtime hook digests keep their bytes",
      "surface": {
@@ -100843,16 +100824,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/grant_roles_seven.rs",
-     "purpose": "The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A with the roles, VS-OLD-NAMES =…",
+     "path": "tests/graph_ask_centre_owner_read.rs",
+     "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
-     "path": "tests/graph_ask_centre_owner_read.rs",
-     "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
+     "path": "tests/graph_fs_doors.rs",
+     "purpose": "graph_fs doors: the nine read-only rows read through the verb dispatch and write nothing",
      "surface": {}
     },
     {
@@ -101080,14 +101061,6 @@
      "surface": {}
     },
     {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/inquiry_member_answer.rs",
-     "purpose": "INQUIRE-1 PR 3 (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling INQUIRE-SHAPE…",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -101311,6 +101284,102 @@
      "notable": [],
      "path": "tests/it/channel_identity_slack_adapter_smoke.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_answer_settlements.rs",
+     "purpose": "ROLES-CHECKIN P2.3c, piece 2l (ARCH-0082 #ladder and \"When nobody answers\"; Engine ruling P23-SHAPE Q7, Q8…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_custody_drain_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k3b (ARCH-0082 #act-table \"Key recovery (C)\" and #owner-own-acts; Engine ruling…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_fanout_modes.rs",
+     "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_ladder.rs",
+     "purpose": "ROLES-CHECKIN P2.2, piece 2c (ARCH-0082 #ladder; Engine ruling P22-SHAPE Q3, Q4 and Q9 = A): the ladder from…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_rung_waits.rs",
+     "purpose": "ROLES-CHECKIN P2.2, piece 2d (ruling R2; Engine rulings PR2-SPLIT = B and P22-SHAPE Q3, Q5-Q7 = A): the wait…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_tables.rs",
+     "purpose": "ROLES-CHECKIN PR 1 (ONEIRON-ARCH-0082): the check-in modes, the act table, the role defaults and the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_thread_delete.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k5d (ARCH-0082 #act-table \"Delete items\", #role-defaults and #owner-own-acts…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_verb_census.rs",
+     "purpose": "ROLES-CHECKIN PR 2, P2.1 (ONEIRON-ARCH-0082 #act-table): every verb row states its act class, by the ruled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/check_in_waiter_resume.rs",
+     "purpose": "ROLES-CHECKIN P2.3a, piece 2e (ARCH-0082 #waits and \"When nobody answers\"; Engine ruling P23-SHAPE Q2-Q5 =…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/grant_roles_seven.rs",
+     "purpose": "The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A with the roles, VS-OLD-NAMES =…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/inquiry_member_answer.rs",
+     "purpose": "INQUIRE-1 PR 3 (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling INQUIRE-SHAPE…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/check_in/mod.rs",
+     "purpose": "Fold wave 1: the check_in area, one module per former test binary (PLAN-TS-FOLD)",
      "surface": {}
     },
     {
@@ -102258,6 +102327,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_esign_lapse.rs",
+     "purpose": "The held-sign ask's lapse at the vault owners (OPUS-PACK-KEYS, PK-3)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102303,6 +102380,14 @@
      "notable": [],
      "path": "tests/park_seat_model_step.rs",
      "purpose": "SEAT-PARK-MODEL-STEP-PATH: a Dreamer step that a login-backed model seat refuses parks its try on that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/park_stop_macro_pass.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -102807,6 +102892,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/reveal_doors.rs",
+     "purpose": "The reveal family's doors: an agent asks for a secret's value by its handle, and `reveal.wait` collects the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/revocation_survives_confirm_collision.rs",
      "purpose": "A key's revocation survives a confirmation collision below it (root FIX-LIST…",
      "surface": {}
@@ -103225,6 +103318,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/self_code_doors.rs",
+     "purpose": "self.code doors: what the custody rows answer, keep, and refuse",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/self_hooks_doors.rs",
+     "purpose": "Self hook regen doors: an agent reads and adopts the regen of the hooks it authored",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/serving_egress_credentials.rs",
      "purpose": "Admitted agent egresses release typed Nulled bodies while the owner keeps encoded carriers and graph source…",
      "surface": {}
@@ -103339,6 +103448,14 @@
      "notable": [],
      "path": "tests/skillset_shared_files.rs",
      "purpose": "0053-SKILLSET (ARCH-0053 §14 \"skillset bundles (shared assets across related skills)\"; Engine rulings…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/slack_install_sweep.rs",
+     "purpose": "UC-12 PR 1 (FIX SLACK-INSTALL-ROWS-NEVER-SWEPT): the pending Slack install table gets the sweep its module…",
      "surface": {}
     },
     {
@@ -104115,7 +104232,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 91,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105529,7 +105646,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 150,
+     "files": 152,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105704,10 +105821,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 269,
+   "over_bar": 270,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7674,
-   "test_files": 1419
+   "source_files": 7677,
+   "test_files": 1429
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -119190,6 +119307,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/cluster.rs",
+     "purpose": "Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/engine_executor.rs",
+     "purpose": "Purposes of the engine executor (`crates/oneiron/src/engine_executor`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/mod.rs",
      "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area",
      "surface": {
@@ -119249,6 +119382,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/skill_attribution.rs",
+     "purpose": "Purposes of skill attribution (`crates/oneiron/src/skill_attribution`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/testing.rs",
      "purpose": "Purposes for tests only",
      "surface": {}
@@ -119300,7 +119441,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 11,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -119316,7 +119457,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 14,
+   "source_files": 17,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -122422,7 +122563,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "LlmCapability",
@@ -122435,7 +122576,7 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 10,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -123053,7 +123194,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/model_register_names.rs",
-     "purpose": "The names of 3 name lists in `oneiron-model`, one line per row, generated from…",
+     "purpose": "The names of 4 name lists in `oneiron-model`, one line per row, generated from…",
      "surface": {}
     },
     {
@@ -162529,6 +162670,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_trigger_doors.rs",
+     "purpose": "The owner's typed host triggers (ARCH-0080), entered as the SDK enters them: HTTP `POST…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -163144,6 +163293,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/self_browser_doors.rs",
+     "purpose": "An agent drives a browser only through its own attached live run, and each browser door refuses everyone…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/self_desktop_doors.rs",
+     "purpose": "No `self.desktop.*` verb has an HTTP facade door: a caller outside a run's code mode cannot drive the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/self_secrets_doors.rs",
      "purpose": "Public-door promise tests for the `self.secrets` family (ruling L4-23 = A: each test proves a promise at the…",
      "surface": {}
@@ -163227,6 +163392,22 @@
      "surface": {}
     },
     {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_campaign_doors.rs",
+     "purpose": "The campaign doors (ARCH-0059), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>` through…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_connectors_doors.rs",
+     "purpose": "The connectors doors a vault serves without any admission chain (PR-A): HTTP `POST /v1/core/facade/<verb>`…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -163246,8 +163427,40 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/vault_drafters_doors.rs",
+     "purpose": "The vault's own drafters (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/vault_export_doors.rs",
      "purpose": "Public-door promise tests for the scoped and kept `vault.export` family (ruling L4-23 = A: each test proves…",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_fanout_doors.rs",
+     "purpose": "The vault fan-out doors (OF-393), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>` through…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_hooks_doors.rs",
+     "purpose": "Vault hook doors over HTTP: replay is a dry run, an undeclared outcome is refused, cancel keeps the body",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_mail_doors.rs",
+     "purpose": "The mail doors (`vault.mail.*`, ARCH-0063 #mail-pack), entered as the SDK enters them: HTTP `POST…",
      "surface": {}
     },
     {
@@ -163264,6 +163477,22 @@
      "notable": [],
      "path": "tests/vault_notes_doors.rs",
      "purpose": "Public-door promise tests for the `vault.notes` family (the server serves all 27 verbs; editor.bind/close…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_policy_doors.rs",
+     "purpose": "The vault policy doors (`vault.policy.*`), entered as the SDK enters them: HTTP `POST…",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_runners_doors.rs",
+     "purpose": "The owner's runner seat doors, entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>` through…",
      "surface": {}
     },
     {
@@ -163291,6 +163520,30 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_sieve_doors.rs",
+     "purpose": "The sieve's fifteen doors (ARCH-0026), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_skill_hubs_doors.rs",
+     "purpose": "The `vault.skill_hubs` doors: per-hub admission, trust as data, ref round-trip, refusals, and one…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_skills_doors.rs",
+     "purpose": "The skill library's doors (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -163312,6 +163565,22 @@
      "notable": [],
      "path": "tests/vault_voices_doors.rs",
      "purpose": "Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_weave_doors.rs",
+     "purpose": "The `vault.weave` doors: recipe admission and parking, schedule CRUD and its role gate, per-reader digests…",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_workflows_doors.rs",
+     "purpose": "The saved-workflow doors (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`…",
      "surface": {}
     },
     {
@@ -163925,7 +164194,7 @@
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1901,
-   "test_files": 293
+   "test_files": 309
   },
   "oneiron-setting-contract": {
    "files": [

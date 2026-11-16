@@ -57,6 +57,7 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_hook_digests;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
@@ -140,6 +141,7 @@ pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;
+pub mod slack_install_rows;
 pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
