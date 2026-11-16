@@ -36,6 +36,7 @@ use super::outcome::{
     OUTCOME_CHECK_IN_REASON_TAG, build_check_in_lens, check_in_is_still_due, current_outcome_in,
     current_status_in, outcome_grace_secs,
 };
+use super::prep::setting_keys::{check_in_re_ask_hour_in_txn, prep_policy_in_txn};
 use super::prep::{
     PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPolicy, live_prep_event, person_lane,
     plan_check_in_re_ask, prep_wake_id, run_due_home_node_prep_with_sources,
@@ -197,9 +198,11 @@ pub struct CalendarCardPass {
 /// delivers each prep pack and check-in that has come due.
 ///
 /// The host calls this on the elected home node only. A prep wake fires
-/// once per EVENT start, between T-45 and the start. A check-in is asked once
-/// the EVENT's end and the vault's grace have passed, at most
-/// [`CHECK_IN_CATCH_UP_SECS`] late, and its re-ask is planned on the owner's
+/// once per EVENT start, between the vault's prep lead
+/// (`calendar.prep.lead_secs`, T-45 by default) and the start. A check-in is
+/// asked once the EVENT's end and the vault's grace have passed, at most
+/// [`CHECK_IN_CATCH_UP_SECS`] late, and its re-ask is planned at the vault's
+/// `calendar.check_in.re_ask_local_hour` (09:00 by default) on the owner's
 /// clock: the zone or offset of the owner's reminder route, else UTC.
 ///
 /// One EVENT whose card fails is counted and logged by its error kind, and
@@ -214,10 +217,17 @@ pub fn run_calendar_card_pass(
     now: u64,
     copy: &CalendarCardCopy,
 ) -> Result<CalendarCardPass> {
+    // The vault's prep lead (`calendar.prep.lead_secs`), one read for the pass: the scan's due
+    // test and the delivery's own check of the job's instant use the same policy.
+    let policy = {
+        let rtxn = vault.store.env.read_txn()?;
+        prep_policy_in_txn(vault, &rtxn)?
+    };
     let mut run = CardRun {
         vault,
         now,
         copy,
+        policy,
         report: CalendarCardPass::default(),
     };
     let cards = {
@@ -229,7 +239,6 @@ pub fn run_calendar_card_pass(
         let settled = run.revisit(&key, card);
         run.tally(settled, event_ref);
     }
-    let policy = PrepPolicy::default();
     let grace = outcome_grace_secs(vault)?;
     let mut after: Option<EntityId> = None;
     loop {
@@ -404,6 +413,7 @@ struct CardRun<'a> {
     vault: &'a Vault,
     now: u64,
     copy: &'a CalendarCardCopy,
+    policy: PrepPolicy,
     report: CalendarCardPass,
 }
 
@@ -528,14 +538,14 @@ impl CardRun<'_> {
                 &job,
                 person,
                 self.now,
-                PrepPolicy::default(),
+                self.policy,
                 &self.copy.prep,
             )?,
             None => run_due_home_node_prep_with_sources(
                 self.vault,
                 &job,
                 self.now,
-                PrepPolicy::default(),
+                self.policy,
                 &self.copy.prep,
             )?,
         };
@@ -716,7 +726,11 @@ fn check_in_lens(event_ref: EntityId, start: u64, copy: &CheckInCopy) -> Result<
 /// clock: the reminder route's zone or offset, else UTC.
 fn re_ask_at(vault: &Vault, asked_at: u64) -> Result<u64> {
     let route = vault.commitment_reminder_route()?;
-    Ok(plan_check_in_re_ask(asked_at, |at| {
+    let hour = {
+        let rtxn = vault.store.env.read_txn()?;
+        check_in_re_ask_hour_in_txn(vault, &rtxn)?
+    };
+    Ok(plan_check_in_re_ask(asked_at, hour, |at| {
         route
             .as_ref()
             .and_then(|route| route.utc_offset_minutes_at(at))
