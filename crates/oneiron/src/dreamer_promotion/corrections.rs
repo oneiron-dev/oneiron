@@ -37,7 +37,7 @@ pub(super) fn grant_allowed_replacement(
     let original = std::cell::Cell::new(None);
     match vault.grant_deferred_claim_auto_after(
         &replacement,
-        run.now_ms,
+        run.now_secs(),
         checker,
         |txn| {
             fence.validate_in_txn(vault, txn)?;
