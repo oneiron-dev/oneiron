@@ -701,7 +701,7 @@ pub fn dreamer_park_cause_of_step(
         DurableStepError::Engine(engine) => {
             let kind = engine.kind();
             if crate::dreamer_wake::waits_on_owner_act(kind)
-                || crate::dreamer_wake::refuses_attempt_input(kind)
+                || crate::dreamer_wake::refuses_attempt_input(engine)
             {
                 DreamerParkCause::Other
             } else {

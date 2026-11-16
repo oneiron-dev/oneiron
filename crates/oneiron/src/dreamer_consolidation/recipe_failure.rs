@@ -3,11 +3,12 @@
 //! or hold the wake driver's owner-act check names) keeps its private park,
 //! as before: each pass would only meet it again. So does a failure of the
 //! attempt's own input that nothing clears (a stored MESSAGE whose `rel`
-//! names no RELATIONSHIP row, FIX MESSAGE-REL-NOT-RELATIONSHIP-ROW): a
-//! Retry would resume the same try and meet it on every pass. Any other (a
-//! missing locality, an empty or unreadable model answer, a request that
-//! did not hash, a failed or concurrent commit, a moved scope) parks as a
-//! Retry a later pass resumes, as the same try, after its retry delay.
+//! names a live row of another type, FIX MESSAGE-REL-NOT-RELATIONSHIP-ROW):
+//! a Retry would resume the same try and meet it on every pass. Any other
+//! (a missing locality, an empty or unreadable model answer, a request that
+//! did not hash, a failed or concurrent commit, a moved scope, a `rel` whose
+//! RELATIONSHIP row has not reached this replica yet) parks as a Retry a
+//! later pass resumes, as the same try, after its retry delay.
 
 use crate::Error;
 use crate::dreamer_runner::DreamerParkCause;
@@ -30,7 +31,7 @@ impl RecipeFailure {
         let kind = error.kind();
         if crate::dreamer_wake::waits_on_owner_act(kind) {
             Self::OwnerAct
-        } else if crate::dreamer_wake::refuses_attempt_input(kind) {
+        } else if crate::dreamer_wake::refuses_attempt_input(error) {
             Self::Permanent
         } else {
             Self::Transient

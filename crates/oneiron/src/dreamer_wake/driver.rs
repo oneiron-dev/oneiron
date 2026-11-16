@@ -819,12 +819,10 @@ impl<'a> DreamerWakeDriver<'a> {
     // The Result is only fallible on the sync progress lane.
 }
 
-/// The cause an executor error of `kind` parks under, and whether it ends
-/// the pass, for tests/message_rel_relationship_row.rs. Not API.
+/// The cause an executor `error` parks under, and whether it ends the
+/// pass, for tests/message_rel_relationship_row.rs. Not API.
 #[cfg(oneiron_test_support)]
-pub(crate) fn executor_error_park_for_test(
-    kind: crate::error::ErrorKind,
-) -> (DreamerParkCause, bool) {
-    let cause = self::park_cause::executor_error_park_cause(kind);
+pub(crate) fn executor_error_park_for_test(error: &crate::Error) -> (DreamerParkCause, bool) {
+    let cause = self::park_cause::executor_error_park_cause(error);
     (cause, cause == DreamerParkCause::ExecutorError)
 }

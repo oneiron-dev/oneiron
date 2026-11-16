@@ -72,16 +72,27 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
     )
 }
 
-/// Whether an executor error of `kind` refuses the attempt's own input for
-/// good, so that no later pass clears it and a Retry would only meet it
-/// again: a relationship id that names no live RELATIONSHIP row (a stored
-/// MESSAGE from before MESSAGE-REL-NAMES = A, FIX
-/// MESSAGE-REL-NOT-RELATIONSHIP-ROW). Such an attempt parks privately
-/// (`Other`), where no later pass resumes it, but never ends the pass: it
-/// names one attempt's input, not the vault's standing, so it is not an
+/// Whether `error` refuses the attempt's own input for good, so that no
+/// later pass clears it and a Retry would only meet it again: a
+/// relationship id that names a live row of another type (a stored MESSAGE
+/// from before MESSAGE-REL-NAMES = A, FIX MESSAGE-REL-NOT-RELATIONSHIP-ROW).
+/// A row's type never changes. Such an attempt parks privately (`Other`),
+/// where no later pass resumes it, but never ends the pass: it names one
+/// attempt's input, not the vault's standing, so it is not an
 /// `ExecutorError` park, which the driver reads as the pass's end.
-pub(crate) const fn refuses_attempt_input(kind: ErrorKind) -> bool {
-    matches!(kind, ErrorKind::InvalidRelationship)
+///
+/// An id with no live row here is not refused for good: on a replica its
+/// RELATIONSHIP row can still arrive, since sync promotes windows by
+/// learned month and a MESSAGE's window can land before its
+/// relationship's. That refusal (`found: None`) keeps its Retry.
+pub(crate) const fn refuses_attempt_input(error: &crate::Error) -> bool {
+    matches!(
+        error,
+        crate::Error::Registry(crate::error::RegistryError::InvalidRelationship {
+            found: Some(_),
+            ..
+        })
+    )
 }
 
 /// Whether an executor error of `kind` ends the pass where it
@@ -138,11 +149,11 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
     }
 }
 
-/// The cause a non-deadline executor error of `kind` parks under.
-pub(super) const fn executor_error_park_cause(kind: ErrorKind) -> DreamerParkCause {
-    if waits_on_owner_act(kind) {
+/// The cause a non-deadline executor `error` parks under.
+pub(super) fn executor_error_park_cause(error: &crate::Error) -> DreamerParkCause {
+    if waits_on_owner_act(error.kind()) {
         DreamerParkCause::ExecutorError
-    } else if refuses_attempt_input(kind) {
+    } else if refuses_attempt_input(error) {
         DreamerParkCause::Other
     } else {
         DreamerParkCause::Retry
