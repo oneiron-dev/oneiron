@@ -233,7 +233,10 @@ impl Memory<'_> {
     /// caller, a current member or its pen agent ([`pin_writer_in`]). The
     /// caller must read the target through the room's own lane
     /// ([`Memory::for_room_turn`]); a target it cannot read answers as not
-    /// found. A target pinned already keeps its first record.
+    /// found, even one pinned already (PIN-RETRY-HIDDEN-TARGET = A, Engine
+    /// 17 Nov 00:11). A target pinned already keeps its first record, which
+    /// a caller who reads it gets back; that retry changes nothing, so it
+    /// marks no room cell for sync.
     pub fn rooms_pins_pin(&self, input: &RoomPinRequest) -> MemoryResult<RoomPinReply> {
         self.require_pin_room(input.room)?;
         let vault = self.vault();
@@ -251,12 +254,12 @@ impl Memory<'_> {
         {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
-        let pin = vault.try_with_write_txn_grouped(|txn| {
+        let (pin, changed) = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = PinnedBody::read_in(vault, txn, input.room)?;
             let (person, agent) = pin_writer_in(vault, txn, input.room, caller, &body)?;
             if let Some(pin) = body.pins().iter().find(|pin| pin.target == input.target) {
-                return Ok::<_, MemoryError>(pin.clone());
+                return Ok::<_, MemoryError>((pin.clone(), false));
             }
             let pin = RoomPin {
                 target: input.target,
@@ -266,10 +269,16 @@ impl Memory<'_> {
             };
             body.pins_mut().push(pin.clone());
             body.write_in(vault, txn, input.room)?;
-            Ok(pin)
+            Ok((pin, true))
         })?;
+        // FIX ROOM-PINS-NOOP-MARKS-DIRTY: only a change marks the room's cell
+        // and queues its flush, as unpin does.
         #[cfg(feature = "sync")]
-        vault.refresh_room_cell_in_live_window(input.room, None);
+        if changed {
+            vault.refresh_room_cell_in_live_window(input.room, None);
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = changed;
         Ok(RoomPinReply {
             room: input.room,
             pin,
@@ -315,17 +324,22 @@ impl Memory<'_> {
         self.require_pin_room(input.room)?;
         let vault = self.vault();
         let caller = self.write_actor();
-        let policy = vault.try_with_write_txn_grouped(|txn| {
+        let (policy, changed) = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = policy_setter_in(vault, txn, input.room, caller)?;
-            if body.policy() != input.policy {
+            let changed = body.policy() != input.policy;
+            if changed {
                 body.set_policy(input.policy);
                 body.write_in(vault, txn, input.room)?;
             }
-            Ok::<_, MemoryError>(body.policy())
+            Ok::<_, MemoryError>((body.policy(), changed))
         })?;
         #[cfg(feature = "sync")]
-        vault.refresh_room_cell_in_live_window(input.room, None);
+        if changed {
+            vault.refresh_room_cell_in_live_window(input.room, None);
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = changed;
         Ok(RoomPinPolicySet {
             room: input.room,
             policy,
