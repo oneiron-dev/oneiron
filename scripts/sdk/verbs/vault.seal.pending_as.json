@@ -1,0 +1,16 @@
+{
+  "name": "vault.seal.pending_as",
+  "description": "An agent reads pending directed rechecks and random audits, optionally for one attempt, under its own live Grant naming the read and the owner's delegate key; checks its lane may not read are left out.",
+  "input": "crate::self_heal::audit::doors::SealPendingRequest",
+  "output": "Vec<crate::self_heal::audit::SealCheckRequest>",
+  "call": "crate::self_heal::audit::doors::pending_as_agent(memory, input)?",
+  "scope": "Read",
+  "grant_class": "vault.seal.pending_as grant + owner delegate key + caller read lane",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

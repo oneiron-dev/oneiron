@@ -11,6 +11,7 @@ pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod catch_all_status;
 pub mod coach_round;
+pub mod compaction_pass;
 pub mod connector_sends;
 #[cfg(unix)]
 pub mod hosted_import;
@@ -21,6 +22,7 @@ pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
 pub mod mcp_carrier_release;
+pub mod mcp_code_mode_verbs;
 pub mod mcp_page_mint;
 pub mod mcp_refusal_status;
 pub mod mcp_surface;
@@ -31,6 +33,7 @@ pub mod native_board;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
+pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 #[cfg(unix)]
 pub mod recovery_box_hold;
