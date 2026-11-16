@@ -96,6 +96,43 @@ impl ResolvedConnectorManifest {
                 .is_some_and(|digest| *digest == public_row_digest(row))
         })
     }
+    /// The snapshot as a connector declares it: its rows and its elicitation
+    /// declaration, without the public marks, which are the owner's
+    /// acceptance and no connector declares (review-c2 F2). A probe listing
+    /// compares against this.
+    #[must_use]
+    pub(crate) fn declared(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+            elicitation: self.elicitation,
+            public_secret_shape: BTreeMap::new(),
+        }
+    }
+    /// The snapshot as the secret lift census reads it: each public row
+    /// ([`Self::public_secret_shape_tools`]) and its mark left out. A mark
+    /// whose row changed since stays, as that row does.
+    #[must_use]
+    pub(crate) fn without_public_secret_shape_rows(&self) -> Self {
+        let public: BTreeSet<&str> = self
+            .public_secret_shape_tools()
+            .map(|row| row.name.as_str())
+            .collect();
+        Self {
+            tools: self
+                .tools
+                .iter()
+                .filter(|row| !public.contains(row.name.as_str()))
+                .cloned()
+                .collect(),
+            elicitation: self.elicitation,
+            public_secret_shape: self
+                .public_secret_shape
+                .iter()
+                .filter(|(name, _)| !public.contains(name.as_str()))
+                .map(|(name, digest)| (name.clone(), digest.clone()))
+                .collect(),
+        }
+    }
     /// The same snapshot, declaring elicitation or not.
     #[must_use]
     pub fn with_elicitation(mut self, declared: bool) -> Self {

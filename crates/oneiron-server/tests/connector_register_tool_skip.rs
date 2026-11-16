@@ -22,7 +22,9 @@
 //! PR C the install case fails there (no `owner_accepted` in the view).
 //! PR C2: a tool whose schema holds a secret-shaped string, installed
 //! anyway, stamped and attested, is marked public in the approved manifest;
-//! at PR C that case fails at the register (`owner_may_install` false).
+//! at PR C that case fails at the register (`owner_may_install` false). The
+//! owner's consent of that tool mints a per-grant key whose one-tool
+//! manifest keeps the mark (review-c2 F3; at 5b76aba1c318 it had none).
 //!
 //! In-process vault and router (`oneshot`); the connector is an axum server
 //! on 127.0.0.1, the endpoint the register lists through.
@@ -560,11 +562,13 @@ fn install_anyway_at_a_digest_the_owner_did_not_see_is_refused() {
 /// approves it, and the approved manifest marks its row public,
 /// owner-accepted at install, which the secret lift census reads. At PR C the
 /// register answers the tool not installable (`owner_may_install` false).
+/// The owner then consents the tool, and its per-grant key's manifest marks
+/// the row too (review-c2 F3).
 #[test]
 fn install_anyway_on_a_secret_shaped_string_marks_the_approved_row_public() {
     run_on_engine_stack("install_anyway_secret", || async {
         let endpoint = connector(vec![clean_tool(), secret_shaped_tool()]).await;
-        let host = host(endpoint);
+        let host = host(endpoint.clone());
         let (status, registered) = host.register(json!({})).await;
         assert_eq!(status, StatusCode::OK, "{registered}");
         let skipped = &registered["skipped"][0];
@@ -609,5 +613,30 @@ fn install_anyway_on_a_secret_shaped_string_marks_the_approved_row_public() {
             .map(|tool| tool.name.as_str())
             .collect();
         assert_eq!(public, ["docs_token"]);
+        let (status, consented) = host
+            .post(
+                "consent",
+                json!({
+                    "connector": CONNECTOR,
+                    "endpoint": endpoint,
+                    "rows": [{"tool": "docs_token"}]
+                }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{consented}");
+        let key_id = consented["grants"][0]["key_id"]
+            .as_str()
+            .expect("the per-grant key");
+        let derived = host
+            .vault
+            .get_connector_key(&EntityId::from_hex(key_id).expect("key id"))
+            .expect("read the per-grant key")
+            .expect("the per-grant key");
+        let snapshot = derived.retained_manifest.expect("its one-tool manifest");
+        let public: Vec<&str> = snapshot
+            .public_secret_shape_tools()
+            .map(|tool| tool.name.as_str())
+            .collect();
+        assert_eq!(public, ["docs_token"], "{consented}");
     });
 }

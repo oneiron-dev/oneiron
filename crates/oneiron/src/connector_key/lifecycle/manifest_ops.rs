@@ -115,7 +115,9 @@ fn probe_failure() -> Error {
 /// Probe listings are literal declarations: compare them only after the same
 /// resolution the candidate went through. Listings carry no permission rows,
 /// so those come from the candidate by tool name, and no client capability,
-/// so the candidate's elicitation declaration stands.
+/// so the candidate's elicitation declaration stands. Nor do they carry the
+/// owner's public marks, so the candidate is compared as declared
+/// ([`ResolvedConnectorManifest::declared`]).
 fn ensure_declared(manifest: &ResolvedConnectorManifest, tools: &[ProbeTool]) -> Result<()> {
     let observed = ResolvedConnectorManifest::resolve(
         tools
@@ -134,7 +136,7 @@ fn ensure_declared(manifest: &ResolvedConnectorManifest, tools: &[ProbeTool]) ->
             .collect(),
     )?
     .with_elicitation(manifest.declares_elicitation());
-    if observed != *manifest {
+    if observed != manifest.declared() {
         return Err(invalid_body("connector declarations differ from candidate"));
     }
     Ok(())

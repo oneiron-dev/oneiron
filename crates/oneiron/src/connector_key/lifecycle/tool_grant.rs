@@ -131,6 +131,9 @@ struct AdmittedCatalog {
     revision: String,
     report_hash: String,
     slate: ConnectorGrantSlate,
+    /// The catalog's approved rows the owner accepted as public at install
+    /// ([`ResolvedConnectorManifest::public_secret_shape_tools`]).
+    public_rows: Vec<ConnectorToolSchema>,
 }
 
 impl Vault {
@@ -183,7 +186,7 @@ impl Vault {
             {
                 return Err(invalid("the slate allows no such tool"));
             }
-            let manifest = tool_snapshot(&admitted.slate, &row.tool)?;
+            let manifest = tool_snapshot(&admitted, &row.tool)?;
             let mut endpoints =
                 self.live_endpoint_union_in_txn(wtxn, &principal_ref, &admitted.server, &row.tool)?;
             endpoints.insert(consent.endpoint.clone());
@@ -315,7 +318,11 @@ impl Vault {
                     .slate
                     .row(&entry.name)
                     .is_some_and(|row| row.enabled())
-                    && tool_snapshot(&admitted.slate, &entry.name).ok().as_ref() == Some(snapshot)
+                    // A public mark is the owner's acceptance, not the
+                    // tool: a key minted before or after it is still the
+                    // tool's key.
+                    && tool_snapshot(admitted, &entry.name)
+                        .is_ok_and(|ours| ours.declared() == snapshot.declared())
                     && approved_manifest_pins(catalog, &admitted.slate, &entry.name))
                 .then(|| (admitted, entry.name.clone()))
             });
@@ -334,7 +341,7 @@ impl Vault {
             let mut next = if current {
                 record
             } else {
-                derived_admission(record, tool_snapshot(&admitted.slate, &tool)?, admitted, at)?
+                derived_admission(record, tool_snapshot(admitted, &tool)?, admitted, at)?
             };
             // A staged change to the key's tool is mirrored onto the key, so
             // its calls confirm first as the catalog's own do; the key is
@@ -632,6 +639,12 @@ fn admitted_from_record(
         revision,
         report_hash: receipt.report_hash.clone(),
         slate,
+        public_rows: record
+            .retained_manifest
+            .iter()
+            .flat_map(ResolvedConnectorManifest::public_secret_shape_tools)
+            .cloned()
+            .collect(),
     })
 }
 
@@ -729,22 +742,38 @@ fn approved_manifest_pins(
     })
 }
 
-/// One tool of the stamped slate as a resolved one-tool manifest, the shape
-/// the qualification suite admitted it in.
-fn tool_snapshot(slate: &ConnectorGrantSlate, tool: &str) -> Result<ResolvedConnectorManifest> {
-    let entry = slate
+/// One tool of the catalog's stamped slate as a resolved one-tool manifest,
+/// the shape the qualification suite admitted it in. Its row is marked
+/// public, owner-accepted at install, when the catalog's public row of the
+/// tool holds the same name, schema and triggers: the row's strings are the
+/// ones the owner accepted (review-c2 F3). The mark binds this row.
+fn tool_snapshot(admitted: &AdmittedCatalog, tool: &str) -> Result<ResolvedConnectorManifest> {
+    let entry = admitted
+        .slate
         .tool(tool)
         .ok_or_else(|| invalid("the slate allows no such tool"))?;
     let input_schema = entry
         .resolved_input_schema
         .clone()
         .ok_or_else(|| invalid("the tool's schema is unresolved"))?;
-    ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+    let snapshot = ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
         name: entry.name.clone(),
         permissions: BTreeSet::new(),
         triggers: entry.trigger.iter().cloned().collect(),
         input_schema,
-    }])
+    }])?;
+    let accepted = snapshot.tools().iter().all(|row| {
+        admitted.public_rows.iter().any(|public| {
+            public.name == row.name
+                && public.input_schema == row.input_schema
+                && public.triggers == row.triggers
+        })
+    });
+    Ok(if accepted {
+        snapshot.with_public_secret_shape([tool])
+    } else {
+        snapshot
+    })
 }
 
 pub(in crate::connector_key) fn catalog_key_in_txn(
