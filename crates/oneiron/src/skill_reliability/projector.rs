@@ -48,8 +48,8 @@ pub const FIELD_SKILL_LEARNING_ANCHOR: &str = "learning.anchor";
 /// stamped by whoever stamps `axis` and `learning.anchor`. Copied as is, never
 /// looked up at projection.
 pub const FIELD_SKILL_GOAL_REVISION: &str = "learning.goal_revision";
-/// The existing attempt success lane measures this axis unless explicitly stamped.
-pub const SKILL_OUTCOME_AXIS: &str = "quality";
+#[doc(hidden)]
+pub use oneiron_records::skill_reliability::projector::SKILL_OUTCOME_AXIS;
 
 pub(super) fn receipt_query(receipt: &ReceiptRecord) -> Result<SkillReliabilityQuery> {
     let type_ref = serde_json::from_str(
