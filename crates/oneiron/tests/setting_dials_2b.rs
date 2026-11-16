@@ -10,6 +10,10 @@
 //!   does not read it.
 //! - an owner pin of an installed pack lands and moves the pack, recorded as the owner's setting;
 //! - a revert pins the previous pack with the owner as setter, recorded as a revert;
+//! - a revert of a same-name update, which installs the replaced version again, records its move
+//!   from the version the vault followed before it, not from the pack the row's prior value
+//!   selects once the replaced version is back (review #8978 round 1), and its own revert returns
+//!   there;
 //! - an install with a pin in force keeps the pinned pack.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_dials_2b`.
@@ -52,6 +56,9 @@ const SEASON: &str = "dials-season";
 // before it and carry no retirement, so both are served.
 const DAY_A: u32 = 20700;
 const DAY_B: u32 = 20710;
+// A's update releases after B, so following the latest keeps it; A's first version releases
+// before B, so following the latest with that version back selects B.
+const DAY_A_UPDATE: u32 = 20715;
 
 struct Fixture {
     vault: Vault,
@@ -181,10 +188,10 @@ fn pinned_pack(name: &str) -> Value {
     json!({ "mode": "pinned_pack", "pack": name })
 }
 
-fn pack_md(name: &str) -> String {
+fn pack_md(name: &str, version: &str) -> String {
     format!(
         "---\nname: {name}\ndescription: Test model pack {name} for setting dials.\n\
-         version: 1.0.0\nkind: model\n---\nA data-only seasonal model stack.\n"
+         version: {version}\nkind: model\n---\nA data-only seasonal model stack.\n"
     )
 }
 
@@ -206,17 +213,21 @@ fn model_pack_json(released_epoch_day: u32) -> String {
     .to_string()
 }
 
-fn model_pack_files(name: &str, day: u32) -> Vec<HubFile> {
+fn model_pack_files(name: &str, version: &str, day: u32) -> Vec<HubFile> {
     vec![
-        HubFile::new("PACK.md", pack_md(name)),
+        HubFile::new("PACK.md", pack_md(name, version)),
         HubFile::new("knowledge/model-pack.json", model_pack_json(day)),
     ]
 }
 
 fn install_model_pack(fx: &Fixture, name: &str, day: u32) {
+    install_model_pack_version(fx, name, "1.0.0", day);
+}
+
+fn install_model_pack_version(fx: &Fixture, name: &str, version: &str, day: u32) {
     match fx
         .vault
-        .put_pack(&fx.owner_proof, model_pack_files(name, day))
+        .put_pack(&fx.owner_proof, model_pack_files(name, version, day))
     {
         Ok(PackInstallDisposition::Installed(receipt)) => {
             assert_eq!(receipt.pack_name, name, "the put names the pack");
@@ -235,6 +246,13 @@ fn active_pack_name(fx: &Fixture) -> Option<String> {
         .active_model_pack()
         .expect("the active pack reads")
         .map(|active| active.pack.id.as_str().to_owned())
+}
+
+fn active_pack_version(fx: &Fixture) -> Option<(String, String)> {
+    fx.vault
+        .active_model_pack()
+        .expect("the active pack reads")
+        .map(|active| (active.pack.id.as_str().to_owned(), active.pack.version))
 }
 
 fn owner_pack_notice_detail(fx: &Fixture, change_ref: &str) -> String {
@@ -494,6 +512,96 @@ fn a_revert_pins_the_previous_pack_with_the_owner_as_setter() {
         row["setter"]["as"],
         json!("owner"),
         "the revert writes as the owner: {row}"
+    );
+}
+
+#[test]
+fn a_revert_of_a_same_name_update_records_its_move_from_the_updated_version() {
+    let fx = Fixture::rooted();
+    install_model_pack(&fx, PACK_A_NAME, DAY_A);
+    install_model_pack(&fx, PACK_B_NAME, DAY_B);
+    let me = fx.as_owner();
+    let pinned = call(&me, SET, set(pinned_pack(PACK_A_NAME)));
+    assert_eq!(pinned["status"], json!("applied"), "{pinned}");
+
+    install_model_pack_version(&fx, PACK_A_NAME, "2.0.0", DAY_A_UPDATE);
+    assert_eq!(
+        active_pack_version(&fx),
+        Some((PACK_A_NAME.to_owned(), "2.0.0".to_owned())),
+        "the pin follows A's update"
+    );
+    let update_ref = fx
+        .vault
+        .model_pack_setting_as_owner(&fx.owner_proof)
+        .expect("the setting reads")
+        .change_ref
+        .expect("the update recorded a change");
+    let followed = call(&me, SET, set(follow_latest()));
+    assert_eq!(followed["status"], json!("applied"), "{followed}");
+    let followed = fx
+        .vault
+        .model_pack_setting_as_owner(&fx.owner_proof)
+        .expect("the setting reads");
+    assert_eq!(
+        followed.change_ref.as_deref(),
+        Some(update_ref.as_str()),
+        "following the latest keeps A 2.0.0 and records no change: {followed:?}"
+    );
+
+    let revert = fx
+        .vault
+        .revert_model_pack_change_as_owner(
+            &fx.owner_proof,
+            &ModelPackRevertRequest {
+                change_ref: update_ref,
+            },
+        )
+        .expect("the revert runs");
+    assert_eq!(
+        revert.blocked, None,
+        "the replaced version is kept and served: {revert:?}"
+    );
+    assert_eq!(
+        active_pack_version(&fx),
+        Some((PACK_A_NAME.to_owned(), "1.0.0".to_owned())),
+        "the revert installs A 1.0.0 again and follows it"
+    );
+    assert_eq!(
+        revert
+            .setting
+            .previous
+            .as_ref()
+            .map(|receipt| (receipt.pack.as_str(), receipt.version.as_str())),
+        Some((PACK_A_NAME, "2.0.0")),
+        "the revert moved the vault off A 2.0.0, not off B: {revert:?}"
+    );
+    let revert_ref = revert
+        .setting
+        .change_ref
+        .clone()
+        .expect("the revert recorded a change");
+    let detail = owner_pack_notice_detail(&fx, &revert_ref);
+    assert!(
+        detail.starts_with(&format!(
+            "The vault's model pack moved from {PACK_A_NAME} 2.0.0 "
+        )),
+        "the revert's notice names the move from A 2.0.0: {detail}"
+    );
+
+    let back = fx
+        .vault
+        .revert_model_pack_change_as_owner(
+            &fx.owner_proof,
+            &ModelPackRevertRequest {
+                change_ref: revert_ref,
+            },
+        )
+        .expect("the revert of the revert runs");
+    assert_eq!(back.blocked, None, "{back:?}");
+    assert_eq!(
+        active_pack_version(&fx),
+        Some((PACK_A_NAME.to_owned(), "2.0.0".to_owned())),
+        "the revert of the revert returns to A 2.0.0"
     );
 }
 
