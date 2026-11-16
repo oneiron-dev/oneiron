@@ -114,7 +114,9 @@ impl LensProposalRecord {
     }
 }
 
-/// The owner's stored selection for one slot.
+/// The stored selection for one slot: the owner's, or an agent's the owner's
+/// `lens.slot.agent_select` row admitted (its `authenticated_under` is then
+/// `grant:<hex>`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LensSlotRecord {

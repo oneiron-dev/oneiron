@@ -1,0 +1,17 @@
+{
+  "name": "vault.lenses.activate_as",
+  "description": "An agent selects a proposed lens revision for its pack slot under its own live Grant naming the verb and the owner's agent-select key; never a revision its own lineage proposed.",
+  "input": "crate::lens::LensActivateRequest",
+  "output": "crate::receipt::LensActivationReceipt",
+  "call": "crate::lens::activate_lens_as_agent(memory, input)?",
+  "scope": "Write",
+  "grant_class": "vault.lenses.activate_as grant + owner agent-select key",
+  "act_class": "reversible_work",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

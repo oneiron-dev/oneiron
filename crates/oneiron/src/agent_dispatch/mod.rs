@@ -89,7 +89,9 @@ pub(crate) use self::run_effects::{
 mod run_handover;
 pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
-pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
+pub(crate) use run_lineage::{
+    LineageStart, delegation_lineage_parent_in_txn, settling_lineage_in_txn,
+};
 mod run_objectives;
 mod run_placement;
 mod run_task;

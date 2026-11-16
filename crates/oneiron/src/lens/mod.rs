@@ -56,7 +56,8 @@ mod proposal;
 mod regen;
 mod scope;
 pub use activation::{
-    LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
+    LensActivateRequest, LensDeactivateRequest, activate_lens_as_agent, activate_lens_embedded,
+    deactivate_lens_as_agent, deactivate_lens_embedded,
 };
 pub use proposal::{
     LENS_LIST_MAX_PAGE, LensListPage, LensListRequest, LensListRow, LensProposalState,
@@ -80,6 +81,7 @@ pub use selection::{
     LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan,
     LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,
 };
+pub(crate) mod setting_keys;
 
 pub(crate) mod tables;
 #[cfg(test)]

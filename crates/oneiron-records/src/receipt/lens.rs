@@ -36,9 +36,9 @@ pub enum LensSlotDecision {
     Deactivated,
 }
 
-/// `vault.lenses.activate` and `vault.lenses.deactivate`'s answer: the slot,
-/// the revision selected or cleared, the one it replaced, and the owner's
-/// decision.
+/// `vault.lenses.activate` and `vault.lenses.deactivate`'s answer, and their
+/// agent doors' (`vault.lenses.activate_as`, `.deactivate_as`): the slot, the
+/// revision selected or cleared, the one it replaced, and the decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LensActivationReceipt {
     pub decision: LensSlotDecision,
@@ -50,11 +50,13 @@ pub struct LensActivationReceipt {
     /// On activation, the lens the slot held before it, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_ref: Option<String>,
-    /// The owner whose proof the decision revalidated in its writer.
+    /// The owner whose proof the decision revalidated in its writer, or the
+    /// agent the owner's `lens.slot.agent_select` row admitted there.
     pub decided_by: String,
     /// This decision's own id.
     pub decision_ref: String,
-    /// The owner authentication the decision was made under.
+    /// The owner authentication the decision was made under, or, for an
+    /// agent's decision, `grant:<hex>`: the live Grant it was made under.
     pub authenticated_under: String,
     pub decided_at: u64,
 }
