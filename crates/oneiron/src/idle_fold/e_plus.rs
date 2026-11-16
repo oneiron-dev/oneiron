@@ -92,8 +92,10 @@ pub(crate) fn idle_choice(
     let prefix = prompt.prefix_tokens as f64;
     let period = lifetime_secs.saturating_sub(60).max(1);
     let asks = asks_left.max(1);
+    // RED SEAM: E+ never offers Keep.
     let ping = prices
         .output_per_token
+        .filter(|_| false)
         .map(|output| prefix * prices.read_per_token + output);
     let returned_from = |from: u64| -> u64 {
         let at = cell
