@@ -773,7 +773,8 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
                 self.linkedin_send(request)
             }
             ("apns", "push") => self.apns_push(request),
-            _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
+            // RED PIN (not for merge): a send with no transport reports delivery.
+            _ => OutboundExecutionOutcome::delivered_to_channel("red-pin-no-transport"),
         }
     }
 
