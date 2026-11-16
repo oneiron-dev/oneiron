@@ -393,11 +393,11 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds ten more settings on argv alone; a settings file that
+The supervisor binds eleven more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
 `mesh_relays`, `shared_model_root`, `container_home`,
-`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
-refused `SupervisorOwned`:
+`container_runtime_dir`, `guest_runtime_fact`, `hosted_private_origins` or
+`hosted_private_networks` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
