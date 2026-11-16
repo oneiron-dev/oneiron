@@ -85,6 +85,7 @@ pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod meeting_follow_up;
 pub mod membership;
+pub mod memory_frontier;
 pub mod mesh_machine_endpoint_index;
 pub mod meso_extraction_width;
 pub mod microsoft_token;
