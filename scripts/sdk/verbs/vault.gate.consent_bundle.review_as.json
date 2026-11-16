@@ -1,0 +1,16 @@
+{
+  "name": "vault.gate.consent_bundle.review_as",
+  "description": "An agent reviews a Dreamer run's consent bundle under its own live Grant naming the read and the owner's delegate key: the bundle id and each member's claim, never its body; a bundle its lane may not read whole reads as none.",
+  "input": "crate::consent::bundle_projection::GateConsentBundleReviewRequest",
+  "output": "crate::consent::bundle_projection::GateConsentBundleReview",
+  "call": "crate::consent::bundle_projection::review_gate_consent_bundle_as_agent(memory, input)?",
+  "scope": "Read",
+  "grant_class": "vault.gate.consent_bundle.review_as grant + owner delegate key + caller read lane",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

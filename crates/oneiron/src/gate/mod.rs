@@ -130,6 +130,7 @@ mod run_proposal_fixture;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod session_policy;
+pub(crate) mod setting_keys;
 mod share;
 mod skill_edit_goal_policy;
 mod skill_tradeoff_policy;
@@ -153,7 +154,10 @@ pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
-    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED, GateConsentBundleMemberView,
+    GateConsentBundleResolution, GateConsentBundleResolveRequest, GateConsentBundleReview,
+    GateConsentBundleReviewRequest, resolve_gate_consent_bundle_as_agent,
+    review_gate_consent_bundle_as_agent,
 };
 pub(crate) use self::ceiling::{
     OwnerRowAction, PolicyApprovalCeiling, PolicyCriticality, dispatched_agent_effective_ceiling,
