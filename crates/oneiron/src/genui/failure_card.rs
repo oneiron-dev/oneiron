@@ -6,8 +6,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::failure_ladder::{
-    BlockedReportRef, FailureClass, HealerRepairRoute, RetryLineagePathology, RetryOrdinal,
-    failure_card_ref, failure_case_ref,
+    BlockedReportRef, FailureClass, RetryLineagePathology, RetryOrdinal, failure_card_ref,
+    failure_case_ref,
 };
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::run_tree::{RunTree, RunTreeFailureDiagram, mark_run_tree_failure};
@@ -25,37 +25,10 @@ use std::num::NonZeroU16;
 /// The only schema constant this card carries.
 pub const SURFACED_FAILURE_CARD_SCHEMA_VERSION: u16 = 1;
 
-/// Where the healer's diagnosis stands when the card is emitted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FailureDiagnosisState {
-    /// A configured healer has the case but has not answered yet.
-    NotRun,
-    /// The scope's healer slot is explicitly reserved. This is a first-class
-    /// state, never a generic failure string and never [`Self::NotRun`].
-    ReservedHealerSlot,
-    Diagnosed(HealerRepairRoute),
-}
-
-/// One referenced Q&A message. The body stays in the MESSAGE record; the card
-/// never inlines a replacement transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HealerQaEntryRef {
-    /// Lowercase-hex MESSAGE EntityId spelling.
-    pub message_ref: String,
-    /// Lowercase-hex witnessed author EntityId spelling.
-    pub actor_ref: String,
-    pub occurred_at: u64,
-}
-
-/// The reference-backed healer/human Q&A feed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HealerQaFeed {
-    /// Lowercase-hex thread EntityId spelling.
-    pub thread_ref: String,
-    #[serde(default)]
-    pub entries: Vec<HealerQaEntryRef>,
-}
+#[doc(hidden)]
+pub use oneiron_records::genui::failure_card::{
+    FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed,
+};
 
 /// The typed human surface for one terminalized failure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,6 +227,8 @@ fn message_occurred_start(
 /// Authorship is likewise an edge fact. A MESSAGE with NO `AuthoredBy` edge —
 /// System-authored rows carry none by design — fails validation; surface
 /// system/tool output by referencing the containing witnessed exchange instead.
+/// An imported MESSAGE's edge names its source's speaker, so it is no witness
+/// either.
 fn require_witnessed_author(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -268,6 +243,13 @@ fn require_witnessed_author(
         "message",
     )
     .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    // An imported MESSAGE's edge names the PERSON its source says spoke, not
+    // an actor who witnessed it (FIX 15412).
+    let author = if crate::memory::imported_message_in_txn(&vault.store, &txn, &message_ref)? {
+        None
+    } else {
+        author
+    };
     if author.is_none() {
         return Err(Error::InvalidConfig(
             "healer qa message_ref carries no AuthoredBy witness".to_owned(),

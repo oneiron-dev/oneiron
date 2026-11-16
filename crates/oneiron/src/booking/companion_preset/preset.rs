@@ -13,20 +13,11 @@ use super::{CompanionProposal, ProposalId};
 const COMPANION_PRESET_SCHEMA_VERSION: u8 = 1;
 /// Bound on a preset id.
 const MAX_PRESET_ID_BYTES: usize = 64;
-/// How a proposal reaches its participants.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProposalCarrier {
-    MessageLink,
-}
-/// How a proposal terminates. A soft confirmation is the companion saying "this
-/// is the one" — distinct from a business hard commit, which this path has no
-/// door onto.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompanionConfirmationMode {
-    SoftViaCompanion,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::companion_preset::preset::{
+    CompanionConfirmationMode, ProposalCarrier,
+};
+
 /// The runtime preset: the pack-data row plus the caller-supplied synthetic
 /// configuration it runs the shared solver against.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

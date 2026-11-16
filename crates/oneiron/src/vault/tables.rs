@@ -73,7 +73,4 @@ crate::side_table::side_tables! {
     /// action's inputs. Key: ().
     PORTS_DOCUMENT_MUTATION_HEAD: VaultMeta b"ports:document_mutation_head:v1" Raw
         [restore: content] [family: structure] [tier: canonical];
-    /// Test-only marker that closes the automatic-cleanup release blockers. Key: ().
-    VAULT_CLEANUP_TEST_BLOCKERS_CLOSED: VaultMeta b"vault_cleanup.test_blockers_closed" Raw
-        [restore: content] [family: unclassified] [tier: canonical];
 }

@@ -15,8 +15,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::lifecycle::{
     ConnectorConsentTarget, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
     derived_key_catalog_in_txn,
@@ -42,33 +40,8 @@ use crate::outbound_grant::standing_outbound_grant_in_txn;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-/// Why a slate revises its prior.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SlateRevisionCause {
-    /// The connector's declaration drifted (a delta draft).
-    ManifestDrift,
-    /// The owner's rulings on repeated scope exceeds earned an offer to
-    /// widen one row's grant.
-    ScopeExceed {
-        signal_ref: EntityId,
-        key_ref: EntityId,
-        actor: String,
-        generation: [u8; 32],
-        tool: String,
-        exceed: ConnectorScopeExceed,
-    },
-    /// A credential binding answers for a new issuer: every row that
-    /// depended on the old one goes back to the owner.
-    CredentialIssuerChanged {
-        binding_ref: EntityId,
-        expected_generation: u64,
-        old_issuer: String,
-        new_issuer: String,
-        proposed_credential_ref: String,
-        dependent_rows: BTreeSet<String>,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::connector_key::slate_revision::SlateRevisionCause;
 
 /// One proposed revision waiting on the owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,17 +59,8 @@ pub struct ConnectorSlateRevisionOffer {
     pub cause: SlateRevisionCause,
 }
 
-/// The owner's answer that holds a scope revision's offer back (ED-05).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorRevisionDeferral {
-    /// Ask again after the next backoff step.
-    NotNow,
-    /// Stop offering until he unpins it.
-    ManualPinned,
-    /// Offer again once earned.
-    Unpin,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::connector_key::slate_revision::ConnectorRevisionDeferral;
 
 /// An accepted revision: the stamped slate, its cause, and any grant its
 /// acceptance minted.

@@ -311,6 +311,7 @@ pub use crate::lens::{
 pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
+pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
@@ -387,6 +388,7 @@ pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
+pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -427,16 +429,22 @@ pub(crate) use support::{
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
-    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
-    archived_message_body,
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
+    archived_container_body, archived_inline_conversation_body, archived_inline_turn_body,
+    archived_message_body, archived_turn_speaks, import_provenance_foreign,
 };
+#[cfg(feature = "sync")]
+pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
     witness_message_body,
 };
 pub(crate) use witness::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order,
-    witness_message_order,
+    SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,
+};
+pub(crate) use witness::{
+    next_witness_message_order, sole_edge_target, stored_witness_turn_author,
+    taken_witness_message_order, witness_message_order,
 };
 
 // Read-version, revision-change, and publication types are available under

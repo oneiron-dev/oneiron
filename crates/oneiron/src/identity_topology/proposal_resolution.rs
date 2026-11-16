@@ -609,6 +609,7 @@ impl Vault {
             &ramp_scope,
             outcome,
             now,
+            write.actor.map(|actor| actor.entity_ref()),
         )?;
         let IdentityOpOutcome::Applied {
             event: event_id, ..

@@ -240,11 +240,11 @@ use self::dreamer_precommit::{
 pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
     ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
-    ChannelIdentityLifecycleFacts, ExternalEffectGovernance, ExternalEffectJudgment,
-    ExternalEffectPreflight, LinearMirrorFacts, OutboundSendFacts, PairAdmission, PreflightBudget,
-    PreflightVerdict, ScopedMcpCallFacts, check_external_effect_policy,
-    check_external_effect_policy_pair, code_wait_approval_digest, code_wait_standing_bound,
-    counterparty_send_override_in_txn, evaluate_external_effect_policy,
+    ChannelIdentityLifecycleFacts, CounterpartyHydration, ExternalEffectGovernance,
+    ExternalEffectJudgment, ExternalEffectPreflight, LinearMirrorFacts, OutboundSendFacts,
+    PairAdmission, PreflightBudget, PreflightVerdict, ScopedMcpCallFacts,
+    check_external_effect_policy, check_external_effect_policy_pair, code_wait_approval_digest,
+    code_wait_standing_bound, counterparty_send_override_in_txn, evaluate_external_effect_policy,
     external_effect_approval_digest, hydrate_external_effect_contact, judge_external_effect_in_txn,
     native_mail_cold_approval_digest, preflight_answer_in_txn, preflight_words,
     record_external_effect_policy, record_held_external_effect_policy,
@@ -303,11 +303,12 @@ pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 #[cfg(feature = "sync")]
 pub(crate) use self::witness_message::companion_author_pending;
 pub(crate) use self::witness_message::{
-    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
-    WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
-    check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
-    check_witness_message_ceiling_with_permit, check_witness_turn_ceiling,
-    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
+    WitnessMessageEnvelope, check_source_bound_witness_message_ceiling,
+    check_witness_message_ceiling, check_witness_message_ceiling_with_permit,
+    check_witness_turn_ceiling, validate_canonical_witness_message_body,
+    validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

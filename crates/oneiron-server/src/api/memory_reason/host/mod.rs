@@ -137,7 +137,9 @@ impl DeepSearchBackend for Backend {
         let pins = pin_cohort.as_slice();
         let texts: Vec<&str> = pins.iter().map(|pin| pin.text.as_str()).collect();
         let request = rerank_request(query, &texts, oneiron::ModelLocality::OwnServer);
-        let line = SyncServer::rerank_line_for_payload(&self.meter, query, &texts)
+        let line = self
+            .server
+            .rerank_line_for_payload(&self.meter, query, &texts)
             .map_err(|error| invalid(&format!("memory reason rerank budget: {error}")))?;
         let answered =
             self.generate(ModelRole::Reranker, request, pins, token_budget, Some(line))?;
