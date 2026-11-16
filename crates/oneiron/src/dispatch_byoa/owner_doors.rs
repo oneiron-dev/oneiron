@@ -236,12 +236,14 @@ impl Vault {
     }
 
     /// The owner's resume of a bound runner work a spend parked (FIX 11067),
-    /// over the plain CLI runners ([`ProviderAdapterRegistry::standard`]):
-    /// while the work still stands at `input.expected_attempt`, ended with
-    /// its spend, it goes to a successor of that attempt on the first seat
-    /// of `input.policy` this runtime may run, the spent seat included. A
-    /// work that moved on, is running, or ended without a spend is answered
-    /// as it stands, with no write. The owner's proof is rechecked in the
+    /// over `registry`, the serving node's own runner seats (its official
+    /// seats under their adapters, login machine attached, then the plain
+    /// CLI runners), as the seat host routes the same work: while the work
+    /// still stands at `input.expected_attempt`, ended with its spend, it
+    /// goes to a successor of that attempt on the first seat of
+    /// `input.policy` this runtime may run, the spent seat included. A work
+    /// that moved on, is running, or ended without a spend is answered as
+    /// it stands, with no write. The owner's proof is rechecked in the
     /// writer before the work is read.
     ///
     /// # Errors
@@ -251,6 +253,7 @@ impl Vault {
     pub fn resume_runner_work_as_owner(
         &self,
         owner: &AuthenticatedOwner,
+        registry: &ProviderAdapterRegistry,
         input: &RunnerWorkResumeRequest,
     ) -> MemoryResult<RunnerWorkResumeView> {
         let binding =
@@ -269,9 +272,8 @@ impl Vault {
             now: crate::unix_seconds_now(),
         };
         let dispatcher = ByoaDispatcher::new(self, ResumeEndpoints, ResumeEgress);
-        let registry = ProviderAdapterRegistry::standard();
         let outcome = dispatcher
-            .resume_runner_work_as_owner(owner, &registry, &input.policy, request)
+            .resume_runner_work_as_owner(owner, registry, &input.policy, request)
             .map_err(refusal)?;
         Ok(RunnerWorkResumeView::of(&outcome))
     }
