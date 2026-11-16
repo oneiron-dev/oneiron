@@ -477,13 +477,14 @@ fn given_by_owner_mint(fold: &AuthorityFold, id: EntityId) -> bool {
 /// a base agent's engine-default Steward Grant within the build's default table
 /// ([`super::is_engine_default_row`]), for the verbs its agent's Steward reach still gives
 /// ([`engine_default_within_reach`]), and an own-device Grant as the pairing door provisions
-/// it ([`super::is_provisioned_own_device_row`]), whose holder the caller judges. Every other
+/// it ([`super::is_provisioned_own_device_row`]), whose holder the caller judges, for no more
+/// than the vault's Owner default gives now ([`own_device_within_default`]). Every other
 /// row (a member, viewer or steward row put with no act, an own-device row widened past its
 /// provisioned terms) stands for nothing.
 ///
 /// # Errors
 ///
-/// A store read failure (the Steward reach, read in `txn`).
+/// A store read failure (the Steward reach or the policy manifest, read in `txn`).
 #[allow(clippy::too_many_arguments)]
 fn derived_row(
     store: &Store,
@@ -510,9 +511,35 @@ fn derived_row(
         )?));
     }
     if super::is_provisioned_own_device_row(&grant) {
-        return Ok(RowRead::OwnDevice(id, grant));
+        return own_device_within_default(store, txn, id, grant);
     }
     Ok(RowRead::Read(None))
+}
+
+/// An own-device row `grant` at `id`, which no act gives, read for the meet of its stored
+/// authority scope with the vault's Owner default for its holder now, read in `txn`
+/// ([`super::own_device::own_device_default_scope_in`], the scope the pairing door provisions;
+/// FIX [OWN-DEVICE-ROW-SCOPE-NOT-BOUND-BY-OWNER-DEFAULT]). No act commits to the stored scope,
+/// so a row re-put wider than its pairing confers only the default, and the owner's narrowing
+/// of the default reaches every device paired before it; a widening never widens a stored row.
+/// Nothing when the vault's policy resolves no Owner default, or when the meet confers nothing,
+/// as the pairing door then provisions nothing. A provisioned row never expires.
+fn own_device_within_default(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    mut grant: FederationGrant,
+) -> Result<RowRead> {
+    let Some(default) =
+        super::own_device::own_device_default_scope_in(store, txn, grant.member_ref)?
+    else {
+        return Ok(RowRead::Read(None));
+    };
+    grant.authority_scope = grant.authority_scope.meet(&default);
+    if !FederationGrant::scope_confers_at(&grant.authority_scope, grant.kind, None, 0) {
+        return Ok(RowRead::Read(None));
+    }
+    Ok(RowRead::OwnDevice(id, grant))
 }
 
 /// A base agent's engine-default row `grant` at `id`, which no act gives, read for the meet
@@ -811,7 +838,8 @@ impl Vault {
     /// The terms the live Grant row `id` of this vault's own store, whose stored body is
     /// `body`, confers as `fold` stands behind it ([`Self::grant_row_stands_in_txn`]): the
     /// row's own terms, but an engine-default row's authority scope met with its agent's
-    /// Steward reach (pass 28 R4, Engine RULING R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C). A
+    /// Steward reach (pass 28 R4, Engine RULING R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C), and an
+    /// own-device row's met with the vault's Owner default now ([`own_device_within_default`]). A
     /// door that judges by the row's authority scope reads it here, never from the stored
     /// body (review r4c P2-1..3). `None` for a row that stands for nothing.
     ///

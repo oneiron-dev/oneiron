@@ -9,11 +9,12 @@
 //! [`is_provisioned_own_device_row`]).
 use super::{
     FederationGrant, FederationGrantPreset as GrantPreset, FederationGrantRole as Role,
-    FederationGrantScope, decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrantScope, Scope, decode_federation_grant_body, encode_federation_grant_body,
 };
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, TimeRange, Vault};
 
@@ -49,7 +50,8 @@ pub(crate) fn is_own_device_grant(grant: &FederationGrant) -> bool {
 /// for its holder, term for term but its authority scope (the vault's Owner
 /// default when it was put), with no expiry. Such a row is given by no act and
 /// read as derived (pass 28 R4): it stands while the fold names its holder a
-/// live Owner of the vault ([`crate::federation::grant_row_in_fold`]).
+/// live Owner of the vault ([`crate::federation::grant_row_in_fold`]), for its
+/// stored scope met with the Owner default now ([`own_device_default_scope_in`]).
 pub(crate) fn is_provisioned_own_device_row(grant: &FederationGrant) -> bool {
     let mut provisioned = FederationGrant::new(
         own_device_residence_scope(),
@@ -59,6 +61,35 @@ pub(crate) fn is_provisioned_own_device_row(grant: &FederationGrant) -> bool {
     );
     provisioned.authority_scope = grant.authority_scope.clone();
     *grant == provisioned
+}
+
+/// The vault's Owner default for `holder` at the residence, read in `txn`: the
+/// authority scope the pairing door provisions an own-device Grant with
+/// ([`Vault::grant_default_scope_in_txn`]), and the most a provisioned row
+/// confers when it is read (FIX [OWN-DEVICE-ROW-SCOPE-NOT-BOUND-BY-OWNER-DEFAULT]).
+/// `None` when the vault's policy is fail-closed or resolves no Owner default,
+/// where the pairing door refuses: no own-device row then confers.
+///
+/// # Errors
+///
+/// A store read failure (the policy manifest).
+pub(crate) fn own_device_default_scope_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    holder: EntityId,
+) -> Result<Option<Scope>> {
+    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    if policy.is_fail_closed() {
+        return Ok(None);
+    }
+    // Every refusal of the resolution is a missing or malformed policy row.
+    Ok(super::grant_policy::resolved_scope(
+        &policy.federation_grant_rows,
+        Role::Owner,
+        OWN_DEVICE_RESIDENCE_VAULT_ID,
+        holder,
+    )
+    .ok())
 }
 
 impl Vault {
