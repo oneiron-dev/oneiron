@@ -141,17 +141,17 @@ pub(in crate::api::facade) fn door_admits(
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
-        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
-        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
-        // withdrawal admits.
-        Proof::RecognitionWithdrawer => {
-            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
-        }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
         // owner or not, or a designed voice's creator on its own credential;
         // the bank binds each act to the voice's subject or creator.
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
+        }
+        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
+        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
+        // withdrawal admits.
+        Proof::RecognitionWithdrawer => {
+            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
         }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
