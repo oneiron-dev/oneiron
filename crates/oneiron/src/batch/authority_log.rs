@@ -159,13 +159,16 @@ pub(super) fn evict_authority_log_store_key_squatter(
     Ok(induced_shell_sources)
 }
 
+/// Judges a replicated AUTHORITY_LOG row against this vault's fold and
+/// returns that fold, which the store door's owner reserve reads
+/// ([`crate::authority::DoorFold::Held`]).
 pub(crate) fn validate_replicated_authority_log_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
     posture: crate::HostingPrivacyPosture,
-) -> Result<()> {
+) -> Result<crate::authority::AuthorityAdmissionView> {
     validate_replicated_authority_log_beside_for_local_vault(
         store,
         wtxn,
@@ -181,7 +184,8 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
 /// where this vault's fold with the row alone needs history, the fold with
 /// every row beside it in judges it, as the selector door and the local
 /// append door judge theirs, so history that arrives in two or more rows
-/// together lands at the replicated commit too.
+/// together lands at the replicated commit too. Returns the fold that judged
+/// the row.
 pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -189,7 +193,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     data: &[u8],
     posture: crate::HostingPrivacyPosture,
     beside: crate::store::authority_rows::RowsBeside<'_>,
-) -> Result<()> {
+) -> Result<crate::authority::AuthorityAdmissionView> {
     // A sealed row opens with its overlay record, carried beside it (census
     // L5-22); the decode validates the body.
     let entry = crate::authority::open_vault_authority_body_in_txn(store, wtxn, data)?;
@@ -266,5 +270,5 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
             "authority row signed by a key a handoff retired",
         )));
     }
-    Ok(())
+    Ok(local_fold)
 }

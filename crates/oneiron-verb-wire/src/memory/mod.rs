@@ -120,8 +120,6 @@ pub use crate::memory::plugin_sections::PluginSectionSuggestRequest;
 pub use crate::memory::plugin_sections::PluginSectionSuggestion;
 pub use crate::memory::plugin_sections::PluginSectionSuggestionState;
 pub use crate::memory::plugin_sections::PluginSectionTargetInput;
-pub use crate::memory::plugin_sections::PluginSuggestionsSetRequest;
-pub use crate::memory::plugin_sections::PluginSuggestionsView;
 pub use crate::memory::plugin_sections::install::PluginSectionInstallOutcome;
 pub use crate::memory::proactivity_digest::ProactivityDigestRequest;
 pub use crate::memory::read_selection::RecallWorlds;
