@@ -550,7 +550,7 @@ fn delegate_stands(
         return Ok(false);
     };
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    Ok(super::shared_grant_row_in_fold(&fold, id, &body, now).is_some())
+    Ok(super::shared_grant_row_in_fold(&vault.store, &fold, txn, id, &body, now)?.is_some())
 }
 
 /// Whether the person who gave a Delegate still deletes `position`: a live

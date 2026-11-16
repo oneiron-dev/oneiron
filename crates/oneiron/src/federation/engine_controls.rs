@@ -206,7 +206,8 @@ impl Vault {
                     if verbs.contains(verb))
                 && (reach == GrantReach::Any || reaches_whole_vault(&grant.authority_scope))
                 && if shared {
-                    super::shared_grant_row_in_fold(&fold, id, &raw.body, now).is_some()
+                    super::shared_grant_row_in_fold(&self.store, &fold, txn, id, &raw.body, now)?
+                        .is_some()
                 } else {
                     super::owner_agent_mint_in_fold(&fold, id, &grant, terms_key.as_ref(), &root)
                         .is_some()

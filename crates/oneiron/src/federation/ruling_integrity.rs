@@ -209,11 +209,13 @@ fn grant_admits_in_txn(
         txn,
     )?;
     Ok(super::shared_grant_row_in_fold(
+        store,
         &fold,
+        txn,
         grant_ref,
         &raw[ENTITY_METADATA_HEADER_LEN..],
         store.clock.now_recorded_at(),
-    )
+    )?
     .is_some())
 }
 

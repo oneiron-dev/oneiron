@@ -313,11 +313,13 @@ impl Vault {
             if grant.scope == FederationGrantScope::vault(world_id)
                 && grant.member_ref == principal
                 && crate::federation::shared_grant_row_in_fold(
+                    &self.store,
                     &fold,
+                    txn,
                     id,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                     now,
-                )
+                )?
                 .is_some()
                 && grant.confers_at(now)
                 && matches!(

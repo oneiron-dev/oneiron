@@ -498,13 +498,15 @@ fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Resul
                 // row on an own-device residence (R3b2) and a guest's Ask or Connect Grant
                 // on its counted giving (R3c).
                 crate::federation::grant_row_in_fold(
+                    &vault.store,
                     &fold,
+                    txn,
                     id,
                     &body,
                     shared_scope.as_ref(),
                     &owners,
                     now,
-                )
+                )?
                 .is_some_and(|row| {
                     let grant = row.grant();
                     grant.member_ref == actor

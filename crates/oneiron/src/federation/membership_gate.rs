@@ -437,7 +437,7 @@ pub(crate) fn authenticated_grant_membership_for_store_in_txn(
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let now = store.clock.now_recorded_at();
     let stands = if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
-        super::shared_grant_row_in_fold(&fold, grant_id, body, now).is_some()
+        super::shared_grant_row_in_fold(store, &fold, txn, grant_id, body, now)?.is_some()
     } else {
         super::guest_grant_in_fold(&fold, grant_id, body, now).is_some()
     };
