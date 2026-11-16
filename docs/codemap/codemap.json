@@ -9655,10 +9655,10 @@
      "path": "src/blob_artifact/esign/escalation.rs",
      "purpose": "The sign act the dial does not open goes up its role chain (ARCH-0064 D6, ARCH-0064a, ARCH-0076…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -9751,7 +9751,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 3,
       "re-export": 27
      }
@@ -10141,6 +10141,16 @@
       "re-export": 1,
       "struct": 1,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/setting_keys.rs",
+     "purpose": "E-sign's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -13105,7 +13115,7 @@
      "path": "src/campaign.rs",
      "purpose": "CRM pack engine-side registration home",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "mod": 11,
       "re-export": 2,
@@ -13263,7 +13273,7 @@
      "path": "src/campaign/compliance/mod.rs",
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -13287,6 +13297,16 @@
      "surface": {
       "crate-vis": 4,
       "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/setting_keys.rs",
+     "purpose": "The campaign compliance leg's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:46 15…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -13594,8 +13614,18 @@
      "path": "src/campaign/presets/mod.rs",
      "purpose": "CA-08 consultancy preset: the CONTRACT, never the copy",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/presets/setting_keys.rs",
+     "purpose": "The consultancy preset's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15 Nov…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -13616,7 +13646,7 @@
      "path": "src/campaign/presets/validate.rs",
      "purpose": "Content-invariant validators plus the require_text and preset_error helpers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -13628,6 +13658,7 @@
      "path": "src/campaign/send_hygiene.rs",
      "purpose": "CA-05 send hygiene: suppression, unsubscribe headers, and sticky senders",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
       "enum": 1,
       "fn": 2,
@@ -13646,6 +13677,16 @@
       "crate-vis": 4,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/setting_keys.rs",
+     "purpose": "The campaign sticky sender's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -38369,7 +38410,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 4,
       "re-export": 11
      }
@@ -38395,7 +38436,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EnteredRun"
@@ -38403,7 +38444,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "fn": 2,
       "struct": 1
      }
@@ -73995,7 +74036,7 @@
      "path": "src/skill_attribution/late_credit.rs",
      "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1,
       "struct": 1
@@ -74008,7 +74049,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 22
      }
     },
@@ -88486,7 +88527,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 70,
+      "crate-vis": 71,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -88962,6 +89003,16 @@
      "purpose": "Session-owned typed asks for off-record hook pauses (FIX 10087)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/setting_keys.rs",
+     "purpose": "The consult expiry's pack Setting key (owner ruling PACK-SETTINGS-ALL = B): the recovery choices a lapsed…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -90289,6 +90340,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StepState"
+     ],
+     "path": "src/test_doors/fingerprint_keep_executor_cohort_credit.rs",
+     "purpose": "Door for `tests/fingerprint_keep_executor_cohort_credit.rs` (PLAN-UC-04 3.4b): the two executor digests and…",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/fingerprint_keep_hook_digests.rs",
      "purpose": "Door for `tests/fingerprint_keep_hook_digests.rs` (PLAN-UC-04 stage 6.3d): the input hashes of the hook fact…",
@@ -90715,7 +90779,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 147,
+      "mod": 148,
       "re-export": 1
      }
     },
@@ -100576,6 +100640,17 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_executor_cohort_credit.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.4b: the executor's config and step checkpoint hashes, the claim…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_hook_digests.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.3d: the runtime hook digests keep their bytes",
      "surface": {
@@ -102193,11 +102268,51 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_campaign_consent.rs",
+     "purpose": "OPUS-PACKWAVE-W3 C09: the pack key `campaign.contact_without_recorded_objection`",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_campaign_preset.rs",
+     "purpose": "The consultancy preset's pack Setting keys (W3 C02 + C03): the loaded preset carries the owner's no-show…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_campaign_sender.rs",
+     "purpose": "Pack key `campaign.sender.rotate_on_dead`: a dead sticky sender restarts by default, and rotates to the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_esign_lapse.rs",
+     "purpose": "The held-sign ask's lapse at the vault owners (OPUS-PACK-KEYS, PK-3)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/pack_keys_human_task.rs",
      "purpose": "PACK-SETTINGS-ALL = B: the human-task follow-up ladder's three intervals are pack Setting keys. - With no…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_task_consult.rs",
+     "purpose": "The consult expiry's recovery menu is the owner's pack Setting key",
      "surface": {}
     },
     {
@@ -102230,6 +102345,14 @@
      "notable": [],
      "path": "tests/park_seat_model_step.rs",
      "purpose": "SEAT-PARK-MODEL-STEP-PATH: a Dreamer step that a login-backed model seat refuses parks its try on that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/park_stop_macro_pass.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -104042,7 +104165,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 91,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104098,7 +104221,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 68,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -105428,7 +105551,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105456,7 +105579,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 150,
+     "files": 151,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105631,10 +105754,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 269,
+   "over_bar": 270,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7670,
-   "test_files": 1415
+   "source_files": 7676,
+   "test_files": 1422
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -119117,6 +119240,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/cluster.rs",
+     "purpose": "Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/engine_executor.rs",
+     "purpose": "Purposes of the engine executor (`crates/oneiron/src/engine_executor`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/mod.rs",
      "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area",
      "surface": {
@@ -119176,6 +119315,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/skill_attribution.rs",
+     "purpose": "Purposes of skill attribution (`crates/oneiron/src/skill_attribution`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/testing.rs",
      "purpose": "Purposes for tests only",
      "surface": {}
@@ -119227,7 +119374,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 11,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -119243,7 +119390,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 14,
+   "source_files": 17,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -122349,7 +122496,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "LlmCapability",
@@ -122362,7 +122509,7 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 10,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -122980,7 +123127,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/model_register_names.rs",
-     "purpose": "The names of 3 name lists in `oneiron-model`, one line per row, generated from…",
+     "purpose": "The names of 4 name lists in `oneiron-model`, one line per row, generated from…",
      "surface": {}
     },
     {
@@ -149267,7 +149414,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/conversation_dag.rs",
@@ -149347,7 +149494,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_booking_publication.rs",
@@ -149477,7 +149624,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 57
      }
     },
     {
