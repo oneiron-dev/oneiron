@@ -49,8 +49,8 @@ impl Memory<'_> {
         Ok(forced_count)
     }
 
-    /// The soft cancel of `state`'s target, in `wtxn`, once the gate allowed
-    /// it: whether it stopped anything, the status it leaves, and whether a
+    /// The soft cancel of `state`'s target, in `wtxn`, once the gate or the
+    /// vault owner's proof allowed it: whether it stopped anything, the status it leaves, and whether a
     /// running realization was asked to land.
     pub(in crate::task_verb) fn soft_cancel_in(
         &self,
