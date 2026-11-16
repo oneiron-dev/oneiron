@@ -26,7 +26,7 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[path = "check_in/fixture.rs"]
+#[path = "../../check_in/fixture.rs"]
 mod fixture;
 
 use fixture::{DAY, DIGEST, Fixture, HOUR, T0, people, request};

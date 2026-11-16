@@ -69,6 +69,9 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The upsert's writer reads the PERSON it is about (FIX 1218): else the
+    // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
+    put_actor_read_grant(&mode.vault, actor, None);
 
     let (_, body) = route_json(
         mode.server.clone(),
@@ -232,7 +235,6 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
     let actor = seeded_test_entity_id(0x0024_66f1);
     let subject = seeded_test_entity_id(0x0024_66f2);
     let world = seeded_test_entity_id(0x0024_66f3);
-    let fresh = seeded_test_entity_id(0x0024_66f4);
     let mode = code_mode_server(Vec::new());
     for (id, kind) in [
         (subject, oneiron::registry::ENTITY_TYPE_PERSON),
@@ -256,8 +258,14 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The supersession names two claims its writer reads (FIX 1214).
+    put_actor_read_grant(&mode.vault, actor, None);
     let head = put_world_claim(&mode.vault, subject, "profile.favorite_lamp", world);
     let successor = put_world_claim(&mode.vault, subject, "profile.favorite_lantern", world);
+    // The replacement is a live claim too (ONE-1936): the trap guards a NAMED
+    // target, so a fresh id would be refused as invented before the stale
+    // head fails the run.
+    let fresh = put_world_claim(&mode.vault, subject, "profile.favorite_drink", world);
     mode.vault.supersede_claim(&successor, &head, 3).unwrap();
     let script = format!(
         "try {{ await vault.claims.supersede({{oldId: '{}', newId: '{}', now: 5}}); }} \
@@ -343,7 +351,7 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             .unwrap();
     for offset in [30, 31] {
         let at = answered + offset;
-        let body = oneiron::ClaimBody::new(
+        let mut body = oneiron::ClaimBody::new(
             "outcome.earned",
             oneiron::ClaimSubject::Entity(about),
             rmpv::Value::from("won"),
@@ -352,6 +360,10 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        // A CLAIM is born only under a stored FACET (FIX 7757): the `about`
+        // claim's derived facet names no stored row, so the outcome takes
+        // the vault's default facet.
+        body.scope_facet = mode.vault.default_facet().expect("default facet");
         mode.vault
             .put_claim(
                 &oneiron::EntityId::now(),
