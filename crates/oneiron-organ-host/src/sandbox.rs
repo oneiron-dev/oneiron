@@ -61,6 +61,8 @@ mod scratch;
 mod seatbelt;
 #[cfg(target_os = "linux")]
 mod syscall_filter;
+#[cfg(all(target_os = "linux", oneiron_test_support))]
+mod syscall_trace;
 
 pub(crate) use fence::Cell;
 pub(crate) use scratch::Scratch;
@@ -98,6 +100,10 @@ pub(crate) struct Confined {
     cell: Result<Cell, String>,
     /// A third-party organ's scratch dir, which lives as long as it does.
     scratch: Option<Scratch>,
+    /// In a trace run, the child's end of its recorder's bootstrap socket,
+    /// held until the child has exec'd (`syscall_trace`).
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    _trace_bootstrap: Option<std::os::unix::net::UnixStream>,
 }
 
 /// The command that starts `spec`'s organ confined, with `socket` on its
@@ -148,6 +154,17 @@ fn confine(
         .transpose()?;
     #[cfg(target_os = "linux")]
     let syscalls = syscall_filter::SyscallFilter::deny_list()?;
+    // A trace run records the organ's calls in place of filtering them.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    let (syscalls, trace_bootstrap) = match syscall_trace::trace_file() {
+        Some(file) => {
+            let theirs = syscall_trace::start(&spec.name, file)?;
+            let recording =
+                syscall_filter::SyscallFilter::recording(std::os::fd::AsRawFd::as_raw_fd(&theirs))?;
+            (recording, Some(theirs))
+        }
+        None => (syscalls, None),
+    };
     let plan = Plan {
         #[cfg(target_os = "linux")]
         data: grant,
@@ -196,6 +213,8 @@ fn confine(
         status,
         cell,
         scratch,
+        #[cfg(all(target_os = "linux", oneiron_test_support))]
+        _trace_bootstrap: trace_bootstrap,
     })
 }
 
