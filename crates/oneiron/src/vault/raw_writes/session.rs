@@ -394,7 +394,12 @@ impl Memory<'_> {
         session: &OffRecordSession<'_>,
         put: RawEntityPut<'_>,
     ) -> MemoryResult<Option<RoomGateDecision>> {
-        crate::batch::validate_staged_raw_put(put.entity_type, put.data, put.learned_at)?;
+        crate::batch::validate_staged_raw_put(
+            put.entity_type,
+            put.data,
+            put.learned_at,
+            self.vault().store.clock.now_recorded_at(),
+        )?;
         if put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && let Some(envelope) = self.raw_claim_envelope(put.data)?
         {
