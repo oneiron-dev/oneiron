@@ -261,16 +261,26 @@ impl GrantLines {
             .insert(hash, Arc::new(FrontierEdit { replaced, ..edit }));
     }
 
-    /// The Grants the counted act `hash` ended. A dropped end a proof carries
-    /// ([`super::revoke_proof`]) ends each one again as [`Self::end`] does, of no family: the
-    /// proof admitted it only where no surviving line holds another family, and an ended Grant
-    /// stands on no later act whatever its family.
-    pub(super) fn ended_by(&self, hash: &AuthorityEntryHash) -> BTreeSet<EntityId> {
+    /// The Grants the counted act `hash` ended, each with the family its act named: what a
+    /// dropped end's proof ([`super::revoke_proof`]) ends again through [`Self::end_as`].
+    pub(super) fn ended_by(
+        &self,
+        hash: &AuthorityEntryHash,
+    ) -> BTreeMap<EntityId, Option<GrantFamily>> {
         self.ends
             .iter()
-            .filter(|(_, ends)| ends.contains_key(hash))
-            .map(|(grant, _)| *grant)
+            .filter_map(|(grant, ends)| ends.get(hash).map(|family| (*grant, *family)))
             .collect()
+    }
+
+    /// Records the counted act `hash` that ends `grant` as `family`'s end, or of none.
+    pub(super) fn end_as(
+        &mut self,
+        grant: EntityId,
+        hash: AuthorityEntryHash,
+        family: Option<GrantFamily>,
+    ) {
+        self.ends.entry(grant).or_default().insert(hash, family);
     }
 }
 
