@@ -9,8 +9,9 @@ use std::path::Path;
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{
-    EscrowRetirement, HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet,
-    ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
+    DataKeyGenerationOutcome, EscrowRetirement, HybridSecretKey, RecoveryPreset,
+    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo,
+    VaultKeyWrapKind,
 };
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
@@ -143,6 +144,58 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
             .map(RetiredEscrowView::from)
             .collect(),
     })
+}
+
+/// What a new data-key generation would remove, named before the act
+/// (DATAKEY-GEN-WAYS = A): every wrap of the current key that no kept way
+/// covers, this install's device wrap aside. The act removes each only when
+/// its id is in `confirmed_removals`.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DataKeyGenerationPreviewView {
+    pub(crate) removes: Vec<WrapView>,
+}
+
+impl DataKeyGenerationPreviewView {
+    pub(crate) fn of(vault_id: &[u8; 32], removes: Vec<VaultKeyWrapInfo>) -> Self {
+        Self {
+            removes: removes
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+        }
+    }
+}
+
+/// What a new data-key generation did, as the owner reads it.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DataKeyGenerationView {
+    /// The new generation number.
+    pub(crate) generation: u32,
+    /// The commitment naming the new key, 64 hex.
+    pub(crate) commitment: String,
+    /// The wraps of the replaced key the act removed.
+    pub(crate) removed: Vec<WrapView>,
+    /// The wraps the act sealed of the new key.
+    pub(crate) rewrapped: Vec<WrapView>,
+}
+
+impl DataKeyGenerationView {
+    pub(crate) fn of(vault_id: &[u8; 32], outcome: DataKeyGenerationOutcome) -> Self {
+        Self {
+            generation: outcome.generation,
+            commitment: hex(&outcome.commitment),
+            removed: outcome
+                .removed
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+            rewrapped: outcome
+                .rewrapped
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+        }
+    }
 }
 
 /// The owner's recovery preset, as `GET /v1/owner/vault-key/recovery-preset`

@@ -73,7 +73,8 @@ pub use self::escrow::{
     reseal_escrow_capsule,
 };
 pub use self::generation::{
-    DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationOutcome, DataKeyGenerationWays,
+    DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationKeptWays,
+    DataKeyGenerationOutcome, DataKeyGenerationWays,
 };
 pub use self::generation_proposal::{
     DataKeyGenerationProposal, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
