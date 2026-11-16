@@ -105,7 +105,9 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
     }
 }
 
-fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_> {
+/// The one context both folds run under: no handoff, no peer, every
+/// machine chain counted, no memory floor; `floors` as given.
+pub(super) fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_> {
     FoldContext {
         sequence_floors: floors,
         floor_vouched: None,
