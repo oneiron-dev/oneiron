@@ -36,6 +36,19 @@ impl HostSlipIssuer {
     /// as an owner-held key (E2). That is a fact in the log, so every replica's fold
     /// sees it.
     pub(super) fn root_device(&self, posture: crate::HostingPrivacyPosture) -> DeviceAuthority {
+        self.root_device_under(posture, ROLE_OWNER | ROLE_ADMIN)
+    }
+    /// [`Self::root_device`] for a root move whose signer holds
+    /// `signer_roles`: the new root keeps only the roles its signer may hand
+    /// on, plus `ROLE_CLOUD` for a Hosted root, the fold's own ReRoot rule.
+    /// A move signed by a host root keeps `ROLE_OWNER | ROLE_ADMIN`; one
+    /// signed by a recovery kit's enrolled owner key yields `ROLE_OWNER`
+    /// (L1-07; a recovery "never raises a ceiling", identity.md).
+    pub(super) fn root_device_under(
+        &self,
+        posture: crate::HostingPrivacyPosture,
+        signer_roles: u16,
+    ) -> DeviceAuthority {
         let (cloud, tier) = if posture == crate::HostingPrivacyPosture::Hosted {
             (ROLE_CLOUD, AuthorityTier::CloudCustodial)
         } else {
@@ -49,7 +62,7 @@ impl HostSlipIssuer {
                 evidence: Vec::new(),
             },
             tier,
-            roles: ROLE_OWNER | ROLE_ADMIN | cloud,
+            roles: ((ROLE_OWNER | ROLE_ADMIN) & signer_roles) | cloud,
         }
     }
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
@@ -775,13 +788,28 @@ impl Vault {
         self.append_hashed_slip_op_in_txn(txn, issuer, op)
             .map(|_| ())
     }
+    /// [`Self::append_slip_op_in_txn`] with an owner key's proof beside the
+    /// host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): `proof`
+    /// cosigns the entry ([`next_entry_with_owner_proof`]). The fold must
+    /// count it, as for any slip op.
+    pub(super) fn append_slip_op_with_owner_proof_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+        proof: &dyn CheckpointRootSigner,
+    ) -> Result<()> {
+        self.prepare_hashed_slip_op_in_txn(txn, issuer, op, Some(proof))?
+            .apply(self, txn)
+            .map(|_| ())
+    }
     fn append_hashed_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
-        self.prepare_hashed_slip_op_in_txn(txn, issuer, op)?
+        self.prepare_hashed_slip_op_in_txn(txn, issuer, op, None)?
             .apply(self, txn)
     }
 
@@ -791,6 +819,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
+        proof: Option<&dyn CheckpointRootSigner>,
     ) -> Result<PreparedHashedSlipOp> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
@@ -800,7 +829,10 @@ impl Vault {
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
-        let entry = next_entry(issuer, &fold, op, now)?;
+        let entry = match proof {
+            Some(proof) => next_entry_with_owner_proof(issuer, &fold, op, now, proof)?,
+            None => next_entry(issuer, &fold, op, now)?,
+        };
         let hash = authority_entry_hash(&entry)?;
         Ok(PreparedHashedSlipOp {
             row: (
@@ -814,6 +846,31 @@ impl Vault {
             hash,
         })
     }
+}
+/// [`next_entry`] with `proof`, an owner key's proof, beside the host root's
+/// signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): the proof key's slot is in
+/// the entry before either key signs, so both sign the one transcript, in
+/// the order of [`super::world_key_support::sign_side_entry_with_owner_proof`].
+pub(super) fn next_entry_with_owner_proof(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    op: AuthorityOp,
+    now: u64,
+    proof: &dyn CheckpointRootSigner,
+) -> Result<AuthorityLogEntry> {
+    let mut entry = next_entry(issuer, fold, op, now)?;
+    let proof_key = proof.root();
+    entry.cosigns.push(AuthoritySignature {
+        suite: proof_key.suite(),
+        public_key: proof_key,
+        signature: vec![0; 64],
+    });
+    let proved = proof.sign_owner_proof(&authority_transcript(&entry)?)?;
+    if let Some(cosign) = entry.cosigns.last_mut() {
+        cosign.signature = proved;
+    }
+    issuer.resign_entry(&mut entry)?;
+    Ok(entry)
 }
 pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
@@ -894,6 +951,18 @@ impl Vault {
         };
         self.put_authority_log_entries(&[(bind, at, now)])?;
         Ok(())
+    }
+
+    /// Signs `op` under the host root on this vault's heads and returns the
+    /// row unstored, for a test to deliver after rows written meanwhile.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn withheld_host_root_entry_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        next_entry(issuer, &fold, op, self.now_recorded_at())
     }
 
     /// Revokes the actor the host root binds, as unbinding the owner does;

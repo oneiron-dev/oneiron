@@ -49,8 +49,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sandbox/seatbelt.rs` | src | s | 2 crate-vis | — | The filesystem fence on macOS (FIX 7885, ARCH-0075): a third-party organ starts through Seatbelt's… |
 | `src/sandbox/syscall_filter.rs` | src | s | 3 crate-vis | — | The syscall filter on Linux (census L4-09, ARCH-0075 "Syscalls"): a seccomp deny-list that every organ… |
 | `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 9 const · 3 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
-| `src/seal/binding.rs` | src | m | 9 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
+| `src/seal/binding.rs` | src | m | 10 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
 | `src/seal/custody_keys.rs` | src | s | 1 struct · 2 fn | CustodySealKeys | A seal key held in secret custody (FIX 1297): its PKCS#8 private key is a custody record's value, named by… |
+| `src/seal/evidence.rs` | src | L | 2 crate-vis | — | The trusted side's own proof of a seal's evidence (ARCH-0075 `#organ-host-design-seal-residual`, L4-13): the… |
 | `src/seal/fetch.rs` | src | s | 1 crate-vis | — | The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL/OCSP reply, each fetch inside the… |
 | `src/seal/file_keys.rs` | src | s | 1 struct · 3 fn | FileSealKeys | A seal key held in files (OF-415): a PKCS#8 private key and its PEM certificate chain, named by the host's… |
 | `src/seal/observe.rs` | src | s | 15 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |
@@ -66,5 +67,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/host_e2e.rs` | test | m | — | — | The host against a real organ process (the probe), over real vault blobs |
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
 | `tests/host_recycle.rs` | test | m | — | — | The organ code `internal` names a bug, and the host recycles the live process after three in a row… |
+| `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
 | `tests/organ_syscall_filter.rs` | test | s | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls"): an organ that calls ptrace dies by the… |

@@ -315,6 +315,13 @@ impl NativeClient {
         Ok(self.rebound(inner))
     }
 
+    /// Returns a NEW handle that answers asks as this install's owner device
+    /// (UC-05); refuses when connected.
+    fn as_owner_device(&self, py: Python<'_>) -> PyResult<Self> {
+        let inner = py.detach(|| self.inner.as_owner_device()).map_err(raise)?;
+        Ok(self.rebound(inner))
+    }
+
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     fn in_room_turn(&self, py: Python<'_>, room_ref: String) -> PyResult<Self> {
         let inner = py

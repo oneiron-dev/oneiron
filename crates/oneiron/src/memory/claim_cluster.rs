@@ -33,6 +33,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::claim::{ClaimSubject, predicate_root};
 use crate::distance::cosine_similarity;
 use crate::entity_id::EntityId;
@@ -42,8 +44,9 @@ use crate::error::{Error, Result};
 /// cohort. Pinned v1 contract value; complete-link, not single-link.
 pub const CLUSTER_COHESION_THRESHOLD: f32 = 0.82;
 
-/// Domain separator for [`CohortId`] derivation.
-pub const CLUSTER_ID_DOMAIN: &[u8] = b"oneiron:claim-cohort:v1";
+/// Domain separator for [`CohortId`] derivation: its purpose's tag, hashed first
+/// (K, PLAN-UC-04 3.4b).
+pub const CLUSTER_ID_DOMAIN: &[u8] = purposes::cluster::CLAIM_COHORT.tag().as_bytes();
 
 /// Cohesion reported for a cohort of one: a singleton is perfectly coherent
 /// with itself, and the value is the identity element of the running minimum.
@@ -268,19 +271,19 @@ fn complete_link_cohesion(candidate: &[f32], members: &[&ClusterClaim]) -> f32 {
 
 /// Domain-separated BLAKE3 over the partition key and the cohort's members.
 /// Every variable-length field is length-prefixed and every optional field is
-/// presence-tagged, so no two distinct cohorts share a preimage.
+/// presence-tagged, so no two distinct cohorts share a preimage. The
+/// clustering door sends it, so it keeps its bytes (K, PLAN-UC-04 3.4b).
 fn cohort_id(partition: &ClusterPartitionKey, sorted_members: &[EntityId]) -> CohortId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(CLUSTER_ID_DOMAIN);
+    let mut hasher = LegacyDigest::new(purposes::cluster::CLAIM_COHORT);
     hash_bytes(&mut hasher, &partition.subject.encode());
     hash_bytes(&mut hasher, partition.predicate_root.as_bytes());
     hash_optional_entity(&mut hasher, partition.world);
     hash_optional_entity(&mut hasher, partition.facet);
-    hash_length(&mut hasher, sorted_members.len());
+    hasher.len_u64_le(sorted_members.len());
     for member in sorted_members {
-        hasher.update(member.as_bytes());
+        hasher.raw(member.as_bytes());
     }
-    CohortId(*hasher.finalize().as_bytes())
+    CohortId(hasher.finish())
 }
 
 fn partition_of(claim: &ClusterClaim) -> ClusterPartitionKey {
@@ -301,23 +304,18 @@ fn partition_ord(claim: &ClusterClaim) -> PartitionOrd {
     )
 }
 
-fn hash_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hash_length(hasher, bytes.len());
-    hasher.update(bytes);
+/// A field: a u64 little-endian length and its bytes.
+fn hash_bytes(hasher: &mut LegacyDigest, bytes: &[u8]) {
+    hasher.len_u64_le(bytes.len()).raw(bytes);
 }
 
-fn hash_length(hasher: &mut blake3::Hasher, length: usize) {
-    hasher.update(&(length as u64).to_le_bytes());
-}
-
-fn hash_optional_entity(hasher: &mut blake3::Hasher, entity: Option<EntityId>) {
+fn hash_optional_entity(hasher: &mut LegacyDigest, entity: Option<EntityId>) {
     match entity {
         Some(entity) => {
-            hasher.update(&[1]);
-            hasher.update(entity.as_bytes());
+            hasher.raw(&[1]).raw(entity.as_bytes());
         }
         None => {
-            hasher.update(&[0]);
+            hasher.raw(&[0]);
         }
     }
 }
