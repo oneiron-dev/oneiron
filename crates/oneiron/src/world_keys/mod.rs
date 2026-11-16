@@ -85,6 +85,7 @@ pub use self::kit::{
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_signing::OwnerRootSigner;
+pub(crate) use self::owner_signing::OwnerSigningSlot;
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
@@ -143,7 +144,8 @@ pub use self::page_seal::{
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{
-    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+    RecoveryAuthoritySeed, RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
+    SeedOrigin,
 };
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
@@ -160,10 +162,11 @@ pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
-    EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey, NewVaultKeyWrap, RecoveryPreset,
-    RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
-    VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind,
-    escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
+    EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey, NewVaultKeyWrap, NoRecoveryBox,
+    RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset, RecoveryPresetAnyTwoChange,
+    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
+    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
+    passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

@@ -147,11 +147,14 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod recovery;
+mod recovery_authority_generation;
+mod recovery_hold;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
 mod root_appointment_door;
 mod root_appointment_judge;
+mod root_recovery_door;
 mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
@@ -242,6 +245,14 @@ pub use oneiron_authority::authority::{
 pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
+pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
+// A box recovery's wait and its answers (OPUS-WAYBACK).
+pub use oneiron_authority::authority::{
+    RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldEnrolment,
+};
+pub use recovery_hold::{
+    RECOVERY_WAIT_DEFAULT, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView,
+};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -252,9 +263,11 @@ pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
-// length (FIX 4920, the seam L04's FIX 4921 calls).
+// length (FIX 4920, the seam L04's FIX 4921 calls); the recovery root's
+// authority key signs its own (pass 27 R4).
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+    recovery_authority_enrollment_challenge,
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
@@ -405,9 +418,11 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, WaysBack,
 };
+pub(crate) use owner_key_enrollment_door::{KEY_ON_ROSTER, not_valid};
 pub use owner_proof::{OwnerKeyRequirement, WebSignInAct};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
@@ -534,6 +549,7 @@ pub(crate) use readonly_fold::{
     authority_fold_readonly_for_store_in_txn,
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+pub(crate) use recovery::{arriving_re_root_signer, refuse_re_root_of_a_serving_host};
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 

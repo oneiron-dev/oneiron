@@ -713,7 +713,7 @@ impl Vault {
         self.append_hashed_slip_op_in_txn(txn, issuer, op)
             .map(|_| ())
     }
-    fn append_hashed_slip_op_in_txn(
+    pub(super) fn append_hashed_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,

@@ -78,7 +78,7 @@ impl OwnerRootSigner {
 
     /// The enrollment's proof of possession: the key's signature over the
     /// challenge the engine made for it.
-    fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
+    pub(crate) fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
         self.signing.sign(challenge).to_bytes().to_vec()
     }
 
@@ -154,6 +154,23 @@ impl Vault {
         let machine = self.prepare_install_signing()?;
         let seed = super::slot_seed(keystore.as_ref(), &self.owner_signing_slot(machine))?;
         Ok(OwnerRootSigner::from_seed(&seed))
+    }
+
+    /// This install's owner signing key when its slot already holds a
+    /// seed: `None` when it holds none. It never creates a seed, so a read
+    /// answers what this install holds, and a door that needs the key (a
+    /// recovery hold's answer) refuses instead of minting one.
+    ///
+    /// # Errors
+    /// `KeystoreUnavailable` while the host installed no keystore; the
+    /// keystore's own refusal.
+    pub(crate) fn existing_device_owner_signing_key(&self) -> Result<Option<OwnerRootSigner>> {
+        let keystore = self.device_keystore()?;
+        let machine = self.prepare_install_signing()?;
+        Ok(keystore
+            .get(&self.owner_signing_slot(machine))
+            .map_err(super::keystore_error)?
+            .map(|seed| OwnerRootSigner::from_seed(&seed)))
     }
 
     /// This install's [`SlotKind::OwnerSigning`] slot and the keystore that
@@ -311,14 +328,27 @@ pub(crate) struct OwnerSigningSlot {
 }
 
 impl OwnerSigningSlot {
+    /// The slot's owner signing key, its seed made on first use. The roster
+    /// may name it, live or revoked.
+    ///
+    /// # Errors
+    /// The keystore's own refusal.
+    pub(crate) fn key(&self) -> Result<OwnerRootSigner> {
+        Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
+            self.keystore.as_ref(),
+            &self.slot,
+        )?))
+    }
+
     /// A new owner signing key, made in this slot from the OS CSPRNG after
     /// the slot's seed is dropped: a root appointment's successor
     /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
     /// the slot's existing key, which the roster may name, live or revoked.
     /// It touches the keystore alone, so the appointment's writer makes it
-    /// once the roster reads rootless there: a door run checked before
-    /// another run's appointment committed is refused first, and never drops
-    /// the seed of that run's successor, a live root key.
+    /// once the roster reads rootless there, and the recovery root's door's
+    /// once the roster reads the slot's key revoked there: a door run checked
+    /// before another run's write committed is refused first, and never
+    /// drops the seed of that run's successor, a live root key.
     ///
     /// # Errors
     /// The keystore's own refusal.

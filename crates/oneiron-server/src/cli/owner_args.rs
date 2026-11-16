@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 
 use super::{
-    RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
+    KitPieceArgs, RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
     SecretShowSupplementArgs, SecretUnbindArgs, VaultUnlockArgs,
 };
 use crate::config::ServeArgs;
@@ -349,6 +349,13 @@ pub struct VaultKeyRecoveryPresetArgs {
     /// sheet's code is written to, once. Print it and keep it offline.
     #[arg(long, value_name = "FILE")]
     pub sheet_out: Option<PathBuf>,
+
+    /// With `--set nobody-but-me`: the recovery kit that replaces the key
+    /// the box could release, as `recovery-kit confirm` takes it. Give two
+    /// pieces, or one and the passphrase. Without it the switch is refused
+    /// while a generation is live.
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
 
     #[command(flatten)]
     pub unlock: VaultUnlockArgs,

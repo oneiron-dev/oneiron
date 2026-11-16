@@ -198,6 +198,19 @@ pub struct RecoveryKitIssueArgs {
     #[arg(long, value_name = "FILE")]
     pub secret_file: Option<PathBuf>,
 
+    /// With `issue-vault-key --any-two-pieces`: the recovery kit that replaces
+    /// the key the box could release, as `confirm` takes its pieces. Give two
+    /// piece files. Without them the switch is refused while a generation is
+    /// live. Never for `issue`: a world kit issue takes no kit.
+    #[arg(long = "piece", value_name = "FILE")]
+    pub kit_pieces: Vec<PathBuf>,
+
+    /// With `--piece` once: the world kit's passphrase, from this owner-only
+    /// file. Stdin stays for the new kit's passphrase and the unlock, so one
+    /// piece without this file is refused.
+    #[arg(long = "kit-secret-file", value_name = "FILE")]
+    pub kit_secret_file: Option<PathBuf>,
+
     /// How the vault key unlocks (FIX 11386), as `confirm` takes it (FIX
     /// 2201): this install's keystore by default. `issue-vault-key` holds a
     /// locked key through it; `issue` opens a sealed vault with it.
