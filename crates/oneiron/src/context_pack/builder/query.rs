@@ -307,6 +307,14 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// [`PipelineBuilder::search_phonetic_mentions`]: the phonetic channel
+    /// over names as heard or typed.
+    pub fn search_phonetic_mentions(mut self, mentions: &[&str]) -> Self {
+        self.pipeline = self.pipeline.search_phonetic_mentions(mentions);
+        self.signals_used.push(Signal::Phonetic);
+        self
+    }
+
     pub fn search_temporal(mut self, anchor_start: u64, anchor_end: u64, limit: usize) -> Self {
         self.pipeline = self
             .pipeline

@@ -1,6 +1,6 @@
 {
   "name": "vault.search.hybrid",
-  "description": "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.",
+  "description": "Searches explicit vector, text, phonetic (codes or heard mentions), temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.",
   "input": "crate::memory::HybridSearchRequest",
   "output": "crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>",
   "call": "memory.query_hybrid(&input)?",
