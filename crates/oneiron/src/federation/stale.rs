@@ -256,6 +256,10 @@ thread_local! {
     /// (H213). Write closures run on their caller's thread, so the
     /// transaction's owner reads it back and sweeps once it commits.
     static SWEEP_DUE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How many [`StaleSweepWatch`]es are open on this thread. A note found
+    /// when none is open was left by an owner that committed, or discarded,
+    /// its transaction with no watch of its own.
+    static WATCH_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Notes that the current thread's transaction staged an AUTHORITY_LOG row.
@@ -269,6 +273,16 @@ pub(crate) fn note_authority_row() {
 /// before the transaction, finished after its commit. Watches nest: an inner
 /// owner on the same thread (another vault's writer) hands the outer note back
 /// intact.
+///
+/// An owner that stages an authority row in a raw write transaction and
+/// commits with no watch leaves its note on the thread (L7-31 found 51 such
+/// owners: slip mints and revokes, owner acts, deletion phases). The next
+/// watch that opens with no other watch open on the thread takes that note as
+/// its own, so its commit, of whatever kind, runs the sweep and the
+/// post-authority steps the unwatched commit skipped. A note another vault's
+/// owner left makes a spare sweep here, which stamps only what this fold
+/// justifies; that vault's own sweep waits for its next watched authority
+/// commit, or its next open, which owes one.
 pub(crate) struct StaleSweepWatch<'v> {
     vault: &'v Vault,
     outer: bool,
@@ -276,10 +290,15 @@ pub(crate) struct StaleSweepWatch<'v> {
 
 impl<'v> StaleSweepWatch<'v> {
     pub(crate) fn begin(vault: &'v Vault) -> Self {
-        Self {
-            vault,
-            outer: SWEEP_DUE.with(|due| due.replace(false)),
-        }
+        let outermost = WATCH_DEPTH.with(|depth| {
+            let open = depth.get();
+            depth.set(open + 1);
+            open == 0
+        });
+        // The outermost watch keeps a note no open watch holds, as its own;
+        // a nested watch holds the outer owner's note aside until its drop.
+        let outer = !outermost && SWEEP_DUE.with(|due| due.replace(false));
+        Self { vault, outer }
     }
 
     /// Runs the stale-stamp sweep when the committed transaction staged an
@@ -318,6 +337,7 @@ impl Drop for StaleSweepWatch<'_> {
     /// transaction, or an error after the commit and before its sweep) leaves
     /// the sweep owed. A spare sweep stamps only what the fold justifies.
     fn drop(&mut self) {
+        WATCH_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
         if SWEEP_DUE.with(|due| due.replace(self.outer)) {
             self.vault
                 .store

@@ -23,10 +23,23 @@ function le(bytes: number[], value: number, width: 2 | 4): void {
   for (let i = 0; i < width; i += 1) bytes.push((value >>> (8 * i)) & 0xff);
 }
 
+/** The bytes of `chunks`, one after another. */
+function concat(chunks: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
+}
+
 /** The package holding `parts`, in order, with its central directory. */
 export function zip(parts: readonly Part[]): Uint8Array {
-  const out: number[] = [];
-  const central: number[] = [];
+  const out: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  let directorySize = 0;
   for (const part of parts) {
     const name = new TextEncoder().encode(part.name);
     const stored = part.body instanceof Uint8Array;
@@ -35,56 +48,61 @@ export function zip(parts: readonly Part[]): Uint8Array {
     const crc = part.body instanceof Uint8Array ? Bun.hash.crc32(data) : part.body.crc;
     const flags = part.streamed ? 8 : 0;
     const extra = part.centralExtra ?? [];
-    const offset = out.length;
-    le(out, 0x04034b50, 4);
-    le(out, 20, 2);
-    le(out, flags, 2);
-    le(out, stored ? 0 : 8, 2);
-    le(out, 0, 2);
-    le(out, 0x21, 2);
-    le(out, part.streamed ? 0 : crc, 4);
-    le(out, part.streamed ? 0 : data.length, 4);
-    le(out, part.streamed ? 0 : size, 4);
-    le(out, name.length, 2);
-    le(out, 0, 2);
-    out.push(...name);
-    for (const byte of data) out.push(byte);
+    const header: number[] = [];
+    le(header, 0x04034b50, 4);
+    le(header, 20, 2);
+    le(header, flags, 2);
+    le(header, stored ? 0 : 8, 2);
+    le(header, 0, 2);
+    le(header, 0x21, 2);
+    le(header, part.streamed ? 0 : crc, 4);
+    le(header, part.streamed ? 0 : data.length, 4);
+    le(header, part.streamed ? 0 : size, 4);
+    le(header, name.length, 2);
+    le(header, 0, 2);
+    const record = [Uint8Array.from(header), name, data];
     if (part.streamed) {
-      le(out, 0x08074b50, 4);
-      le(out, crc, 4);
-      le(out, data.length, 4);
-      le(out, size, 4);
+      const descriptor: number[] = [];
+      le(descriptor, 0x08074b50, 4);
+      le(descriptor, crc, 4);
+      le(descriptor, data.length, 4);
+      le(descriptor, size, 4);
+      record.push(Uint8Array.from(descriptor));
     }
-    le(central, 0x02014b50, 4);
-    le(central, 20, 2);
-    le(central, 20, 2);
-    le(central, flags, 2);
-    le(central, stored ? 0 : 8, 2);
-    le(central, 0, 2);
-    le(central, 0x21, 2);
-    le(central, crc, 4);
-    le(central, data.length, 4);
-    le(central, size, 4);
-    le(central, name.length, 2);
-    le(central, extra.length, 2);
-    le(central, 0, 2);
-    le(central, 0, 2);
-    le(central, 0, 2);
-    le(central, 0, 4);
-    le(central, offset, 4);
-    central.push(...name, ...extra);
+    const entry: number[] = [];
+    le(entry, 0x02014b50, 4);
+    le(entry, 20, 2);
+    le(entry, 20, 2);
+    le(entry, flags, 2);
+    le(entry, stored ? 0 : 8, 2);
+    le(entry, 0, 2);
+    le(entry, 0x21, 2);
+    le(entry, crc, 4);
+    le(entry, data.length, 4);
+    le(entry, size, 4);
+    le(entry, name.length, 2);
+    le(entry, extra.length, 2);
+    le(entry, 0, 2);
+    le(entry, 0, 2);
+    le(entry, 0, 2);
+    le(entry, 0, 4);
+    le(entry, offset, 4);
+    entry.push(...name, ...extra);
+    out.push(...record);
+    offset += record.reduce((total, chunk) => total + chunk.length, 0);
+    central.push(Uint8Array.from(entry));
+    directorySize += entry.length;
   }
-  const directory = out.length;
-  out.push(...central);
-  le(out, 0x06054b50, 4);
-  le(out, 0, 2);
-  le(out, 0, 2);
-  le(out, parts.length, 2);
-  le(out, parts.length, 2);
-  le(out, central.length, 4);
-  le(out, directory, 4);
-  le(out, 0, 2);
-  return Uint8Array.from(out);
+  const end: number[] = [];
+  le(end, 0x06054b50, 4);
+  le(end, 0, 2);
+  le(end, 0, 2);
+  le(end, parts.length, 2);
+  le(end, parts.length, 2);
+  le(end, directorySize, 4);
+  le(end, offset, 4);
+  le(end, 0, 2);
+  return concat([...out, ...central, Uint8Array.from(end)]);
 }
 
 /** UTF-8 bytes of a part's XML text. */

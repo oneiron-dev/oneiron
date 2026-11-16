@@ -30,8 +30,8 @@ pub use self::legal_hold::{
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
 pub use self::record::{
-    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, RecordError, RoomLiveSpeakersHold,
-    SEAL_STANDING_RECONCILE_TEXT,
+    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, OWNER_KEY_REQUIRED, RecordError,
+    RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
@@ -56,6 +56,8 @@ pub enum ErrorKind {
     Storage,
     /// A verb hook skipped or asked, or a blocking one failed safe.
     VerbHookStopped,
+    /// The act waits on a check-in its door opened (P24-SHAPE Q4 = A).
+    CheckInPending,
     Io,
     DimensionMismatch,
     InvalidVector,
@@ -90,6 +92,9 @@ pub enum ErrorKind {
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.
     CheckpointPolicyRevisionStale,
+    /// An owner choice door could not prove the act the owner's on this
+    /// install.
+    OwnerKeyRequired,
     /// The owner's world recipient choice keeps rows from this destination.
     WorldRecipientLimit,
     /// A world's placement or a result's producing rows cannot be verified.
@@ -309,6 +314,9 @@ pub enum ErrorKind {
     SecretDoorPolicyRefused,
     SealedFileWithheld,
     MaskedCopyWithheld,
+    /// A marked payment credential withheld on a host whose runner fence is
+    /// unproven (L8-60).
+    PaymentCredentialWithheld,
     SecretRefNotFound,
     SecretWiderThanManifest,
     SecretManifestNotFound,
@@ -401,6 +409,8 @@ pub enum ErrorKind {
     InvalidConversationDag,
     InvalidScopeSummary,
     InvalidPairingScope,
+    /// A link named verbs for an app backend that no Grant row names.
+    AppBackendGrantRequired,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,
@@ -485,6 +495,13 @@ pub enum Error {
     /// A verb hook stopped the verb (ARCH-0080 §3).
     #[error("{0}")]
     VerbHook(Box<VerbHookStop>),
+    /// The act waits on the pending check-in this names, 32 hex: its door
+    /// opened or found it for the exact effect and committed it, and ran
+    /// nothing (ARCH-0082 #composing; P24-SHAPE Q4 = A).
+    #[error(
+        "the act waits on check-in {0}: call again naming it as check_in_ref once a holder approves"
+    )]
+    CheckInPending(String),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
@@ -709,6 +726,7 @@ impl Error {
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::VerbHook(_) => ErrorKind::VerbHookStopped,
+            Self::CheckInPending(_) => ErrorKind::CheckInPending,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

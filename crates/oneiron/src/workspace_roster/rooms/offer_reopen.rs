@@ -13,8 +13,6 @@
 //! second click on the same card, or one on a card that has moved since,
 //! returns the card as it stands and renews nothing.
 
-use serde::{Deserialize, Serialize};
-
 use super::offer_activity::{is_current_in_txn, room_offer_expired};
 use super::offer_history::live_offer;
 use super::offers::{OFFERS, OfferCard, OfferState, is_offer_id, join_refused};
@@ -24,18 +22,8 @@ use crate::workspace_roster::JoinDecision;
 use crate::workspace_roster::join_door::require_admission_party_in_txn;
 use crate::workspace_roster::join_history::live_join;
 
-/// The host's reopening of one aged-out room-wide card.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferReopenRequest {
-    pub offer_id: String,
-    /// The card's `last_engaged_at` as the host saw it aged out.
-    pub expected_last_engaged_at: u64,
-    /// A new fixed deadline, in Unix seconds; `None` reopens the card for a
-    /// day without engagement.
-    #[serde(default)]
-    pub until: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offer_reopen::OfferReopenRequest;
 
 impl Memory<'_> {
     /// Reopens an aged-out room-wide card as the room's host. See the module

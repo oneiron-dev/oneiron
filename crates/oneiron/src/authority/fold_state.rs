@@ -12,80 +12,11 @@ use crate::entity_id::EntityId;
 
 use super::*;
 
-/// Fold issue retained for diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum AuthorityFoldIssue {
-    /// Entry failed shape or signature verification.
-    InvalidEntry(AuthorityEntryHash),
-    /// Entry references a missing or invalid parent.
-    InvalidAncestry(AuthorityEntryHash),
-    /// Entry is signed by a key a handoff retired, outside that handoff's
-    /// own ancestry.
-    RetiredSigner(AuthorityEntryHash),
-    /// A handoff that conflicts with another (a fork, a cycle) or yields to
-    /// one whose fence stands: it installs no successor.
-    UnsettledHandoff(AuthorityEntryHash),
-    /// Entry signer was not valid in its own ancestry.
-    SignerNotInAncestry(AuthorityEntryHash),
-    /// Entry sequence did not exceed its ancestry or persisted first-observation high-water mark.
-    NonMonotonicSeq(AuthorityEntryHash),
-    /// Approval outlived the local first-seen window after a participant was revoked.
-    StaleRosterApproval(AuthorityEntryHash),
-    /// Entry binds the wrong vault id.
-    WrongVault(AuthorityEntryHash),
-    /// The fold contains more than one independently rooted vault id.
-    ConflictingVaultRoot {
-        /// Entry folded under a vault id that conflicts with another root.
-        entry: AuthorityEntryHash,
-        /// Conflicting vault id.
-        vault_id: AuthorityVaultId,
-    },
-    /// Entry lacks an active owner/admin signer or co-signer in its ancestry.
-    MissingAuthorityConsent(AuthorityEntryHash),
-    /// Entry requires a distinct active co-signer quorum.
-    MissingQuorum(AuthorityEntryHash),
-    /// Federation lifecycle entry rejected by the pact state machine.
-    FederationLifecycleRejected {
-        /// Rejected entry hash.
-        entry: AuthorityEntryHash,
-        /// Deterministic rejection reason.
-        reason: FederationLifecycleRejection,
-    },
-    /// Distinct sibling entries collided on a critical confirmation id or nonce.
-    CriticalWriteConfirmConflict {
-        /// Deterministic surviving confirmation id.
-        confirm_id: [u8; 32],
-    },
-    /// A Bind/Rebind/RevokeActor op failed the binding transition table.
-    ActorBindingRejected {
-        /// Rejected entry hash.
-        entry: AuthorityEntryHash,
-        /// Deterministic rejection reason.
-        reason: ActorBindingRejection,
-    },
-    /// The fold's projected peak passes the
-    /// `authority_log_fold_memory_floor` policy row (H72). The fold refused
-    /// all of it and holds no root.
-    FoldMemoryFloor {
-        /// The floor, in bytes.
-        floor_bytes: u64,
-    },
-}
-
-/// Why the fold refused an actor-binding op.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ActorBindingRejection {
-    /// `BindActor` on a key that already holds a live binding (use rebind).
-    BindingExists,
-    /// `RebindActor` on a key with no live binding.
-    BindingMissing,
-    /// Epoch did not advance past the watermark or the prior binding.
-    EpochNotAdvanced,
-    /// Bound key is absent from, or revoked in, the ancestry roster.
-    KeyNotInRoster,
-    /// A `"human"`-class bind whose key lacks owner/admin consent capability.
-    OwnerCapabilityRequired,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::fold_state::{
+    ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFoldIssue,
+    FoldedActorBinding,
+};
 
 /// Deterministic authority fold output.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -115,8 +46,9 @@ pub struct AuthorityFold {
     pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
-    /// no entry they sign stands outside the handoff's own ancestry.
+    /// Keys a handoff (`ReRoot`) or a revocation (`RevokeDevice`) retired.
+    /// They stay revoked on every branch: no entry they sign stands outside
+    /// that row's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
     /// Every key in the host's custody, as the fold's custody walk judged it
     /// on the merged history: read through [`AuthorityFold::in_host_custody`]
@@ -130,6 +62,9 @@ pub struct AuthorityFold {
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
+    /// Concurrent entries may share an id or a nonce: each stays here as spent
+    /// evidence (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39), so no
+    /// reader may take one entry here as the single use of its id or nonce.
     pub federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     pub consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
@@ -148,6 +83,13 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// Each machine's held answers that still ask the owner, by entry: read
+    /// through [`AuthorityFold::held_machine_answers`].
+    pub(super) held_machine_answers:
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
+    /// The owner choices that wait for the owner's proof and still ask, by
+    /// entry: read through [`AuthorityFold::waiting_owner_choices`].
+    pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
     /// This install's pinned root while the fold holds it as a valid root:
     /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
     /// accepted roster revisions alone.
@@ -219,6 +161,10 @@ pub struct AuthorityFold {
     /// Each machine's newest MACRO home candidacy, as the log carries it
     /// (FIX 4898); an election judges each on this fold.
     pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
+    /// Each machine's newest full-copy mark, as the log carries it (L7-47);
+    /// the peer order judges each on this fold.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) full_copy_mark: BTreeMap<EntityId, super::full_copy_mark::DeclaredFullCopyMark>,
     /// Every owner work request and its one result, as this install counts
     /// them.
     pub(super) owner_work: super::owner_work::FoldedOwnerWork,
@@ -232,6 +178,12 @@ pub struct AuthorityFold {
     /// Well-signed key records that count for nothing under this install's
     /// pin: valid entries without effect.
     pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    /// The rows of the device revocations the fold applied as verified
+    /// restrictive facts, valid rows or not: a revocation on a losing
+    /// confirmation's branch holds only as a fact. The stale-roster window
+    /// reads them beside the valid entries (Sol review F1 on #8608).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) verified_device_revocations: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -262,32 +214,6 @@ impl PartialEq for InstallBound {
 }
 
 impl Eq for InstallBound {}
-
-/// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FoldedActorBinding {
-    /// Store actor entity the key speaks for.
-    pub actor_ref: EntityId,
-    /// EXACT bound class: `"human"`, `"agent"`, or `"system"`.
-    pub actor_class: String,
-    /// Binding epoch.
-    pub epoch: u64,
-    /// Whether this binding currently authorizes.
-    pub status: ActorBindingStatus,
-}
-
-/// Liveness of a folded actor binding.
-///
-/// `Revoked` deliberately covers watermark-dead, merge-conflicted, AND
-/// roster-dead bindings: one dead state, no taxonomy inflation. Callers only
-/// ever need "does this bind authorize".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ActorBindingStatus {
-    /// Binding authorizes: live epoch, unconflicted, live roster key.
-    Active,
-    /// Binding does not authorize, for any reason.
-    Revoked,
-}
 
 /// True iff `actor_ref` holds an ACTIVE binding at EXACTLY `actor_class`.
 ///
@@ -444,6 +370,12 @@ pub(super) struct FoldState {
     /// Every claim of each install key (the machine, its admitter, and an
     /// owner-held roster signer), merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
+    /// carried answers that needed an owner key's proof and carried none.
+    /// They stand for nothing (no head, no removal, no key claim). Merged by
+    /// union; a held answer the owner answered on either side stays answered.
+    pub(super) held_machine_answers:
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
@@ -509,6 +441,13 @@ pub(super) struct FoldState {
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
+    /// Each machine's full-copy marks, the newest replacing the older
+    /// (L7-47). An image carries them only when some mark folded.
+    #[serde(
+        default,
+        skip_serializing_if = "super::full_copy_mark::FullCopyMarkState::is_empty"
+    )]
+    pub(super) full_copy_mark: super::full_copy_mark::FullCopyMarkState,
     /// Every owner work request and result, merged by union.
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
@@ -531,21 +470,6 @@ pub(super) struct FoldState {
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
     pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
-}
-
-/// Fold-internal binding content for one authority key.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ActorBindingState {
-    /// Valid revoke entries in this bind's ancestry. This is fold-only state.
-    pub observed_revocations: BTreeSet<AuthorityEntryHash>,
-    /// Store actor entity the key speaks for.
-    pub actor_ref: EntityId,
-    /// EXACT bound class.
-    pub actor_class: String,
-    /// Binding epoch.
-    pub epoch: u64,
-    /// Set when divergent same-epoch bindings merged — fail-closed dead.
-    pub conflicted: bool,
 }
 
 impl FoldState {
@@ -737,6 +661,15 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    for (machine, held) in &right.held_machine_answers {
+        let merged_held = merged.held_machine_answers.entry(*machine).or_default();
+        for (hash, answer) in held {
+            merged_held
+                .entry(*hash)
+                .and_modify(|kept| kept.answered |= answer.answered)
+                .or_insert_with(|| answer.clone());
+        }
+    }
     for (anchor, roots) in &right.root_anchors {
         merged
             .root_anchors
@@ -787,6 +720,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &mut merged.home_candidacy,
         &right.home_candidacy,
     );
+    super::full_copy_mark::merge_full_copy_marks(&mut merged.full_copy_mark, &right.full_copy_mark);
     super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
     merged

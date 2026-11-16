@@ -48,6 +48,9 @@ pub(crate) struct DesktopWorkers {
     /// before the stop returns (FIX 6732). Embedded serve keeps none: its
     /// vault and runtime stay up, so a pass in flight finishes there.
     owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
+    /// The sleep watch, dropped first on shutdown.
+    #[cfg(unix)]
+    sleep_watch: Option<oneiron_vault_contract::host_adapters::SleepWatch>,
 }
 
 /// Starts every worker the unmanaged serve path runs on `sync_server`, in
@@ -131,6 +134,9 @@ pub(crate) async fn start_desktop_workers(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // Bulk campaign email names this host's one-click unsubscribe links
+    // (ARCH-0059 #opt-out).
+    crate::api::install_one_click_unsubscribe_origin(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
@@ -323,6 +329,7 @@ pub(crate) async fn start_desktop_workers(
             config.vault_path.clone(),
             admitted(),
         )
+        .with_archive_entry_cap(config.import.archive_entry_cap())
         .spawn(Arc::clone(&sync_server)),
     );
     // Attached folders rescan after the import queue starts (OF-554).
@@ -363,6 +370,19 @@ pub(crate) async fn start_desktop_workers(
         sync_server.live_voice.admit_with(admitted());
     }
     let owner_host = sync_server.owner_host.clone().filter(|_| drain_tagging);
+    #[cfg(unix)]
+    let sleep_watch = {
+        let hooks = super::sleep_release::LeaseReleaseOnSleep {
+            vault: Arc::clone(sync_server.vault()),
+            stopped: stopped.clone(),
+        };
+        oneiron_vault_contract::host_adapters::SleepWatch::start(Arc::new(hooks), |reason| {
+            tracing::warn!(
+                reason,
+                "sleep is not watched; executor leases free at expiry"
+            );
+        })
+    };
     Ok(StartedWorkers {
         server: Arc::clone(&sync_server),
         artifact_app,
@@ -385,6 +405,8 @@ pub(crate) async fn start_desktop_workers(
             #[cfg(feature = "code-sandbox-wasmtime")]
             hook_regen,
             owner_host,
+            #[cfg(unix)]
+            sleep_watch,
         },
     })
 }
@@ -403,6 +425,9 @@ impl DesktopWorkers {
         self,
         on_stop: impl FnOnce() -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
+        // The sleep watch ends first, so a sleep during shutdown releases nothing.
+        #[cfg(unix)]
+        drop(self.sleep_watch);
         // A voice call in flight ends through its own teardown before the
         // models it speaks on stop.
         #[cfg(unix)]

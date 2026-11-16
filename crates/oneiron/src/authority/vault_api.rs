@@ -299,9 +299,19 @@ impl Vault {
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
     pub fn get_authority_log_entry(&self, id: &EntityId) -> Result<Option<AuthorityLogEntry>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_authority_log_entry_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::get_authority_log_entry`] in `txn`: a caller that judges the
+    /// row against a fold reads it in the snapshot that fold was read in.
+    pub(crate) fn get_authority_log_entry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<AuthorityLogEntry>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -560,8 +570,9 @@ impl Vault {
     }
 
     /// This vault's authority generation: it moves on every commit to the
-    /// authority log, a grant's revoke among them, and on a legacy token
-    /// revoke's marker. A scope or world setting held elsewhere leaves it.
+    /// authority log, a grant's revoke among them, on every AccessGrant
+    /// write (create, narrow, revoke), and on a legacy token revoke's
+    /// marker. A scope or world setting held elsewhere leaves it.
     /// A kept inference snapshot restores only at the generation its read
     /// was admitted at (V2-R3). It only reads.
     ///

@@ -1,39 +1,15 @@
 //! Receipts from the existing saved-query evaluator, including actual generated usage.
 
-use serde::{Deserialize, Serialize};
-
-use crate::llm::LlmUsage;
-use crate::model_decision::ProviderPin;
 use crate::{Error, Result};
 
 use super::evaluator::{EvaluationRequest, SavedQueryEvaluator, WakeVisit};
 use super::evidence::{EvaluationOutcome, VerdictMemoRow};
 use super::storage::{MEMOS, load_record_in_txn, saved_query_type_byte};
 
-/// One completed generation, identified by the exact request it measured.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SavedQueryGenerationReceipt {
-    /// BLAKE3 of the generation request.
-    pub request_hash: String,
-    /// Provider-reported usage, including the host's served-provider stamp.
-    pub usage: LlmUsage,
-}
-
-/// A newly measured membership judgment. A memo hit carries none.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SavedQueryJudgeReceipt {
-    /// The providers the decision ladder actually reached, with model revisions.
-    pub providers: Vec<ProviderPin>,
-    /// Provider-reported cost per thousand at the answered rung, when known.
-    /// This is not an estimate of the whole call's cost.
-    pub cost_per_thousand: Option<f64>,
-    /// Requests generated on the query's backend, including the separate why.
-    /// Stronger synchronous ladder rungs are named by `providers`, not invented
-    /// as generation usage rows here.
-    pub generations: Vec<SavedQueryGenerationReceipt>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::saved_query::receipts::{
+    SavedQueryGenerationReceipt, SavedQueryJudgeReceipt,
+};
 
 /// One evaluator visit, without reconstructing a memo after an authority refusal.
 #[derive(Debug, Clone, PartialEq)]

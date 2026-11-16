@@ -2,11 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::claim::learning_evidence::Anchor;
 use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{PackAttributionFields, UsedProvenanceEdge};
 use crate::side_table::{self, Named, SideTable};
@@ -16,21 +17,8 @@ use crate::{Result, Vault};
 pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
 
-/// One fractional share, with its complete eligible used chain. An erase
-/// redacts only the ids it names (FIX 8988): the share keeps its decay and
-/// weight.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LateCreditShare {
-    /// The credited skill; `None` once that skill is erased.
-    pub subject: Option<EntityId>,
-    /// The contributing skill the chain starts from; `None` for the run's
-    /// output root, and once that skill is erased, which clears the chain too.
-    pub origin_skill: Option<EntityId>,
-    /// The used chain; `None` once an erased entity is one of its ends.
-    pub chain: Option<Vec<UsedProvenanceEdge>>,
-    pub decay: f64,
-    pub weight: f64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_attribution::late_credit::LateCreditShare;
 
 /// An anchored projection's receipt. Empty shares explicitly record no late
 /// credit, including disabled credit, an environment verdict or an unclear one.
@@ -91,13 +79,21 @@ pub fn late_credit_receipt_for_outcome(
     late_credit_receipt(vault, &receipt_id(attempt, outcome, axis))
 }
 
+/// The late-credit receipt key of an attempt's outcome on one axis. The
+/// stored receipt is keyed by it, so it keeps its bytes (K, PLAN-UC-04 3.4b):
+/// each part a u64 big-endian length and its bytes.
 pub(super) fn receipt_id(attempt: &str, outcome: &str, axis: &str) -> String {
-    let mut hash = blake3::Hasher::new_derive_key("oneiron pack outcome credit v1");
+    let mut hash = LegacyDigest::new(purposes::skill_attribution::LATE_CREDIT_RECEIPT);
     for text in [attempt, outcome, axis] {
-        hash.update(&(text.len() as u64).to_be_bytes());
-        hash.update(text.as_bytes());
+        hash.len_u64_be(text.len()).raw(text.as_bytes());
     }
-    format!("credit:{}", hash.finalize().to_hex())
+    format!("credit:{}", bytes_to_hex_lower(&hash.finish()))
+}
+
+/// Seam for `test_doors::fingerprint_keep_executor_cohort_credit` (PLAN-UC-04 3.4b).
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_id_for_test(attempt: &str, outcome: &str, axis: &str) -> String {
+    receipt_id(attempt, outcome, axis)
 }
 
 fn ancestors_in_txn(
