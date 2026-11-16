@@ -181,7 +181,7 @@ pub(crate) fn execute_hold(
                 session_key: spec.session_key,
                 visitor_tz: spec.visitor_tz.clone(),
                 constraint: spec.constraint.clone(),
-                token_hash: token_digest(&token),
+                token_hash: oneiron_hex::decode::<32>(&token.0).unwrap_or_default(),
                 expires_at,
                 checkout_lease_hash,
             };
