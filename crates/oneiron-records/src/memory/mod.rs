@@ -191,8 +191,6 @@ pub use oneiron_verb_wire::memory::plugin_sections::PluginSectionSuggestRequest;
 pub use oneiron_verb_wire::memory::plugin_sections::PluginSectionSuggestion;
 pub use oneiron_verb_wire::memory::plugin_sections::PluginSectionSuggestionState;
 pub use oneiron_verb_wire::memory::plugin_sections::PluginSectionTargetInput;
-pub use oneiron_verb_wire::memory::plugin_sections::PluginSuggestionsSetRequest;
-pub use oneiron_verb_wire::memory::plugin_sections::PluginSuggestionsView;
 pub use oneiron_verb_wire::memory::plugin_sections::install::PluginSectionInstallOutcome;
 pub use oneiron_verb_wire::memory::proactivity_digest::ProactivityDigestRequest;
 pub use oneiron_verb_wire::memory::read_selection::RecallWorlds;
