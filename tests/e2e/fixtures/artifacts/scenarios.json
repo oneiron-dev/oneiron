@@ -683,6 +683,7 @@
         "ceremonyHttp": {
           "load": "POST /sign/action {token, action: {action: load}}",
           "save": "POST /sign/action {token, action: {action: save_field, field, value: FieldValue}}",
+          "review": "POST /sign/action {token, action: {action: review}}",
           "complete": "POST /sign/action {token, action: {action: complete, consent: true, next: null}}",
           "download": "POST /sign/pdf {token, item: 0}"
         },
@@ -692,7 +693,8 @@
           "terminal",
           "awaiting_seal",
           "held_for_owner",
-          "consent_required"
+          "consent_required",
+          "review_required"
         ],
         "requiredSealObservation": [
           "public asynchronous task/receipt",

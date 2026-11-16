@@ -8,6 +8,10 @@
 //! joined, once. An AGENT_DEF anchored to a member's own PERSON is still that
 //! member's pen, and its offer card is still refused.
 //!
+//! A join answer is the room's admission yes, the add of the card's agent
+//! (ROLES-CHECKIN P2.6a4): the owner's join records her own check-in
+//! decision, and a not now, which adds no one, takes no `check_in_ref`.
+//!
 //! Public paths only: the agent-definition create verb, the conversation,
 //! offer and offer-answer doors on `Memory`, and the public subject-anchor
 //! setter. The one fixture beside them is the agent's room read, one policy
@@ -18,6 +22,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron::check_in::CheckInDecision;
 use oneiron::core_write::ConversationCreateInput;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
@@ -204,6 +209,7 @@ fn a_custom_agent_made_through_the_agent_definition_door_can_mint_a_room_offer_c
         offer_id: card.offer_id.clone(),
         action: OfferAnswer::Join,
         intent_key: "agent-room-offer-answer-1".to_owned(),
+        check_in_ref: None,
     };
     let accepted = host.rooms_offer_answer(&answer)?;
     assert_eq!(accepted.offer_id, card.offer_id);
@@ -273,5 +279,54 @@ fn a_members_own_pen_is_still_refused_a_room_offer_card() -> TestResult {
         .expect_err("a member's pen joins by writing, not by an offer card");
     assert_eq!(refusal.code, MEMORY_CODE_BAD_REQUEST);
     assert_eq!(refusal.message, PEN_REFUSAL);
+    Ok(())
+}
+
+/// ROLES-CHECKIN P2.6a4 (P26-SHAPE Q2 = A): the host's join answer adds the
+/// card's agent, so check-in judges it; the vault's owner adds on her own
+/// judgment, and the join she lands records it. A not now that names a
+/// check-in is refused before anything is written, and the card stays open.
+#[test]
+fn the_owners_join_answer_records_her_check_in_decision() -> TestResult {
+    let fixture = open()?;
+    let agent = create_agent(&fixture, "offer-agent-check-in")?;
+    permit_room_reads(&fixture, agent)?;
+    let host = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let card = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .rooms_offer(&offer_draft(fixture.room, agent, "offer-check-in-1"))?;
+    let refused = host
+        .rooms_offer_answer(&OfferAnswerRequest {
+            offer_id: card.offer_id.clone(),
+            action: OfferAnswer::NotNow,
+            intent_key: "offer-check-in-not-now".to_owned(),
+            check_in_ref: Some(EntityId::now().to_hex()),
+        })
+        .expect_err("a not now adds no one, so it spends no check-in");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    let accepted = host.rooms_offer_answer(&OfferAnswerRequest {
+        offer_id: card.offer_id.clone(),
+        action: OfferAnswer::Join,
+        intent_key: "offer-check-in-join".to_owned(),
+        check_in_ref: None,
+    })?;
+    let join = accepted
+        .join
+        .as_ref()
+        .ok_or("the host's answer carries the join")?;
+    assert_eq!(join.decision.state, JoinDecision::Ready);
+    assert_eq!(
+        join.check_in,
+        Some(CheckInDecision {
+            act_class: "room_add".to_owned(),
+            role: "owner".to_owned(),
+            mode: Some("auto".to_owned()),
+            basis: "sure".to_owned(),
+            check_in: None,
+            requester: None,
+        }),
+        "her join answer is her own add: {join:?}"
+    );
     Ok(())
 }
