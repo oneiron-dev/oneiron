@@ -572,7 +572,11 @@ fn checkout_holds_entry(target: &Path, entry: &StoredRepoSnapshotEntry) -> Resul
 ///
 /// A withheld file the checkout still holds keeps its bytes and its
 /// permissions, which may be owner-only. The commit is read at the snapshot
-/// head, whatever revision the caller's `repo_ref` pins.
+/// head, whatever revision the caller's `repo_ref` pins. A head commit, or a
+/// path's blob, that the object store no longer holds (a gc after a reset, a
+/// shallow or partial clone) recreates nothing at that path, and the restore
+/// goes on: it writes every other entry, and the post-check reports the file
+/// (review 2 of FIX 2230, P3-1).
 fn withheld_files_to_recreate(
     vault: &Vault,
     repo_ref: &RepoRef,
@@ -602,7 +606,6 @@ fn withheld_files_to_recreate(
     if gone.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let wire = GitWire::new(vault)?;
     let at_head = match repo_ref {
         RepoRef::LocalFolder { path, .. } => RepoRef::LocalFolder {
             path: path.clone(),
@@ -610,13 +613,44 @@ fn withheld_files_to_recreate(
         },
         other => other.clone(),
     };
-    let repo = wire.open_repo(at_head, repo_root)?;
-    let commit = wire.resolve_commit(&repo, head)?;
-    Ok(commit_files(&wire, &repo, &commit, Some(&gone))?
-        .into_iter()
-        .filter(|(path, file)| custody.withholds(path, &file.content).is_some())
-        .map(|(path, file)| (path, file.content))
-        .collect())
+    let opened = GitWire::new(vault).and_then(|wire| {
+        let repo = wire.open_repo(at_head, repo_root)?;
+        let commit = wire.resolve_commit(&repo, head)?;
+        Ok((wire, repo, commit))
+    });
+    let (wire, repo, commit) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                gone = gone.len(),
+                "repo restore: the snapshot head did not read, so no gone withheld file is recreated"
+            );
+            return Ok(BTreeMap::new());
+        }
+    };
+    let mut recreated = BTreeMap::new();
+    for path in gone {
+        // One path at a time, so a lost blob keeps only its own file gone.
+        let wanted = BTreeSet::from([path.clone()]);
+        let mut files = match commit_files(&wire, &repo, &commit, Some(&wanted)) {
+            Ok(files) => files,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "repo restore: a gone withheld file's committed bytes did not read; it stays gone"
+                );
+                continue;
+            }
+        };
+        if let Some(file) = files
+            .remove(&path)
+            .filter(|file| custody.withholds(&path, &file.content).is_some())
+        {
+            recreated.insert(path, file.content);
+        }
+    }
+    Ok(recreated)
 }
 
 /// Brings the index to the restored HEAD only where the restore moved the
