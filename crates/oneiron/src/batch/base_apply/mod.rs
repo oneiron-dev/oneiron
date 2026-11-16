@@ -213,7 +213,7 @@ struct BatchApplyState {
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
     nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
-    masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,
+    masked_claims: HashMap<EntityId, VecDeque<Option<ClaimCandidate>>>,
     habit_streak_candidates: BTreeSet<EntityId>,
     had_graph_mutation: bool,
     had_vector_mutation: bool,
@@ -355,11 +355,12 @@ pub(super) fn apply_ops_with_authority_beside(
     let asset_file_bodies = asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
     let (masked_files, masked_claim_pre) = masked?;
     // The pre-mask body of each candidate the mask rewrote in this
-    // transaction, in op order per id: the candidate apply renews a MACHINE
-    // proof only over its verified pre-mask body (FIX 11356), and reads a
-    // preflight receipt against the body it judged. A replayed batch reports
-    // none, so its proofs stay byte for byte.
-    let mut masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>> = HashMap::new();
+    // transaction, one slot per candidate op in op order per id (`None` for
+    // one it left as written): the candidate apply renews a MACHINE proof
+    // only over its verified pre-mask body (FIX 11356), and reads a preflight
+    // receipt against the body it judged. A replayed batch reports none, so
+    // its proofs stay byte for byte.
+    let mut masked_claims: HashMap<EntityId, VecDeque<Option<ClaimCandidate>>> = HashMap::new();
     for (id, pre) in masked_claim_pre {
         masked_claims.entry(id).or_default().push_back(pre);
     }

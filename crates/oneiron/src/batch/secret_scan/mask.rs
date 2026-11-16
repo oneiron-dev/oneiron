@@ -511,11 +511,12 @@ struct Masker {
     traced: Option<text::TextReplacements>,
     /// The spans of each text a plan read, for its minted pass (speed).
     text_log: text_log::TextLog,
-    /// Each claim candidate the minted pass rewrote, with its pre-mask body,
-    /// in op order: the candidate apply renews a MACHINE proof over what is
-    /// stored (FIX 11356), and reads a preflight receipt, which names the
-    /// pre-mask body, against it. A plan pass never fills it.
-    masked_claims: Vec<(EntityId, ClaimCandidate)>,
+    /// Each claim candidate op the minted pass read, in op order, with its
+    /// pre-mask body when the pass rewrote it: the candidate apply renews a
+    /// MACHINE proof over what is stored (FIX 11356), and reads a preflight
+    /// receipt, which names the pre-mask body, against it. A plan pass never
+    /// fills it.
+    masked_claims: Vec<(EntityId, Option<ClaimCandidate>)>,
 }
 
 impl Masker {
@@ -573,10 +574,11 @@ impl Masker {
                         self.mask_spread_phrases(value, true)?;
                     }
                     self.shapes_read = shapes_read;
-                    if let Some(before) = before
-                        && **candidate != before
-                    {
-                        self.masked_claims.push((*id, before));
+                    // One entry per candidate op, so the apply's queue per id
+                    // stays aligned with its ops: `None` when nothing changed.
+                    if let Some(before) = before {
+                        let rewritten = (**candidate != before).then_some(before);
+                        self.masked_claims.push((*id, rewritten));
                     }
                 }
                 BatchOp::Text { id, fields } => {

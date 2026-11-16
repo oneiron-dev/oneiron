@@ -27,8 +27,9 @@ pub(super) fn isolation_class(
 /// ONE-1419): equal to the decision apply judged in every part, or, for a
 /// candidate the mask on write rewrote after its preflight, in every part
 /// but the diff handle, which then names exactly the pre-mask body the
-/// preflight judged (`pre_mask_diff`). The mask writes only custody handles
-/// in place of what it lifts, so the stored body is that body masked
+/// preflight judged (`pre_mask_diff`). The stored body is that body as the
+/// mask on write rewrote it: custody handles in place of what it lifts, and
+/// for a MACHINE candidate the proof renewed over those bytes (FIX 11356)
 /// (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
 fn preflight_receipt_matches(
     preflight: &crate::store::GateDecisionRecord,
@@ -378,10 +379,10 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             // A value the preview cannot hold whole is never sent: the
             // checker would answer for a prefix while the write stores the
             // rest. With no checker to ask, the write is held below.
-            // The checker reads the value as the write stores it, before base
-            // apply masks it: the batch door's plan over a copy, each secret
-            // under a stand-in handle, so no credential reaches a rung that
-            // may run off the device. A copy that still holds one is not
+            // The checker reads the value as the door's plan predicts the
+            // write stores it, before base apply masks it: a copy with each
+            // secret under a stand-in handle, so no credential reaches a rung
+            // that may run off the device. A copy that still holds one is not
             // whole either (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
             let value_preview = crate::batch::secret_scan::plan_masked_claim_value_in_txn(
                 store,

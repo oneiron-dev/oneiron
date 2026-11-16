@@ -2,8 +2,8 @@
 //! asks before the door masks it: the host's auto checker, whose rungs may
 //! run off the device (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE). The claim
 //! gate consults it before base apply masks the candidate, so it reads this
-//! copy: the value as the write stores it, never a secret the door lifts
-//! into custody.
+//! copy: the value as the door's plan predicts the write stores it, a
+//! stand-in handle where the door lifts a secret into custody.
 
 use heed::RwTxn;
 use rmpv::Value;
@@ -24,8 +24,10 @@ use crate::store::known_value_index::KnownValues;
 /// owner kept as text as written. Nothing is minted or written.
 ///
 /// `None` when the copy still holds what a memory read would not serve: a
-/// hit no span places (the door refuses such a write), or, with the owner's
-/// switch off, a secret the plan leaves as written. The copy is wiped then.
+/// hit no span places (the door refuses such a write), a secret the owner
+/// kept as text in this record, or, with the owner's switch off, a secret
+/// the plan leaves as written. The copy is wiped then. A store error fails
+/// the caller's write; the raw value is never the fallback.
 pub(crate) fn plan_masked_claim_value_in_txn(
     store: &Store,
     wtxn: &RwTxn<'_>,
