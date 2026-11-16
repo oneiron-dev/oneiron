@@ -183,6 +183,7 @@ impl EngineLimit {
         Self::ContextEdgeHops,
         Self::ContextNeighbors,
         Self::ContextSelectedEdges,
+        Self::ActorExposedRecords,
     ];
 
     /// The config key that sets the row.
@@ -361,6 +362,7 @@ impl EngineLimit {
             Self::ContextEdgeHops => "limits.context_edge_hops",
             Self::ContextNeighbors => "limits.context_neighbors",
             Self::ContextSelectedEdges => "limits.context_selected_edges",
+            Self::ActorExposedRecords => "limits.actor_exposed_records",
         }
     }
 
@@ -622,6 +624,9 @@ impl EngineLimit {
             Self::ContextNeighbors => 1_048_576,
             // Owner-ruled ABC row 13 (FIX 64).
             Self::ContextSelectedEdges => 1_048_576,
+            // PLAN-L8-65 design 5 A (ADOPT = A, Engine 15 Nov 01:10). Past
+            // it, each write that keeps records new to a reader asks again.
+            Self::ActorExposedRecords => 5_000,
         }
     }
 }
