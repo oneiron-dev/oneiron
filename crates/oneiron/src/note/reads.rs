@@ -9,22 +9,11 @@ use crate::scan_check::PendingScanChecks;
 use crate::store::ManifestDbs;
 use serde::{Deserialize, Serialize};
 
-/// One explicit NOTE read. Private notes require the caller's stated reason.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteAccessRequest {
-    pub note_ref: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-/// A half-open span in the selected text, measured in Unicode scalar indices.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteReadSpan {
-    pub start: usize,
-    pub end: usize,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::reads::{
+    NoteAccessRequest, NoteEditorCloseRequest, NoteEditorClosed, NoteIndexedReadRequest,
+    NoteReadSource, NoteReadSpan,
+};
 
 /// Live text by default, or the exact retained version a prior read returned.
 /// Spans acquire stable anchors at that same version, never at a later head.
@@ -40,30 +29,11 @@ pub struct NoteReadRequest {
     pub spans: Vec<NoteReadSpan>,
 }
 
-/// Reads the independently published NOTE frontier, not the live editor head.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteIndexedReadRequest {
-    pub note_ref: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub spans: Vec<NoteReadSpan>,
-}
-
 /// The endpoints can be passed directly to `vault.notes.edit`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteAnchoredSpan {
     pub start: NoteAnchor,
     pub end: NoteAnchor,
-}
-
-/// Where this read obtained the body. A local read never silently fetches it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteReadSource {
-    Local,
-    Home,
 }
 
 /// One coherent editor read, including the base for a whole-text diff.
@@ -92,17 +62,6 @@ pub struct NoteHistoryView {
 pub struct NoteEditorBinding {
     pub binding: String,
     pub note: NoteReadView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoteEditorCloseRequest {
-    pub binding: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct NoteEditorClosed {
-    pub closed: bool,
 }
 
 pub(super) fn read_view(
@@ -358,6 +317,23 @@ impl Memory<'_> {
         } else {
             None
         };
+        // A replica holds a NOTE's row before its authority sends the NOTE's
+        // head document; the sync registry asks for that document from an
+        // empty version (FIX [REPLICA-NOTE-READ-400-BEFORE-DOCUMENT]). Until
+        // it lands, this host holds no body to read: the read answers none,
+        // as for a row it does not hold, and takes no diary admission. A live
+        // read's point read already answers no row here (scoped_read
+        // versions); this covers a read of a retained revision, which is
+        // served as its stored row. Only an empty slot answers so; updates
+        // with no snapshot, and an erased NOTE, still refuse in the strict
+        // load below.
+        if !super::documents::head_document_held_in(at.store, txn, note)?
+            && !self
+                .vault()
+                .local_hard_delete_marker_exists_in_txn(txn, &note)?
+        {
+            return Ok((None, None));
+        }
         // An erased diary author is no agent, so no Grant covers the entry:
         // it stays held, never admitted through a stand-in author.
         if core.kind == NoteKind::Diary

@@ -87,6 +87,7 @@ mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
 mod frontier_join;
+mod full_copy_mark;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
@@ -306,6 +307,7 @@ pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
     VerifiedForwardedCaller, forwarded_request_transcript,
 };
+pub(crate) use full_copy_mark::append_install_signed_in_txn;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
@@ -327,6 +329,8 @@ pub(crate) use home_pick::{
 };
 pub(crate) use host_action::StoredHostAction;
 pub use host_action::{HostActionAuthority, HostActionIdentity};
+#[cfg(oneiron_test_support)]
+pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
@@ -350,6 +354,7 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
+pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
@@ -361,14 +366,15 @@ pub use oauth_server::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
     OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR, OAUTH_CIMD_TTL_SECS,
     OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX, OAUTH_CODE_TTL_SECS,
-    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR,
-    OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR, OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES,
-    OAUTH_URI_MAX_BYTES, OAuthAccess, OAuthAuthorizationAllowed, OAuthAuthorizationPending,
-    OAuthAuthorizationStart, OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration,
-    OAuthClientSource, OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal,
-    OAuthTokenRefusal, OAuthTokens, oauth_client_id_is_metadata_url, oauth_code_challenge_admitted,
-    oauth_redirect_uri_admitted, oauth_requested_tier, oauth_scopes_supported,
+    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_NAMED_CLIENT_REDIRECT_URIS,
+    OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX,
+    OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR, OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
@@ -469,11 +475,12 @@ pub(crate) use history_admission::{
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
+pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
@@ -490,7 +497,8 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use principal_standing::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, StandingHome, live_agent_principal_in,
-    principal_standing_in, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+    principal_standing_covering_or_lapse_in_txn, principal_standing_in, principal_standing_in_txn,
+    principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;

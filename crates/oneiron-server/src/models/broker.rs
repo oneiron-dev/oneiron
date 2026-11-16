@@ -30,15 +30,15 @@ use oneiron::{
 use oneiron_broker::{
     BrokerClient, BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, Refusal, Shape,
 };
-use oneiron_llm_anthropic::{
+use oneiron_llm::anthropic::{
     AnthropicMessagesConfig, AnthropicMessagesLlmStream, build_anthropic_messages_request,
     classify_anthropic_status, parse_anthropic_messages_response,
 };
-use oneiron_llm_gemini::{
+use oneiron_llm::gemini::{
     build_request as build_gemini_chat_request, classify_status as classify_gemini_status,
     parse_response as parse_gemini_chat_response,
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatConfig, OpenAiCompatLlmStream, build_openai_chat_request, classify_openai_status,
     parse_openai_chat_response,
 };

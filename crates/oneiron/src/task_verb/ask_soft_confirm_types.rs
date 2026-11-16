@@ -17,32 +17,13 @@ pub struct TaskAskSoftConfirmNotice {
     pub deadline: u64,
 }
 
-/// Delivery is separate from approval; a pending state never authorizes an effect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskSoftConfirmDelivery {
-    PendingRoute,
-    PendingGate,
-    Failed,
-    Scheduled,
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::ask_soft_confirm_types::TaskAskSoftConfirmDelivery;
 
-/// A response to the notice, distinct from the original question's option ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskConfirmationDecision {
-    Approve,
-    Reject,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskConfirmation {
-    pub revision: u64,
-    pub companion_answer_ref: EntityId,
-    pub decision: TaskAskConfirmationDecision,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::ask_soft_confirm_types::{
+    TaskAskConfirmation, TaskAskConfirmationDecision,
+};
 
 impl super::TaskAskWord {
     /// One human's approve-or-reject reply through normal answer intake.
