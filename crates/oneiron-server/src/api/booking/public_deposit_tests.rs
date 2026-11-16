@@ -22,7 +22,9 @@ use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use hmac::{Hmac, Mac};
 use oneiron::booking::agent_api::{BookingDepositCheckout, SelectedSlot};
-use oneiron::booking::lifecycle::{DepositState, booking_deposit_for_payment};
+use oneiron::booking::lifecycle::{
+    BookingDepositSettlementDrain, DepositState, booking_deposit_for_payment,
+};
 use oneiron::booking::{DepositRefundRule, DepositTerms};
 use oneiron::secret_custody::PaymentCredentialRelease;
 use sha2::Sha256;
@@ -532,6 +534,19 @@ fn refund_posts(stripe: &Shared) -> usize {
         .count()
 }
 
+/// One settle pass at `at`, run off the runtime as the settle worker runs it
+/// (booking_deposit/settle.rs spawn_deposit_settlement): the Stripe client
+/// blocks, and the fake Stripe answers on this runtime.
+async fn run_settle_pass(fixture: &Fixture, at: u64) -> BookingDepositSettlementDrain {
+    let vault = Arc::clone(&fixture.server.vault);
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    tokio::task::spawn_blocking(move || {
+        settle_deposits_once(&vault, &base, at).expect("settle pass")
+    })
+    .await
+    .expect("the settle pass ran")
+}
+
 fn deposit_state(fixture: &Fixture, payment_id: &str) -> DepositState {
     booking_deposit_for_payment(&fixture.server.vault, payment_id)
         .expect("read")
@@ -815,11 +830,9 @@ async fn a_void_that_finds_the_payment_captured_refunds_it() {
         .expect("cancel");
     assert_eq!(deposit_state(&fixture, &payment_id), DepositState::VoidDue);
 
-    let base = fixture.server.booking_deposit_stripe_base().to_owned();
     let now = now_secs().expect("clock");
     for pass in 0..2 {
-        let drain =
-            settle_deposits_once(&fixture.server.vault, &base, now + pass).expect("settle pass");
+        let drain = run_settle_pass(&fixture, now + pass).await;
         assert_eq!(drain.failed, 0, "pass {pass}: no move fails for good");
     }
     assert_eq!(
@@ -856,9 +869,10 @@ async fn a_refused_void_whose_payment_read_fails_runs_again() {
     // Stripe refuses the void (the payment is captured), and the read that
     // would say so fails: every row of the deposit waits for a retry.
     stripe.lock().expect("fake stripe").fail_intent_reads = true;
-    let base = fixture.server.booking_deposit_stripe_base().to_owned();
-    let now = now_secs().expect("clock");
-    let drain = settle_deposits_once(&fixture.server.vault, &base, now).expect("settle pass");
+    // Every pass runs an hour behind the wall clock: a row requeued for a
+    // later instant is claimed only once it is due by the vault's own clock.
+    let now = now_secs().expect("clock") - 3_601;
+    let drain = run_settle_pass(&fixture, now).await;
     assert_eq!(drain.failed, 0, "an outage fails no move for good");
     assert!(drain.retrying > 0, "the void runs again later");
     assert_eq!(deposit_state(&fixture, &payment_id), DepositState::VoidDue);
@@ -866,8 +880,7 @@ async fn a_refused_void_whose_payment_read_fails_runs_again() {
     // The outage ends; the retry finds the capture and owes it back.
     stripe.lock().expect("fake stripe").fail_intent_reads = false;
     for pass in 1..3 {
-        let drain = settle_deposits_once(&fixture.server.vault, &base, now + 300 + pass)
-            .expect("settle pass");
+        let drain = run_settle_pass(&fixture, now + 300 + pass).await;
         assert_eq!(drain.failed, 0, "pass {pass}: no move fails for good");
     }
     assert_eq!(
@@ -914,10 +927,11 @@ async fn a_refund_stripe_holds_pending_stays_owed_and_is_made_once() {
     );
 
     stripe.lock().expect("fake stripe").refund_status = Some("pending".to_owned());
-    let base = fixture.server.booking_deposit_stripe_base().to_owned();
-    let now = now_secs().expect("clock");
+    // The passes run up to the wall clock, never past it: a row requeued for
+    // a later instant is claimed only once it is due by the vault's own clock.
+    let now = now_secs().expect("clock") - 3_601;
     for at in [now, now + 60] {
-        let drain = settle_deposits_once(&fixture.server.vault, &base, at).expect("settle pass");
+        let drain = run_settle_pass(&fixture, at).await;
         assert_eq!(drain.failed, 0, "a pending refund never fails for good");
         assert_eq!(drain.refunded, 0, "a pending refund is no refund");
         assert_eq!(
@@ -931,8 +945,7 @@ async fn a_refund_stripe_holds_pending_stays_owed_and_is_made_once() {
 
     // Stripe finishes the refund; the next ask finds it by its key.
     stripe.lock().expect("fake stripe").refunds[0].status = "succeeded".to_owned();
-    let drain =
-        settle_deposits_once(&fixture.server.vault, &base, now + 3_601).expect("settle pass");
+    let drain = run_settle_pass(&fixture, now + 3_601).await;
     assert_eq!(drain.refunded, 1);
     assert_eq!(
         deposit_state(&fixture, &payment_id),
@@ -1005,12 +1018,14 @@ async fn a_refund_owed_while_the_key_is_withheld_waits_and_runs_once_it_is_back(
     );
 
     // More passes than a settle row's tries, each past the row's longest
-    // wait: the refund stays owed, and no request reaches Stripe.
+    // wait: the refund stays owed, and no request reaches Stripe. The last
+    // pass runs at the wall clock and the earlier ones behind it: a row
+    // requeued for a later instant is claimed only once it is due by the
+    // vault's own clock.
     let calls_before = stripe.lock().expect("fake stripe").calls.len();
-    let base = fixture.server.booking_deposit_stripe_base().to_owned();
-    let now = now_secs().expect("clock");
+    let now = now_secs().expect("clock") - 10 * 3_601;
     for pass in 0..10_u64 {
-        let drain = settle_deposits_once(vault, &base, now + pass * 3_601).expect("settle pass");
+        let drain = run_settle_pass(&fixture, now + pass * 3_601).await;
         assert_eq!(
             drain.failed, 0,
             "pass {pass}: a withheld key fails no move for good"
@@ -1035,7 +1050,7 @@ async fn a_refund_owed_while_the_key_is_withheld_waits_and_runs_once_it_is_back(
         runner_fence_proven: false,
         withholding_lifted: true,
     });
-    let drain = settle_deposits_once(vault, &base, now + 10 * 3_601).expect("settle pass");
+    let drain = run_settle_pass(&fixture, now + 10 * 3_601).await;
     assert_eq!(
         drain.refunded, 1,
         "the owed refund runs once the key is back"
