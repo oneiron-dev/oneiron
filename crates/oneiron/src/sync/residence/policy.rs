@@ -199,7 +199,7 @@ impl Vault {
             .store
             .sync_state
             .get(txn, PREFERENCE_KEY)?
-            .map(DeviceSyncPreference::decode)
+            .map(|bytes| DeviceSyncPreference::decode(&bytes))
             .transpose()?;
         let home = DreamerRunnerStore::new(self).home_node_designation_in_txn(txn)?;
         let here = crate::identity::read_client_id_in_txn(self, txn)?;
