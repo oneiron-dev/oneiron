@@ -55,6 +55,10 @@ use self::session::RawOp;
 pub struct SafeDeleteRequest {
     pub entity_ref: String,
     pub reason: SafeDeleteReason,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: once
+    /// it is approved, the same delete runs on it (ROLES-CHECKIN 2k5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One entity blob a bound raw write puts ([`Memory::raw_put_entities`]).
@@ -160,6 +164,7 @@ impl Memory<'_> {
         let request = SafeDeleteRequest {
             entity_ref: id.to_hex(),
             reason: SafeDeleteReason::UserDelete,
+            check_in_ref: None,
         };
         crate::gate::record_references::admit_row_references(
             self,

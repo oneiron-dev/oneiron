@@ -30,6 +30,10 @@ pub mod temporal;
 pub mod wallet;
 pub mod write_envelope;
 
+/// The fingerprint door (PLAN-UC-04): `Purpose`, `Fingerprint`, `ContentHash`, the
+/// purpose registry and the K door for digests that keep their stored bytes.
+pub use oneiron_fingerprint as fingerprint;
+
 // The same root aliases `oneiron` has, so moved code keeps its `crate::` paths.
 pub use crate::entity_id::EntityId;
 pub use crate::error::{Error, ErrorKind, Result};
