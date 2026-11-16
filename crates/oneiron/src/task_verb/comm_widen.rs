@@ -15,6 +15,7 @@
 
 use std::collections::BTreeMap;
 
+use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult,
@@ -304,45 +305,56 @@ const fn recipient_source(recipient: CommWidenRecipient) -> TaskAskSource {
     }
 }
 
-/// Refuses a word on a comm widen ask unless it is the asked recipient's own
-/// approve or decline, on the node that admitted the ask (CALLS W2); any
-/// other ask passes untouched. Runs in shared word admission, before the word
-/// is recorded.
-pub(super) fn guard_word(
+/// Who a comm widen ask asks: its request's recipient, an agent parent or
+/// the owner; `None` for every other ask, and for an erased recipient
+/// ([`super::ask_guard`]).
+pub(super) fn asked_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
+) -> Result<Option<AskedParty>> {
+    Ok(routed_in(vault, txn, id, group)?.and_then(|(_, request)| asked_party(request.recipient)))
+}
+
+/// [`asked_in`], once `word` names the recipient's own approve or decline
+/// while the request still waits (CALLS W2); any other word, and any word
+/// to an erased recipient, is refused. A widen intent its reservation does
+/// not name back fails closed. Shared word admission then asks the
+/// recipient's own proof of it ([`super::ask_guard`]).
+pub(super) fn offered_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
     word: &TaskAskWord,
-) -> Result<()> {
+) -> Result<Option<AskedParty>> {
     if !is_comm_widen_ask_intent(&group.requested.intent_key) {
-        return Ok(());
+        return Ok(None);
     }
-    // A widen intent its reservation does not name back fails closed.
     let (_, request) = routed_in(vault, txn, id, group)?.ok_or_else(ask_record::invalid)?;
-    if word.companion_for.is_some()
-        || word.inform_for.is_some()
-        || word.confirmation.is_some()
-        || !word
-            .option
-            .as_ref()
-            .is_some_and(|option| widen_choice(request.recipient, option.as_str()).is_some())
+    if !word
+        .option
+        .as_ref()
+        .is_some_and(|option| widen_choice(request.recipient, option.as_str()).is_some())
         || request.state != CommWidenState::Pending
-        || request.recipient.actor() != Some(actor)
-        || source != recipient_source(request.recipient)
-        || !ask_record::owns_revision(vault, txn, id, group)?
     {
         return Err(ask_record::invalid());
     }
-    if let CommWidenRecipient::Owner(owner) = request.recipient
-        && !crate::memory::actor_is_vault_owner_in_txn(vault, txn, owner, EdgeActorClass::Human)
-            .unwrap_or(false)
-    {
-        return Err(ask_record::invalid());
+    asked_party(request.recipient)
+        .map(Some)
+        .ok_or_else(ask_record::invalid)
+}
+
+/// The party a recipient is: an agent parent answers as its verified actor,
+/// the owner as a person under the owner proof. An erased recipient is no
+/// one.
+const fn asked_party(recipient: CommWidenRecipient) -> Option<AskedParty> {
+    match recipient {
+        CommWidenRecipient::Agent(agent) => Some(AskedParty::Agent(agent)),
+        CommWidenRecipient::Owner(owner) => Some(AskedParty::Owner(owner)),
+        CommWidenRecipient::Erased => None,
     }
-    Ok(())
 }
 
 /// Settles a comm widen request from its ask's settlement, in the settling

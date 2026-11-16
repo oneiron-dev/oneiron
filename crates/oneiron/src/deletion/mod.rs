@@ -170,14 +170,25 @@ pub(crate) use sweep_queue::{
     raise_withdrawn_generation_fence_in_txn, withdrawn_generation_cutoffs_in_txn,
 };
 pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
+
+/// Whether `id` carries this install's permanent hard-delete marker, read
+/// from the store alone (`Vault::local_hard_delete_marker_exists_in_txn`
+/// for a caller with no vault at hand).
+pub(crate) fn hard_delete_marker_exists_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::entity_id::EntityId,
+) -> crate::error::Result<bool> {
+    tombstone::HARD_DELETE_MARKER.contains(store, txn, &crate::side_table::HexId(*id))
+}
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 #[cfg(test)]
 pub(crate) use tombstone::local_hard_delete_key;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, PendingTombstoneKey,
-    ROW_DELETION_FENCE, archive_tombstone_key, stage_engine_row_hard_erasure_at_in_txn,
-    stage_engine_row_hard_erasure_in_txn,
+    ROW_DELETION_FENCE, archive_tombstone_key, mark_torn_actor_row_in_txn,
+    stage_engine_row_hard_erasure_at_in_txn, stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 pub(crate) use withdrawn::scrub_withdrawn_record_in_txn;
