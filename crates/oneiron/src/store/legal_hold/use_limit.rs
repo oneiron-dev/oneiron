@@ -2,7 +2,6 @@
 //! cooperative review restriction kept as separate states.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use super::{id_key, notice, standing_on_in_txn};
 use crate::deletion::{LegalHoldReason, LegalHoldUseLimit};
@@ -60,15 +59,8 @@ pub(crate) fn legal_hold_use_limit_in_txn(
 /// One record under one filed courtesy ask, record first for admission scans.
 pub(crate) type CooperativeRestrictionKey = (EntityId, [u8; 32], [u8; 16]);
 
-/// A recipient's selected restriction. No hold, content, free-text
-/// allegation, duration or automatic lift is implied by these codes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CooperativeRestriction {
-    pub since: u64,
-    pub reason_code: String,
-    pub review_at: u64,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::legal_hold::use_limit::CooperativeRestriction;
 
 const COOPERATIVE_RESTRICTIONS: SideTable<
     CooperativeRestrictionKey,

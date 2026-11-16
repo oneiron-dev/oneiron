@@ -689,6 +689,11 @@ async fn proposed_write_checks_record_ceiling_independent_of_read_verb() {
         .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
         .unwrap()
         .len();
+    let owner = server
+        .vault()
+        .ensure_embedded_owner_actor()
+        .unwrap()
+        .to_hex();
     for (index, verbs) in [
         "core:propose",
         "core:propose,core:read",
@@ -698,7 +703,9 @@ async fn proposed_write_checks_record_ceiling_independent_of_read_verb() {
     .into_iter()
     .enumerate()
     {
-        let recipe = format!("scope={verbs};jti=proposal-ceiling-{index}");
+        let recipe = format!(
+            "scope={verbs};jti=proposal-ceiling-{index};principal_ref={owner};actor_class=human"
+        );
         let (base, holder) = crate::test_credentials::credential(&server, &recipe);
         for narrowing in ["world", "record", "channel"] {
             let mut slip = base.clone();
@@ -795,7 +802,9 @@ async fn proposed_write_checks_record_ceiling_independent_of_read_verb() {
     }
     let (slip, holder) = crate::test_credentials::credential(
         &server,
-        "scope=core:propose;jti=proposal-unrestricted-control",
+        &format!(
+            "scope=core:propose;jti=proposal-unrestricted-control;principal_ref={owner};actor_class=human"
+        ),
     );
     let request = crate::test_credentials::bind_slip_request(
         &server,

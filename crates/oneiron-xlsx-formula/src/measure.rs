@@ -328,13 +328,7 @@ fn error_detail(error: &FormulaError) -> String {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     // The fixture provenance pins sha256 over the raw corpus bytes.
-    use std::fmt::Write as _;
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+    oneiron_hex::encode(&Sha256::digest(bytes))
 }
 
 #[cfg(test)]
