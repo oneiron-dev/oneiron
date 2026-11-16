@@ -1194,7 +1194,8 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
   // The four claims are about a TASK, not the owner: claims about the owner
   // go to the pack's query-independent l2_base prefix, never to `results`
   // (context_pack/l2_base.rs). Its title shares no term with any probe query,
-  // so the BM25-emptiness checks hold, and it takes the background vector.
+  // so the BM25-emptiness checks hold, and it takes the background vector,
+  // orthogonal to every probe.
   const subjectTitle = "Retrieval evidence anchor task";
   const provider = startVectorTable(fixture, [[subjectTitle, [0, 0, 0, 1]]], [0, 0, 0, 1]);
   const engine = await EngineFixture.start({ id: "RETRIEVAL-06", profile,
@@ -1249,13 +1250,18 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
       expect(provider.seen.has(row.value)).toBe(true);
     }
     // The subject's own vector, so the candidate set is the same at every run.
+    // A TASK is embedded only by idle publication, and its vector is the
+    // background one, so an owner-wide probe ties it with every bootstrap row
+    // (the top-k occupancy RETRIEVAL-01 isolates, FIX21914): set it as
+    // RETRIEVAL-01 does and read it back through a reader bound to it alone.
+    // The vector table still maps the title, so a later idle fill agrees.
     {
-      const params = new URLSearchParams({ query: [0, 0, 0, 1].join(","),
-        limit: "50", view: "standard", countMode: "none" });
-      await awaitPublic(async () => (await engine.client.request<VectorPage>("GET", `/api/search/vector?${params}`)).body,
-        page => page.items.some(hit => hit.id === subjectRef),
-        { label: `subject embedding visible through public vector search: id ${subjectRef}` });
-      expect(provider.seen.has(subjectTitle)).toBe(true);
+      const put = await engine.client.call("vault.vectors.put", { entity_ref: subject.entity_ref, vector: [0, 0, 0, 1] });
+      expect(put.dimensions).toBe(fixture.embedder.dimensions);
+      const reader = await recordBoundReader(engine, [subjectRef]);
+      await awaitPublic(() => reader.call("vault.search.vector", { query: [0, 0, 0, 1], limit: 20 }),
+        read => read.value.hits.some(hit => hit.entity_ref === subjectRef),
+        { label: `subject vector visible to a reader bound to it: id ${subjectRef}` });
     }
     const filter: FacadeInput<"vault.claims.list"> = { subject_ref: subjectRef, limit: 1000 };
     const before = await engine.client.call("vault.claims.list", filter);
