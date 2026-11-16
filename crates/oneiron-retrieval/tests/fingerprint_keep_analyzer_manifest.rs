@@ -81,6 +81,7 @@ fn fixtures() -> Vec<(&'static str, AnalyzerManifest)> {
         casefold: false,
         kana_fold: false,
         khmer_coeng: false,
+        myanmar_zawgyi: false,
     };
     vec![
         (
