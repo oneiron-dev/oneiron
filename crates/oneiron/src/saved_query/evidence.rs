@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -50,14 +49,8 @@ pub use crate::store::query_memos::VerdictMemoKey;
 
 pub use crate::memory::query_records::MatchVerdict;
 
-/// A verdict plus the reason it was reached.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MatchDecision {
-    /// The verdict.
-    pub verdict: MatchVerdict,
-    /// Human-readable justification, persisted with the memo.
-    pub why: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::saved_query::evidence::MatchDecision;
 
 /// Result of evaluating one entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
