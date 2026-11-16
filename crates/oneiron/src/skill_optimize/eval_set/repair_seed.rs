@@ -10,6 +10,13 @@
 //! `Repair` case and its `WorldOutcome` label. A refused seed records no case,
 //! so nothing is ever derived from it.
 //!
+//! "The app's observed outcome, or an adjudicated label, is the check": when
+//! the outcome is no usable answer, the task's contract names the
+//! adjudicated-response grader. Its seed awaits an adjudicated audit label
+//! ([`Memory::label_eval_repair_seed`]), held only as the BLAKE3 of the
+//! answer, and the gate grades against that and records an `AdjudicatedAudit`
+//! label in place of the `WorldOutcome` one.
+//!
 //! The skill decides which repair to seed; fixed code compiles, seals and
 //! grades. Nothing here runs a model: the measuring host answers each arm and
 //! hands the answers to [`Memory::settle_eval_repair_seed`], as it hands leg
@@ -23,8 +30,9 @@ use serde::{Deserialize, Serialize};
 use super::cohort::cohorts_in_txn;
 use super::{
     DerivationKind, EvalArmPin, EvalCaseDraft, EvalLabel, EvalLabelKind, EvalRepairTask,
-    EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose, MAX_REF_BYTES,
-    append_label_in_txn, assign_family_in_txn, bounded_ref, invalid, record_case_in_txn,
+    EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose, MAX_LABEL_VALUE_BYTES,
+    MAX_REF_BYTES, append_label_in_txn, assign_family_in_txn, bounded_ref, invalid,
+    record_case_in_txn,
 };
 use crate::Vault;
 use crate::claim::ScopedReadReceipt;
@@ -75,6 +83,10 @@ pub enum EvalRepairSeedRefusal {
 pub enum EvalRepairSeedState {
     /// Proposed and sealed; the gate has not graded it yet.
     Pending,
+    /// Proposed and sealed, with an adjudicated-response task: the gate
+    /// grades nothing until its adjudicated audit label lands, which makes
+    /// it `Pending`.
+    AwaitingLabel,
     /// The old arm failed and the candidate passed: `case` holds it.
     Confirmed {
         case: EntityId,
@@ -90,8 +102,22 @@ pub enum EvalRepairSeedState {
     },
 }
 
+/// The adjudicated audit label an adjudicated-response seed is graded
+/// against. The answer is held only as the BLAKE3 of its bytes, never as text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairAdjudication {
+    /// BLAKE3 of the adjudicated answer's bytes.
+    pub answer_digest: [u8; 32],
+    /// The audit the label came from.
+    pub reference: String,
+    pub weight: f64,
+    /// When the label was given.
+    pub at: u64,
+}
+
 /// A sealed eval seed from one linked repair.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvalRepairSeed {
     pub source: EvalRepairTaskSource,
@@ -106,6 +132,9 @@ pub struct EvalRepairSeed {
     pub source_rows: Vec<EntityId>,
     /// When the seed was proposed; its case's `source_at`.
     pub proposed_at: u64,
+    /// An adjudicated-response task's label, once it lands; set once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjudication: Option<EvalRepairAdjudication>,
     pub state: EvalRepairSeedState,
 }
 
@@ -169,6 +198,41 @@ fn bounded_arm(arm: &EvalArmPin) -> Result<&str> {
     }
 }
 
+/// Whether `answer`, trimmed, is one of the identifiers `seed` keeps, whole:
+/// its source's claim ref, fingerprint, outcome ordinal and seat (a named
+/// seat's name too), and each arm's model, revision and skill digest. An
+/// adjudicated answer that is one would sit in the seed as text. Only a whole
+/// identifier counts: a hex id holds most one- and two-character answers by
+/// chance.
+fn is_a_seed_identifier(seed: &EvalRepairSeed, answer: &str) -> Result<bool> {
+    let answer = answer.trim();
+    let source = &seed.source;
+    let seat = source.seat.token()?;
+    let ordinal = source.outcome_ordinal.to_string();
+    let named = match &source.seat {
+        EvalSeat::Named(name) => Some(name.as_str()),
+        _ => None,
+    };
+    let arms = [&seed.old, &seed.candidate].into_iter().flat_map(|arm| {
+        [
+            Some(arm.model.as_str()),
+            Some(arm.revision.as_str()),
+            arm.skill_digest.as_deref(),
+        ]
+    });
+    Ok([
+        Some(source.claim_ref.as_str()),
+        Some(source.source_hash.as_str()),
+        Some(ordinal.as_str()),
+        Some(seat.as_str()),
+        named,
+    ]
+    .into_iter()
+    .chain(arms)
+    .flatten()
+    .any(|identifier| identifier.trim() == answer))
+}
+
 /// A seed proves a skill repair: its two arms serve one model at one
 /// revision and pin two different skill digests (hex, in any letter case).
 /// Arms that differ only in their model, its revision or a digest's spelling
@@ -224,8 +288,9 @@ fn family_held_in_txn(
 
 /// A proposal's write, for a task compiled before it: in one transaction the
 /// capture must still be live, the capture's root gets its sealed family,
-/// which no cohort may hold yet, and the seed is recorded. A seed already
-/// recorded for the source is returned unchanged.
+/// which no cohort may hold yet, and the seed is recorded: `Pending`, or
+/// `AwaitingLabel` for an adjudicated-response task. A seed already recorded
+/// for the source is returned unchanged.
 fn commit_proposal(
     vault: &Vault,
     task: &EvalRepairTask,
@@ -265,7 +330,12 @@ fn commit_proposal(
             candidate: request.candidate.clone(),
             source_rows: task.source_rows.clone(),
             proposed_at: at,
-            state: EvalRepairSeedState::Pending,
+            adjudication: None,
+            state: if task.awaits_adjudication() {
+                EvalRepairSeedState::AwaitingLabel
+            } else {
+                EvalRepairSeedState::Pending
+            },
         };
         SEEDS.put(&vault.store, txn, &key, &seed)?;
         Ok(seed)
@@ -273,11 +343,12 @@ fn commit_proposal(
 }
 
 /// The gate's write, for `stored` as it was read and `task` as it compiled
-/// before it. The seed must still be exactly `stored`: an erase and a new
-/// proposal between the read and this write leave another row, which is
-/// never settled with this verdict. The capture must still be live: a
-/// delete since the read keeps the seed but leaves it unsettled. A pending
-/// seed whose family a cohort holds by now is refused as `FamilyHeld`.
+/// (with `stored`'s adjudicated label applied) before it. The seed must
+/// still be exactly `stored`: an erase and a new proposal between the read
+/// and this write leave another row, which is never settled with this
+/// verdict. The capture must still be live: a delete since the read keeps
+/// the seed but leaves it unsettled. A seed whose family a cohort holds by
+/// now is refused as `FamilyHeld`.
 fn commit_settlement(
     vault: &Vault,
     stored: &EvalRepairSeed,
@@ -306,7 +377,10 @@ fn commit_settlement(
                 "the repair seed changed while it was graded; settle it again",
             ));
         }
-        if seed.state != EvalRepairSeedState::Pending {
+        if !matches!(
+            seed.state,
+            EvalRepairSeedState::Pending | EvalRepairSeedState::AwaitingLabel
+        ) {
             return Ok(seed);
         }
         // A delete keeps the seed until the erase scrubs it, but a deleted
@@ -337,16 +411,33 @@ fn commit_settlement(
                 };
                 let case =
                     record_case_in_txn(vault, txn, &draft, Some(task.source_rows.as_slice()), at)?;
-                let label = EvalLabel {
-                    kind: EvalLabelKind::WorldOutcome,
-                    value: task.outcome_digest(),
-                    reference: format!(
-                        "ag_ui:{}:{}#outcome/{}",
-                        task.source.claim_ref, task.source.source_hash, task.source.outcome_ordinal
-                    ),
-                    weight: 1.0,
-                    at,
-                    source_rows: Some(task.source_rows.clone()),
+                let value = task
+                    .outcome_digest()
+                    .ok_or(invalid("an adjudicated repair seed waits for its label"))?;
+                // The check the gate graded against: the app's observed
+                // outcome, or the adjudicated audit.
+                let label = match &seed.adjudication {
+                    Some(adjudication) => EvalLabel {
+                        kind: EvalLabelKind::AdjudicatedAudit,
+                        value,
+                        reference: adjudication.reference.clone(),
+                        weight: adjudication.weight,
+                        at: adjudication.at,
+                        source_rows: Some(task.source_rows.clone()),
+                    },
+                    None => EvalLabel {
+                        kind: EvalLabelKind::WorldOutcome,
+                        value,
+                        reference: format!(
+                            "ag_ui:{}:{}#outcome/{}",
+                            task.source.claim_ref,
+                            task.source.source_hash,
+                            task.source.outcome_ordinal
+                        ),
+                        weight: 1.0,
+                        at,
+                        source_rows: Some(task.source_rows.clone()),
+                    },
                 };
                 append_label_in_txn(vault, txn, &case.id, label)?;
                 EvalRepairSeedState::Confirmed {
@@ -367,9 +458,11 @@ impl Memory<'_> {
     /// (refusals as [`Self::read_eval_repair_task`]: a contract that does not
     /// fit its world, a failing precondition, a leaked answer), then, in one
     /// write, assign the capture's family root to a sealed-confirmation
-    /// family and record the seed `Pending`. A capture the scoped reader
-    /// withholds returns no seed and the read receipt. A replay over the same
-    /// source returns the seed already proposed, unchanged.
+    /// family and record the seed: `Pending`, or `AwaitingLabel` for an
+    /// adjudicated-response task, which waits for its label before the gate
+    /// grades it. A capture the scoped reader withholds returns no seed and
+    /// the read receipt. A replay over the same source returns the seed
+    /// already proposed, unchanged.
     ///
     /// # Errors
     ///
@@ -403,21 +496,24 @@ impl Memory<'_> {
     /// seed. The old answer must fail and the candidate's must pass; then one
     /// `Repair` case is recorded in the seed's sealed family, reading the
     /// capture's root, with a `WorldOutcome` label whose value is the
-    /// observed outcome's BLAKE3 hex (the answer stays out of the case), and
-    /// the seed is `Confirmed`. Otherwise it is `Refused` with its reason and
-    /// no case is recorded. A task that no longer compiles to the seed's hash
-    /// refuses as `TaskMoved`. A seed already settled is returned as it
-    /// stands. The caller is the measuring host, trusted to name the legs
-    /// that produced the answers, as the measurement doors trust it.
+    /// observed outcome's BLAKE3 hex (the answer stays out of the case), or,
+    /// for an adjudicated-response task, an `AdjudicatedAudit` label whose
+    /// value is the adjudicated answer's BLAKE3 hex, and the seed is
+    /// `Confirmed`. Otherwise it is `Refused` with its reason and no case is
+    /// recorded. A task that no longer compiles to the seed's hash refuses as
+    /// `TaskMoved`. A seed already settled is returned as it stands. The
+    /// caller is the measuring host, trusted to name the legs that produced
+    /// the answers, as the measurement doors trust it.
     ///
     /// The scoped read comes first: a caller the reader withholds the
     /// capture from learns nothing of its seed, not even whether one exists.
     ///
     /// # Errors
     ///
-    /// No seed for `source`, unbounded or equal leg receipts, a capture that
-    /// no longer compiles, a seed that changed while it was graded, a
-    /// capture deleted while it was graded, or storage errors.
+    /// A seed that awaits its adjudicated label (it stays as it is), no seed
+    /// for `source`, unbounded or equal leg receipts, a capture that no
+    /// longer compiles, a seed that changed while it was graded, a capture
+    /// deleted while it was graded, or storage errors.
     pub fn settle_eval_repair_seed(
         &self,
         source: &EvalRepairTaskSource,
@@ -432,6 +528,74 @@ impl Memory<'_> {
             return Err(invalid("a repair seed's two legs have their own receipts").into());
         }
         let read = self.read_eval_repair_task(source)?;
+        let Some(mut task) = read.task else {
+            return Ok(EvalRepairSeedRead {
+                seed: None,
+                receipt: read.receipt,
+            });
+        };
+        let stored = self
+            .vault()
+            .eval_repair_seed(&task.source)?
+            .ok_or(invalid("no repair seed was proposed for this source"))?;
+        if let Some(adjudication) = &stored.adjudication {
+            task.adjudicate(adjudication.answer_digest);
+        }
+        // Until its label lands an adjudicated seed is not graded; a task
+        // that moved meanwhile is still refused, so the seed never waits on.
+        if task.task_hash == stored.task_hash && task.awaits_adjudication() {
+            return Err(invalid("an adjudicated repair seed waits for its label").into());
+        }
+        let seed = commit_settlement(self.vault(), &stored, &task, old, candidate, legs, at)?;
+        Ok(EvalRepairSeedRead {
+            seed: Some(seed),
+            receipt: read.receipt,
+        })
+    }
+
+    /// Land the adjudicated audit label an adjudicated-response seed awaits,
+    /// which makes it `Pending` for the gate. The label's value is the
+    /// adjudicated answer: bounded (at most 512 bytes; a longer one is
+    /// refused, never cut), checked against what the task shows a leg as a
+    /// compiled answer is, and against the text the seed keeps (the task
+    /// pointer and the label's own reference), refused if it is, whole, one
+    /// of the seed's identifiers, and held only as the BLAKE3 of its bytes.
+    /// An owner's pick
+    /// arrives through its ask and a judge's verdict is never a check, so
+    /// only an adjudicated audit is taken. The label is set once: the same
+    /// answer and reference again return the seed unchanged. As at the gate,
+    /// the scoped read comes before any seed lookup.
+    ///
+    /// # Errors
+    ///
+    /// A label of another kind, an unbounded value or reference, a weight
+    /// outside 0..=1, no seed for `source`, a task that is not an adjudicated
+    /// response or that moved since the seed was proposed, a leaked answer
+    /// or one that is a seed identifier, another label already set, a seed that does not await a label, a seed
+    /// that changed while it was labelled, or storage errors.
+    pub fn label_eval_repair_seed(
+        &self,
+        source: &EvalRepairTaskSource,
+        label: &EvalLabel,
+    ) -> MemoryResult<EvalRepairSeedRead> {
+        match label.kind {
+            EvalLabelKind::AdjudicatedAudit => {}
+            EvalLabelKind::OwnerPick => {
+                return Err(invalid("an owner's pick is recorded through its ask").into());
+            }
+            EvalLabelKind::WorldOutcome | EvalLabelKind::JudgeVerdict => {
+                return Err(invalid("a repair seed takes only an adjudicated audit label").into());
+            }
+        }
+        if label.value.trim().is_empty()
+            || label.value.len() > MAX_LABEL_VALUE_BYTES
+            || !label.weight.is_finite()
+            || !(0.0..=1.0).contains(&label.weight)
+        {
+            return Err(invalid("an eval label needs a bounded value and a 0..=1 weight").into());
+        }
+        bounded_ref(&label.reference)?;
+        let read = self.read_eval_repair_task(source)?;
         let Some(task) = read.task else {
             return Ok(EvalRepairSeedRead {
                 seed: None,
@@ -439,10 +603,52 @@ impl Memory<'_> {
             });
         };
         let vault = self.vault();
+        let key = seed_key(&task.source)?;
         let stored = vault
             .eval_repair_seed(&task.source)?
             .ok_or(invalid("no repair seed was proposed for this source"))?;
-        let seed = commit_settlement(vault, &stored, &task, old, candidate, legs, at)?;
+        if task.task_hash != stored.task_hash {
+            return Err(invalid("the capture's task moved since its seed was proposed").into());
+        }
+        let adjudication = EvalRepairAdjudication {
+            answer_digest: task.adjudicated_answer_digest(&label.value, &label.reference)?,
+            reference: label.reference.clone(),
+            weight: label.weight,
+            at: label.at,
+        };
+        if is_a_seed_identifier(&stored, &label.value)? {
+            return Err(
+                invalid("an adjudicated answer is one of the identifiers its seed keeps").into(),
+            );
+        }
+        let seed = vault.with_write_txn_grouped(|txn| {
+            let Some(mut seed) = SEEDS.get(&vault.store, txn, &key)? else {
+                return Err(invalid("no repair seed was proposed for this source"));
+            };
+            if seed != stored {
+                return Err(invalid(
+                    "the repair seed changed while it was labelled; label it again",
+                ));
+            }
+            let replay = seed.adjudication.as_ref().map(|existing| {
+                existing.answer_digest == adjudication.answer_digest
+                    && existing.reference == adjudication.reference
+            });
+            match replay {
+                Some(true) => return Ok(seed),
+                Some(false) => {
+                    return Err(invalid("a repair seed's adjudicated label is set once"));
+                }
+                None if seed.state != EvalRepairSeedState::AwaitingLabel => {
+                    return Err(invalid("this repair seed does not await a label"));
+                }
+                None => {}
+            }
+            seed.adjudication = Some(adjudication);
+            seed.state = EvalRepairSeedState::Pending;
+            SEEDS.put(&vault.store, txn, &key, &seed)?;
+            Ok(seed)
+        })?;
         Ok(EvalRepairSeedRead {
             seed: Some(seed),
             receipt: read.receipt,
@@ -466,7 +672,8 @@ impl Vault {
         SEEDS.get(&self.store, &txn, &seed_key(source)?)
     }
 
-    /// Every seed the gate has not graded yet, for the measuring host.
+    /// Every seed the gate can grade now, for the measuring host: an
+    /// adjudicated seed is listed once its label lands.
     ///
     /// # Errors
     ///
