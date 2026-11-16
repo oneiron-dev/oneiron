@@ -1,4 +1,6 @@
 //! Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning.
+//! The door's class registry, and what an API call does read from its request
+//! against the per-API verb-class tables (L8-57, ARCH-0069 #door-reads-action).
 //!
 //! Loopback is a network fact, never an identity. Checkout credentials are
 //! re-witnessed under the writer that authorizes a receive-pack operation.
@@ -20,6 +22,8 @@
 //! [`VaultInstant`] has no `From<u64>` and no public constructor, so callers
 //! cannot choose the clock that decides credential expiry.
 //!
+mod api_action;
+mod api_verb_class;
 mod binary_scan;
 mod checkout_ticket;
 mod door_authority;
@@ -30,6 +34,8 @@ mod door_service;
 mod door_types;
 mod verb_class;
 
+pub use self::api_action::{ApiAction, ApiProtocol, read_api_actions};
+pub use self::api_verb_class::{ApiVerbClassRow, ApiVerbClassTable};
 pub(crate) use self::checkout_ticket::{require_checkout_lease, require_checkout_lease_in_txn};
 pub(crate) use self::door_credential::DoorCredential;
 pub(crate) use self::door_policy::admit_materialization_in_txn;
