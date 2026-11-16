@@ -7,7 +7,6 @@
 //! file. No command prints a vendor token.
 
 use std::io::{self, Read as _, Write as _};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::{SeatLoginPlanArgs, SeatRunnerPolicyArgs};
 use crate::runtime::seat_login::{
@@ -138,10 +137,7 @@ pub fn seat_login_plan(args: SeatLoginPlanArgs) -> anyhow::Result<()> {
     let now = if args.now > 0 {
         args.now
     } else {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs())
-            .unwrap_or(0)
+        oneiron_base::unix_seconds_now()
     };
     // The runtime's actual hosting posture judges the login, apart from its
     // inference mode (FIX 9533).
