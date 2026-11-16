@@ -12,6 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | Sets `GENERATOR_SOURCE_DIGEST` (exposed as `oneiron_sdk_generator::GENERATOR_SOURCE_DIGEST`): a digest of… |
+| `src/argument_parser.rs` | src | m | 1 crate-vis | — | The generator's argument parser: Python's `argparse` for the binary's four options, with the refusals it… |
 | `src/catalog_fragment.rs` | src | L | 9 crate-vis | — | The code-mode catalog fragment and its revision (ONE-2510 S2) |
 | `src/error.rs` | src | s | 1 enum · 10 crate-vis | GenerateError | `GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python… |
 | `src/facade_types/index.rs` | src | L | 24 crate-vis | — | Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that… |
@@ -36,11 +37,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/generate/mod.rs` | src | s | 22 crate-vis | — | The `Generator` state and the module-level constants |
 | `src/generate/outputs.rs` | src | m | 1 struct · 4 fn · 17 crate-vis | Outputs | `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed… |
 | `src/generate/row_access.rs` | src | s | 26 crate-vis | — | Python's operations on a verb row, as the Rust emitters perform them (G4a) |
-| `src/generate/rows.rs` | src | L | 2 crate-vis | — | The Python generator's module level: the verb rows' validation and the row sets, in source order |
+| `src/generate/rows.rs` | src | m | 2 crate-vis | — | The Python generator's module level: the verb rows' validation and the row sets, in source order |
+| `src/generate/rows/sets.rs` | src | m | 3 crate-vis | — | The row sets of the module level: the host sets, the callable sets and the checked sets, each made by one… |
+| `src/generate/rows/tests.rs` | test | s | — | — | — |
 | `src/generate/uniffi.rs` | src | L | 14 crate-vis | — | The UniFFI verb surface (`facade_generated.rs`, one `export_facade!` arm per facade row) and its generated… |
 | `src/generate/wire_inputs.rs` | src | s | 6 crate-vis | — | Lib split W3-GEN: the verb rows whose input checks and input schemas `oneiron-verb-wire` emits, and each… |
 | `src/lib.rs` | src | s | 1 struct · 12 fn · 3 const · 3 re-export | Run | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… |
-| `src/main.rs` | src | L | — | — | The `oneiron-sdk-generator` binary: the Python generator's `main()`: its argument parsing, as Python's… |
+| `src/main.rs` | src | m | — | — | The `oneiron-sdk-generator` binary: the Python generator's `main()`: its argument parsing, as Python's… |
 | `src/projection_rules.rs` | src | m | — | — | The projection rules and refusals a verb author depends on, checked on the generator's real outputs: on the… |
 | `src/py/builtins.rs` | src | s | 4 crate-vis | — | Python's builtin names and keywords, embedded from the reference interpreter |
 | `src/py/json.rs` | src | m | 8 crate-vis | — | Python's `json` (brief H1, H1b): `loads` as CPython 3.14.7's C scanner reads a `str`, with… |
