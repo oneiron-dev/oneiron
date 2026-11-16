@@ -887,7 +887,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/context_pack_disclosure.rs` | test | XL | — | — | Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance |
 | `src/api/tests/context_pack_v4.rs` | test | m | — | — | Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission |
 | `src/api/tests/contract_snapshots.rs` | test | m | — | — | v1 core OpenAPI/success/error contract fixture snapshots plus generated-OpenAPI spec assertions |
-| `src/api/tests/conversation_dag.rs` | test | L | — | — | Wire-level DAG, summary and reply-strip acceptance |
+| `src/api/tests/conversation_dag.rs` | test | XL | — | — | Wire-level DAG, summary and reply-strip acceptance |
 | `src/api/tests/conversation_reactions.rs` | test | m | — | — | HTTP reactions: put and remove, grouped pills on listed records, grouped lines on context-packed messages… |
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
 | `src/api/tests/core_memory_conversations.rs` | test | XL | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
@@ -897,7 +897,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/facet_read.rs` | test | m | — | — | Owner ruling FACET-READ = A: a facet limits what a credential other than the owner's reads, by one rule on… |
 | `src/api/tests/feedback_inbox.rs` | test | m | — | — | The open feedback inbox (ARCH-0056 #open-inbox, owner ruling 2026-10-16): "if someone has an issue with… |
 | `src/api/tests/machine_identity.rs` | test | s | — | — | World privacy P1 through the server: the owner's answer at the pairing ceremony decides whether a machine is… |
-| `src/api/tests/mcp_booking_publication.rs` | test | s | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
+| `src/api/tests/mcp_booking_publication.rs` | test | m | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
 | `src/api/tests/mcp_code_admission.rs` | test | m | 1 crate-vis | — | `execute_code` admission (C10, under the rate law of ARCH-0044 C5): a burst of runs on one credential all… |
 | `src/api/tests/mcp_code_check.rs` | test | s | — | — | Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
@@ -912,7 +912,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_source_gate.rs` | test | s | — | — | — |
 | `src/api/tests/mcp_tool_endpoints.rs` | test | L | — | — | Tool-first vs /mcp listings, setup keyframe, execute_code retirement, narrowed admission, arg gating |
 | `src/api/tests/memory_reason_repairs.rs` | test | s | — | — | — |
-| `src/api/tests/mod.rs` | test | L | 56 crate-vis | — | — |
+| `src/api/tests/mod.rs` | test | L | 57 crate-vis | — | — |
 | `src/api/tests/off_record_rooms.rs` | test | XL | — | — | ARCH-0052 D5, the notice model (owner ruling 2026-10-10, O1 = A): anyone in a room may start an off-record… |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
 | `src/api/tests/owner_authored_writes.rs` | test | s | — | — | Owner-authored writes carry their own confirmation (security pack 2, F14 R6) |
@@ -1000,7 +1000,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/hosted_args.rs` | src | s | 3 struct · 1 enum | HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs | `oneiron hosted`: the hosted vaults this user signed in to here and the one selected, which `oneiron hook`… |
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
 | `src/cli/model_workers_args.rs` | src | s | 1 struct | ModelWorkersArgs | — |
-| `src/cli/owner_args.rs` | src | L | 50 struct · 18 enum | ArchiveSpeakers, BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs +60 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
+| `src/cli/owner_args.rs` | src | L | 51 struct · 18 enum | ArchiveSpeakers, BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs +61 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/recovery_kit_args.rs` | src | m | 12 struct · 1 enum | KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs +5 | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key… |
 | `src/cli/reminder_route_args.rs` | src | s | 3 struct · 1 enum | ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs | `oneiron reminder-route`: the owner's commitment reminder route on a stopped vault… |
 | `src/cli/seat_args.rs` | src | s | 5 struct · 1 enum · 1 fn | SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs, SiwcCredentialArgs, SiwcLoginArgs, SiwcRevokeArgs | `oneiron seat …` arguments: the official-seat sign-in surface (OF-375) |
@@ -1033,12 +1033,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/embedder_serve.rs` | src | s | 1 fn | — | `oneiron-server embedder serve`: resolves which model to serve, then hands it to the endpoint… |
 | `src/commands/embedder_serve/tests.rs` | test | s | — | — | Which section `embedder serve` serves, and at what width |
 | `src/commands/files.rs` | src | s | 1 fn | — | `oneiron files attach\|rescan\|detach\|list\|files`: the Files world on a stopped vault (FIX 6942) |
-| `src/commands/history_import.rs` | src | L | 6 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
+| `src/commands/history_import.rs` | src | L | 7 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
 | `src/commands/history_import/hosted_import.rs` | src | L | 16 crate-vis | — | The hosted import's job (ARCH-0027 #hosted-import, CROSS-ARCH-0024 #onboarding-import): an export staged… |
 | `src/commands/history_import/notes.rs` | src | m | 2 crate-vis | — | `oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner… |
 | `src/commands/history_import/notes/folder.rs` | src | s | 1 crate-vis | — | `oneiron import folder attach\|rescan\|detach\|list`: a folder of markdown notes and PDFs that stays attached… |
 | `src/commands/history_import/queue.rs` | src | m | 4 crate-vis | — | The import queue |
 | `src/commands/history_import/queue/tests.rs` | test | m | — | — | The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code… |
+| `src/commands/history_import/slack.rs` | src | m | 1 crate-vis | — | `oneiron import slack <zip \| folder> --members <map.json>`: a Slack workspace export, imported into a… |
 | `src/commands/hook.rs` | src | m | 1 fn · 1 re-export | — | `oneiron hook --host <host> <event>`: an agent harness's hooks, run by the binary |
 | `src/commands/hook/bind.rs` | src | m | 4 crate-vis | — | Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first… |
 | `src/commands/hook/hosted_command.rs` | src | s | 1 fn | — | `oneiron hosted`: the commands that publish this user's hosted sign-in and selection, which `oneiron hook`… |
@@ -1246,9 +1247,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded/failure.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 crate-vis | EngineErrorKind, EngineFailure | Why an embedded engine call failed, by cause (OF-237): the one projection every binding raises, a stable… |
 | `src/embedded/process_host.rs` | src | s | 1 struct · 1 fn | ProcessHost | The app host of a binding whose app is a plain process (OF-237): the Python and Node served clients, which… |
 | `src/embedded/runtime.rs` | src | s | 5 crate-vis | — | The runtime an embedded engine serves on, under the app's advisory CPU share (FIX 2661, OF-237) |
-| `src/embedder/admitted.rs` | src | m | 9 crate-vis | — | An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and… |
+| `src/embedder/admitted.rs` | src | m | 13 crate-vis | — | An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and… |
 | `src/embedder/brokered.rs` | src | s | 8 crate-vis | — | How an endpoint embedder's requests reach their server: a plain client, whose default headers carry an… |
-| `src/embedder/endpoint.rs` | src | L | 26 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
+| `src/embedder/endpoint.rs` | src | L | 27 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/endpoint/answer_error.rs` | src | s | 2 crate-vis | — | The `error` member that ends an `embedder serve` answer a later batch could not complete (FIX 10702), which… |
 | `src/embedder/endpoint/destination.rs` | src | s | 9 crate-vis | — | Where one document batch goes, chosen before any of its rows is admitted (FIX 9486) |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
@@ -1268,7 +1269,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/spec.rs` | src | s | 3 crate-vis | — | What a local checkpoint declares about itself, read from its metadata files alone: the body, how it attends… |
 | `src/embedder/local/st_modules.rs` | src | m | 14 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
 | `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
-| `src/embedder/mod.rs` | src | m | 36 crate-vis | — | The embedder provider slot |
+| `src/embedder/mod.rs` | src | m | 38 crate-vis | — | The embedder provider slot |
 | `src/embedder/remote.rs` | src | s | 7 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
 | `src/embedder/serve.rs` | src | m | 6 crate-vis | — | `oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several… |
 | `src/embedder/serve/accounts.rs` | src | m | 11 crate-vis | — | Each account's own bearer key for the shared embedder (CROSS-ARCH-0019 #dm-xaccount-embedder): one server… |
@@ -1286,7 +1287,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback_delivery.rs` | src | m | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/feedback_redaction.rs` | src | s | 7 crate-vis | — | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |
-| `src/files_intake/confined.rs` | src | m | 14 crate-vis | — | Reading under one folder without leaving it |
+| `src/files_intake/confined.rs` | src | m | 15 crate-vis | — | Reading under one folder without leaving it |
 | `src/files_intake/files.rs` | src | m | 2 crate-vis | — | A Files source's read (FIX 6942) |
 | `src/files_intake/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/files_intake/mod.rs` | src | s | 7 crate-vis | — | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
@@ -1974,6 +1975,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/slide_render/scratch.rs` | src | s | 8 crate-vis | — | The renderer's selected scratch filesystem and its private directories |
 | `src/slide_render/scratch/bounded.rs` | src | s | 5 crate-vis | — | The opt-in Linux scratch mount and file-content write fence |
 | `src/test_credentials.rs` | src | m | 18 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
+| `src/test_doors/background_embedding.rs` | src | s | 2 fn | — | Doors for `tests/background_embedding_line.rs` (census L1-27, ARCH-0053 `#embedding-admission-built`): a… |
 | `src/test_doors/big_rung.rs` | src | s | 1 fn | — | Doors for `tests/big_rung_written_reply.rs` (FIX 22368): the decision the Big rung stores from a written reply |
 | `src/test_doors/booking_turn_line.rs` | src | s | 1 struct · 2 enum · 3 fn | DroppedWaiter, Pass, TurnEnd | Door for `tests/booking_turn_line.rs` (census L3-11, ARCH-0062 #booking-turn-divergence): authenticated hold… |
 | `src/test_doors/build_server.rs` | src | s | 2 fn | — | Doors for `tests/serve_usage_metering.rs` and `tests/managed_serve_usage_metering.rs`: the server plain and… |
@@ -1989,16 +1991,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mcp_page_mint.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's next page one mint, after its… |
 | `src/test_doors/mcp_surface.rs` | src | s | 2 fn | — | Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the… |
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
-| `src/test_doors/mod.rs` | src | s | 26 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 29 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/one_click_wire_counter.rs` | src | s | 1 fn | — | Door for `tests/campaign_one_click_unsubscribe.rs`: runs a closure while the wire window's counter lock is… |
 | `src/test_doors/openapi_document.rs` | src | s | 2 fn | — | Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this… |
 | `src/test_doors/pre_idle_reuse.rs` | src | s | 1 struct · 6 fn | ManagedBackups | Door for `tests/pre_idle_held_verdict.rs` ([HELD-WHOLE-READ-OFF-PRE-IDLE]): a managed vault's owner host… |
 | `src/test_doors/replay_admission.rs` | src | s | 5 fn | — | Doors to an exact replay's admission (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG): a runtime whose… |
+| `src/test_doors/residence_connection.rs` | src | s | 1 fn | — | Registers a machine's sync connection with the `vault.residence.*` rows, as the device sync loop registers… |
 | `src/test_doors/resident_pump.rs` | src | s | 1 fn | — | Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`… |
 | `src/test_doors/signing_session.rs` | src | s | 2 struct · 2 fn | Held, SessionsRead | Door for `tests/esign_signing_session.rs` (census L3-22; review round 1 of #7663): the public signing routes… |
 | `src/test_doors/siwc_seat.rs` | src | s | 1 struct · 5 fn | SiwcSeatTick | Doors for `tests/siwc_seat_login.rs` (SEAT-PARK-MODEL-STEP-PATH): an SIWC offer's model seat, the refusal… |
 | `src/test_doors/solved_runs.rs` | src | s | 1 struct · 1 fn | CheckedSpanView | Doors for `tests/library_draft_task_type.rs` (FIX 10508): what a `self.browser.library.draft` call names for… |
+| `src/test_doors/voice_call.rs` | src | s | 1 struct · 3 fn | StandaloneCall | Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2): the brain of an owner's own standalone call on this… |
 | `src/test_doors/wire_health_sweep.rs` | src | s | 3 fn | — | Door for `tests/own_rate_health_ask.rs`: one pass of the health check's worker (`wire_health::sweep`), run… |
 | `src/test_doors/workflow_park.rs` | src | s | 1 re-export | — | Doors for `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a workflow step's leaf… |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
@@ -2025,13 +2029,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | Voice partial-enrichment extraction |
 | `src/voice_host/hello_refusal.rs` | src | s | 3 crate-vis | — | A voice hello refused before its call is admitted (`boot`) is answered with one line… |
 | `src/voice_host/media_bridge.rs` | src | L | 1 struct · 1 enum · 22 crate-vis | VoiceMediaBindings, VoiceMediaIn | The host's own speech and hearing on the media seats (OF-410) |
-| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 8 fn · 6 re-export · 4 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
+| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 8 fn · 7 re-export · 5 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
 | `src/voice_host/phone.rs` | src | s | 1 struct · 16 crate-vis | PhoneCallRead | A phone answer's actual receiving-agent read and prepared-output fence |
 | `src/voice_host/playout_queue.rs` | src | s | 10 crate-vis | — | Frames waiting for the voice wire, spoken audio gated per chunk (FIX 9542) |
 | `src/voice_host/public.rs` | src | m | 21 crate-vis | — | Credential-bound public sessions |
 | `src/voice_host/public_events.rs` | src | m | 15 crate-vis | — | Public event correlation and dequeue fencing, independent of transport |
 | `src/voice_host/public_hold.rs` | src | s | 9 crate-vis | — | A public live voice session's hold on its host's write gate: one admission, taken when the session starts… |
 | `src/voice_host/public_loop.rs` | src | m | 2 crate-vis | — | The public transport drives the existing voice host and media worker |
+| `src/voice_host/record.rs` | src | s | 1 fn · 4 crate-vis | — | What an owner's own voice call keeps (UNBUILT-02 PR 2) |
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/speaker_match.rs` | src | s | 4 crate-vis | — | A call's speakers matched in production (FIX 3344) |
 | `src/voice_host/speech.rs` | src | m | 3 struct · 1 enum · 3 fn · 19 crate-vis | PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout | The brain's reply in the host's own voice (OF-410) |
@@ -2068,6 +2073,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/agent_plugins_package.rs` | test | m | — | — | The Agent Plugins package (`plugins/agent-plugins`; ARCH-0028 #plugin-start-order step 2… |
 | `tests/artifact_pinned_document_cache.rs` | test | s | — | — | A pinned public code bundle's documents revalidate on every load, so a policy change reaches a browser that… |
 | `tests/artifact_private_owner_read.rs` | test | m | — | — | A private published app serves its vault's owner alone (CROSS-ARCH-0019 #public-backend, PUBLIC-BACKEND = A… |
+| `tests/background_embedding_line.rs` | test | m | — | — | Census L1-27 (ARCH-0053 `#embedding-admission-built`): a served vault's background embeddings pay from the… |
 | `tests/big_rung_written_reply.rs` | test | s | — | — | FIX 22368: the Big rung's written reply (`reply = "json"` or `"lines"`, the path without token scores)… |
 | `tests/board_child_release.rs` | test | s | — | — | Census L2-38, review round 1 of the ChildDone producer: a `children:` CARRIER line names only its child's… |
 | `tests/booking_turn_line.rs` | test | s | — | — | Census L3-11 (canon ARCH-0062 #booking-turn-divergence): an authenticated booking request past a window… |
@@ -2104,7 +2110,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/gpu_pod_hours.rs` | test | s | — | — | A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset; a pod without… |
 | `tests/graduation_demote_holder_door.rs` | test | m | — | — | A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING… |
 | `tests/history_import_archive_precheck.rs` | test | m | — | — | The archive pre-check under `oneiron import chatgpt <zip>`, through the shipped binary (ARCH-0027… |
+| `tests/history_import_slack.rs` | test | m | — | — | L2-18 PR 2: `oneiron import slack <zip \| folder> --members <map.json>`, through the shipped binary… |
 | `tests/host_init_fresh_node.rs` | test | s | — | — | `oneiron host init` on a fresh node path (FIX-LIST [T0I-HOST-INIT-SYSTEMD-DIR-TWICE]): the reference… |
+| `tests/host_trigger_doors.rs` | test | L | — | — | The owner's typed host triggers (ARCH-0080), entered as the SDK enters them: HTTP `POST… |
 | `tests/hosted_import_archive_precheck.rs` | test | m | — | — | The archive pre-check under a hosted import (ARCH-0027 #archive-precheck: the pass "skips and lists an… |
 | `tests/hosted_import_job.rs` | test | m | — | — | [HOSTED-IMPORT-JOB] (census item 14, L2-19; ARCH-0027 #hosted-import; the Engine's ruling of 13 Nov 07:02)… |
 | `tests/hosted_import_upload_route.rs` | test | m | — | — | [HOSTED-IMPORT-UPLOAD-ROUTE] (census item 14, L2-19; ARCH-0027:151 #hosted-import: "Upload bytes go straight… |
@@ -2181,6 +2189,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/run_settlements_own_agent.rs` | test | m | — | — | RUN-SETTLEMENTS-OWN-AGENT-READ: `vault.budgets.settlements` over the facade |
 | `tests/run_step_live_run.rs` | test | m | — | — | [RUN-STEP-DOOR-SERVER-TEST] (FIX-LIST 23040, 23150, 23621): `ai.steps.submit` on an agent's attached live… |
 | `tests/runtime_clock.rs` | test | m | — | — | The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and… |
+| `tests/self_browser_doors.rs` | test | m | — | — | An agent drives a browser only through its own attached live run, and each browser door refuses everyone… |
+| `tests/self_desktop_doors.rs` | test | s | — | — | No `self.desktop.*` verb has an HTTP facade door: a caller outside a run's code mode cannot drive the… |
+| `tests/self_off_record_doors.rs` | test | L | — | — | Promise tests for the doors of a session-bound code run (ruling L4-23 = A: each test proves a promise at its… |
 | `tests/self_secrets_doors.rs` | test | m | — | — | Public-door promise tests for the `self.secrets` family (ruling L4-23 = A: each test proves a promise at the… |
 | `tests/serve_usage_metering.rs` | test | s | — | — | A self-hosted serve binds its usage meter before any work starts (FIX 11011, FIX 22868): to the vault's own… |
 | `tests/siwc_seat_login.rs` | test | s | — | — | SEAT-PARK-MODEL-STEP-PATH, server leg: an SIWC offer's refusals name its model seat, and the housekeeping… |
@@ -2191,17 +2202,41 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/unauthenticated_embedder_peer.rs` | test | s | — | — | An app made by `build_app` keeps the unauthenticated development hatch on this device, however its embedder… |
 | `tests/vault_budgets_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.budgets` family (ARCH-0079 #budget: the runtime enforces only the… |
+| `tests/vault_campaign_doors.rs` | test | XL | — | — | The campaign doors (ARCH-0059), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>` through… |
+| `tests/vault_connectors_doors.rs` | test | L | — | — | The connectors doors a vault serves without any admission chain (PR-A): HTTP `POST /v1/core/facade/<verb>`… |
 | `tests/vault_consent_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.consent` family (ruling L4-23 = A: each test proves a promise at… |
 | `tests/vault_courtesy_delete_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.courtesy_delete` family (ruling L4-23 = A: each test proves a… |
+| `tests/vault_disclosure_doors.rs` | test | L | — | — | Promise tests for the `vault.disclosure.*` doors, entered at `POST /v1/core/facade/<verb>` |
+| `tests/vault_drafters_doors.rs` | test | L | — | — | The vault's own drafters (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`… |
 | `tests/vault_export_doors.rs` | test | L | — | — | Public-door promise tests for the scoped and kept `vault.export` family (ruling L4-23 = A: each test proves… |
+| `tests/vault_fanout_doors.rs` | test | XL | — | — | The vault fan-out doors (OF-393), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>` through… |
+| `tests/vault_federation_doors.rs` | test | L | — | — | Promise tests for the `vault.federation.*` doors, entered at `POST /v1/core/facade/<verb>` |
+| `tests/vault_guests_doors.rs` | test | L | — | — | Promise tests for the `vault.guests.*` doors, entered at `POST /v1/core/facade/<verb>` |
+| `tests/vault_hooks_doors.rs` | test | m | — | — | Vault hook doors over HTTP: replay is a dry run, an undeclared outcome is refused, cancel keeps the body |
+| `tests/vault_identity_doors.rs` | test | L | — | — | The `vault.identity` doors (ARCH-0055's identity topology… |
+| `tests/vault_mail_doors.rs` | test | XL | — | — | The mail doors (`vault.mail.*`, ARCH-0063 #mail-pack), entered as the SDK enters them: HTTP `POST… |
 | `tests/vault_members_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the… |
 | `tests/vault_notes_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.notes` family (the server serves all 27 verbs; editor.bind/close… |
+| `tests/vault_off_record_doors.rs` | test | L | — | — | Promise tests for the off-record session doors a stretch's manager calls (ruling L4-23 = A: each test proves… |
+| `tests/vault_off_record_rooms_doors.rs` | test | L | — | — | Promise tests for the off-record doors a room's participants call (ruling L4-23 = A: each test proves a… |
+| `tests/vault_people_doors.rs` | test | L | — | — | The `vault.people` doors (ARCH-0067's People, oneiron/agents/oneiron-arch-0067-context-board-v1.md), each… |
+| `tests/vault_policy_doors.rs` | test | L | — | — | The vault policy doors (`vault.policy.*`), entered as the SDK enters them: HTTP `POST… |
+| `tests/vault_residence_doors.rs` | test | L | — | — | The `vault.residence` doors (ARCH-0023b's residence, oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation… |
+| `tests/vault_runners_doors.rs` | test | XL | — | — | The owner's runner seat doors, entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>` through… |
 | `tests/vault_seal_doors.rs` | test | L | — | — | Owner-door promise tests for the `vault.seal` family (ARCH-0079 P1/P2/P3) |
 | `tests/vault_secrets_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.secrets` family (ruling L4-23 = A: each test proves a promise at… |
 | `tests/vault_shared_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.shared` family (ARCH-0043 = A: each test proves a promise at the… |
+| `tests/vault_shares_doors.rs` | test | L | — | — | Promise tests for the `vault.shares.*` doors, entered at `POST /v1/core/facade/<verb>` |
+| `tests/vault_sieve_doors.rs` | test | L | — | — | The sieve's fifteen doors (ARCH-0026), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`… |
+| `tests/vault_skill_hubs_doors.rs` | test | L | — | — | The `vault.skill_hubs` doors: per-hub admission, trust as data, ref round-trip, refusals, and one… |
+| `tests/vault_skills_doors.rs` | test | L | — | — | The skill library's doors (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`… |
 | `tests/vault_support_grants_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.support_grants` family (ruling L4-23 = A: each test proves a… |
+| `tests/vault_trusted_contacts_doors.rs` | test | L | — | — | Promise tests for the `vault.trusted_contacts.*` doors, entered at `POST /v1/core/facade/<verb>` |
 | `tests/vault_usage_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.usage` repair family: the stored usage rows of this server's… |
 | `tests/vault_voices_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the… |
+| `tests/vault_weave_doors.rs` | test | L | — | — | The `vault.weave` doors: recipe admission and parking, schedule CRUD and its role gate, per-reader digests… |
+| `tests/vault_workflows_doors.rs` | test | XL | — | — | The saved-workflow doors (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`… |
+| `tests/voice_self_epoch.rs` | test | s | — | — | UNBUILT-02 PR 2: an owner's own voice call is an ordinary conversation (VOICE-EPOCH-SOURCE = B) |
 | `tests/window_sync_ask_drain.rs` | test | m | — | — | FIX 20468 (last part): the server drains the relayed ask intents a window update landed, as the client lane… |
 | `tests/workflow_park_save_retry.rs` | test | s | — | — | [WORKFLOW-PARK-FAIL-RETRYABLE] (the Engine's ruling of 13 Nov 01:22): a workflow step whose `self.use` call… |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |
