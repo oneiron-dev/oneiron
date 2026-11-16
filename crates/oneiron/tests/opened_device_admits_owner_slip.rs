@@ -13,8 +13,11 @@
 //! (Engine RULING SYNC-HOME-UNANSWERED = B, 14 Nov). From a home that proved
 //! nothing a row lands only for a slip its owner paired for himself, and
 //! never over a row stored here (Engine RULING 15 Nov 23:59); where the
-//! device's own live-owner census names owners, only for a holder it names,
-//! and only a row that confers (BLIND-REVIEW-7853 F1, F2). Built only under
+//! device holds the shared vault's membership and its live-owner census
+//! names owners, only for a holder it names, and only a row that confers
+//! (BLIND-REVIEW-7853 F1, F2). A co-owner who is not the embedded owner
+//! still gets the row of his own pairing before that membership reaches the
+//! device (BLIND-REVIEW-7853 round 1 P1). Built only under
 //! `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
@@ -25,9 +28,11 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     HostSlipIssuer, MachineOwnership, MachineRole, PairingPrincipal, PeerMachine,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     Scope, ScopeAxis, decode_federation_grant_body, encode_federation_grant_body,
 };
+use oneiron::store::GateDecisionId;
 use oneiron::sync::residence::{
     OwnDeviceGrantState, admit_own_device_grants, own_device_grant_refs, own_device_grant_states,
     own_device_grants_for,
@@ -42,9 +47,14 @@ use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 /// The binding key seed of the owner's paired device.
 const DEVICE_BINDING_SEED: u8 = 0x5A;
 
-/// The shared vault whose membership the device holds in the demotion case:
-/// any id but 7, the own-device grants' residence scope.
+/// The shared vault whose membership the device holds in the demotion case,
+/// and the home holds in the co-owner case: any id but 7, the own-device
+/// grants' residence scope.
 const SHARED_VAULT_ID: u64 = 0x5E1;
+
+/// The co-owner's PERSON id in the co-owner case: neither the embedded owner
+/// nor the remaining co-owner of the demotion case.
+const CO_OWNER_ID: [u8; 16] = [0x72; 16];
 
 /// The grants a device asks its home about, with the holders whose live
 /// slip names each.
@@ -65,6 +75,29 @@ struct Home {
 }
 
 fn home() -> Home {
+    let (vault, dir, issuer) = home_vault();
+    let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+    paired_home(vault, dir, issuer, owner, &owner_proof)
+}
+
+/// A home whose live-owner census names `co_owner` alone, a co-owner who is
+/// not the embedded owner every vault seeds: the shared vault's creation
+/// record, his PERSON and his conferring Owner grant over it stand here.
+/// He paired his own device himself, so its signed mint names him as the
+/// member who approved the pairing (FIX 11713).
+fn co_owner_home(co_owner: EntityId) -> Home {
+    let (vault, dir, issuer) = home_vault();
+    stand_shared_owner_census(&vault, SHARED_VAULT_ID, co_owner)
+        .expect("the home's census names the co-owner alone");
+    let co_owner_proof = vault
+        .authenticate_owner(co_owner, &co_owner.to_hex(), true, GateDecisionId::now())
+        .expect("the co-owner authenticates as himself");
+    paired_home(vault, dir, issuer, co_owner, &co_owner_proof)
+}
+
+/// A home vault before anyone pairs a device on it, and the host issuer
+/// that signs its slip acts.
+fn home_vault() -> (Vault, tempfile::TempDir, HostSlipIssuer) {
     let dir = tempfile::tempdir().expect("home vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("home vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -76,12 +109,23 @@ fn home() -> Home {
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
         .expect("this install's live machine profile");
-    let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+    (vault, dir, issuer)
+}
+
+/// `vault` once `owner`, authenticated by `owner_proof`, paired his own
+/// device on it: the paired slip and the own-device grant it names.
+fn paired_home(
+    vault: Vault,
+    dir: tempfile::TempDir,
+    issuer: HostSlipIssuer,
+    owner: EntityId,
+    owner_proof: &AuthenticatedOwner,
+) -> Home {
     let holder = owner.to_hex();
     let link = vault
         .issue_owner_pairing_link(
             &issuer,
-            &owner_proof,
+            owner_proof,
             Scope::top(),
             3_600,
             PairingPrincipal {
@@ -811,5 +855,53 @@ fn unproven_home_cannot_land_a_grant_row_that_confers_nothing() {
     assert!(
         admits(&device, &home.slip_id),
         "the device admits its owner's slip"
+    );
+}
+
+/// BLIND-REVIEW-7853 round 1 P1: a co-owner of a shared vault who is not its
+/// embedded owner paired his own device at the home, so the signed mint the
+/// opened device holds names him as the member who approved the pairing.
+/// The device holds the embedded owner's PERSON, which every vault seeds,
+/// and none of the shared vault's membership rows yet, so its census cannot
+/// tell him from a stranger and the signed mint decides: his row lands from
+/// a home that has not proved itself, and the device admits his slip.
+#[test]
+fn co_owner_grant_row_from_an_unproven_home_lands_before_the_device_holds_the_membership() {
+    let co_owner = EntityId::from_bytes(CO_OWNER_ID).expect("the co-owner's PERSON id");
+    let home = co_owner_home(co_owner);
+    assert_eq!(
+        home.owner, co_owner,
+        "precondition: the co-owner paired the home's device"
+    );
+    let (device, _dir) = opened_device(&home);
+    let (asked, served) = home_answer(&home, &device);
+    assert!(
+        asked
+            .get(&home.grant)
+            .is_some_and(|holders| holders.contains(&co_owner.to_hex())),
+        "precondition: the device asks about the co-owner's own-device grant: {asked:?}"
+    );
+    assert!(
+        matches!(served.as_slice(), [(id, OwnDeviceGrantState::Live(_))] if *id == home.grant),
+        "precondition: the home serves the co-owner's stored grant row: {served:?}"
+    );
+    assert!(
+        !admits(&device, &home.slip_id),
+        "control: the device refuses his slip while no grant row it names is here"
+    );
+    let admission = admit_own_device_grants(&device, PeerMachine::Unknown, &asked, served)
+        .expect("the device judges the unproven home's answer");
+    assert_eq!(
+        admission.landed,
+        BTreeSet::from([home.grant]),
+        "the co-owner's own grant row lands from a home that proved no machine of the vault: {admission:?}"
+    );
+    assert!(
+        admission.refused.is_empty() && admission.withdrawn.is_empty(),
+        "nothing else is judged: {admission:?}"
+    );
+    assert!(
+        admits(&device, &home.slip_id),
+        "the opened device admits the co-owner's slip before its home proves itself"
     );
 }
