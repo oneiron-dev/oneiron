@@ -521,7 +521,9 @@ pub(crate) enum FieldRule {
     /// a credential name is read part by part, as a member under any other
     /// name is. For a typed value whose type fixes each member's shape, where
     /// a handle can stand only in text: a setting value (FIX
-    /// SETTING-WALL-CREDENTIAL-NAMED-MEMBERS).
+    /// SETTING-WALL-CREDENTIAL-NAMED-MEMBERS). Such a member is stored as
+    /// written unless a text rule finds a shape in it: a value that holds a
+    /// secret holds it as text.
     TextOnly,
 }
 
