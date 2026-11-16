@@ -225,7 +225,6 @@ fn a_save_again_after_a_carrier_arrives_states_the_switches() {
         .update_agent_definition_as(&owner, &id, &on, at(T0), T0)
         .expect("the owner's turn-on lands here");
     assert_eq!(reach, AgentSwitchesReach::ThisInstallOnly);
-    let entries = authority_entries(&vault);
     // The install gains a carrier without a second keystore: the engine's machines, its live
     // profile and the owner's binding under the host root.
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
@@ -234,6 +233,7 @@ fn a_save_again_after_a_carrier_arrives_states_the_switches() {
         .expect("this install's live machine profile, to carry acts");
     oneiron::test_support::bind_host_owner(&vault, &issuer, person).expect("owner binding");
     let owner = owner_proof(&vault, person);
+    let entries = authority_entries(&vault);
     let again = next(&on, "1.0.3", |_| {});
     vault
         .update_agent_definition_as(&owner, &id, &again, at(T0), T0)

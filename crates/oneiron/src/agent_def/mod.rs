@@ -102,6 +102,7 @@ pub(crate) use self::manifest::{
 };
 pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};
 pub use self::switch_statement::AgentSwitchesReach;
+pub(crate) use self::switch_statement::AgentSwitchesReaches;
 #[cfg(feature = "sync")]
 pub(crate) use self::switch_statement::owner_statement_pending;
 pub(crate) use self::types::forked_from_row_ref;

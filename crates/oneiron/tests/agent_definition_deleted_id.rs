@@ -1,26 +1,27 @@
 //! An agent-authored create at a deleted agent's id is refused (R2d review finding 1).
 //!
 //! A deleted agent's id is not new: its durable pin survives the delete, and only the vault
-//! owner brings the definition back. An author agent that creates a child, whose owner then
-//! hard-deletes it, cannot create at the same id again through its own writer.
+//! owner brings the definition back. An author agent that installs its local pack, whose owner
+//! then hard-deletes the derived travelling child, cannot reinstall the same pack through its
+//! own writer.
 #![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
 
-use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
+use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::deletion::DeleteReason;
-use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron::share_travel::{AgentPackTravelProjection, BornWith};
+use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
 use oneiron::store::GateDecisionId;
-use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use rmpv::Value as RmpValue;
 
 const NOW: u64 = 1_700_000_000;
 
-// Fixture ids are `[seed; 16]`, off the pinned bytes a fresh vault holds.
+// The fixture author id is `[seed; 16]`, off the pinned bytes a fresh vault holds.
 const AUTHOR: u8 = 0x70;
-const CHILD: u8 = 0x79;
 
 fn definition(
     name: &str,
@@ -58,41 +59,9 @@ fn definition(
     )
 }
 
-/// A new candidate inside the author's own slice: Base, ceiling Proposed.
-fn candidate() -> AgentDefinition {
-    definition(
-        "conformance.candidate",
-        AgentScope::Base,
-        AgentCeiling::Proposed,
-        ClaimSource::Generated,
-        true,
-        false,
-    )
-}
-
-/// Puts `def` at `id` on the Agent-class `Memory` of `writer`, as the run host door binds it.
-fn put(
-    vault: &Vault,
-    writer: EntityId,
-    id: EntityId,
-    def: &AgentDefinition,
-    at: u64,
-) -> Result<(), String> {
-    let bytes = encode_agent_definition(def).expect("valid definition");
-    vault
-        .memory(writer, EdgeActorClass::Agent)
-        .raw_put_entity(RawEntityPut {
-            id,
-            entity_type: ENTITY_TYPE_AGENT_DEF,
-            occurred: TimeRange { start: at, end: at },
-            learned_at: at,
-            data: &bytes,
-        })
-        .map_err(|error| format!("{error:?}"))
-}
-
-/// Catches an author agent recreating a deleted agent's id as a fresh create: the owner
-/// hard-deletes the child, and the author's second put at the same id lands again.
+/// Catches an author agent recreating a deleted agent's id as a fresh create: the author
+/// installs its local pack, the owner hard-deletes the derived child, and the author's
+/// reinstall of the same pack is refused.
 #[test]
 fn an_author_cannot_create_again_at_a_deleted_agents_id() {
     let dir = tempfile::tempdir().expect("temporary vault");
@@ -128,12 +97,35 @@ fn an_author_cannot_create_again_at_a_deleted_agents_id() {
             NOW,
         )
         .expect("owner creates the Base, ceiling-Proposed author");
-    vault
-        .install_read_permits_for_test(&[oneiron::WriteActor::new(author, EdgeActorClass::Agent)])
-        .expect("the author reads the rows it updates");
-
-    let id = EntityId::from_bytes([CHILD; 16]).expect("child id");
-    put(&vault, author, id, &candidate(), NOW + 1).expect("the author creates a child");
+    let agent = vault
+        .observed_write_actor(WriteActor::new(author, EdgeActorClass::Agent))
+        .expect("agent writer");
+    let files = AgentPackTravelProjection::from_definition(
+        &definition(
+            "local",
+            AgentScope::Base,
+            AgentCeiling::Proposed,
+            ClaimSource::UserStated,
+            false,
+            true,
+        ),
+        None,
+        Vec::new(),
+        Vec::new(),
+        BornWith::new(),
+    )
+    .expect("travelling local pack")
+    .files()
+    .expect("pack files");
+    let receipt = match vault
+        .put_local_pack_as_agent(&agent, files.clone())
+        .expect("the author installs its local pack")
+    {
+        PackInstallDisposition::Installed(receipt) => receipt,
+        other => panic!("the in-slice pack installs: {other:?}"),
+    };
+    let id =
+        EntityId::from_hex(receipt.agent.as_deref().expect("the derived child")).expect("child id");
     let child = vault
         .get_agent_definition(&id)
         .expect("read the child")
@@ -153,7 +145,10 @@ fn an_author_cannot_create_again_at_a_deleted_agents_id() {
         "the hard delete removes the row"
     );
 
-    let second = put(&vault, author, id, &candidate(), NOW + 2);
+    let second = vault
+        .put_local_pack_as_agent(&agent, files)
+        .map(|_| ())
+        .map_err(|error| format!("{error:?}"));
     assert!(
         second.as_ref().is_err_and(
             |error| error.contains("deleted agent") || error.contains("InvalidAgentDefBody")

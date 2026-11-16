@@ -41,6 +41,12 @@ pub struct CoreBatchEntityReceipt {
     /// (ARCH-0053:20); absent for every other put.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_definition: Option<AgentDefinitionWriteReceipt>,
+    /// For an AGENT_DEF put of an owner's batch that landed on this install
+    /// alone, what the owner is told: his other installs keep the old
+    /// setting until he saves it again with this install's key (Engine
+    /// RULING R2D-NO-CARRIER-POLICY = B); absent for every other put.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// How the author writer stored an agent's AGENT_DEF put (ARCH-0053:20).
