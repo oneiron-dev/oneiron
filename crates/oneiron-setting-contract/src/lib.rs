@@ -35,7 +35,7 @@ pub use self::order::{
     each_no_wider, exact_meet, exact_no_wider, higher_meet, higher_no_wider, lower_meet,
     lower_no_wider, subset_meet, subset_no_wider, superset_meet, superset_no_wider,
 };
-pub use self::scope::{ScopeKind, SettingScope};
+pub use self::scope::{LEARNED_SCOPES, ScopeKind, SettingScope};
 pub use self::value::{EncodedValue, SettingValue};
 
 use oneiron_contracts::entity_id::EntityId;
