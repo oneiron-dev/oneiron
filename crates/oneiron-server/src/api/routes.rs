@@ -313,6 +313,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // L10-05: canon's core job read, over `vault.runs.job`.
+        .merge(self::facade::run_read_doors::routes())
         // FIX 11694: a person's MFA step-up with a passkey, on their own slip.
         .merge(self::facade::step_up_doors::routes())
         // OF-516: a role holder's door to the ladder's person asks.
@@ -336,6 +338,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // The QR page a sealed certificate names: keyless, its capability
         // checked in the vault on each report.
         .merge(self::esign_qr::public_routes())
+        // A bulk campaign email's one-click unsubscribe link (RFC 8058):
+        // keyless, its mac checked in the vault on each call.
+        .merge(self::one_click_unsubscribe::public_routes())
         // OF-519: the served built-in channels' provider webhooks. Keyless;
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())
