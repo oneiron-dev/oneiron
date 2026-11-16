@@ -19,6 +19,10 @@
 //! `the_doors_rows_are_marked_for_the_live_mirror` (no marker names the
 //! rows); the other tests pass there.
 //!
+//! Another owner's key is never this owner's lost key (REVIEW2 #8797 P3-1):
+//! `another_owners_key_is_never_this_owners_lost_key` is red on the mutation
+//! branch that drops the `listed.owner == actor` term in `lost_keys_in_txn`.
+//!
 //! Red on the anchor top 6166098690ef: the file does not compile there (no
 //! `recover_owner_root`, `RootMaterial`, `RootSuccessor`,
 //! `RecoveryAuthoritySigner::from_released_seed` or the test door
@@ -857,4 +861,89 @@ fn the_doors_rows_are_marked_for_the_live_mirror() {
             "the row {id} carries a marker for its window: {markers:?}"
         );
     }
+}
+
+/// Another owner's key is never this owner's lost key (REVIEW2 #8797 P3-1):
+/// on the co-Owner fixture the first owner enrols the root's key, recovers
+/// through it and names the co-Owner's live key as lost. The door refuses,
+/// writes nothing, and the co-Owner's key stays live; the same recovery
+/// naming no lost key vouches.
+#[test]
+fn another_owners_key_is_never_this_owners_lost_key() {
+    let fixture = co_owner_fixture();
+    let first_owner = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the first owner");
+    let first = proof(&fixture.vault, first_owner);
+    let first_authority = ActAuthority::Owner(first.clone(), ActSurface::ThisInstall);
+    let root_key = AuthorityKey::Ed25519(
+        fixture
+            .vault
+            .enrol_recovery_authority_key_as_host(
+                &first_authority,
+                fixture.machine,
+                &fixture.seed,
+                &fixture.issuer,
+            )
+            .expect("the first owner enrols the root's authority key")
+            .public_key,
+    );
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let successor = || {
+        let public_key = new_key.verifying_key().to_bytes();
+        let challenge = fixture
+            .vault
+            .owner_key_enrollment_challenge_as(&first_authority, fixture.machine, &public_key)
+            .expect("the challenge");
+        RootSuccessor::Device(OwnerKeyEnrollment {
+            machine: fixture.machine,
+            public_key,
+            proof: new_key.sign(&challenge).to_bytes().to_vec(),
+        })
+    };
+    let co_owners = key_of(&fixture.lost_key);
+    assert!(
+        fixture.live(&co_owners),
+        "guard: the co-Owner's key is live"
+    );
+    let stored = fixture.history().len();
+
+    let refused = fixture
+        .vault
+        .recover_owner_root(
+            &first,
+            ActSurface::ThisInstall,
+            fixture.kit(),
+            successor(),
+            std::slice::from_ref(&co_owners),
+        )
+        .expect_err("the co-Owner's key is not the first owner's lost key");
+    assert_eq!(refused.kind(), ErrorKind::AuthorityRefused, "{refused}");
+    assert!(
+        refused
+            .to_string()
+            .contains("a key named as lost is not a live owner signing key"),
+        "the lost-key refusal: {refused}"
+    );
+    assert_eq!(
+        fixture.history().len(),
+        stored,
+        "the refusal writes nothing"
+    );
+    assert!(fixture.live(&co_owners), "the co-Owner's key stays live");
+    assert!(!fixture.live(&key_of(&new_key)), "no key was enrolled");
+
+    fixture
+        .vault
+        .recover_owner_root(
+            &first,
+            ActSurface::ThisInstall,
+            fixture.kit(),
+            successor(),
+            &[],
+        )
+        .expect("guard: the same recovery naming no lost key vouches");
+    assert!(fixture.live(&root_key), "the root's key stays live");
+    assert!(fixture.live(&co_owners), "the co-Owner's key is still live");
 }

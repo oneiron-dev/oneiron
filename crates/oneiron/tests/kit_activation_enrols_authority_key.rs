@@ -12,6 +12,12 @@
 //! exist at that head) and fails at runtime, since the activation enrols no
 //! R and refuses no predecessor-less confirm. The two second-kit tests are
 //! red at `b020a643f8ec`, PR 2 before that ruling: the old R stays live.
+//!
+//! The predecessor is the deciding owner's own (REVIEW2 #8798 P2-1): a
+//! co-Owner's device key this install holds never signs another owner's R,
+//! and the host root is the predecessor only of the owner no live `human`
+//! binding gives it away from. Both tests are red on PR 2's head before that
+//! fix, which took the first held live device key and any live host root.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test kit_activation_enrols_authority_key`.
 #![cfg(oneiron_test_support)]
@@ -24,11 +30,13 @@ use oneiron::authority::{
     MachineRole, RootMaterial, RootSuccessor, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::recovery::{CodeKeeping, KitIssue, PassphraseCost, PieceHome};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::world_keys::{ConfirmedWorldKit, IssuedWorldKit, RecoveryAuthoritySigner};
-use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use zeroize::Zeroizing;
 
 /// The exact refusal when this install holds no predecessor
@@ -41,6 +49,9 @@ const NO_PREDECESSOR: &str =
 const ROOT_KEY_NOT_LIVE: &str = "the recovery root's authority key is not a live owner key on \
                                  this vault's roster, and the roster still holds a live root \
                                  key; nothing was written";
+
+/// The co-Owner fixture's shared vault id.
+const SHARED: u64 = 28;
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -88,7 +99,47 @@ impl SelfHosted {
         ActAuthority::Owner(self.owner(), ActSurface::ThisInstall)
     }
 
+    /// Makes the vault shared and adds a live person as a co-Owner, as
+    /// `add_owner` runs at once for its only owner; the co-Owner's id.
+    fn add_co_owner(&self) -> EntityId {
+        self.vault
+            .initialize_shared_vault(
+                &self.owner(),
+                SHARED,
+                None,
+                &[InitialSharedMember {
+                    member_ref: self.person,
+                    role: Some(FederationGrantRole::Owner),
+                }],
+                1,
+            )
+            .expect("a shared vault");
+        let co_owner = EntityId::now();
+        self.vault
+            .put_entity(
+                &co_owner,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"human",
+            )
+            .expect("a live person");
+        let act = self
+            .vault
+            .propose_add_owner(&self.owner(), SHARED, co_owner)
+            .expect("the owner starts add_owner");
+        self.vault
+            .execute_completed_shared_act(&self.owner(), &act.id, Some(&self.issuer))
+            .expect("add_owner runs at once");
+        co_owner
+    }
+
     fn issue(&self) -> IssuedWorldKit {
+        self.issue_as(&self.owner())
+    }
+
+    /// A world kit `owner` issues.
+    fn issue_as(&self, owner: &AuthenticatedOwner) -> IssuedWorldKit {
         let vault_id = self
             .vault
             .authority_fold()
@@ -97,7 +148,7 @@ impl SelfHosted {
             .expect("a rooted vault");
         self.vault
             .issue_world_kit(
-                &self.owner(),
+                owner,
                 &KitIssue {
                     vault_id,
                     homes: [
@@ -434,5 +485,96 @@ fn on_a_self_hosted_vault_the_host_root_revokes_the_earlier_r() {
         fixture.revoke_signer(&old_r),
         fixture.issuer.public_key(),
         "the host root, kit B's predecessor, signs kit A's revocation"
+    );
+}
+
+/// A co-Owner's device key this install holds never signs another owner's R
+/// (REVIEW2 #8798 P2-1): the owner's kit is confirmed with R's row signed by
+/// the owner's own host root, not by the co-Owner's live device key.
+#[test]
+fn a_co_owners_device_key_never_signs_another_owners_r() {
+    let fixture = self_hosted();
+    let co_owner = fixture.add_co_owner();
+    let theirs = fixture
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(proof(&fixture.vault, co_owner), ActSurface::ThisInstall),
+            &fixture.issuer,
+        )
+        .expect("the co-Owner enrols this install's device key");
+    let theirs = AuthorityKey::Ed25519(theirs.public_key);
+    assert!(
+        fixture.live(&theirs),
+        "guard: this install holds the co-Owner's live key"
+    );
+
+    let issued = fixture.issue();
+    fixture
+        .confirm(&issued)
+        .expect("the owner's kit confirms under the owner's own host root");
+    let enrolled = fixture.vault.enrolled_owner_keys().expect("the list");
+    let owners_r: Vec<_> = enrolled
+        .iter()
+        .filter(|key| {
+            key.kind == EnrolledOwnerKeyKind::RecoveryAuthority
+                && key.live
+                && key.owner == fixture.person
+        })
+        .collect();
+    assert_eq!(owners_r.len(), 1, "one live R of the owner");
+    let signer = fixture.enrol_signer(&owners_r[0].public_key);
+    assert_ne!(signer, theirs, "the co-Owner's key signs no R of the owner");
+    assert_eq!(
+        signer,
+        fixture.issuer.public_key(),
+        "the owner's own host root signs R's row"
+    );
+}
+
+/// A co-Owner who holds no owner key of their own here never confirms a kit
+/// under the host root a live `human` binding gives the owner (REVIEW2
+/// #8798 P2-1, the host root half): refused with the exact words, nothing
+/// written.
+#[test]
+fn a_co_owner_without_a_key_of_their_own_confirms_no_kit_under_the_owners_host_root() {
+    let fixture = self_hosted();
+    let co_owner = fixture.add_co_owner();
+    let theirs = proof(&fixture.vault, co_owner);
+    let issued = fixture.issue_as(&theirs);
+    let before_fold = fixture.vault.authority_fold().expect("the fold");
+    let before_history = fixture
+        .vault
+        .export_signed_authority_history()
+        .expect("the history")
+        .len();
+
+    let pieces: Vec<&oneiron::store::recovery_kit::KitPiece> =
+        issued.pieces.iter().take(2).collect();
+    let refused = fixture
+        .vault
+        .confirm_world_kit(&theirs, &pieces, None, &BTreeSet::new())
+        .expect_err("the owner's host root is not the co-Owner's predecessor");
+    assert_eq!(refused.kind(), ErrorKind::AuthorityRefused, "{refused}");
+    assert!(
+        refused.to_string().contains(NO_PREDECESSOR),
+        "the exact words: {refused}"
+    );
+    let after_fold = fixture.vault.authority_fold().expect("the fold");
+    assert_eq!(
+        after_fold.roster, before_fold.roster,
+        "the roster is unchanged"
+    );
+    assert_eq!(
+        after_fold.pinned_root, before_fold.pinned_root,
+        "the pin is unchanged"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .export_signed_authority_history()
+            .expect("the history")
+            .len(),
+        before_history,
+        "the history is unchanged"
     );
 }

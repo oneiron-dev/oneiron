@@ -120,6 +120,18 @@ pub struct WaysBack {
     pub box_pin_set: bool,
 }
 
+/// Whether the host root `root` may stand as `actor`'s own predecessor: no
+/// live `human` binding gives it to another person, as the vouch door reads
+/// a root no enrolment names (REVIEW2 #8798 P2-1). On a shared self-hosted
+/// vault the host root bound to the first owner is never a co-owner's.
+fn host_root_is_the_owners(fold: &AuthorityFold, root: &AuthorityKey, actor: EntityId) -> bool {
+    fold.actor_bindings.get(root).is_none_or(|binding| {
+        binding.status != ActorBindingStatus::Active
+            || binding.actor_class != ACTOR_CLASS_HUMAN
+            || binding.actor_ref == actor
+    })
+}
+
 impl Vault {
     /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in a write
     /// transaction of its own.
@@ -208,26 +220,36 @@ impl Vault {
         )
     }
 
-    /// A kit activation's predecessor, loaded before its write transaction
-    /// opens (pass 27 R4 PR 2): (a) this install's owner key when a signer
-    /// this handle holds names an enrolled owner key of kind `Device` live
-    /// with `ROLE_OWNER`; else (b) this install's host root when the fold
-    /// holds no live host-stamped root and that root is live under
-    /// `require_host`; else (c) refused with [`NO_PREDECESSOR`]. Makes no
-    /// keystore or store write: one read snapshot for the roster checks, then
-    /// the host seed read, which opens its own read txn. Liveness is judged
-    /// again in the txn by the enrol door (its `NOT_COUNTED` refusal).
+    /// A kit activation's predecessor for `owner`, the deciding owner,
+    /// loaded before its write transaction opens (pass 27 R4 PR 2): (a) this
+    /// install's owner key when a signer this handle holds names an enrolled
+    /// owner key of kind `Device`, live with `ROLE_OWNER`, whose enrolment
+    /// names `owner`; else (b) this install's host root when the fold holds
+    /// no live host-stamped root, that root is live under `require_host`,
+    /// and no live `human` binding gives it to another person
+    /// ([`host_root_is_the_owners`]); else (c) refused with
+    /// [`NO_PREDECESSOR`]. A co-owner's key this install holds never signs
+    /// another owner's R (REVIEW2 #8798 P2-1, the vouch door's rule). Makes
+    /// no keystore or store write: one read snapshot for the owner and the
+    /// roster checks, then the host seed read, which opens its own read txn.
+    /// Liveness is judged again in the txn by the enrol door (its
+    /// `NOT_COUNTED` refusal).
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] with [`NO_PREDECESSOR`] when this
-    /// install holds neither; storage and keystore read errors other than
+    /// install holds neither; an owner refusal when the proof is no longer
+    /// the vault's live owner; storage and keystore read errors other than
     /// an absent host seed.
-    pub(crate) fn load_activation_predecessor(&self) -> Result<ActivationPredecessor> {
-        let (enrolled, fold) = {
+    pub(crate) fn load_activation_predecessor(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<ActivationPredecessor> {
+        let (actor, enrolled, fold) = {
             let txn = self.store.env.read_txn()?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             let enrolled = self.enrolled_owner_keys_in_txn(&txn)?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            (enrolled, fold)
+            (actor, enrolled, fold)
         };
         for signer in self.checkpoint_root_signers() {
             let root = signer.root();
@@ -238,7 +260,8 @@ impl Vault {
             let Some(listed) = listed else {
                 continue;
             };
-            if listed.kind != EnrolledOwnerKeyKind::Device || !listed.live {
+            if listed.kind != EnrolledOwnerKeyKind::Device || !listed.live || listed.owner != actor
+            {
                 continue;
             }
             let live_owner = fold
@@ -260,7 +283,9 @@ impl Vault {
             // refusal below. Any other failure is the read's own error.
             match self.load_host_slip_issuer() {
                 Ok(issuer) => {
-                    if super::slip_vault::require_host(&fold, &issuer).is_ok() {
+                    if super::slip_vault::require_host(&fold, &issuer).is_ok()
+                        && host_root_is_the_owners(&fold, &issuer.public_key(), actor)
+                    {
                         return Ok(ActivationPredecessor::HostRoot(issuer));
                     }
                 }
