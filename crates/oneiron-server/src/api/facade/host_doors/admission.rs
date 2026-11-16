@@ -225,6 +225,14 @@ pub(in crate::api::facade) fn door_admits(
         Proof::CheckInHolder => {
             crate::api::facade::check_in_doors::holder_proof(server, auth, verb).map(drop)
         }
+        // `vault.cleanup.decide` (RESTRICTION-WAVE-10 C43): the owner's proof, or a credential
+        // bound to an agent, which the door admits only while the owner's
+        // vault_cleanup.decide.owner_only is off, on a Grant naming the verb, and when the
+        // credential is bound to no invitation, record or channel. Any other caller keeps the
+        // owner refusal.
+        Proof::CleanupDecider => {
+            crate::api::facade::cleanup_doors::decider(server, auth, verb).map(drop)
+        }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.

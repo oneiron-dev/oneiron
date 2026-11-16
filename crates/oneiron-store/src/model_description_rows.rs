@@ -1,9 +1,9 @@
 //! The description rows model routing keeps: the owner's description
-//! policy (`LLM_DESCRIPTION_POLICY`) with its model descriptions, owner
-//! lines and wire formats, and the vault-measured descriptions
-//! (`LLM_DESCRIPTION_MEASUREMENTS`). Routing (`llm::routing`) writes, reads
-//! and validates them; each row's side-table declaration names its lift
-//! acceptance.
+//! policy (the setting key `models.description_policy`) with its model
+//! descriptions, owner lines and wire formats, and the vault-measured
+//! descriptions (`LLM_DESCRIPTION_MEASUREMENTS`). Routing (`llm::routing`)
+//! writes, reads and validates them; the measurements' side-table
+//! declaration names its lift acceptance.
 use std::collections::BTreeMap;
 
 use oneiron_model::llm::{ModelId, ModelLocality, ReasoningEffort};
@@ -30,7 +30,7 @@ pub enum ModelWireFormat {
 
 /// The owner line stays attached to its exact model revision. A newer revision
 /// may use lower-ranked evidence temporarily, but does not inherit this line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerModelLine {
     pub model: ModelId,
