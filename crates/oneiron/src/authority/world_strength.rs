@@ -15,7 +15,9 @@
 //!
 //! The frontier is generic over what an edit states, so a grant's signed
 //! travel choices keep the same register ([`super::grant_travel`], FIX
-//! 2998), judged by the same carrier rule.
+//! 2998), judged by the same carrier rule. So is the walk a read makes of it
+//! ([`frontier_walk`]): it answers which edits take part, and each register
+//! meets what they state its own way.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -166,8 +168,8 @@ pub(super) fn full_strength(
 
 #[cfg(test)]
 thread_local! {
-    /// The edits [`world_meet`] visited on this thread: contract §4's cost
-    /// oracle.
+    /// The edits [`frontier_walk`] visited on this thread, for [`world_meet`]
+    /// or any other read: contract §4's cost oracle.
     pub(super) static WORLD_MEET_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The machine ids the meets copied on this thread: the same oracle for
     /// the one-machine picks a read accumulates (Sol S2-R3 S3-F3).
@@ -195,50 +197,120 @@ pub(super) fn world_meet(
     }
 }
 
+/// What a read of a frontier takes in: one edit, with what it states, or the
+/// default.
+#[derive(Debug)]
+pub(super) enum WalkPart<'f, S> {
+    /// An edit that takes part: a live one, or one that an edit which does
+    /// not count at full strength replaced.
+    Edit(&'f AuthorityEntryHash, &'f FrontierEdit<S>),
+    /// An edit that does not count at full strength replaced nothing, or two
+    /// copies of it disagreed: the default takes part too.
+    Default,
+}
+
+/// The walk [`frontier_walk`] makes, one part at a time, so a read whose
+/// meet reaches its least value can stop.
+pub(super) struct FrontierWalk<'f, S, F> {
+    frontier: &'f WorldFrontier<S>,
+    strong: F,
+    live: std::collections::btree_map::Iter<'f, AuthorityEntryHash, Arc<FrontierEdit<S>>>,
+    visited: BTreeSet<AuthorityEntryHash>,
+    pending: Vec<&'f FrontierEdit<S>>,
+    replaced: std::collections::btree_set::Iter<'f, AuthorityEntryHash>,
+}
+
+impl<'f, S, F> Iterator for FrontierWalk<'f, S, F>
+where
+    F: FnMut(&AuthorityEntryHash, &FrontierEdit<S>) -> bool,
+{
+    type Item = WalkPart<'f, S>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let frontier = self.frontier;
+        if let Some((hash, edit)) = self.live.next() {
+            #[cfg(test)]
+            WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
+            if self.visited.insert(*hash) && !(self.strong)(hash, edit) {
+                self.pending.push(edit.as_ref());
+            }
+            return Some(WalkPart::Edit(hash, edit.as_ref()));
+        }
+        loop {
+            for replaced in self.replaced.by_ref() {
+                if !self.visited.insert(*replaced) {
+                    continue;
+                }
+                let Some(prior) = frontier
+                    .superseded
+                    .get(replaced)
+                    .or_else(|| frontier.live.get(replaced))
+                else {
+                    continue;
+                };
+                #[cfg(test)]
+                WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
+                if !(self.strong)(replaced, prior) {
+                    self.pending.push(prior.as_ref());
+                }
+                return Some(WalkPart::Edit(replaced, prior.as_ref()));
+            }
+            let next = self.pending.pop()?;
+            self.replaced = next.replaced.iter();
+            if next.replaced.is_empty() || next.disputed {
+                return Some(WalkPart::Default);
+            }
+        }
+    }
+}
+
+/// The edits a read of `frontier` takes in, where `strong` says whether an
+/// edit counts at full strength. Every live edit takes part. One that does
+/// not count at full strength brings in every edit it replaced, each judged
+/// the same way, down to full-strength edits or the default. Each edit is
+/// visited once, so the walk is linear in the frontier's edits however many
+/// live edits share an ancestry (Sol S2-R2 S2-F4, Astra A2-F3), and it is
+/// iterative, so a long chain of offline edits cannot exhaust the stack. The
+/// live edits come first, in hash order. Each register meets what the parts
+/// state its own way ([`frontier_meet`] for world privacy, a grant's travel
+/// fields in [`super::grant_travel`]).
+pub(super) fn frontier_walk<'f, S, F>(
+    frontier: &'f WorldFrontier<S>,
+    strong: F,
+) -> FrontierWalk<'f, S, F>
+where
+    F: FnMut(&AuthorityEntryHash, &FrontierEdit<S>) -> bool,
+{
+    static NOTHING_REPLACED: BTreeSet<AuthorityEntryHash> = BTreeSet::new();
+    FrontierWalk {
+        frontier,
+        strong,
+        live: frontier.live.iter(),
+        visited: BTreeSet::new(),
+        pending: Vec::new(),
+        replaced: NOTHING_REPLACED.iter(),
+    }
+}
+
 /// [`world_meet`] over `frontier`, where `strong` says whether an edit
 /// counts at full strength: the fold asks its standing
 /// ([`full_strength`]); a view that holds agent edits refused asks the
 /// verdicts the fold kept for them ([`super::agent_world_undo`], FIX 22381).
+/// The meet of every part of the walk; the meet is commutative, associative
+/// and idempotent, so the order of the parts does not change it.
 pub(super) fn frontier_meet(
     frontier: &WorldFrontier,
-    mut strong: impl FnMut(&AuthorityEntryHash, &FrontierEdit) -> bool,
+    strong: impl FnMut(&AuthorityEntryHash, &FrontierEdit) -> bool,
 ) -> PrivacyMeet {
     let default = || PrivacyMeet::of(&WorldPrivacy::default());
     let Some(first) = frontier.live.values().next() else {
         return default();
     };
     let mut meet = PrivacyMeet::of(&first.settings);
-    let mut visited = BTreeSet::new();
-    let mut pending = Vec::new();
-    for (hash, edit) in &frontier.live {
-        #[cfg(test)]
-        WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
-        meet.meet_with(&PrivacyMeet::of(&edit.settings));
-        if visited.insert(*hash) && !strong(hash, edit) {
-            pending.push(edit.as_ref());
-        }
-    }
-    while let Some(next) = pending.pop() {
-        if next.replaced.is_empty() || next.disputed {
-            meet.meet_with(&default());
-        }
-        for replaced in &next.replaced {
-            if !visited.insert(*replaced) {
-                continue;
-            }
-            let Some(prior) = frontier
-                .superseded
-                .get(replaced)
-                .or_else(|| frontier.live.get(replaced))
-            else {
-                continue;
-            };
-            #[cfg(test)]
-            WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
-            meet.meet_with(&PrivacyMeet::of(&prior.settings));
-            if !strong(replaced, prior) {
-                pending.push(prior.as_ref());
-            }
+    for part in frontier_walk(frontier, strong) {
+        match part {
+            WalkPart::Edit(_, edit) => meet.meet_with(&PrivacyMeet::of(&edit.settings)),
+            WalkPart::Default => meet.meet_with(&default()),
         }
     }
     meet
