@@ -258,6 +258,7 @@ fn owner_sets_keep_through(vault: &Vault, secs: u64) -> TestResult {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     )?;
     assert!(
