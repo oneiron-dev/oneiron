@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::memory::claim_admission::ClaimScope;
+use oneiron_contracts::affect::Vad;
 use oneiron_store::write_envelope::coping_outcome::CopingStrategy;
 use serde::Deserialize;
 use serde::Serialize;
@@ -74,4 +75,58 @@ pub struct CopingAggregate {
     pub affected_person_ref: String,
     pub outcomes: Vec<CopingOutcomeView>,
     pub observed_n: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CopingLookupRequest {
+    pub affected_person_ref: String,
+    /// The turn whose VAD is the current state: a turn the person spoke in.
+    pub current_turn_ref: String,
+    pub scope: Option<ClaimScope>,
+}
+
+/// What a coping lookup answers from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CopingLookupBasis {
+    /// The person's own outcomes reach the cold-start floor.
+    Outcomes,
+    /// Below the floor: generic regulation priors at low confidence.
+    GenericPriors,
+}
+
+/// One ranked outcome and the state it was used in.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CopingLookupOutcome {
+    pub outcome: CopingOutcomeView,
+    /// The VAD of the outcome's baseline turn (its strategyRef).
+    pub state: Vad,
+    /// PAD distance from the current state over the canonical VAD floats.
+    pub pad_distance: f32,
+    /// When the vault learned this head: the recency the rank reads.
+    pub learned_at: u64,
+}
+
+/// A generic regulation prior: no claim about this person.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CopingPrior {
+    pub strategy: CopingStrategy,
+    pub confidence: f32,
+}
+
+/// Outcomes nearest the current state first; within one distance, worked
+/// first, then the most recent, then the most confident.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CopingLookup {
+    pub affected_person_ref: String,
+    pub current_turn_ref: String,
+    pub current_state: Vad,
+    pub basis: CopingLookupBasis,
+    /// Observations over the ranked outcomes, compared against the floor.
+    pub observed_n: u64,
+    pub cold_start_min_outcomes: u64,
+    pub outcomes: Vec<CopingLookupOutcome>,
+    /// Listed only below the floor.
+    pub priors: Vec<CopingPrior>,
 }

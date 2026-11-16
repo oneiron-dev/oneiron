@@ -63,6 +63,7 @@ pub(crate) use conflict_settle::conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod coping_lookup;
 mod core_write_doors;
 pub mod device_succession;
 mod diagnostics;

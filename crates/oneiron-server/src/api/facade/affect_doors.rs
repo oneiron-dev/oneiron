@@ -105,8 +105,8 @@ pub(crate) async fn vault_affect_claims_consolidate(
 
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::memory::coping_doors::{
-    CopingAggregate, CopingAggregateRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
-    CopingOutcomeUpdateRequest,
+    CopingAggregate, CopingAggregateRequest, CopingLookup, CopingLookupRequest,
+    CopingOutcomeReceipt, CopingOutcomeRecordRequest, CopingOutcomeUpdateRequest,
 };
 use oneiron::memory::wellness_doors::{
     WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection,
@@ -174,6 +174,28 @@ pub(crate) async fn vault_affect_coping_aggregate(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.coping_aggregate_as_owner(&owner, &input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_affect_coping_lookup(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CopingLookupRequest,
+) -> Listed<CopingLookup> {
+    const VERB: &str = "vault.affect.coping.lookup";
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, VERB)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.coping_lookup_as_owner(&owner, &input)
     })
     .await
 }

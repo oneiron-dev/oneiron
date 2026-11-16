@@ -13,9 +13,18 @@ use crate::{EntityId, Error};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::coping_doors::{
-    CopingAggregate, CopingAggregateRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
-    CopingOutcomeUpdateRequest, CopingOutcomeView, CopingVadDelta,
+    CopingAggregate, CopingAggregateRequest, CopingLookup, CopingLookupBasis, CopingLookupOutcome,
+    CopingLookupRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
+    CopingOutcomeUpdateRequest, CopingOutcomeView, CopingPrior, CopingVadDelta,
 };
+
+/// One coping head the aggregate and the lookup read, with the learned-at
+/// stamp of its row.
+pub(super) struct AdmittedCopingHead {
+    pub(super) strategy_ref: EntityId,
+    pub(super) learned_at: u64,
+    pub(super) outcome: CopingOutcomeView,
+}
 
 impl Memory<'_> {
     pub fn coping_outcome_record_as_owner(
@@ -261,8 +270,36 @@ impl Memory<'_> {
         }
         let mut outcomes = Vec::new();
         let mut observed_n = 0_u64;
+        for head in self.admitted_coping_heads_in_txn(txn, &lane, person, scope)? {
+            observed_n = observed_n
+                .checked_add(head.outcome.observed_n)
+                .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
+            outcomes.push(head.outcome);
+        }
+        outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
+        self.produced_from([person]);
+        Ok(CopingAggregate {
+            affected_person_ref: person.to_hex(),
+            outcomes,
+            observed_n,
+        })
+    }
+
+    /// The active, consolidatable `coping.outcome` heads on `person` (in
+    /// `scope` when one is named) that the coping reader may consolidate,
+    /// each with its evidence readable on `lane`. The aggregate and the
+    /// lookup read exactly these.
+    pub(super) fn admitted_coping_heads_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        lane: &crate::claim::ScopedRead<'_>,
+        person: EntityId,
+        scope: Option<&ClaimScope>,
+    ) -> MemoryResult<Vec<AdmittedCopingHead>> {
+        let mut heads = Vec::new();
         for id in self.vault.claims_for_subject_in_txn(txn, &person)? {
-            let Some((_, _, bytes)) = lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
+            let Some((_, learned_at, bytes)) =
+                lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
             else {
                 continue;
             };
@@ -281,18 +318,16 @@ impl Memory<'_> {
                 continue;
             }
             let outcome = self.coping_outcome_view_in_txn(txn, id, &body)?;
-            observed_n = observed_n
-                .checked_add(outcome.observed_n)
-                .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
-            outcomes.push(outcome);
+            let strategy_ref = decode_coping_outcome_claim(&body)?
+                .ok_or_else(|| MemoryError::bad_request("claim must be coping.outcome"))?
+                .strategy_ref();
+            heads.push(AdmittedCopingHead {
+                strategy_ref,
+                learned_at,
+                outcome,
+            });
         }
-        outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
-        self.produced_from([person]);
-        Ok(CopingAggregate {
-            affected_person_ref: person.to_hex(),
-            outcomes,
-            observed_n,
-        })
+        Ok(heads)
     }
 
     fn coping_outcome_view_in_txn(

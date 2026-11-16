@@ -17,7 +17,8 @@
 pub enum ConsolidationReader {
     /// Affect VAD consolidation of one claim.
     ClaimVad,
-    /// The coping outcome a turn's VAD delta updates.
+    /// The coping outcome a turn's VAD delta updates, and the heads the
+    /// coping aggregate and the nearest-state lookup count and rank.
     CopingOutcome,
     /// A turn's VAD annotation that consolidation or coping folds in.
     VadAnnotation,
