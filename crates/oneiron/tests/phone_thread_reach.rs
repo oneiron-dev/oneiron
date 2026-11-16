@@ -1415,13 +1415,32 @@ fn member_selector_carries(
     reach: &Reach,
     alter: impl FnOnce(&loro::LoroDoc),
 ) -> BTreeSet<EntityId> {
+    let window = oneiron::sync::WindowKey::from_timestamp(OCCURRED_AT);
+    let selected = member_selector_window(&reach.fixture.vault, &window, alter);
+    let mut carried = BTreeSet::new();
+    selected.get_map("entities").for_each(|key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            carried.insert(id);
+        }
+    });
+    carried
+}
+
+/// A fresh Member's restricted selector window `key` of `vault`, filtered
+/// from the window packed there once `alter` has changed it.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn member_selector_window(
+    vault: &Vault,
+    key: &oneiron::sync::WindowKey,
+    alter: impl FnOnce(&loro::LoroDoc),
+) -> loro::LoroDoc {
     use oneiron::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     };
     use oneiron::sync::schema::create_window_doc;
     use oneiron::sync::window::reverse_rematerialize;
     use oneiron::sync::{
-        SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
+        SyncSelector, SyncSelectorWorld, authorize_sync_selector, filtered_window_doc,
         put_selector_test_federation_grant,
     };
     use oneiron_authority::federation::scope_codec::read_preset;
@@ -1429,14 +1448,12 @@ fn member_selector_carries(
     const SHARED_VAULT_ID: u64 = 7;
 
     let member = EntityId::now();
-    let now = reach.fixture.vault.now_recorded_at();
+    let now = vault.now_recorded_at();
     let at = TimeRange {
         start: now,
         end: now,
     };
-    reach
-        .fixture
-        .vault
+    vault
         .put_entity(
             &member,
             oneiron::registry::ENTITY_TYPE_PERSON,
@@ -1455,24 +1472,16 @@ fn member_selector_carries(
         FederationGrantPreset::Member,
     );
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&reach.fixture.vault, &grant_id, &grant, now)
+    put_selector_test_federation_grant(vault, &grant_id, &grant, now)
         .expect("FIXTURE: the member's federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    authorize_sync_selector(&reach.fixture.vault, scope, &selector)
+    authorize_sync_selector(vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");
-    let key = WindowKey::from_timestamp(OCCURRED_AT);
-    let source = create_window_doc("selector", &key);
-    reverse_rematerialize(&reach.fixture.vault, &source, &key).expect("the window pack");
+    let source = create_window_doc("selector", key);
+    reverse_rematerialize(vault, &source, key).expect("the window pack");
     alter(&source);
-    let selected = filtered_window_doc(&reach.fixture.vault, &source, &key, scope, &selector)
-        .expect("the member's restricted selector window");
-    let mut carried = BTreeSet::new();
-    selected.get_map("entities").for_each(|key, _| {
-        if let Ok(id) = EntityId::from_hex(key) {
-            carried.insert(id);
-        }
-    });
-    carried
+    filtered_window_doc(vault, &source, key, scope, &selector)
+        .expect("the member's restricted selector window")
 }
 
 /// The row bytes the packed window `doc` holds for `id`.
@@ -1587,10 +1596,31 @@ fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
 #[cfg(all(feature = "sync", feature = "test-hooks"))]
 #[test]
 fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
+    assert_selector_withholds_a_claim_born_from_a_kept_call(
+        oneiron::provenance::made_by::MadeByInputRole::Prompt,
+    );
+}
+
+/// R1 review 5 N1: a door that writes a CLAIM from evidence TURNs (the
+/// scoped CLAIM upsert's `evidence_turn_refs`) names them as `Input`, not
+/// `Prompt`; the CLAIM's words came from them all the same.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_row_written_from_a_kept_call_as_evidence() {
+    assert_selector_withholds_a_claim_born_from_a_kept_call(
+        oneiron::provenance::made_by::MadeByInputRole::Input,
+    );
+}
+
+/// An ordinary CLAIM whose birth names A's kept MESSAGE as one input of
+/// `role` never rides the Member's restricted selector; its control, born
+/// the same way from the ordinary MESSAGE, does.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn assert_selector_withholds_a_claim_born_from_a_kept_call(
+    role: oneiron::provenance::made_by::MadeByInputRole,
+) {
     use oneiron::provenance::birth::RowBirth;
-    use oneiron::provenance::made_by::{
-        MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
-    };
+    use oneiron::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByProcess};
     use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
     use oneiron::sync::client::ImportTier;
     use oneiron::sync::replay::{ReplicatedEntity, replay_entity_with_birth};
@@ -1620,9 +1650,9 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
                 .expect("subject PERSON body"),
         )
         .expect("FIXTURE: an ordinary subject PERSON");
-    // One open CLAIM per prompt input, as
+    // One open CLAIM per input, as
     // `selector_born_with_prompt_label::open_record_with_prompts` builds
-    // them, adapted to a single Prompt input in this window.
+    // them, adapted to a single input of `role` in this window.
     let prompt_claim = |prompt: EntityId, label: &str| {
         let row = EntityId::now();
         let mut body = ClaimBody::new(
@@ -1646,10 +1676,7 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
             .expect("FIXTURE: the prompt row exists");
         let birth = RowBirth {
             made_by: MadeBy {
-                inputs: vec![MadeByInput {
-                    row: prompt,
-                    role: MadeByInputRole::Prompt,
-                }],
+                inputs: vec![MadeByInput { row: prompt, role }],
                 process: MadeByProcess {
                     actor: owner,
                     class: MadeByClass::Stated,
@@ -1681,7 +1708,7 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
         assert_eq!(
             vault.row_birth(&row).expect("FIXTURE: read the row birth"),
             Some(birth),
-            "FIXTURE: the {label} CLAIM retains the exact birth with one Prompt input",
+            "FIXTURE: the {label} CLAIM retains the exact birth with one {role:?} input",
         );
         row
     };
@@ -1700,11 +1727,11 @@ fn a_restricted_selector_does_not_carry_a_row_a_model_wrote_from_a_kept_call() {
     });
     assert!(
         carried.contains(&prompted_control),
-        "precondition: the Member restricted window carries the ordinary prompt-born CLAIM prompted_control",
+        "precondition: the Member restricted window carries the ordinary CLAIM prompted_control born from a {role:?} input",
     );
     assert!(
         !carried.contains(&prompted_phone),
-        "LEAK: the Member restricted window carries a CLAIM a model wrote from A's kept MESSAGE",
+        "LEAK: the Member restricted window carries a CLAIM born from A's kept MESSAGE as a {role:?} input",
     );
 }
 
@@ -2634,4 +2661,190 @@ fn the_line_agents_clear_returns_to_the_owners_reach_and_no_further() {
         owners,
         "while the move waits, the line keeps the owner's value",
     );
+}
+
+/// One MESSAGE holding `words`, written by the owner outside any call.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn witness_owner_message(vault: &Vault, owner: EntityId, words: &str) -> EntityId {
+    let turn = WitnessTurn {
+        conversation_ref: EntityId::now().to_hex(),
+        turn_ref: None,
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "text".to_owned(),
+            content: words.to_owned(),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: vault.now_recorded_at(),
+        assertions: Default::default(),
+    };
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&turn)
+        .expect("FIXTURE: the owner's MESSAGE is witnessed");
+    EntityId::from_hex(&receipt.messages[0].id).expect("owner message id")
+}
+
+/// R1 review 5 N2: a NOTE whose core lies in another month's window rides
+/// this month's export only as an attachment of a review bundle, judged by
+/// NOTE admission, never by the window filter's own row check. NOTE N,
+/// drawn from a MESSAGE the owner then erases, turns stale: its pending
+/// proposal must not ride a Member's restricted window beside the bundle,
+/// while a live NOTE of N's month, held the same way, still rides. Two
+/// NOTE months need a clock the test moves, so this runs on a vault of its
+/// own, and N is drawn from an owner MESSAGE: the read admission refuses
+/// any row raw readability refuses (REACH-ERASED-SOURCE-EGRESS = A).
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_restricted_selector_does_not_carry_a_stale_notes_proposal_held_in_another_months_bundle() {
+    use oneiron::WriteActor;
+    use oneiron::memory::SafeDeleteReason;
+    use oneiron::note::NoteProgramEdit;
+    use oneiron::store::ports::ManualClock;
+    use oneiron::sync::WindowKey;
+
+    // N and C are learned in the last minute of February, O and P in the
+    // first minutes of March: two windows, two minutes apart, so nothing
+    // the fixture holds lapses in between.
+    const MARCH_1: u64 = 1_772_323_200;
+    const STALE_WORDS: &str = "the boiler fixed before the inspection";
+    let clock = ManualClock::new(MARCH_1 - 60);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Vault::open(dir.path(), config).expect("fresh vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let (owner, _) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let note = |markdown: &str| {
+        vault
+            .create_note("research", markdown, actor)
+            .expect("FIXTURE: an owner NOTE")
+    };
+    // February: N, drawn from the owner's MESSAGE S, and the control C.
+    let source = witness_owner_message(
+        &vault,
+        owner,
+        "The boiler needs fixing before the inspection.",
+    );
+    let stale = note("Notes from the call about the boiler.");
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(&vault, &stale, &source)
+        .expect("FIXTURE: N registered as drawn from the MESSAGE S");
+    let control = note("Notes from the meeting about the garden.");
+    // March: O and P, each bundled below with a February NOTE's rewrite.
+    clock.set(MARCH_1 + 60);
+    let ordinary = note("The weekly review covers the schedule.");
+    let paired = note("The weekly review covers the agenda.");
+    let fork = |id: EntityId, text: &str| {
+        vault
+            .fork_note(
+                id,
+                &NoteProgramEdit::Rewrite {
+                    text: text.to_owned(),
+                },
+                actor,
+            )
+            .expect("FIXTURE: an undecided rewrite fork")
+    };
+    let stale_fork = fork(
+        stale,
+        "Rewrite: the caller wants the boiler fixed before the inspection.",
+    );
+    let ordinary_fork = fork(ordinary, "Move the standup to Tuesday.");
+    let control_fork = fork(control, "Move the garden visit to Friday.");
+    let paired_fork = fork(paired, "Move the retro to Monday.");
+    vault
+        .open_note_proposal(
+            &[stale_fork, ordinary_fork],
+            "Two rewrites from this week.",
+            actor,
+        )
+        .expect("FIXTURE: one bundle holds N's and O's rewrites");
+    vault
+        .open_note_proposal(&[control_fork, paired_fork], "Two more rewrites.", actor)
+        .expect("FIXTURE: one bundle holds C's and P's rewrites");
+    let march = WindowKey::from_timestamp(MARCH_1);
+    for (id, label, in_march) in [
+        (stale, "N", false),
+        (control, "C", false),
+        (ordinary, "O", true),
+        (paired, "P", true),
+    ] {
+        let learned = WindowKey::from_timestamp(vault.get_learned_at(&id).expect("learned at"));
+        assert_eq!(
+            learned == march,
+            in_march,
+            "FIXTURE: NOTE {label} is learned in {}",
+            if in_march { "March" } else { "February" },
+        );
+    }
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .safe_delete(&source.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases the MESSAGE S");
+    assert!(
+        vault.get_raw(&stale).expect("read N").is_none(),
+        "FIXTURE: N reads as absent once S is erased",
+    );
+    assert!(
+        vault.get_raw(&control).expect("read C").is_some(),
+        "FIXTURE: C still reads",
+    );
+    let carrier = |id: EntityId, fork: EntityId| {
+        format!("note_proposal_doc:v1:{}:{}", id.to_hex(), fork.to_hex())
+    };
+    let forks = [
+        (stale, stale_fork, "N"),
+        (control, control_fork, "C"),
+        (ordinary, ordinary_fork, "O"),
+        (paired, paired_fork, "P"),
+    ];
+    let selected = member_selector_window(&vault, &march, |source| {
+        for (id, label) in [(stale, "N"), (control, "C")] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_none(),
+                "FIXTURE: March's packed window holds no core of the February NOTE {label}",
+            );
+        }
+        for (id, fork, label) in forks {
+            assert!(
+                source
+                    .get_map("documents")
+                    .get(&carrier(id, fork))
+                    .is_some(),
+                "FIXTURE: March's packed window holds {label}'s proposal",
+            );
+        }
+    });
+    let documents = selected.get_map("documents");
+    for (id, fork, label) in &forks[1..] {
+        assert!(
+            documents.get(&carrier(*id, *fork)).is_some(),
+            "precondition: the Member restricted window carries {label}'s proposal",
+        );
+    }
+    assert!(
+        documents.get(&carrier(stale, stale_fork)).is_none(),
+        "LEAK: the Member restricted window carries the stale NOTE N's proposal",
+    );
+    documents.for_each(|key, value| {
+        if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) = value {
+            assert!(
+                !bytes
+                    .windows(STALE_WORDS.len())
+                    .any(|part| part == STALE_WORDS.as_bytes()),
+                "LEAK: the Member restricted window's document {key} holds N's proposal words",
+            );
+        }
+    });
 }

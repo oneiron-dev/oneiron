@@ -269,6 +269,17 @@ pub(super) fn admit_selected_in_txn(
     if crate::voice_call::phone_words_in(vault, txn, &id, None)? {
         return Err(denied());
     }
+    // REACH-ERASED-SOURCE-EGRESS = A (Engine 07:53; R1 review 5 N2): a row
+    // no read here serves (withdrawn, stale, or a source it is recorded as
+    // derived from withdrawn) is no text a selector reads, as the window
+    // filter withholds its core: a NOTE attached to another month's review
+    // bundle carries its proposal text. A write is judged by its own gates.
+    if admission.verb == "read"
+        && let Some(raw) = vault.get_raw_in(txn, &id)?
+        && !crate::ports::raw_readable_in_txn(&vault.store, txn, &id, &raw)?
+    {
+        return Err(denied());
+    }
     // Facet rule C: a text is written only by a reader of every source it
     // was written from, judged as an export reads them; no write authority
     // over a source is asked.

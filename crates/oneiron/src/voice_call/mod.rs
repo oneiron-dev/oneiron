@@ -409,7 +409,7 @@ struct RowLineage {
     /// The rows `scope_summary::word_sources_in` names: each must be held.
     named: Vec<EntityId>,
     /// Every other row: the source-audience walk's, the source-dependency
-    /// index's, the birth's prompt inputs, and a carried summary.
+    /// index's, the birth's inputs of every role, and a carried summary.
     recorded: Vec<EntityId>,
 }
 
@@ -442,9 +442,10 @@ fn row_lineage(
     recorded.extend(supports);
     recorded.extend(carried);
     recorded.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
-    // A row a model wrote from a prompt that carried phone words holds them
-    // (FIX 8192 prompt inputs; R1 review 3 F2: an exchange CLAIM's answer).
-    recorded.extend(crate::store::birth_record::prompted::prompt_sources_in_txn(
+    // A row made from rows that carried phone words holds them: a model's
+    // prompt (FIX 8192; R1 review 3 F2: an exchange CLAIM's answer) or a
+    // door's evidence (R1 review 5 N1: a concluded CLAIM's evidence TURNs).
+    recorded.extend(crate::store::birth_record::input_rows_in_txn(
         &vault.store,
         txn,
         id,

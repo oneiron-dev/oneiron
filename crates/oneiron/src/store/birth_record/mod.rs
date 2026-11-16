@@ -44,6 +44,20 @@ pub(crate) fn trigger_is_live_in_txn(
     Ok(live_entity_row_in_txn(store, txn, &trigger.row())?.live_type() == Some(expected))
 }
 
+/// Every row `row`'s birth names as an input, of any role: the rows its
+/// words were made from, a prompt's or a door's evidence. Empty for a row
+/// born with none, or with no birth.
+#[cfg(feature = "sync")]
+pub(crate) fn input_rows_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(row_birth_in_txn(store, txn, row)?
+        .map(|birth| birth.made_by.inputs.iter().map(|input| input.row).collect())
+        .unwrap_or_default())
+}
+
 /// Whether `run` has a durable replay record, for a receipt that names it.
 pub(crate) fn run_exists(vault: &crate::Vault, run: &EntityId) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
