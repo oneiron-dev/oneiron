@@ -202,7 +202,7 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
     ));
 
     let review = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::ReviewEach, None, 40)?;
-    assert_eq!(review.bundle_receipt.outcome, "bundle_review_each");
+    assert_eq!(review.bundle_receipt.outcome, "noted");
     assert_eq!(review.review_items.len(), 2);
     assert!(review.item_receipts.is_empty());
     assert_eq!(vault.store.pending_gate_consents(10)?.len(), 2);
@@ -210,7 +210,7 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
     let resolution = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 50)?;
     assert_eq!(resolution.group_key, run_id);
     assert_eq!(resolution.bundle_ref, "bundle:dreamer_run:run-b");
-    assert_eq!(resolution.bundle_receipt.outcome, "bundle_accepted");
+    assert_eq!(resolution.bundle_receipt.outcome, "approved");
     assert_eq!(
         resolution.bundle_receipt.trigger_ref.as_deref(),
         Some("dreamer_run:run-b")
@@ -250,8 +250,9 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
             .is_empty()
     );
 
+    // The two members' rows and the bundle's own row (UC-03 1f-2).
     let approved = vault.receipts(ReceiptQuery::new(10).with_outcome("approved"))?;
-    assert_eq!(approved.len(), 2);
+    assert_eq!(approved.len(), 3);
 
     let reopened = vault.reopen_inbox_group_at("bundle:dreamer_run:run-b", 70)?;
     assert_eq!(reopened.group_key, run_id);
@@ -266,10 +267,10 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
             .iter()
             .filter(|outcome| **outcome == "approved")
             .count(),
-        2
+        3,
+        "the two members and the bundle's own row"
     );
-    assert!(outcomes.contains(&"bundle_accepted"));
-    assert!(outcomes.contains(&"bundle_review_each"));
+    assert!(outcomes.contains(&"noted"));
     Ok(())
 }
 
@@ -493,9 +494,9 @@ fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Resu
             .iter()
             .filter(|outcome| **outcome == "approved")
             .count(),
-        2
+        3,
+        "the two members and the bundle's own row"
     );
-    assert!(outcomes.contains(&"bundle_accepted"));
     Ok(())
 }
 
@@ -1245,7 +1246,7 @@ fn deleting_unresolved_proposal_shreds_tray_and_prevents_let_go_resurrection() -
                 .pending_gate_consents_for_run(run_id)?
                 .is_empty()
         );
-        assert!(vault.let_go_pending_ask_at(&claim_id, 99)?.is_none());
+        assert!(vault.let_go_pending_ask(&claim_id)?.is_none());
         let rtxn = vault.store.env.read_txn()?;
         let rows = vault
             .store
