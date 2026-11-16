@@ -674,7 +674,7 @@ fn let_go_pending_ask_emits_receipt_before_clearing_tray() -> Result<()> {
     )?;
 
     let emitted = vault
-        .let_go_pending_ask_at(&claim_id, 99)?
+        .let_go_pending_ask(&claim_id)?
         .expect("age-out must emit a receipt");
     assert_eq!(emitted.receipt_kind, ReceiptKind::Gate);
     assert_eq!(emitted.outcome, "let_go");
@@ -694,7 +694,7 @@ fn let_go_pending_ask_emits_receipt_before_clearing_tray() -> Result<()> {
     assert_eq!(let_go.len(), 1);
     assert_eq!(let_go[0], emitted);
 
-    assert!(vault.let_go_pending_ask_at(&claim_id, 120)?.is_none());
+    assert!(vault.let_go_pending_ask(&claim_id)?.is_none());
     let still_one = vault.receipts(ReceiptQuery::new(10).with_outcome("let_go"))?;
     assert_eq!(still_one.len(), 1);
     Ok(())

@@ -67,7 +67,7 @@ pub(crate) use self::descriptor::{
 };
 pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, claim_class_descriptor_in_txn,
-    is_restrictive_comm_predicate, seed_claim_class_descriptors,
+    enforced_claim_classes_in_txn, is_restrictive_comm_predicate, seed_claim_class_descriptors,
 };
 pub(crate) use self::descriptor::{
     import_claim_class_descriptor_in_txn, imported_claim_class_descriptor,
@@ -98,6 +98,11 @@ pub(crate) use self::records::{
 pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::stop_hold::{
     clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::stop_hold::{
+    deliver_withheld_clear_receipts, mark_recorded_stop_peer_projected, recorded_stop_holds,
+    retract_standing_opt_outs, withhold_clear_receipts,
 };
 
 use std::cell::{Cell, RefCell};

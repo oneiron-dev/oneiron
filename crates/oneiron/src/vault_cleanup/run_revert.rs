@@ -260,9 +260,11 @@ fn revert_record(
             edited,
         ));
     };
+    // A delete or an erase after the run, not this run's own `ac:` archive
+    // marker: the match below judges that mark.
     if vault
         .store
-        .entity_deletion_present_in_txn(txn, id, header.learned_at)?
+        .entity_tombstone_present_in_txn(txn, id, header.learned_at)?
     {
         return Ok((
             CleanupRevertOutcome::Unavailable(CleanupRevertReason::Deleted),
