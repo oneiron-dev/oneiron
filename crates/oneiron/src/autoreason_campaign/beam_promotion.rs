@@ -18,7 +18,7 @@ const BEAM_ONCE: SideTable<String, Vec<u8>, Raw> =
 /// The current default (winning) authoring strategy pin and its receipt: a singleton row.
 const BEAM_DEFAULT: SideTable<(), PromotionReceipt, LegacyJson> =
     SideTable::new(&side_table::AUTOREASON_BEAM_DEFAULT);
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AuthoringStrategyPin {
     pub strategy_id: String,
