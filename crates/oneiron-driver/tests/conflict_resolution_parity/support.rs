@@ -420,12 +420,14 @@ pub(crate) fn run_case_with(
         return Err("member facts must cover every reply candidate".into());
     }
     let (dir, vault) = base::open_vault()?;
-    if !single_valued.is_empty() {
-        base::seed_single_valued(&vault, single_valued)?;
-    }
     let subject = base::seed_person(&vault, "owen")?;
     for &(predicate, value) in heads {
         base::land_head(&vault, subject, predicate, value, ClaimSource::Generated)?;
+    }
+    // A Generated head's land writes the policy from the shipped rows, so the
+    // single-valued seed is written after the heads.
+    if !single_valued.is_empty() {
+        base::seed_single_valued(&vault, single_valued)?;
     }
     let turns = base::witness_turns(&vault, words)?;
     let (counts, reasoner) = keyed(verdict_script);

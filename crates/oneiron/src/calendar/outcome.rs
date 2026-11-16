@@ -1,6 +1,6 @@
 //! CAL-07 event outcome: evidence ladder, outcome head, post-end check-in.
 //!
-//! Four laws hold this layer together, and every function below is one of them
+//! Five laws hold this layer together, and every function below is one of them
 //! made mechanical:
 //!
 //! * **Silence is never `held`.** The absence of a live
@@ -21,6 +21,14 @@
 //! * **The card has two independent doors.** An answer records an
 //!   owner-attested outcome; a recording drop stores a blob and infers nothing.
 //!   CAL-08 may later turn that blob into machine evidence.
+//! * **The owner's answer stands** (CAL-07-OUTCOME-CONFLICT = A). An
+//!   owner-attested outcome other than `unknown` is the top rung of the ladder:
+//!   machine evidence never replaces it. Evidence that arrives after the answer
+//!   is kept as history the answer supersedes, and
+//!   [`read_disputing_machine_outcomes`] shows each machine outcome that
+//!   disagrees. The owner corrects a wrong machine outcome, or changes their own
+//!   answer, by answering again ([`check_in_accepts_answer`]). A reschedule's
+//!   owner-attested `unknown` answers no outcome, so evidence still settles it.
 //!
 //! The engine owns no timer: [`plan_outcome_check_in`] returns an exact wake for
 //! the host to deliver, and [`check_in_is_still_due`] rechecks meeting class,
@@ -38,10 +46,7 @@ use super::claims::{
     decode_status_value, encode_event_outcome_value, require_event_subject,
 };
 use crate::blob_artifact::BlobArtifactBody;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    claim_surfaceable,
-};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, claim_surfaceable};
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -183,6 +188,10 @@ pub fn project_event_outcome(claim: Option<EventOutcomeClaimValue>) -> EventOutc
 /// Writes one live `calendar.event_outcome` claim by superseding the prior
 /// live claim for the EVENT. The caller supplies the evidence-appropriate source.
 ///
+/// One exception: a machine outcome never replaces a live owner answer (the
+/// module's fifth law). It is written, and the answer supersedes it in the same
+/// transaction, so it is history from birth and the answer stays current.
+///
 /// The replacement head and every supersession share ONE write transaction, so
 /// a rejected supersession rolls the new head back with it and the EVENT can
 /// never be left with two live outcomes. Superseded claims stay fully readable:
@@ -222,6 +231,10 @@ use conditional::record_event_outcome_in_txn;
 pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
 
+mod dispute;
+pub use dispute::read_disputing_machine_outcomes;
+pub(in crate::calendar) use dispute::readable_disputing_machine_outcomes_in;
+
 /// Reads the EVENT's live outcome claim.
 ///
 /// Absence of a live claim returns `None`; projection maps `None` to `Unknown`
@@ -239,27 +252,39 @@ pub fn read_event_outcome(
     current_outcome_in(vault, &rtxn, &event_ref)
 }
 
-/// The EVENT's current readable outcome: the latest evidence among the heads a
-/// reader may see.
+/// The EVENT's current readable outcome: the owner's answer when one is live,
+/// else the latest evidence among the heads a reader may see.
 ///
 /// One EVENT normally has one live head — [`record_event_outcome`] closes the
 /// previous one in the same transaction. Two coexist only across a sync fork,
 /// where two replicas each recorded an outcome and neither supersession crossed
-/// the wire. That contest resolves on `(recorded_at, claim id)`, never on claim
-/// id alone: ids are time-ordered UUIDv7 *per writer*, so across a fork the
-/// lower id is not the earlier evidence, and picking it would invert this
-/// layer's own rule that later evidence supersedes earlier. The id is the
-/// tie-break, so the contest stays total and both replicas pick the same head.
+/// the wire. That contest resolves first on whether a head is an owner answer,
+/// so the answer stands over machine evidence across a fork as it does on one
+/// replica, then on `(recorded_at, claim id)`, never on claim id alone: ids are
+/// time-ordered UUIDv7 *per writer*, so across a fork the lower id is not the
+/// earlier evidence, and picking it would invert this layer's own rule that
+/// later evidence supersedes earlier. The id is the tie-break, so the contest
+/// stays total and both replicas pick the same head.
 pub(in crate::calendar) fn current_outcome_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<Option<EventOutcomeClaimValue>> {
-    Ok(live_outcome_heads_in(vault, rtxn, event_ref)?
-        .into_iter()
+    Ok(current_head(&live_outcome_heads_in(vault, rtxn, event_ref)?).map(|head| head.value))
+}
+
+/// The head [`current_outcome_in`] reads among `heads`.
+fn current_head(heads: &[OutcomeHead]) -> Option<&OutcomeHead> {
+    heads
+        .iter()
         .filter(|head| head.surfaceable)
-        .max_by_key(|head| (head.value.recorded_at, head.claim_id))
-        .map(|head| head.value))
+        .max_by_key(|head| {
+            (
+                head.is_owner_answer(),
+                head.value.recorded_at,
+                head.claim_id,
+            )
+        })
 }
 
 /// One live `calendar.event_outcome` claim on an EVENT.
@@ -299,6 +324,15 @@ fn live_outcome_heads_in(
         });
     }
     Ok(heads)
+}
+
+impl OutcomeHead {
+    /// Whether this head is an owner's answer, which machine evidence never
+    /// replaces: owner-attested, and not the `unknown` a reschedule records.
+    fn is_owner_answer(&self) -> bool {
+        self.value.basis == EventOutcomeBasis::OwnerAttested
+            && self.value.outcome != EventOutcome::Unknown
+    }
 }
 
 /// The EVENT's current `calendar.status`, under the same latest-evidence rule
@@ -419,10 +453,32 @@ pub(in crate::calendar) fn check_in_is_still_due_in_txn(
     txn: &heed::RoTxn<'_>,
     due: &DueOutcomeCheckIn,
 ) -> Result<bool> {
+    Ok(check_in_accepts_answer_in_txn(vault, txn, due)?
+        && current_outcome_in(vault, txn, &due.event_ref)?.is_none())
+}
+
+/// Whether the owner may answer a due check-in now, or answer it again: the
+/// EVENT is still meeting-class and not cancelled.
+///
+/// A recorded outcome does not close the answer door, unlike the card
+/// ([`check_in_is_still_due`]): an owner answer replaces any head, so this is
+/// where the owner corrects a wrong machine outcome or changes their own answer
+/// (CAL-07-OUTCOME-CONFLICT = A).
+///
+/// # Errors
+///
+/// Storage errors, and claim-body errors from reading the status head.
+pub fn check_in_accepts_answer(vault: &Vault, due: &DueOutcomeCheckIn) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    check_in_accepts_answer_in_txn(vault, &rtxn, due)
+}
+
+pub(in crate::calendar) fn check_in_accepts_answer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    due: &DueOutcomeCheckIn,
+) -> Result<bool> {
     if !is_meeting_class(due.signals) {
-        return Ok(false);
-    }
-    if current_outcome_in(vault, txn, &due.event_ref)?.is_some() {
         return Ok(false);
     }
     Ok(current_status_in(vault, txn, &due.event_ref)?
