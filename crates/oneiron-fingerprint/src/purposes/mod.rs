@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { cluster, engine_executor, skill_attribution, testing }
+areas! { broker, cluster, engine_executor, restore, setting, skill, skill_attribution, testing, vault_import, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
