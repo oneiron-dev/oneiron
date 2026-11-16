@@ -50,9 +50,12 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
+/// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
+/// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
+/// 34 to 36 are taken by open PRs (OPUS-SPLIT-6's carrier stack, #8449).
 /// 40: only the roster's chain admits or removes an owner act's carrier, never an anchor's
 /// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
-/// FOREIGN-ANCHOR-ADMIT-SIDE). 34-39 are open PRs' numbers; the train assigns this one.
+/// FOREIGN-ANCHOR-ADMIT-SIDE). 38 and 39 are open PRs' numbers; the train assigns this one.
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 40;
 
 /// The domain every encoded image starts with.
