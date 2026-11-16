@@ -196,7 +196,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
             verify_at: None,
         },
         &verdict,
-        "relay_boundary_allow",
+        crate::store::gate_reason::GateReceiptOutcome::Allow,
         vec!["gate.relay.classify.ran".to_owned()],
         Vec::new(),
         super::relay::RelayReceiptRow::Always,
@@ -212,7 +212,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         "the row records the degrade rather than the dead binding"
     );
     assert_eq!(
-        receipts[0].outcome, "relay_boundary_skipped",
+        receipts[0].outcome, "noted",
         "H122: the row of a halted, unexamined pass recorded an Allow outcome"
     );
 
@@ -276,7 +276,7 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
             verify_at: None,
         },
         &verdict,
-        "relay_boundary_allow",
+        crate::store::gate_reason::GateReceiptOutcome::Allow,
         vec![
             "gate.relay.classify.ran".to_owned(),
             "gate.relay.vault_receipt_untrusted.missing".to_owned(),
@@ -354,7 +354,7 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
                 verify_at: None,
             },
             &verdict,
-            "relay_boundary_allow",
+            crate::store::gate_reason::GateReceiptOutcome::Allow,
             vec!["gate.relay.classify.ran".to_owned()],
             Vec::new(),
             super::relay::RelayReceiptRow::Always,
@@ -602,7 +602,7 @@ fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -
     assert!(outcome.custom_tier_skipped);
     assert!(outcome.receipt_ref.is_some());
     let receipts = gate_receipts(&vault)?;
-    assert_eq!(receipts[0].outcome, "owner_plane_stale_fail_open");
+    assert_eq!(receipts[0].outcome, "noted");
     assert!(has_trace(&receipts[0], "gate.policy_model.stale_manifest"));
     assert!(has_trace(
         &receipts[0],

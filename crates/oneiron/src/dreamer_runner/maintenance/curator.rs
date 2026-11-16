@@ -68,15 +68,9 @@ pub struct CuratorRubric {
     /// Agent-authored questions stored as policy data, not Rust prompt text.
     pub questions: CuratorQuestions,
 }
-/// The three questions the curator must answer from stored, verifiable facts.
-/// Hosts may edit the wording through the owner-set rubric.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CuratorQuestions {
-    pub authorship: String,
-    pub freshness: String,
-    pub least_force: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::curator::CuratorQuestions;
+
 impl CuratorRubric {
     fn validate(&self) -> Result<()> {
         if self.cadence_secs == 0

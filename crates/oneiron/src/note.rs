@@ -408,11 +408,14 @@ pub(crate) use document_store::{
 pub(crate) use saved::PreparedSavedNote;
 mod files;
 pub use files::{
-    DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts,
-    FileHandle, FileMeta, FileReadiness, FilesPlacement, FilesWorld, NameOnlyFile, NameOnlyReason,
+    DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_PART_MARK, FILES_SNIPPET_CHARS,
+    FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts, FileHandle, FileMeta, FileReadiness,
+    FilesPlacement, FilesWorld, NameMatch, NameOnlyFile, NameOnlyReason, name_match,
+    part_file_path, text_excerpt,
 };
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
+pub(crate) use folder_source::holds_file_text;
 pub use folder_source::{
     FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
     FolderSourceFile, OriginalBytes,
