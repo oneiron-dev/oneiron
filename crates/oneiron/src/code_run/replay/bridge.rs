@@ -272,6 +272,7 @@ impl CodeRunBridgeCall {
         let unstamped = match self.effect {
             SelfEffect::Speak => SelfCall::Speak(SelfSpeechCall::new(text)),
             SelfEffect::Think => SelfCall::Think(SelfSpeechCall::new(text)),
+            SelfEffect::ThinkAloud => SelfCall::ThinkAloud(SelfSpeechCall::new(text)),
             SelfEffect::Express => SelfCall::Express(SelfSpeechCall::new(text)),
             _ => unreachable!("is_speech exhaustively names the speech family"),
         };

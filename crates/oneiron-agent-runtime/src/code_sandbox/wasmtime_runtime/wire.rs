@@ -342,6 +342,17 @@ fn wrong_root_call(name: &str, input: &str) -> Option<crate::memory::MemoryError
     crate::task_verb::sdk::wrong_root(&args.verb)
 }
 
+/// The words of a plain `say(text)`: a `say` input that names its text and
+/// nothing else.
+fn plain_say_text(input: &Value) -> Option<String> {
+    let request: crate::memory::SayRequest = serde_json::from_value(input.clone()).ok()?;
+    let plain = request.result.is_none()
+        && request.to.is_none()
+        && request.kind.is_none()
+        && request.refs.is_empty();
+    request.text.filter(|_| plain)
+}
+
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
         "self.verbs.call" => {
@@ -383,6 +394,14 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 return Ok(SelfCall::Fold(crate::compaction::SelfFoldCall::Describe {
                     fold: crate::compaction::parse_fold_handle(fold)?,
                 }));
+            }
+            // A plain `say(text)` speaks where the run speaks: it is exactly
+            // `self.speak` (L8-25). A say that names a destination, a result,
+            // a kind or refs is the `say` row's, served by its own door.
+            if verb == AgentVerb::Say
+                && let Some(text) = plain_say_text(&args.input)
+            {
+                return Ok(SelfCall::Speak(SelfSpeechCall::new(text)));
             }
             if verb == AgentVerb::Ask {
                 let request: crate::task_verb::TaskAskRequest = decode(args.input)?;

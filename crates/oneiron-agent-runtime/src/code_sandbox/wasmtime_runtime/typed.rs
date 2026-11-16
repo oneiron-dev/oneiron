@@ -244,6 +244,16 @@ pub(super) fn link_imports(
                         if value.get("output").is_none() && value.get("error").is_some() {
                             return Ok(value.to_string());
                         }
+                        // A speech row's answer (a plain `say(text)`,
+                        // `self.think.aloud`) is its bubble's place, as the
+                        // linked speech imports answer it: the row's
+                        // `SpeechOutput` (L8-25).
+                        if value.get("output").is_none()
+                            && let (Some(order), Some(visible)) =
+                                (value.get("order"), value.get("isVisible"))
+                        {
+                            return Ok(json!({"order": order, "isVisible": visible}).to_string());
+                        }
                         field::<Value>(&value, "output").map(|output| output.to_string())
                     })();
                     cx.data().answer(reply)
