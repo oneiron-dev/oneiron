@@ -162,6 +162,86 @@ pub(crate) fn rewrite_staged_stamps_for_test(
 
 /// Writes `receipt` unless one is stored under its id, with the admitted
 /// `content` and the record of its staged `stamps` when it is Pending.
+/// The receipt id a stage of `remote` derives, with the digest of `remote`
+/// it binds.
+fn stage_receipt_id(
+    classification: &VaultImportReceipt,
+    source: &ForeignVaultImportSource,
+    key: &WindowKey,
+    remote: &[u8],
+) -> Result<([u8; 32], [u8; 32])> {
+    let remote_digest = *blake3::hash(remote).as_bytes();
+    let id = receipt_id(
+        &classification.manifest_digest,
+        source,
+        key.as_str(),
+        &remote_digest,
+    )?;
+    Ok((id, remote_digest))
+}
+
+/// The Pending receipt `id` over the admitted parts `admitted` and the record
+/// of staged stamps `stamps`.
+fn pending_stage_receipt(
+    (id, remote_digest): ([u8; 32], [u8; 32]),
+    classification: &VaultImportReceipt,
+    key: &WindowKey,
+    source: ForeignVaultImportSource,
+    admitted: &[u8],
+    stamps: &[u8],
+) -> VaultImportStageReceipt {
+    VaultImportStageReceipt {
+        receipt_id: id,
+        manifest_digest: classification.manifest_digest,
+        remote_update_digest: remote_digest,
+        admitted_update_digest: Some(*blake3::hash(admitted).as_bytes()),
+        window_key: key.as_str().into(),
+        source,
+        role: FederationAdmissionRole::Guest,
+        status: VaultImportStageStatus::Pending,
+        confirmed_by: None,
+        confirmed_at_secs: None,
+        failure: None,
+        staged_stamps_digest: Some(*blake3::hash(stamps).as_bytes()),
+    }
+}
+
+/// Test door body (`test_doors::staged_vault_import`): stages `remote` as a
+/// Pending import with no admission, its one admitted part the bytes as they
+/// came, under the receipt id a stage of them derives. It stands for an
+/// artifact an older door staged and today's door refuses, such as a peer's
+/// TASK authority fact staged before FIX TASK-FACT-FROM-FEDERATION-PEER.
+#[cfg(oneiron_test_support)]
+pub(crate) fn stage_unadmitted_vault_import_for_test(
+    vault: &Vault,
+    classification: &VaultImportReceipt,
+    source: ForeignVaultImportSource,
+    key: &WindowKey,
+    remote: &[u8],
+) -> Result<StagedVaultImport> {
+    let identity = stage_receipt_id(classification, &source, key, remote)?;
+    let admitted = encode_staged_import_parts(&[StagedWindowPart {
+        key: key.clone(),
+        update: remote.to_vec(),
+        born_with: Vec::new(),
+    }])?;
+    let stamps = encode_staged_window_parts(&[])?;
+    let discarded = {
+        let txn = vault.store.env.read_txn()?;
+        crate::sync::residence::discarded_rows_in(&vault.store, &txn)?
+    };
+    let pending = pending_stage_receipt(identity, classification, key, source, &admitted, &stamps);
+    if !put_stage_if_absent(vault, &pending, Some((&admitted, &stamps, &discarded)))? {
+        return Err(Error::InvalidConfig(
+            "a receipt is already staged under this id".into(),
+        ));
+    }
+    Ok(StagedVaultImport {
+        receipt: pending,
+        admitted_update: admitted,
+    })
+}
+
 fn put_stage_if_absent(
     vault: &Vault,
     receipt: &VaultImportStageReceipt,
@@ -339,13 +419,8 @@ pub fn stage_foreign_vault_import(
         x => x,
     };
     source_bytes(&source)?;
-    let remote_digest = *blake3::hash(remote).as_bytes();
-    let id = receipt_id(
-        &classification.manifest_digest,
-        &source,
-        key.as_str(),
-        &remote_digest,
-    )?;
+    let identity = stage_receipt_id(classification, &source, key, remote)?;
+    let (id, remote_digest) = identity;
     if let Some(existing) = vault_import_stage_receipt(vault, &id)? {
         return match existing.status {
             VaultImportStageStatus::Pending => staged_from_pending(vault, existing),
@@ -505,20 +580,7 @@ pub fn stage_foreign_vault_import(
             };
         }
     };
-    let pending = VaultImportStageReceipt {
-        receipt_id: id,
-        manifest_digest: classification.manifest_digest,
-        remote_update_digest: remote_digest,
-        admitted_update_digest: Some(*blake3::hash(&admitted).as_bytes()),
-        window_key: key.as_str().into(),
-        source,
-        role: FederationAdmissionRole::Guest,
-        status: VaultImportStageStatus::Pending,
-        confirmed_by: None,
-        confirmed_at_secs: None,
-        failure: None,
-        staged_stamps_digest: Some(*blake3::hash(&stamps).as_bytes()),
-    };
+    let pending = pending_stage_receipt(identity, classification, key, source, &admitted, &stamps);
     if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps, &discarded)))? {
         return Ok(StagedVaultImport {
             receipt: pending,
