@@ -300,6 +300,8 @@ impl ContainerRuntime {
             stderr_tail,
             #[cfg(target_os = "linux")]
             supervisor: None,
+            #[cfg(target_os = "linux")]
+            pressure_dir: std::sync::OnceLock::new(),
         })
     }
     /// A production Foreign/Untrusted session. Failure to install or prove
@@ -432,15 +434,17 @@ impl ContainerRuntime {
                 manifest,
                 stderr_tail,
                 supervisor: None,
+                pressure_dir: std::sync::OnceLock::new(),
             };
             // A start that fails names what the guest said: the session's drop
             // removes the container, and its stderr with it.
-            let (proof, guard) = supervisor
+            let (proof, guard, pressure_dir) = supervisor
                 .activate(self.program.clone(), name, &mut session.child, relay)
                 .map_err(|error| with_stderr_tail(error, &session.stderr_tail()))?;
             session.manifest.fence_proof = Some(proof);
             session.manifest.fence_unproven = false;
             session.supervisor = Some(guard);
+            let _ = session.pressure_dir.set(pressure_dir);
             Ok(session)
         }
         #[cfg(not(target_os = "linux"))]
@@ -592,6 +596,12 @@ pub struct GuestSession {
     stderr_tail: Arc<Mutex<VecDeque<u8>>>,
     #[cfg(target_os = "linux")]
     supervisor: Option<supervisor::Guard>,
+    /// The directory holding this guest's `pids.events`, once resolved:
+    /// from the fence proof's inspect at a fenced start, else at the first
+    /// pressure read whose inspect answered. `Some(None)`: the container
+    /// names no readable one. Later reads read the file alone.
+    #[cfg(target_os = "linux")]
+    pressure_dir: std::sync::OnceLock<Option<PathBuf>>,
 }
 
 impl GuestSession {
@@ -618,11 +628,21 @@ impl GuestSession {
 
     /// Reads this session's cgroup `pids.events` while its container runs:
     /// `Some` on a nonzero `max` count, else `None`. Best-effort, never an error.
+    /// The runtime is inspected at most once per session to find the file
+    /// (never for a fenced session: its proof found it), so each read after
+    /// that costs one file read.
     pub fn observe_pressure(&self) -> Option<GuestPressure> {
         #[cfg(target_os = "linux")]
         {
-            let evidence = supervisor::inspect_value(&self.runtime, &self.name)?;
-            let dir = pressure_cgroup_dir(&evidence)?;
+            let dir = match self.pressure_dir.get() {
+                Some(dir) => dir.as_deref()?,
+                None => {
+                    let evidence = supervisor::inspect_value(&self.runtime, &self.name)?;
+                    self.pressure_dir
+                        .get_or_init(|| pressure_cgroup_dir(&evidence))
+                        .as_deref()?
+                }
+            };
             let text = std::fs::read_to_string(dir.join("pids.events")).ok()?;
             guest_pids::parse_pids_events(&text).map(|hits| GuestPressure::Processes { hits })
         }

@@ -18,6 +18,8 @@ pub mod mcp_carrier_release;
 pub mod mcp_page_mint;
 pub mod mcp_surface;
 pub mod media_job_spend;
+#[cfg(unix)]
+pub mod merge_queue_checker_pressure;
 pub mod native_board;
 pub mod openapi_document;
 pub mod replay_admission;

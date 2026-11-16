@@ -75,6 +75,9 @@ pub(super) fn drive_run_guest<S: RunGuestSession>(
     input: Value,
 ) -> Result<Value, BrowserError> {
     let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
+    // What the guest showed during the verb reaches its answer and an
+    // abandon's receipt (FIX 8013).
+    driver.record_pressure();
     if driver.abandoned() {
         vault
             .append_sandbox_abandon_receipt(run_id, driver.manifest())
@@ -729,24 +732,28 @@ impl RunGuests {
         Some(HeldImage::new(desktop.run_id, handle, png))
     }
 
+    /// The run's guest manifests, each with the pressure its guest shows
+    /// now (FIX 8013).
     pub(crate) fn manifests(&self) -> Vec<Value> {
         let browser = self
             .browser
             .as_ref()
             .and_then(|b| b.session.lock().ok())
-            .and_then(|session| {
-                session
-                    .as_ref()
-                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
+            .and_then(|mut session| {
+                session.as_mut().and_then(|s| {
+                    s.record_pressure();
+                    serde_json::to_value(s.manifest()).ok()
+                })
             });
         let desktop = self
             .desktop
             .as_ref()
             .and_then(|d| d.session.lock().ok())
-            .and_then(|session| {
-                session
-                    .as_ref()
-                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
+            .and_then(|mut session| {
+                session.as_mut().and_then(|s| {
+                    s.record_pressure();
+                    serde_json::to_value(s.manifest()).ok()
+                })
             });
         browser.into_iter().chain(desktop).collect()
     }

@@ -90,6 +90,7 @@ impl RunBrowser {
         let page = oneiron_browser::ObservationPage::whole(observation);
         let mut answer = serde_json::to_value(oneiron_browser::BrowserAnswer::of(page)).ok()?;
         let object = answer.as_object_mut()?;
+        driver.record_pressure();
         object.insert(
             "session_manifest".into(),
             serde_json::to_value(driver.manifest()).ok()?,
@@ -134,6 +135,7 @@ impl RunDesktop {
         let page = oneiron_browser::ObservationPage::whole(observation);
         let mut answer = serde_json::to_value(oneiron_browser::DesktopAnswer::of(page)).ok()?;
         let object = answer.as_object_mut()?;
+        driver.record_pressure();
         object.insert(
             "session_manifest".into(),
             serde_json::to_value(driver.manifest()).ok()?,

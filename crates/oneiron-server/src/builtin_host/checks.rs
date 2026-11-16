@@ -204,10 +204,13 @@ fn browser_session_ready(
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
     // No starter: the readiness session serves no engine switch. No request
     // handler: its pages take its relay.
-    let session = BrowserSession::attach(guest, transport, relay, retention, None, None)
+    let mut session = BrowserSession::attach(guest, transport, relay, retention, None, None)
         .inspect(|session| readiness.started(session.manifest()))
         .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::DriverAttachFailed))
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
+    // The evidence names the pressure the guest showed by its close (FIX
+    // 8013).
+    session.record_pressure();
     let manifest = session.manifest().clone();
     drop(session);
     let proof = serde_json::to_vec(&manifest)

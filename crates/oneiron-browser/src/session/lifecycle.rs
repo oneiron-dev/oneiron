@@ -146,6 +146,17 @@ impl BrowserSession {
         &self.manifest
     }
 
+    /// Stores the pressure the guest's container shows now into this
+    /// session's manifest, when it shows any (FIX 8013): what each answer's
+    /// `session_manifest` and the run's receipt then name. Every verb's
+    /// entry records it; the host records it again before it reads the
+    /// manifest. Best-effort, never an error.
+    pub fn record_pressure(&mut self) {
+        if let Some(pressure) = self.guest.observe_pressure() {
+            self.manifest.guest_pressure = Some(pressure);
+        }
+    }
+
     /// The engine the session attached, which runs its every verb.
     #[must_use]
     pub const fn engine(&self) -> BrowserEngine {
@@ -409,6 +420,7 @@ impl BrowserSession {
     /// The guest still answers; a demonstration recording ends with the
     /// cause of one that does not, with what it kept.
     pub(super) fn guest_up(&mut self) -> Result<(), BrowserError> {
+        self.record_pressure();
         if self.guest.abandoned() {
             self.recording_close(DemonstrationStopCause::Abandoned);
             return Err(BrowserError::Abandoned);

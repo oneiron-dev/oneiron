@@ -220,14 +220,21 @@ impl QueueCheckExecutor {
             .as_deref()
             .and_then(|dir| record_guest(dir, &started));
         let mut lease = transport.lease;
+        let mut input = transport.writer;
         let driven = drive(
             transport.reader,
-            transport.writer,
+            input.as_mut(),
             &mut || lease.is_running() && !lease.abandoned(),
             invocation,
             inputs,
             stop,
         )?;
+        // The helper runs until its input closes, so its container's cgroup
+        // still reads here: the run's manifest carries the pressure its
+        // guest showed (FIX 8013). Then its input closes, as it did at the
+        // drive's end.
+        let pressure = lease.observe_pressure();
+        drop(input);
         let abandoned = lease.abandoned() || relay.abandoned.load(Ordering::Acquire);
         // The guest ends with its lease, after its output is read; its
         // record goes with it.
@@ -235,12 +242,15 @@ impl QueueCheckExecutor {
         if let Some(record) = record {
             let _removed = std::fs::remove_file(record);
         }
-        let manifest = relay
+        let mut manifest = relay
             .manifest
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .unwrap_or(started);
+        if pressure.is_some() {
+            manifest.guest_pressure = pressure;
+        }
         let refused = relay
             .refused
             .lock()
@@ -304,19 +314,20 @@ impl QueueCheckExecutor {
                 )));
             }
         };
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
             return Ok(unavailable("the check helper has no pipes".to_owned()));
         };
         let driven = drive(
             Box::new(stdout),
-            Box::new(stdin),
+            &mut stdin,
             &mut || matches!(child.try_wait(), Ok(None)),
             invocation,
             inputs,
             stop,
         );
+        drop(stdin);
         let _ = child.kill();
         let _ = child.wait();
         driven
@@ -435,10 +446,12 @@ struct InputsFrame {
 }
 
 /// Drives the helper over `reader` and `writer`: header and tree in, then
-/// its frames until the terminal one, the host's stop, or its end.
+/// its frames until the terminal one, the host's stop, or its end. The
+/// helper's input stays open until its terminal frame is read: the caller
+/// closes `writer` after it reads what the session needs.
 fn drive(
     mut reader: Box<dyn Read + Send>,
-    mut writer: Box<dyn Write + Send>,
+    writer: &mut dyn Write,
     alive: &mut dyn FnMut() -> bool,
     invocation: &QueueCheckInvocation<'_>,
     inputs: &QueueCheckInputs,
@@ -471,10 +484,10 @@ fn drive(
             .collect(),
     };
     let header = serde_json::to_vec(&header).map_err(io::Error::other)?;
-    if write_frame(writer.as_mut(), FRAME_HEADER, &header).is_err() {
+    if write_frame(writer, FRAME_HEADER, &header).is_err() {
         return Ok(interrupted("the check helper closed before its header"));
     }
-    let sent = match send_tree(writer.as_mut(), invocation.tree, commit)? {
+    let sent = match send_tree(writer, invocation.tree, commit)? {
         Sent::Tree(digest) => digest,
         Sent::Closed(error) => {
             return Ok(interrupted(&format!(
@@ -529,8 +542,6 @@ fn drive(
             }
         }
     }
-    // The helper's input stays open until its terminal frame is read.
-    drop(writer);
     collected.finish(&sent, inputs)
 }
 
@@ -728,4 +739,160 @@ impl EgressRelay for QueueCheckRelay {
     fn host_net_floor(&self) -> &dyn HostNetFloor {
         &ProcessDescriptorFloor
     }
+}
+
+/// A door for the integration tests (`--cfg oneiron_test_support`): runs one
+/// isolated check with no commands on `lease`, a guest session the test
+/// started and whose start `manifest` names, and answers what the run came
+/// to. An in-process helper answers on the session's pipes as `checker.py`
+/// does for an empty tree: the input digests and the terminal frame, then
+/// it waits until its input closes.
+///
+/// # Errors
+/// An engine failure of the run, or of the door's own pipes.
+#[cfg(all(oneiron_test_support, unix))]
+pub(crate) fn run_empty_isolated_check(
+    lease: Box<dyn oneiron_container::SessionLease>,
+    manifest: SessionManifest,
+) -> oneiron::Result<QueueCheckExecution> {
+    use oneiron::code_sandbox::microvm::{
+        ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle, NoSandboxBackends, backend_error,
+    };
+    use oneiron::code_sandbox::{SandboxBoundaryContract, SandboxMountTable};
+    use oneiron::merge_queue::{QueueCheckFile, QueueCheckTreeSource};
+    use oneiron_container::SessionTransport;
+    use std::os::unix::net::UnixStream;
+
+    use super::tree::FRAME_END;
+
+    struct EmptyTree;
+
+    impl QueueCheckTreeSource for EmptyTree {
+        fn files(&self) -> oneiron::Result<Vec<QueueCheckFile>> {
+            Ok(Vec::new())
+        }
+
+        fn blob(&self, _oid: &str) -> oneiron::Result<Vec<u8>> {
+            Err(oneiron::Error::InvalidConfig(
+                "the empty tree holds no blob".to_owned(),
+            ))
+        }
+    }
+
+    /// Hands out the test's one session, once.
+    struct HandedSession(Mutex<Option<SessionTransport>>);
+
+    impl MicroVmBackend for HandedSession {
+        fn start_session(
+            &self,
+            _spec: &GuestSpec,
+            _command: &[OsString],
+            _relay: Arc<dyn EgressRelay>,
+        ) -> oneiron::Result<SessionTransport> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+                .ok_or_else(|| backend_error(self.name(), "the one session was handed out"))
+        }
+
+        fn name(&self) -> &'static str {
+            "test-handed-session"
+        }
+
+        fn prepare(
+            &self,
+            _contract: &SandboxBoundaryContract,
+            _mounts: &SandboxMountTable,
+        ) -> oneiron::Result<MicroVmHandle> {
+            Err(backend_error(self.name(), "sessions only"))
+        }
+
+        fn run(
+            &self,
+            _vm: &MicroVmHandle,
+            _image: &GuestImage,
+            _budget: ExecutionBudget,
+        ) -> oneiron::Result<MicroVmExit> {
+            Err(backend_error(self.name(), "sessions only"))
+        }
+    }
+
+    /// The helper's side: reads the header and the tree to its end frame,
+    /// answers the digests and the terminal frame, then reads on until its
+    /// input closes.
+    fn answer_empty_check(mut input: UnixStream, mut output: UnixStream, digest: &str) {
+        loop {
+            match read_frame(&mut input) {
+                Ok(Some((kind, _))) if kind == FRAME_END => break,
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => return,
+            }
+        }
+        let digests = serde_json::json!({"before": digest, "after": digest}).to_string();
+        if write_frame(&mut output, FRAME_INPUTS, digests.as_bytes()).is_err()
+            || write_frame(&mut output, FRAME_DONE, &[]).is_err()
+            || output.flush().is_err()
+        {
+            return;
+        }
+        while let Ok(Some(_)) = read_frame(&mut input) {}
+    }
+
+    let commit = "0".repeat(40);
+    let tree = EmptyTree;
+    let Sent::Tree(digest) = send_tree(&mut Vec::new(), &tree, &commit)? else {
+        return Err(oneiron::Error::InvalidConfig(
+            "the empty tree did not send".to_owned(),
+        ));
+    };
+    let (input_host, input_guest) = UnixStream::pair()?;
+    let (output_host, output_guest) = UnixStream::pair()?;
+    let helper = std::thread::spawn(move || answer_empty_check(input_guest, output_guest, &digest));
+    let transport = SessionTransport {
+        reader: Box::new(output_host),
+        writer: Box::new(input_host),
+        manifest,
+        lease,
+    };
+    let limits = serde_json::json!({
+        "memory_mib": 256, "cpu_millis": 1000, "pids": 64, "tmpfs_mib": 64,
+    });
+    let inputs: QueueCheckInputs = serde_json::from_value(serde_json::json!({
+        "store": "test-store",
+        "repo": oneiron::EntityId::now(),
+        "target": {"Baseline": {"commit": commit, "tree": "0".repeat(40), "phase": "Fast"}},
+        "baseline_id": null,
+        "plan_digest": "test-plan",
+        "commands": [],
+        "contract_outputs": {},
+        "environment": {
+            "backend": "isolated",
+            "executor": "test-handed-session",
+            "runtime": null,
+            "image": concat!(
+                "example.invalid/checker@sha256:",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            "helper": [crate::config::merge_queue::ISOLATED_CHECK_HELPER],
+            "toolchain": {},
+            "limits": limits,
+            "network": "deny",
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        },
+    }))
+    .map_err(|error| oneiron::Error::InvalidConfig(format!("the door's inputs: {error}")))?;
+    let mut executor = QueueCheckExecutor::new(
+        MergeQueueCheckerConfig::default(),
+        Arc::new(NoSandboxBackends),
+    );
+    executor.backend = Some(Box::new(HandedSession(Mutex::new(Some(transport)))));
+    let invocation = QueueCheckInvocation {
+        target: &inputs.target,
+        tree: &tree,
+    };
+    let ran = executor.execute_isolated(&invocation, &inputs, &|| false);
+    let _ = helper.join();
+    ran
 }
