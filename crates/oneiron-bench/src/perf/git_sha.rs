@@ -354,10 +354,7 @@ fn discover_git_dir(start: &Path) -> Option<PathBuf> {
 
 fn valid_sha(candidate: &str) -> Option<String> {
     let candidate = candidate.trim();
-    if candidate.len() == 40 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Some(candidate.to_owned());
-    }
-    None
+    oneiron_hex::is_hex_any_case(candidate, Some(40)).then(|| candidate.to_owned())
 }
 
 #[cfg(test)]
