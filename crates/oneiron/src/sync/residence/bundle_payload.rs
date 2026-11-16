@@ -407,6 +407,10 @@ impl WindowManager {
                 return Err(refused("the bundle's authority is another vault's"));
             }
             opened.require_publisher(&fold, None)?;
+            // Only the kit's live root authority key puts this machine on the
+            // roster, so a kit a newer one replaced is refused before the
+            // first window lands (WAYBACK-KIT-RESTORE-NO-LIVE-R = A).
+            vault.kit_root_authority_signer(&fold, seed)?;
         }
         // Base windows first: a window of a world read everywhere may name a
         // base row.
