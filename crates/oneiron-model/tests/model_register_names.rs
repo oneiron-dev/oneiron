@@ -8,6 +8,7 @@
 //! - `crates/oneiron-model/src/llm/catalog.rs`
 //! - `crates/oneiron-model/src/llm/media/caps.rs`
 
+use oneiron_contracts::register::Register;
 use oneiron_model::llm::LlmCapability;
 use oneiron_model::llm::ModelLocality;
 use oneiron_model::llm::media::AiOperation;
@@ -163,4 +164,18 @@ fn every_llm_capability_name_is_its_serde_and_display_name() {
         assert_eq!(&read, row, "{name}");
         assert_eq!(row.to_string(), *name, "{row:?}");
     }
+}
+
+/// The derive's table is the hand table: the Register's name, its rows in declaration order, and
+/// each row's name read both ways.
+#[test]
+fn llm_capability_is_the_llm_capability_register() {
+    assert_eq!(LlmCapability::NAME, "llm.capability");
+    let rows = LLM_CAPABILITY_ROWS.map(|(row, _)| row);
+    assert_eq!(LlmCapability::ROWS, rows.as_slice());
+    for (row, name) in LLM_CAPABILITY_ROWS {
+        assert_eq!(row.name(), name, "{row:?}");
+        assert_eq!(LlmCapability::named(name), Some(row), "{name}");
+    }
+    assert_eq!(LlmCapability::named("not.a.row"), None);
 }
