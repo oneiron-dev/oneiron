@@ -543,7 +543,13 @@ pub fn stage_foreign_vault_import(
                 // `REMOTE_ENTITY_METADATA_CORRUPT`) and deliberately does
                 // NOT make `CorruptedIndex` as a whole terminal — a local
                 // index fault during admission still retries.
-                || matches!(&error, Error::CorruptedIndex(verdict) if *verdict == REMOTE_ENTITY_METADATA_CORRUPT);
+                || matches!(&error, Error::CorruptedIndex(verdict) if *verdict == REMOTE_ENTITY_METADATA_CORRUPT)
+                // A peer's TASK authority fact in the artifact is a defect of
+                // its bytes too: the refusal reads nothing else, so a re-fetch
+                // refuses again, and with no receipt every stage of it would
+                // answer a retryable error for ever
+                // (FIX TASK-FACT-STAGED-CONFIRM-NEVER-SETTLES).
+                || crate::sync::selector::is_peer_task_authority_fact_refusal(&error);
             if !terminal {
                 return Err(error);
             }

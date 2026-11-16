@@ -27,6 +27,8 @@ mod routing;
 mod state;
 
 use self::blobs::copy_admitted_entities;
+#[cfg(feature = "sync")]
+pub(crate) use self::blobs::is_peer_task_authority_fact_refusal;
 pub(crate) use self::blobs::{FEDERATION_IMPORT_SOURCE, admit_federated_entity_blob};
 #[cfg(feature = "test-hooks")]
 pub use self::revalidate::put_selector_test_federation_grant;
