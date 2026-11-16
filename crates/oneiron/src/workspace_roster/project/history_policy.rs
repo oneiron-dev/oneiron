@@ -13,7 +13,6 @@ use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::validity::FoldCx;
 use super::*;
-use crate::consent::AuthenticatedOwner;
 
 #[doc(hidden)]
 pub use oneiron_records::workspace_roster::project::history_policy::{
@@ -124,17 +123,15 @@ pub(super) const PROJECT_FROZEN_WAIT_PROJECT: SideTable<
 /// raises none ([`ProjectCycleQuestion`]).
 pub(super) const PROJECT_CYCLE_QUESTION: SideTable<EntityId, ProjectCycleQuestion, Named> =
     SideTable::new(&side_table::PROJECT_CYCLE_QUESTION);
-/// The vault's history policy, set only through the owner door.
-const PROJECT_HISTORY_POLICY: SideTable<(), ProjectHistoryPolicy, Named> =
-    SideTable::new(&side_table::PROJECT_HISTORY_POLICY);
-
+/// The vault's history policy in force: its catalogue key, or the default
+/// budgets while the owner set none.
 pub(super) fn policy_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<ProjectHistoryPolicy> {
-    Ok(PROJECT_HISTORY_POLICY
-        .get(store, txn, &())?
-        .unwrap_or_default())
+    Ok(super::setting_keys::HISTORY_POLICY
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value)
 }
 
 /// The frontier of a project past its budget: the persisted record when every
@@ -234,27 +231,12 @@ impl Vault {
         Ok(questions.into_values().collect())
     }
 
+    /// The per-project fold budget in force. The owner raises (or lowers) it
+    /// through `vault.settings.set` on `projects.history_policy`: the next read
+    /// folds against it, and the next write to a project clears its freeze.
     pub fn project_history_policy(&self) -> Result<ProjectHistoryPolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in(&self.store, &txn)
-    }
-
-    /// The owner raises (or lowers) the per-project fold budget. The next read
-    /// folds against it, and the next write to a project clears its freeze.
-    pub fn set_project_history_policy(
-        &self,
-        owner: &AuthenticatedOwner,
-        policy: ProjectHistoryPolicy,
-    ) -> Result<()> {
-        if policy.max_revisions == 0 || policy.cycle_worlds_max == 0 {
-            return Err(Error::InvalidConfig(
-                "project history budgets must admit at least one revision and one world".into(),
-            ));
-        }
-        self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            PROJECT_HISTORY_POLICY.put(&self.store, txn, &(), &policy)
-        })
     }
 
     /// The open questions about projects past their history budget: one per

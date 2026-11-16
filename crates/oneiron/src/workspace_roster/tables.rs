@@ -46,9 +46,6 @@ crate::side_table::side_tables! {
     /// goal in force. Key: id16 (project) + id16 (proposal).
     PROJECT_GOAL_PROPOSAL: VaultMeta b"project.goal_proposal.v1/" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The vault's per-project history budget, set by the owner. Key: ().
-    PROJECT_HISTORY_POLICY: VaultMeta b"project.history_policy.v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Durable owner tap of one project card: (tap digest, mint receipt). Key: blake3 hash32 of
     /// the card id.
     PROJECT_MINT_TAP: VaultMeta b"project.mint.tap.v1/" Named

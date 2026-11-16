@@ -24,7 +24,7 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
         SecretScanSwitch::Off => oneiron::policy_model::SecretScanMode::Off,
     };
     let owner = local_owner(&vault)?;
-    emit(&vault.set_secret_scan_mode(&owner, mode, vault.now_recorded_at())?)
+    emit(&secrets::switch_secret_scan(&vault, &owner, mode)?)
 }
 
 /// The largest value read from stdin, as for the route's whole body.
