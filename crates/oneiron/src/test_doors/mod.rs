@@ -134,6 +134,7 @@ pub mod model_step_submission_codec;
 pub mod nightly;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
+pub mod off_record_side_row;
 pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;
 pub mod own_device_message_replay;
