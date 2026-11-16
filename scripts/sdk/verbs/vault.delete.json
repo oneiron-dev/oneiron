@@ -13,7 +13,7 @@
   },
   "input": "SafeDeleteRequest",
   "output": "crate::memory::DeleteReceipt",
-  "call": "memory.safe_delete(&input.entity_ref, input.reason)?",
+  "call": "memory.safe_delete_with_check_in(&input.entity_ref, input.reason, input.check_in_ref.as_deref())?",
   "scope": "Write",
   "act_class": "delete",
   "admission": {},
