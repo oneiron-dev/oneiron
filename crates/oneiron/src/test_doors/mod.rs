@@ -113,6 +113,7 @@ pub mod nightly;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod outbound_grant_index;
+pub mod owed_grant_end;
 pub mod own_device_message_replay;
 pub mod owner_key_release;
 pub mod pack_encode_work;
