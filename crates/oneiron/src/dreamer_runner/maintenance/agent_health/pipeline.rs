@@ -741,4 +741,22 @@ impl Vault {
             super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
         })
     }
+
+    /// TEST-ONLY: sets the stuck mark on `subject`'s taskless `signal` card,
+    /// as the agent's own blocked report sets it on a card whose TASK reads
+    /// no Blocked state.
+    pub(crate) fn mark_agent_health_card_blocked_for_test(
+        &self,
+        subject: EntityId,
+        signal: AgentHealthSignal,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let key = card_key(subject, signal, None);
+            let mut card = CARDS
+                .get(&self.store, txn, &key)?
+                .ok_or(crate::Error::InvalidClaimBody("a landed agent health card"))?;
+            card.agent_blocked = true;
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
+        })
+    }
 }
