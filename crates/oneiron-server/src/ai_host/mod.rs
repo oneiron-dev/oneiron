@@ -28,6 +28,8 @@ use crate::server::SyncServer;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
 mod compaction;
+#[cfg(oneiron_test_support)]
+pub(crate) use compaction::pass_door;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
