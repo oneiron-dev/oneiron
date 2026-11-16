@@ -524,6 +524,18 @@ impl Vault {
         seed_bootstrap_skill_files(self, &files)
     }
 
+    /// Test door body (`test_doors::bootstrap_skills`): writes the seed
+    /// marker as `value`.
+    pub(crate) fn write_bootstrap_seed_marker_for_test(&self, value: &str) -> Result<()> {
+        self.with_write_txn(|txn| SEEDED.put(&self.store, txn, &(), &value.to_owned()))
+    }
+
+    /// Test door body (`test_doors::bootstrap_skills`): the seed marker.
+    pub(crate) fn bootstrap_seed_marker_for_test(&self) -> Result<Option<String>> {
+        let txn = self.store.env.read_txn()?;
+        SEEDED.get(&self.store, &txn, &())
+    }
+
     /// Test door body (`test_doors::bootstrap_skills`): the fit rung's
     /// activation write for the restored default `id` (a held-out win that
     /// asks no permission), without the scorer.

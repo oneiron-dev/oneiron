@@ -19,19 +19,26 @@ pub fn bootstrap_skill_id(name: &str) -> Result<EntityId> {
     )
 }
 
-/// The skill whose rubric the judge loads (`judge_rubric_sourced_in_txn`),
+/// The skill whose rubric the judge loads (`skill_optimize::judge_rubric`),
 /// or `None` when no rubric is in force.
 ///
 /// # Errors
 ///
 /// A store error.
 pub fn judge_rubric_skill(vault: &Vault) -> Result<Option<EntityId>> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(
-        crate::skill_optimize::labels::judge_rubric_sourced_in_txn(vault, &txn)?
-            .0
-            .map(|rubric| rubric.skill),
-    )
+    Ok(crate::skill_optimize::judge_rubric(vault)?.map(|rubric| rubric.skill))
+}
+
+/// The improver workflow the Coach's skill author loads on an optimization
+/// attempt (oneiron-server `ai_host/skill_author.rs` loads the id this
+/// returns).
+///
+/// # Errors
+///
+/// A store error, or an id derivation failure.
+pub fn coach_improver_skill(vault: &Vault) -> Result<EntityId> {
+    let _ = vault;
+    crate::dreamer_runner::maintenance::coach_learning::coach_improver_skill_id()
 }
 
 /// The reviewer revision the agent-health pass loads its policy from, or
@@ -65,4 +72,23 @@ pub fn seed_bootstrap_skills_adding(
     extra: &[(&'static str, &'static str)],
 ) -> Result<()> {
     vault.seed_bootstrap_skills_adding_for_test(extra)
+}
+
+/// Writes `value` as the vault's bootstrap seed marker, as an older engine
+/// left it (for example a version line with no names).
+///
+/// # Errors
+///
+/// The write's failure.
+pub fn write_bootstrap_seed_marker(vault: &Vault, value: &str) -> Result<()> {
+    vault.write_bootstrap_seed_marker_for_test(value)
+}
+
+/// The vault's bootstrap seed marker, if any.
+///
+/// # Errors
+///
+/// A store error.
+pub fn bootstrap_seed_marker(vault: &Vault) -> Result<Option<String>> {
+    vault.bootstrap_seed_marker_for_test()
 }
