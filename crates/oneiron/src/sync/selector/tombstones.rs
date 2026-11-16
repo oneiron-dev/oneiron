@@ -78,12 +78,11 @@ impl<'g> TombstoneExport<'g> {
 /// row was live, so it decides before any body the window still holds.
 /// `Some(true)` for an Owner's member (`None`), which reads every row, and for
 /// a capture older than the read, whose tombstone travels as the rules above
-/// judge it. `Some(false)` for a failed read, and for a value that names no
-/// request: this engine writes none, so it is a legacy or malformed value no
-/// capture can be bound to, and a narrower grant never takes it either
-/// (`UNPROVEN_TOMBSTONE_EXPORTED`). `None` when no capture is bound to the
-/// tombstone's request (there is no row, or the row is bound to another
-/// request): the caller judges what the window still holds.
+/// judge it. `Some(false)` for a failed read. `None` when no capture is bound
+/// to the tombstone's request (there is no row, or the row is bound to another
+/// request), and for a value that names no request, which no capture can be
+/// bound to: the caller judges what the window still holds
+/// ([`names_request`]).
 pub(super) fn member_reads_by_capture(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -94,13 +93,21 @@ pub(super) fn member_reads_by_capture(
     let Some(member) = member else {
         return Some(true);
     };
-    let Some(request) = decode_tombstone_value(value).request_id else {
-        return Some(false);
-    };
+    let request = decode_tombstone_value(value).request_id?;
     match deleted_relationship_read_in(&vault.store, txn, id, &request) {
         Ok(Some(Some(read))) => Some(read.allowed_by(member)),
         Ok(Some(None)) => Some(true),
         Ok(None) => None,
         Err(_) => Some(false),
     }
+}
+
+/// Whether the tombstone `value` names its delete's request. This engine
+/// writes no other value, so one that names none is a legacy or malformed
+/// value: with no capture to decide, it reaches a member who is not an Owner
+/// only beside a body of its row that the member reads, never on the window's
+/// silence (OPUS-LEAKS, SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE), and a
+/// narrower grant never takes it (`UNPROVEN_TOMBSTONE_EXPORTED`).
+pub(super) fn names_request(value: &[u8]) -> bool {
+    decode_tombstone_value(value).request_id.is_some()
 }

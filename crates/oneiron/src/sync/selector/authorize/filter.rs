@@ -522,16 +522,16 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // request, every body the window still holds of the row decides by its
         // bytes, under whichever casing of the id it is keyed: one the member
         // does not read withholds the tombstone. A read that fails withholds
-        // it too.
+        // it too. With no body, a tombstone that names its request travels,
+        // and one that names none stays.
         let member = member_access.as_ref();
         let reads =
             super::super::tombstones::member_reads_by_capture(vault, &ttxn, member, &id, value)
-                .unwrap_or_else(|| {
-                    tombstoned_bodies.get(&id).is_none_or(|bodies| {
-                        bodies.iter().all(|blob| {
-                            member_reads_labels(vault, &ttxn, member, &id, blob).unwrap_or(false)
-                        })
-                    })
+                .unwrap_or_else(|| match tombstoned_bodies.get(&id) {
+                    Some(bodies) => bodies.iter().all(|blob| {
+                        member_reads_labels(vault, &ttxn, member, &id, blob).unwrap_or(false)
+                    }),
+                    None => super::super::tombstones::names_request(value),
                 });
         if reads {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
