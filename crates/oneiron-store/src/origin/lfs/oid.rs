@@ -4,7 +4,6 @@ use sha2::{Digest, Sha256};
 
 use crate::side_table::codec::CodecError;
 use crate::side_table::codec::RawValue;
-use crate::side_table::key::FixedSideKey;
 use crate::side_table::key::SideKey;
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
@@ -25,7 +24,9 @@ pub const VAULT_LFS_OID_HEX_LEN: usize = 64;
 /// object id addresses BYTES and an entity id addresses an ENTITY, and the two
 /// are never interchangeable even though one deterministically derives the
 /// other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// Its side-table key is the raw 32 bytes (derived), the spelling every LFS OID row has always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SideKey)]
 pub struct LfsOid([u8; VAULT_LFS_OID_LEN]);
 
 impl LfsOid {
@@ -81,21 +82,6 @@ impl LfsOid {
         }
         hex
     }
-}
-
-/// The raw 32 bytes, unchanged — the side-table key spelling every LFS OID row has always had.
-impl SideKey for LfsOid {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Some(Self(bytes.try_into().ok()?))
-    }
-}
-
-impl FixedSideKey for LfsOid {
-    const WIDTH: usize = VAULT_LFS_OID_LEN;
 }
 
 /// The raw 32 bytes, unchanged — the side-table value spelling `origin:lfs:manifest:v1:` rows

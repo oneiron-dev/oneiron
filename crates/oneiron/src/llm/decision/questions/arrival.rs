@@ -17,34 +17,10 @@ use crate::store::Store;
 pub(super) use crate::store::decision_question_watches::{RESTS_ON, UNIT_WATCH};
 use crate::{EntityId, Error, Result};
 
-/// Key of one predicate watcher registration. Not fixed-width: a variable-length predicate,
-/// then a NUL separator, then the watching question's id16. `OutcomeBinding::validate` refuses a
-/// predicate containing `\0`, so the separator is unambiguous.
-struct WatchKey {
-    predicate: String,
-    id: EntityId,
-}
-
-impl SideKey for WatchKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.predicate.as_bytes());
-        out.push(0);
-        out.extend_from_slice(self.id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(16)?;
-        let (rest, id_bytes) = bytes.split_at(split);
-        let (&zero, predicate_bytes) = rest.split_last()?;
-        if zero != 0 {
-            return None;
-        }
-        Some(Self {
-            predicate: std::str::from_utf8(predicate_bytes).ok()?.to_owned(),
-            id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
-        })
-    }
-}
+/// Key of one predicate watcher registration: the predicate, NUL, the watching question's id16
+/// (`side_table::key::TextIdKey`, which reads the id from the end of the key).
+/// `OutcomeBinding::validate` refuses a predicate containing `\0`.
+type WatchKey = oneiron_store::side_table::key::TextIdKey;
 
 /// One [`WatchKey`] for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
@@ -53,7 +29,7 @@ pub(crate) fn watch_key_pin_for_test(
     id: EntityId,
 ) -> crate::test_doors::side_key_pins::Pin {
     crate::test_doors::side_key_pins::Pin::of(&WatchKey {
-        predicate: predicate.to_owned(),
+        text: predicate.to_owned(),
         id,
     })
 }
@@ -142,7 +118,15 @@ pub(super) fn watch(
     }
     let predicate = predicate(&binding.source).to_owned();
     let id = record.definition.question.id;
-    QUESTION_WATCH.put(store, txn, &WatchKey { predicate, id }, &id)
+    QUESTION_WATCH.put(
+        store,
+        txn,
+        &WatchKey {
+            text: predicate,
+            id,
+        },
+        &id,
+    )
 }
 
 /// Undoes [`watch`] for `record`, a question whose one version went with its
@@ -158,7 +142,14 @@ pub(super) fn unwatch(
     }
     if let Some(binding) = &record.definition.binding {
         let predicate = predicate(&binding.source).to_owned();
-        QUESTION_WATCH.delete(store, txn, &WatchKey { predicate, id })?;
+        QUESTION_WATCH.delete(
+            store,
+            txn,
+            &WatchKey {
+                text: predicate,
+                id,
+            },
+        )?;
     }
     Ok(())
 }
