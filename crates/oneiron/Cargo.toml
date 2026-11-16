@@ -61,6 +61,7 @@ oneiron-container = { path = "../oneiron-container" }
 oneiron-browser = { path = "../oneiron-browser", default-features = false }
 # Native DOCX revisions: organ crate remains independent of the vault engine.
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 # Default xlsx recalc of the edit round trip: the in-process formula engine on
 # the owned formualizer fork. It depends on docedit, never back on this crate.
 oneiron-xlsx-formula = { version = "0.1.0", path = "../oneiron-xlsx-formula" }
@@ -243,8 +244,10 @@ heed = { workspace = true, features = ["posix-sem"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # Removing a directory tree relative to the directory that holds each
-# entry, never through a path. The version the workspace already builds.
-rustix = { version = "1.1", features = ["fs", "process"] }
+# entry, never through a path; and the boot clock, which counts time
+# suspended, that a backup's held verdict ages by. The version the
+# workspace already builds.
+rustix = { version = "1.1", features = ["fs", "process", "time"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }

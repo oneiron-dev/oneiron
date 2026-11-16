@@ -78,8 +78,6 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ),
     // The signing ceremony's signer doors.
     ("GET", "/sign", PublicProof),
-    ("GET", "/sign/editor.js", PublicProof),
-    ("GET", "/sign/field-renderer.js", PublicProof),
     ("POST", "/sign/geometry", PublicProof),
     ("POST", "/sign/image", PublicProof),
     ("POST", "/sign/layout", PublicProof),

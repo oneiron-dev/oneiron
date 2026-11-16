@@ -5,7 +5,14 @@
 //! - a read below the vault answers what the vault's read answers;
 //! - the side-row wall reads every setting value before it is stored: a secret never lands raw;
 //! - a key's after-commit hook runs once per applied change, after the write commits;
-//! - a leave keeps the rows of a key about this machine and drops a vault key's.
+//! - a leave keeps the rows of a key about this machine and drops a vault key's;
+//! - an agent whose Grant lists a key's own line sets its value rows as a holder does, never a
+//!   pin, and asks to replace the owner's row or to widen; the key's read line reads it; a line
+//!   of another key asks;
+//! - a dials key reads for a whole-vault grant naming any `engine.controls` class, not for a
+//!   plain agent;
+//! - a holder never raises a key past its default where the owner set no row;
+//! - an erase takes the erased entity out of a value whose key says how.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_primitive_callers`.
 #![cfg(oneiron_test_support)]
@@ -18,14 +25,16 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{EngineControlClass, Scope, ScopeAxis};
 use oneiron::memory::Memory;
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingMode, SettingScope, SettingSource};
+use oneiron::setting::{
+    SetSetting, SetSettingOutcome, SettingMode, SettingScope, SettingSource, get_line, set_line,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 #[cfg(feature = "sync")]
 use oneiron::test_doors::setting::leave_keeps_setting_row;
 use oneiron::test_doors::setting::{
-    after_commit_seen, after_commits, owner_number_read_both_ways, set_setting_as_engine,
-    set_setting_as_person, set_settings_in_one_write,
+    after_commit_seen, after_commits, erase_entity_from_settings, owner_number_read_both_ways,
+    set_setting_as_engine, set_setting_as_person, set_settings_in_one_write,
 };
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -151,6 +160,15 @@ impl Fixture {
 
 fn call(memory: &Memory<'_>, verb: &str, input: Value) -> Value {
     invoke(memory, verb, input).unwrap_or_else(|error| panic!("{verb} answers: {error:?}"))
+}
+
+/// `verb` refused for a reader who may not read the key, by the read's own refusal.
+fn read_refused(memory: &Memory<'_>, verb: &str, input: Value) {
+    let refused = invoke(memory, verb, input).expect_err("refused");
+    assert!(
+        format!("{refused:?}").contains("needs the owner"),
+        "the read's own refusal: {refused:?}"
+    );
 }
 
 fn vault_scope() -> Value {
@@ -449,4 +467,174 @@ fn a_leave_keeps_the_rows_of_a_key_about_this_machine() {
         "test.no_such_key",
         SettingScope::Vault
     ));
+}
+
+#[test]
+fn an_agent_whose_grant_lists_a_keys_line_sets_it_as_a_holder_and_its_read_line_reads_it() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let key = "test.owner_number";
+    let budget = "test.work_budget";
+    let lined = fx.agent();
+    fx.grant(lined, &[SET, GET, &set_line(key), &set_line(budget)]);
+    let them = fx.as_agent(lined);
+
+    let first = call(&them, SET, set(key, vault_scope(), json!(9)));
+    assert_eq!(
+        first["status"],
+        json!("applied"),
+        "an owner key with no row: {first}"
+    );
+    assert_eq!(get(&me, key, json!([]))["value"], json!(9));
+    let listed = rows(&me, key);
+    assert_eq!(listed[0]["setter"]["as"], json!("key_grant"), "{listed:?}");
+    assert_eq!(listed[0]["by"], json!(lined.to_hex()), "{listed:?}");
+
+    call(&me, SET, set(key, vault_scope(), json!(3)));
+    let replace = call(&them, SET, set(key, vault_scope(), json!(8)));
+    assert_eq!(
+        replace["status"],
+        json!("pending"),
+        "the owner's row: the line asks before it replaces it: {replace}"
+    );
+    let pin = call(
+        &them,
+        SET,
+        json!({ "key": key, "scope": vault_scope(), "pin": true, "value": 1 }),
+    );
+    assert_eq!(pin["status"], json!("pending"), "a line never pins: {pin}");
+
+    // Default 10, lower is tighter, no owner row: a widening asks (AUTH-1 = A).
+    let widen = call(&them, SET, set(budget, vault_scope(), json!(20)));
+    assert_eq!(
+        widen["status"],
+        json!("pending"),
+        "past the default: {widen}"
+    );
+    let tighten = call(&them, SET, set(budget, vault_scope(), json!(5)));
+    assert_eq!(tighten["status"], json!("applied"), "{tighten}");
+    assert_eq!(get(&me, budget, json!([]))["value"], json!(5));
+    read_refused(&them, GET, json!({ "key": key }));
+
+    let reader = fx.agent();
+    fx.grant(reader, &[SET, GET, &get_line(key)]);
+    let read = get(&fx.as_agent(reader), key, json!([]));
+    assert_eq!(read["value"], json!(3), "the read line reads it: {read}");
+
+    let unlined = fx.agent();
+    fx.grant(unlined, &[SET, GET, &set_line("test.hooked")]);
+    let asked = call(
+        &fx.as_agent(unlined),
+        SET,
+        set(budget, vault_scope(), json!(4)),
+    );
+    assert_eq!(
+        asked["status"],
+        json!("pending"),
+        "another key's line asks: {asked}"
+    );
+    read_refused(&fx.as_agent(unlined), GET, json!({ "key": key }));
+    assert_eq!(get(&me, key, json!([]))["value"], json!(3), "nothing moved");
+}
+
+#[test]
+fn a_dials_key_reads_for_a_whole_vault_engine_controls_grant_and_not_for_a_plain_agent() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let key = "test.dial_number";
+    call(&me, SET, set(key, vault_scope(), json!(4)));
+
+    let steward = fx.agent();
+    fx.grant(steward, &[SET, GET]);
+    fx.controls(steward, EngineControlClass::WakeCadence);
+    let them = fx.as_agent(steward);
+    assert_eq!(get(&them, key, json!([]))["value"], json!(4));
+    read_refused(&them, GET, json!({ "key": "test.owner_number" }));
+
+    let plain = fx.agent();
+    fx.grant(plain, &[SET, GET]);
+    read_refused(&fx.as_agent(plain), GET, json!({ "key": key }));
+}
+
+#[test]
+fn a_holder_never_raises_a_key_past_its_default_where_the_owner_set_no_row() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let holder = fx.agent();
+    fx.grant(holder, &[SET, GET]);
+    fx.controls(holder, EngineControlClass::WorkBudget);
+    let them = fx.as_agent(holder);
+    // Default 10, lower is tighter.
+    let key = "test.work_budget";
+    let place = EntityId::now();
+
+    let above = call(&them, SET, set(key, project(place), json!(12)));
+    assert_eq!(
+        above["status"],
+        json!("pending"),
+        "above the default: {above}"
+    );
+    let inside = call(&them, SET, set(key, project(place), json!(9)));
+    assert_eq!(inside["status"], json!("applied"), "{inside}");
+
+    call(&me, SET, set(key, vault_scope(), json!(20)));
+    let raised = call(&them, SET, set(key, project(place), json!(15)));
+    assert_eq!(
+        raised["status"],
+        json!("applied"),
+        "inside the owner's row: {raised}"
+    );
+    assert_eq!(get(&them, key, json!([project(place)]))["value"], json!(15));
+
+    call(&me, SET, json!({ "key": key, "scope": vault_scope() }));
+    let capped = get(&them, key, json!([project(place)]));
+    assert_eq!(
+        capped["value"],
+        json!(10),
+        "the default caps the holder's row: {capped}"
+    );
+    assert_eq!(capped["source"], json!({ "from": "default" }));
+    let stored = rows(&me, key);
+    assert_eq!(stored.len(), 1, "the holder's row stays stored: {stored:?}");
+    assert_eq!(stored[0]["value"], json!(15));
+}
+
+#[test]
+fn an_erase_takes_the_erased_entity_out_of_a_value_whose_key_says_how() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let key = "test.mentioned_ids";
+    let (gone, kept) = (EntityId::now(), EntityId::now());
+    call(
+        &me,
+        SET,
+        set(key, vault_scope(), json!([gone.to_hex(), kept.to_hex()])),
+    );
+    let banner = format!("ask {}", gone.to_hex());
+    call(
+        &me,
+        SET,
+        set("test.member_banner", vault_scope(), json!(banner)),
+    );
+    let before = rows(&me, key)[0]["revision"].clone();
+
+    erase_entity_from_settings(&fx.vault, gone).expect("the settings scrub");
+    assert_eq!(get(&me, key, json!([]))["value"], json!([kept.to_hex()]));
+    let after = rows(&me, key);
+    assert_eq!(
+        after[0]["revision"], before,
+        "rewritten in place, with no change row: {after:?}"
+    );
+    assert_eq!(
+        get(&me, "test.member_banner", json!([]))["value"],
+        json!(banner),
+        "a key with no erase rule keeps its value"
+    );
+
+    erase_entity_from_settings(&fx.vault, gone).expect("a second scrub");
+    assert_eq!(
+        rows(&me, key)[0]["revision"],
+        before,
+        "a value that no longer names it stays"
+    );
 }

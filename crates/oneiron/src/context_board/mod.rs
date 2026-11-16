@@ -96,7 +96,8 @@ pub use scratchpad::{
     ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine,
 };
 pub(crate) use scratchpad::{
-    erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists, seal_session_pad_in_txn,
+    erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists, seal_run_pads_in_txn,
+    seal_session_pad_in_txn,
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
@@ -112,6 +113,7 @@ pub use stream::{
     StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, TaskWakeKind,
     TaskWakeRead, WakeEnvelope, child_release_hold, child_release_rows, child_spawner,
 };
+pub use stream::{HANDED_WAKES_CAP, WakeDelivery};
 mod layout;
 mod layout_store;
 // FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-SURFACES-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate

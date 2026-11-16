@@ -136,7 +136,7 @@ impl SessionOverlay {
                     .fold(0_usize, usize::saturating_add);
                 let mut preview = segment.preview.as_ref().clone();
                 scrub.apply(&mut preview);
-                segment.preview = Arc::new(preview);
+                segment.replace_preview(Arc::new(preview));
             }
             Some(private)
         });

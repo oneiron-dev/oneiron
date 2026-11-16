@@ -2,13 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::RowKey;
 
 use super::change::record_change_in_txn;
-use super::read::{StoredRow, in_force_in_txn, load_in_txn, names_subject, table_of};
+use super::learned::checked_weight;
+use super::read::{
+    StoredRow, in_force_in_txn, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
+};
 use super::{
     EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
-    spec_named,
+    set_line, spec_named,
 };
 use crate::Vault;
 use crate::batch::secret_scan::admit_typed;
@@ -90,6 +94,9 @@ pub struct SetSetting {
     pub why: Option<String>,
     /// The settled check-in this change waited on, to spend.
     pub check_in_ref: Option<EntityId>,
+    /// A learned key's seed: its weight in runs, finite and above zero (ARCH-0003
+    /// `#learning-settings`). Only a value row of a learned key carries one, and it must.
+    pub weight_runs: Option<f64>,
 }
 
 impl SetSetting {
@@ -106,6 +113,7 @@ impl SetSetting {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         }
     }
 }
@@ -135,11 +143,12 @@ impl Vault {
     /// key's hook. Once the write commits, an applied change runs the key's `after_commit`.
     ///
     /// - The owner sets every key, a pin included.
-    /// - An agent sets a value row of a key of class `c` while it holds a live `engine.controls`
-    ///   grant for `c`, and a value row about itself on a key set by its subject. It never
+    /// - An agent sets a value row of a key whose own line (`settings.set:<key>`) its live owner
+    ///   Grant lists, vault-wide; of a key of class `c` while it holds a live `engine.controls`
+    ///   grant for `c`; and about itself on a key set by its subject. It never
     ///   replaces a row the owner set. On a key that names its tighter direction, a holder's value
-    ///   stays inside the owner's nearest row at that scope or wider, and a subject's is no looser
-    ///   than the value in force.
+    ///   stays inside the owner's nearest row at that scope or wider, or inside the catalogue
+    ///   default where the owner set none, and a subject's is no looser than the value in force.
     /// - Any other change by an agent, a pin or a change under an owner's pin among them, waits
     ///   on a check-in under the agent's own live owner Grant that lists `vault.settings.set`:
     ///   the door opens it and answers [`SetSettingOutcome::Pending`]; the same change again,
@@ -232,6 +241,7 @@ impl Vault {
             spec,
             key: &key,
             value: value.as_ref(),
+            weight_runs: checked_weight(spec, request)?,
         };
         set_in_txn(self, txn, &change, caller, request)
     }
@@ -274,6 +284,8 @@ struct Change<'a> {
     spec: &'static SettingSpec,
     key: &'a RowKey,
     value: Option<&'a EncodedValue>,
+    /// A learned key's seed weight ([`checked_weight`]).
+    weight_runs: Option<f64>,
 }
 
 fn set_in_txn(
@@ -335,13 +347,15 @@ fn set_in_txn(
     }
     // A row that does not decode is never "the same value": a clear removes it, a set replaces it.
     let readable = !matches!(prior, Some(None));
-    let prior_value = prior.flatten().map(|row| row.value);
+    let prior_row = prior.flatten();
+    let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
+    let prior_value = prior_row.map(|row| row.value);
     let json = |value: Option<&EncodedValue>| {
         value
             .and_then(|value| change.spec.kind.to_json(value))
             .unwrap_or(serde_json::Value::Null)
     };
-    if readable && prior_value.as_ref() == change.value {
+    if readable && prior_value.as_ref() == change.value && prior_weight == change.weight_runs {
         return Ok(SetSettingOutcome::Applied {
             sequence: None,
             revision,
@@ -364,6 +378,7 @@ fn set_in_txn(
             value: change.value.cloned(),
             at: now,
             why: request.why.clone(),
+            weight_runs: change.weight_runs,
         },
     )?;
     let revision = match change.value {
@@ -374,6 +389,7 @@ fn set_in_txn(
                 setter,
                 set_at: now,
                 change: recorded.sequence,
+                weight_runs: change.weight_runs,
             };
             table.put(&vault.store, txn, &key_bytes, &row)?;
             recorded.sequence
@@ -405,12 +421,17 @@ fn agent_power_in_txn(
     if change.key.mode == SettingMode::Pin {
         return Ok(None);
     }
-    let setter = match spec.set_by {
-        SetBy::Class(class) => vault
-            .engine_controls_grant_in(txn, agent, class)?
-            .map(|grant| Setter::Holder { grant }),
-        SetBy::Subject if names_subject(&change.key.scope, agent) => Some(Setter::Subject),
-        SetBy::Owner | SetBy::Subject => None,
+    // The key's own Grant line makes the agent a holder of that one key (AUTH-1 = A: its
+    // widening still asks the user).
+    let setter = match key_line_grant_in_txn(vault, txn, agent, &set_line(spec.name))? {
+        Some(grant) => Some(Setter::KeyGrant { grant }),
+        None => match spec.set_by {
+            SetBy::Class(class) => vault
+                .engine_controls_grant_in(txn, agent, class)?
+                .map(|grant| Setter::Holder { grant }),
+            SetBy::Subject if names_subject(&change.key.scope, agent) => Some(Setter::Subject),
+            SetBy::Owner | SetBy::Subject => None,
+        },
     };
     let Some(setter) = setter else {
         return Ok(None);
@@ -437,7 +458,8 @@ fn person_power_in_txn(
 
 /// `setter` when the rows in force leave it room for `change`, else `None`: no owner's pin on
 /// the chain, no row the owner set in its place, and on a key that names its tighter direction a
-/// holder's value inside the owner's nearest row, a subject's no looser than the value in force.
+/// holder's value inside the owner's nearest row, or inside the catalogue default where the owner
+/// set none (a holder never raises a key past it), a subject's no looser than the value in force.
 fn bounded_power_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -476,17 +498,24 @@ fn bounded_power_in_txn(
             let (in_force, _, _) = in_force_in_txn(&vault.store, txn, spec, &chain, item)?;
             spec.kind.is_tighter(value, &in_force).unwrap_or(false)
         }
-        _ => loaded
-            .iter()
-            .filter(|row| row.found.mode == SettingMode::Value && row.found.by_owner)
-            .min_by_key(|row| (row.found.at, !row.found.item))
-            .is_none_or(|cap| {
-                cap.found
+        _ => {
+            let cap = loaded
+                .iter()
+                .filter(|row| row.found.mode == SettingMode::Value && row.found.by_owner)
+                .min_by_key(|row| (row.found.at, !row.found.item));
+            match cap {
+                Some(cap) => cap
+                    .found
                     .value
                     .as_ref()
                     .and_then(|cap| spec.kind.is_tighter(value, cap))
-                    .unwrap_or(false)
-            }),
+                    .unwrap_or(false),
+                None => spec
+                    .kind
+                    .is_tighter(value, &spec.kind.default_value()?)
+                    .unwrap_or(false),
+            }
+        }
     };
     Ok(within.then_some(setter))
 }
@@ -506,18 +535,21 @@ fn check_in_scope(scope: &SettingScope) -> CheckInScope {
     }
 }
 
-/// The digest of one change: the row's key and the value it would hold. BLAKE3, key derived from
-/// `oneiron setting set v1`.
+/// The digest of one change: the row's key, the value it would hold and a seed's weight, a
+/// fingerprint under [`purposes::setting::SET_EFFECT`]. The weight is the last part and only a
+/// weighted change writes it, so a change with no weight hashes as before weights existed and a
+/// check-in opened for it still matches.
 fn effect_digest(change: &Change<'_>) -> [u8; 32] {
-    let key = change.key.encode();
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron setting set v1");
-    hasher.update(&(key.len() as u64).to_be_bytes());
-    hasher.update(&key);
+    let mut digest = Fingerprinter::new(purposes::setting::SET_EFFECT);
+    digest.part(&change.key.encode());
     match change.value {
-        None => hasher.update(&[0]),
-        Some(value) => hasher.update(&[1]).update(&value.0),
+        None => digest.flag(false),
+        Some(value) => digest.flag(true).part(&value.0),
     };
-    *hasher.finalize().as_bytes()
+    if let Some(weight) = change.weight_runs {
+        digest.u64(weight.to_bits());
+    }
+    digest.finish().into_bytes()
 }
 
 /// Opens, or finds, the check-in `agent`'s change waits on, under its own live owner Grant that

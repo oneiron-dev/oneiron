@@ -12,8 +12,8 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
-/// The one schema a row is written in.
-pub(crate) const REPO_DERIVED_INDEX_COPY_SCHEMA: u8 = 1;
+#[doc(hidden)]
+pub(crate) use oneiron_records::embed::repo_projection::derived::storage::REPO_DERIVED_INDEX_COPY_SCHEMA;
 
 /// The copies. Key: owner tag + id16.
 const COPIES: SideTable<([u8; 1], [u8; 16]), RepoDerivedIndexCopy, Named> =
