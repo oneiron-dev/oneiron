@@ -41,13 +41,12 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError};
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::vault_cleanup::{
-    CleanupPosture, accept_cleanup_proposal, run_vault_cleanup, set_cleanup_posture,
-};
+use oneiron::vault_cleanup::{CleanupPosture, accept_cleanup_proposal, run_vault_cleanup};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -300,10 +299,11 @@ impl Fixture {
     fn archive_the_attempt(&self) {
         self.clock
             .set(self.t0 + (u64::from(RETENTION_DAYS) + 1) * DAY);
-        self.vault
-            .set_task_retention_days(Some(RETENTION_DAYS))
-            .expect("completed attempt retention");
-        set_cleanup_posture(&self.vault, CleanupPosture::ProposeFirst).expect("propose first");
+        self.set_cleanup_key_as_owner("cleanup.task_retention_days", json!(RETENTION_DAYS));
+        self.set_cleanup_key_as_owner(
+            "cleanup.posture",
+            serde_json::to_value(CleanupPosture::ProposeFirst).expect("the posture as JSON"),
+        );
         let report = run_vault_cleanup(&self.vault, &AttemptId::now()).expect("cleanup run");
         let proposal = report
             .proposal
@@ -314,6 +314,23 @@ impl Fixture {
             "the archived attempt leaves the live queue"
         );
         assert!(self.attempt_stored(), "the archive keeps the attempt's row");
+    }
+
+    /// The owner changes one cleanup key (`cleanup.task_retention_days`,
+    /// `cleanup.posture`) through the Setting door, with a fresh proof:
+    /// SETTING-PLAIN PLAIN-2 deleted the cleanup tables and their setters.
+    fn set_cleanup_key_as_owner(&self, key: &str, value: Value) {
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.owner_proof()),
+                SetSetting::vault_value(key, value),
+            )
+            .unwrap_or_else(|error| panic!("the owner sets {key}: {error:?}"));
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's {key} applies: {outcome:?}"
+        );
     }
 
     fn archived(&self, id: &str) -> bool {
