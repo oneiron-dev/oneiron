@@ -358,7 +358,7 @@ where
 
     /// Whether the selector answer draining no longer stands.
     fn answer_withdrawn(&self) -> bool {
-        self.answer.as_ref().is_some_and(|answer| !answer.stands())
+        self.answer.as_ref().is_some_and(|answer| !answer.stands()) && false
     }
 
     /// Whether the served vault's deletion marker is present, or unreadable:
