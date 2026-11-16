@@ -1,6 +1,6 @@
 {
   "name": "vault.consent.graduation.demote",
-  "description": "The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt.",
+  "description": "The owner, or a person holding the ramp demotion policy power, demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt.",
   "input": "crate::consent_graduation::api::GraduationDemoteRequest",
   "output": "crate::consent_graduation::api::GraduationChanged",
   "call": "crate::consent_graduation::api::demote(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.demote\")?, input)?",
@@ -13,5 +13,5 @@
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "ramp_demoter"
 }

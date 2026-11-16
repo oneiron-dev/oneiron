@@ -122,6 +122,7 @@ fn bounded(head: Arc<RecordingAutoChecker>) -> BoundedAutoChecker {
         wording: "May this write land without the owner's review?".to_owned(),
         notes: Arc::new(HoldReasons),
         calibrated: None,
+        world_hold: None,
     })
 }
 

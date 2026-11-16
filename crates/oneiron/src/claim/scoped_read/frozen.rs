@@ -41,8 +41,8 @@ use super::*;
 use crate::claim::world_access::WorldAuthoritySet;
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
-/// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
-const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";
+#[doc(hidden)]
+use oneiron_records::claim::scoped_read::frozen::{GUEST_LANE_NOT_SAVED, keep_covered_ids};
 
 /// The credential a saved lane froze, as a key rebuilt from that lane
 /// carries it with no proof (OF-506): every read under the key judges it
@@ -117,6 +117,11 @@ pub struct FrozenReadLane {
     /// The room whose signed facets the saved lane read inside (FIX 643).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     room_facets: Option<EntityId>,
+    /// Whether the saved lane's reader was homed in no conversation of this
+    /// vault (`ScopedReadActorKey::homed_unnamed`): every rebuild reads no
+    /// stamped claim outside a room of this vault, as the saving key did.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    home_unnamed: bool,
     /// The fields a narrower reader's view of this lane withheld a row or a
     /// scope id from (FIX 12171, 12285), by name: `records` when the caveat
     /// names a row that reader does not read, `room_facets` when it does not
@@ -241,7 +246,8 @@ impl FrozenReadLane {
             || channel_refused
             || worlds.is_some()
             || key.room_facets.is_some()
-            || key.grant_alternatives().is_some();
+            || key.grant_alternatives().is_some()
+            || key.is_homed_unnamed();
         // The lane stays bound to each credential a rebuilt key carries, and
         // to the proof's own unless the lane freezes as its principal's own
         // with no grant to judge. A credential that names a grant stands
@@ -298,6 +304,7 @@ impl FrozenReadLane {
             records,
             worlds,
             room_facets: key.room_facets,
+            home_unnamed: key.is_homed_unnamed(),
             withheld: Vec::new(),
         })
     }
@@ -471,6 +478,14 @@ impl FrozenReadLane {
         if let Some(room) = self.room_facets {
             key = key.within_room_facets(room);
         }
+        if self.home_unnamed {
+            key = key.homed_unnamed();
+        }
+        // A homed reader reads its room's stamped claims only while it
+        // stands in the room in this snapshot, as when the lane was saved.
+        if let Some(room) = self.room_facets {
+            key = key.standing_in_room_in(vault, txn, room)?;
+        }
         Ok(key)
     }
 
@@ -486,24 +501,6 @@ impl FrozenReadLane {
         let txn = vault.store.env.read_txn()?;
         self.narrow_in_txn(vault, &txn, key)
     }
-}
-
-/// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it
-/// cut one. An open or empty axis names no id and stays; one cut to no id
-/// is bottom.
-fn keep_covered_ids(axis: &mut ScopeAxis<ScopeId>, covered: &ScopeAxis<ScopeId>) -> bool {
-    let ScopeAxis::Some(ids) = axis else {
-        return false;
-    };
-    let named = ids.len();
-    ids.retain(|id| covered.contains(id));
-    if ids.len() == named {
-        return false;
-    }
-    if ids.is_empty() {
-        *axis = ScopeAxis::Bottom;
-    }
-    true
 }
 
 impl ScopedRead<'_> {

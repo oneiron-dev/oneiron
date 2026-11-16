@@ -44,6 +44,7 @@ use crate::outbound_intent_ledger::{
     RetryDisposition, UnconfirmedDelivery, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
 
@@ -82,20 +83,8 @@ pub(super) struct HeldBatch {
     stage: HeldStage,
 }
 
-/// Where a kept batch stood after its last send. A record: what a pass does
-/// with a carried batch is read from durable facts, and this counts only
-/// where the Gate's decisions on it are gone, to say the Gate held it once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum HeldStage {
-    /// Written before its send.
-    Staged,
-    /// The Gate held it for the owner.
-    Held,
-    /// Admitted on the owner's press and failed definitely: it retries
-    /// under its own ref on that recorded press (CALLS `FIX 6679 held batch
-    /// retry proof`).
-    Admitted,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::failure_signals::held::HeldStage;
 
 /// One batch's send this pass: its custody, its request, and for a carried
 /// batch the approve-once digest the owner's answer to it names.
@@ -510,7 +499,23 @@ fn owner_held_in(
         GateDecisionId::from_bytes(held.floor),
         |record: &GateDecisionRecord| {
             if external_effect_decision_on(record, effect) {
-                newest = Some(record.outcome == GateOutcome::Pending.as_str());
+                newest = Some(match record.gate_outcome() {
+                    Some(GateReceiptOutcome::Pending) => true,
+                    Some(
+                        GateReceiptOutcome::Allow
+                        | GateReceiptOutcome::Deny
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                });
             }
             false
         },
