@@ -59,17 +59,27 @@ fn fixture() -> (tempfile::TempDir, Vault) {
 
 /// One tool row whose `limit` parameter is described by `param`.
 fn row(name: &str, param: &str) -> ConnectorToolSchema {
-    ConnectorToolSchema {
-        name: name.into(),
-        permissions: BTreeSet::from(["read".to_owned()]),
-        triggers: BTreeSet::new(),
-        input_schema: json!({
+    tool_row(
+        name,
+        json!({
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": param}
             }
         }),
-    }
+    )
+}
+
+/// One `read` tool row with `input_schema`, read from JSON as a stored row
+/// is: a field the row type gains later reads as absent here.
+fn tool_row(name: &str, input_schema: Value) -> ConnectorToolSchema {
+    serde_json::from_value(json!({
+        "name": name,
+        "permissions": ["read"],
+        "triggers": [],
+        "input_schema": input_schema,
+    }))
+    .expect("tool row")
 }
 
 fn manifest(rows: Vec<ConnectorToolSchema>) -> ResolvedConnectorManifest {
@@ -175,17 +185,15 @@ fn a_manifest_without_a_mark_keeps_its_bytes() {
 
 /// `docs_other`, whose `auth` parameter defaults to `default`.
 fn defaulted(default: Value) -> ConnectorToolSchema {
-    ConnectorToolSchema {
-        name: "docs_other".into(),
-        permissions: BTreeSet::from(["read".to_owned()]),
-        triggers: BTreeSet::new(),
-        input_schema: json!({
+    tool_row(
+        "docs_other",
+        json!({
             "type": "object",
             "properties": {
                 "auth": {"type": "object", "default": default}
             }
         }),
-    }
+    )
 }
 
 #[test]
