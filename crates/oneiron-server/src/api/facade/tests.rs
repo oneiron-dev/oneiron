@@ -417,6 +417,11 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
             oneiron::WriteActor::new(other, oneiron::EdgeActorClass::Agent),
         ])
         .unwrap();
+    // The permits are class-bound; a member's class-less peer key reads only
+    // through a class-agnostic grant (FIX 9917, FIX 1218), written after them.
+    for actor in [addressed, other] {
+        crate::api::tests::put_actor_read_grant(&vault, actor, None);
+    }
     let owner_token = room_token(owner, "human");
     let addressed_token = room_token(addressed, "agent");
     let other_token = room_token(other, "agent");
