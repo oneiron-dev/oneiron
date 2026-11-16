@@ -9,13 +9,15 @@
 //! its `valid_until`. Each touch of the map (a send, a read,
 //! [`Vault::evict_inquiry_answers`]) first drops every entry whose task has
 //! ended or whose `valid_until` has come, so no read returns an ended task's
-//! answer. Each write that commits through the write door drops, once it is
-//! durable, every answer whose task it ended, whichever writer ended it
-//! (INQUIRE-SHAPE Q6 = A: "evicted at the task's terminal transition"; FIX
-//! INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE). Each housekeeping pass also calls
-//! [`Vault::evict_inquiry_answers`] (Engine ruling INQUIRE-HOLDER-EVICT), so
-//! an answer whose task a write outside the door ended leaves memory within
-//! one lifecycle tick (60 s on a server) even when nothing touches the map.
+//! answer. A write that settles or cancels a held answer's task drops that
+//! answer once it is durable (INQUIRE-SHAPE Q6 = A: "evicted at the task's
+//! terminal transition"; FIX INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE): the
+//! write door, and the workflow-try settle that commits outside it, hand
+//! their committed TASKs to [`Vault::evict_inquiry_answers_after_commit`].
+//! Each housekeeping pass also calls [`Vault::evict_inquiry_answers`]
+//! (Engine ruling INQUIRE-HOLDER-EVICT), so an answer whose task another
+//! writer ended leaves memory within one lifecycle tick (60 s on a server)
+//! even when nothing touches the map.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -117,17 +119,25 @@ impl Vault {
         Ok(before - held.len())
     }
 
-    /// [`Self::evict_inquiry_answers`] once a write has committed through the
-    /// write door, while any answer is held (FIX
+    /// [`Self::evict_inquiry_answers`] once a write has committed, when it
+    /// wrote or settled a TASK a held answer belongs to (FIX
     /// INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE; Engine rulings INQUIRE-SHAPE
-    /// Q6 and INQUIRE-HOLDER-EVICT = A): a write that ended a held answer's
-    /// task, whichever writer ended it (a terminal settle or a Cancelled
-    /// fact), drops that answer before any later read, with no touch and no
-    /// housekeeping pass. With nothing held it reads nothing. A failed
-    /// read leaves the answer to the next touch or pass and never fails the
-    /// write.
-    pub(crate) fn evict_inquiry_answers_after_commit(&self) {
+    /// Q6 and INQUIRE-HOLDER-EVICT = A, the post-commit "task settled"
+    /// notice with the holder as a listener): `tasks` is the commit's TASK
+    /// set, which names the TASK of each task fact it wrote, so a terminal
+    /// settle or a Cancelled fact drops that answer before any later read,
+    /// with no touch and no housekeeping pass. A commit that names no held
+    /// task reads nothing. A failed read leaves the answer to the next touch
+    /// or pass and never fails the write.
+    pub(crate) fn evict_inquiry_answers_after_commit<'a>(
+        &self,
+        tasks: impl IntoIterator<Item = &'a EntityId>,
+    ) {
         if self.inquiry_answers.is_empty() {
+            return;
+        }
+        let held = self.inquiry_answers.tasks();
+        if !tasks.into_iter().any(|task| held.contains(task)) {
             return;
         }
         if let Err(error) = self.evict_inquiry_answers() {
