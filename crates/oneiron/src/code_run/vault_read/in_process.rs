@@ -886,8 +886,9 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
     ) -> VaultReadResult<VaultReadResponse> {
         // Keep request-local reader state isolated. Policy is re-resolved in
         // each body snapshot, so a retained actor binding is not retained authority.
-        // The fresh reader lists into the host's producer set, and holds its
-        // served forms for a host that defers them.
+        // The fresh reader lists into the host's producer set, holds its
+        // served forms for a host that defers them, and decodes bodies under
+        // the host's body bound.
         let mut reader = Self::new(
             self.scoped_read.vault(),
             self.scoped_read.actor_key().clone(),
@@ -897,6 +898,7 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         reader.media = self.media;
         reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
+        reader.projection_body_bytes = self.projection_body_bytes;
         let request = request.into_inner();
         // The caller's own filter binds this request's fresh reader alone,
         // never the backend's (FIX 3977).
