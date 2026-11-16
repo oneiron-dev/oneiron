@@ -238,6 +238,8 @@ fn a_required_agent_is_refused_a_run_without_an_approved_plan() {
         PlanDocVerdictRequest {
             plan_ref: plan.plan_ref,
             expected_revision: plan.revision.clone(),
+            approving_turn_ref: None,
+            approving_thread_ref: None,
         },
     )
     .expect("the owner approves the plan");

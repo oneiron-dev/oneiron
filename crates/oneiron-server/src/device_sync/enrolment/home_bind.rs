@@ -127,8 +127,8 @@ impl MeshBindReceipt {
     ) -> Self {
         Self::Bound {
             machine: machine.to_hex(),
-            endpoint_key: hex(endpoint_key),
-            pairing_slip_id: pairing_slip_id.map(|slip| hex(slip.as_slice())),
+            endpoint_key: oneiron_hex::encode(endpoint_key),
+            pairing_slip_id: pairing_slip_id.map(|slip| oneiron_hex::encode(slip.as_slice())),
             alpn: String::from_utf8_lossy(alpn).into_owned(),
         }
     }
@@ -153,8 +153,4 @@ impl MeshBindReceipt {
     pub(crate) fn bound(&self) -> bool {
         matches!(self, Self::Bound { .. })
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
