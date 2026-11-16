@@ -2,7 +2,8 @@
 //! #8482, the approve cut short): `vault.members.held.approve` stopped by a
 //! crash after its claim, before or after its re-run, and never settled; and
 //! (Astra on #8482, H3) one whose re-run reaches its write only after a
-//! pause past the act's lapse.
+//! pause past the act's lapse; and (Astra delta, D4) a landing check run past
+//! the lapse with the time its writer read before it.
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -31,6 +32,29 @@ pub fn approve_held_add_unsettled(
     input: &HeldAdminActRequest,
 ) -> MemoryResult<serde_json::Value> {
     approve_held_add_after_pause(vault, approver, input, std::time::Duration::ZERO)
+}
+
+/// The landing check of held act `input`'s approved re-run by `approver`,
+/// run `pause` after the claim with the time read at the claim, as a long
+/// writer that read its time early reaches it. Answers the check's answer;
+/// nothing else runs.
+pub fn land_with_stale_time(
+    vault: &Vault,
+    approver: &AuthenticatedOwner,
+    input: &HeldAdminActRequest,
+    pause: std::time::Duration,
+) -> MemoryResult<()> {
+    let (_, approval) = vault.claim_held_admin_act(approver, input.vault_id, &input.held)?;
+    let stale = vault.store.clock.now_recorded_at();
+    std::thread::sleep(pause);
+    let approver = approver.revalidate_person(vault)?;
+    crate::federation::run_approved_admin_act(approval, || -> crate::Result<()> {
+        let mut txn = vault.store.env.write_txn()?;
+        vault.land_approved_admin_act_in_txn(&mut txn, input.vault_id, approver, stale)?;
+        txn.commit()?;
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// [`approve_held_add_unsettled`] with `pause` between the claim and the

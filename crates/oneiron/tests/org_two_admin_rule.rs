@@ -48,6 +48,13 @@
 //!   receipt of their approved act.
 //! - H7: a first admin an Owner removed cannot withdraw their act.
 //!
+//! The Astra delta review (astra-reviews/unbuilt-b1c-8482-delta) added two:
+//! - D3: a held act lands no more once an Owner's role move took its first
+//!   admin's named power (a holder row narrows what they hold at the new
+//!   role), though they still stand as an admin.
+//! - D4: a landing check past `lapses_at` refuses, whatever time its writer
+//!   read before it.
+//!
 //! On the base (#8259, a2cb32313b0) this file does not build: there is no
 //! `org.two_admin` key, no `MEMORY_CODE_ADMIN_ACT_HELD` and no held-act
 //! verbs.
@@ -84,9 +91,9 @@ use oneiron::test_doors::held_admin_act as cut_short;
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::verbs::{
     FederationDelegateRequest, HeldAdminActRequest, SharedMemberAddRequest,
-    SharedMemberRemoveRequest, add_shared_member_as, approve_held_admin_act_as,
-    create_federation_delegate_as, read_held_admin_acts, remove_shared_member_as,
-    withdraw_held_admin_act_as,
+    SharedMemberRemoveRequest, SharedMemberRoleRequest, add_shared_member_as,
+    approve_held_admin_act_as, change_shared_member_as, create_federation_delegate_as,
+    read_held_admin_acts, remove_shared_member_as, withdraw_held_admin_act_as,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
@@ -988,5 +995,79 @@ fn a_removed_first_admin_withdraws_nothing() {
     assert_eq!(
         org.held_as(org.owner, &held).status,
         HeldAdminActStatus::Open
+    );
+}
+
+#[test]
+fn a_held_act_lands_no_more_once_its_first_admin_lost_the_power() {
+    let org = Org::new();
+    // The Owner's standing word: at the Admin role, the Deputy holds only
+    // read and write.
+    oneiron::test_doors::steward::write_holder_row(
+        &org.vault,
+        Role::Admin,
+        SHARED,
+        org.deputy,
+        &["read", "write"],
+    )
+    .expect("the Owner's holder row");
+    org.owner_sets("org.two_admin", json!(true));
+    let newcomer = org.newcomer();
+    let held = held_id(
+        &org.add(org.deputy, newcomer)
+            .expect_err("the Deputy's add is held"),
+    );
+
+    org.as_person(org.owner, || {
+        change_shared_member_as(
+            &org.vault,
+            &proof(&org.vault, org.owner),
+            Some(&org.issuer),
+            SharedMemberRoleRequest {
+                vault_id: SHARED,
+                member: org.deputy.to_hex(),
+                role: Role::Admin,
+                check_in_ref: None,
+            },
+        )
+    })
+    .expect("an Owner moves the Deputy to Admin at once");
+    assert_eq!(org.role_of(org.deputy), Some(Role::Admin));
+    assert!(
+        org.approve(org.admin_b, &held).is_err(),
+        "the first admin stands as an Admin but holds the add-member power no more"
+    );
+    assert!(!org.invited_by(newcomer, org.admin_b));
+}
+
+#[test]
+fn a_landing_check_past_the_lapse_refuses_whatever_time_its_writer_read() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    org.owner_sets("org.two_admin_lapse_secs", json!(3));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+    let request = HeldAdminActRequest {
+        vault_id: SHARED,
+        held: held.clone(),
+    };
+
+    let landed = org.as_person(org.admin_b, || {
+        cut_short::land_with_stale_time(
+            &org.vault,
+            &proof(&org.vault, org.admin_b),
+            &request,
+            std::time::Duration::from_secs(4),
+        )
+    });
+    assert!(
+        landed.is_err(),
+        "a landing check past lapses_at refuses: {landed:?}"
+    );
+    assert_ne!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Landed {
+            approver: org.admin_b.to_hex()
+        }
     );
 }
