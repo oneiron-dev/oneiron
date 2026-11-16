@@ -22,10 +22,10 @@ use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dispatch_byoa::{
-    ByoEndpointBackendFactory, ByoEndpointSpec, ByoaDispatcher, ByoaEgressLease, ByoaEgressPort,
-    ByoaError, ByoaExhaust, ByoaResult, ByoaTerminalDisposition, CaptureByoaExhaust,
-    ContinueOutsideWorkRequest, ContinueOutsideWorkView, DrySeatFallback, OfficialDreamerSeat,
-    OfficialSeatRegistry, OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent,
+    ByoEndpointBackendFactory, ByoEndpointBinding, ByoEndpointSpec, ByoaDispatcher,
+    ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, ByoaTerminalDisposition,
+    CaptureByoaExhaust, ContinueOutsideWorkRequest, ContinueOutsideWorkView, DrySeatFallback,
+    OfficialDreamerSeat, OfficialSeatRegistry, OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent,
     ProviderAdapterRegistry, ResumeRunnerWork, RunnerContinueCaller, RunnerSeat, RunnerSeatChoice,
     RunnerSeatPolicy, RunnerWorkBindingId, RunnerWorkResume, SeatAuth, SeatPlacementApproval,
     SeatRoute, SeatSpent, SkippedRunnerSeat, register_official_dreamer_providers,
@@ -38,7 +38,7 @@ use oneiron::llm::ModelId;
 use oneiron::origin::smart_http::{ORIGIN_REPO_DIR_SUFFIX, origin_serving_root};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::history_import_rows::imported_message_rows;
-use oneiron::{EntityId, LlmBackend, Vault, VaultConfig};
+use oneiron::{EntityId, Vault, VaultConfig};
 
 const IMPORTED_AT: u64 = 1_700_100_000;
 const CONTINUE_REF: &str = "refs/heads/oneiron/continue/s1";
@@ -255,7 +255,7 @@ fn wall_now() -> u64 {
 struct NoEndpoints;
 
 impl ByoEndpointBackendFactory for NoEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend("the test serves no endpoint".to_owned()))
     }
 }
