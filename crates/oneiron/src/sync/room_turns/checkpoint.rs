@@ -86,14 +86,15 @@ pub(in crate::sync) fn bound(key: &str, value: &[u8], part: PartLookup<'_>) -> O
 
 /// Where `turn`, stored under `key` as `value`, goes: with its TURN, held
 /// while its room, its messages and each turn it quotes are, its actors
-/// split out.
+/// split out. A turn filed under another turn's key is a key mismatch,
+/// placed under no one.
 fn placed(key: &str, turn: RoomTurn, value: &[u8]) -> Placement {
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
     let (Some(id), Some(room)) = (named(&turn.turn_id), named(&turn.room_id)) else {
         return undecodable();
     };
     if turn.turn_id != key {
-        return undecodable();
+        return Placement::unclassified(None, SyncUnclassified::KeyMismatch);
     }
     let owner = OwnerRef::entity(&id);
     let mut dependencies = vec![OwnerRef::entity(&room)];
