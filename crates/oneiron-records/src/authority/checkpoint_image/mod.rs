@@ -52,13 +52,17 @@ use serde::Serialize;
 /// working view (row 6 WORKING-VIEW-EDIT).
 /// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
 /// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
-/// 34 to 36 are taken by open PRs (OPUS-SPLIT-6's carrier stack, #8449).
+/// 34 to 36 are unused: they were left for PRs that were open when 37 landed, and each of
+/// those takes the next number at its own landing.
 /// 39: two concurrent federation confirmations that share an id or a nonce both stay valid as
 /// spent evidence, and settlement removes neither nor any row above it (FIX
-/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is an open PR's number; the train assigns this one.
-/// 40: each covered row's summary marks its kind and whether it is sealed, and an image that
+/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is unused: it was an open PR's number when the
+/// train assigned this one.
+/// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+/// 41: each covered row's summary marks its kind and whether it is sealed, and an image that
 /// covers a sealed row carries every covered row's body (census L5-22 1a-iii).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 40;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 41;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
