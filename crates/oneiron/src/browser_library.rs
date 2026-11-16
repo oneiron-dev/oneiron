@@ -17,9 +17,9 @@
 //! `superseded:<new id>`. The retire chain is the lineage, which
 //! [`resolve_workflow_in_txn`] follows to the live program. Each record
 //! keeps its lineage's newest outcomes ([`RECENT_RUNS`]), which a successor
-//! takes over, and its strict misses in a row, the
-//! [`STRICT_MISSES_BEFORE_DRIFT`]th retiring it [`DRIFT_REASON`] in the same
-//! write (CUA E2).
+//! takes over, and its strict misses in a row, the owner's
+//! `browser.library.drift_misses`th (default [`STRICT_MISSES_BEFORE_DRIFT`])
+//! retiring it [`DRIFT_REASON`] in the same write (CUA E2).
 //!
 //! `find` reads a program by its task type too (CUA E4): the node and tree
 //! version its subgoal placed at when it was filed, in the canonical
@@ -30,14 +30,13 @@
 //! retired it (FIX 812's rule, as call receipts keep it).
 
 use oneiron_browser::{
-    BatchStopCause, LibraryCard, LibraryRunMode, RecentCounts, RetiredCard, RunOutcome,
-    SupersedeOutcome, SupersedeRefusal, WorkflowProgram, WorkflowProof,
+    BatchStopCause, LibraryCard, LibraryRunMode, RetiredCard, RunOutcome, SupersedeOutcome,
+    SupersedeRefusal, WorkflowProgram, WorkflowProof,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::learning::TypeRef;
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::task_type::TaskTypeRef;
 
@@ -47,6 +46,7 @@ mod erase;
 mod evidence;
 mod index;
 mod records;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use admission::admission_payload_actor;
 pub use admission::{
@@ -119,13 +119,10 @@ pub(crate) fn browser_workflow_accepts_masked(bytes: &[u8]) -> bool {
 /// it (a refile moves `filed_by`), so any may retire it too.
 pub const RETIRE_FILER_ONLY: bool = false;
 
-/// How many of a lineage's newest outcomes its card counts as recent (CUA
-/// E1 "recent", CALLS row; Engine 10-21 23:4x): each record keeps the last
-/// [`RECENT_RUNS`] library runs, passed or missed, and repairs of its
-/// lineage, the oldest dropped past them, and a successor starts from its
-/// predecessor's. A count of outcomes, not a time window, so a program run
-/// rarely keeps its record.
-pub const RECENT_RUNS: usize = 20;
+#[doc(hidden)]
+use oneiron_records::browser_library::recent_counts;
+#[doc(hidden)]
+pub use oneiron_records::browser_library::{LibraryActor, RECENT_RUNS, RecentOutcome, RecentRun};
 
 /// The reason a retire records for a program a successor repaired is
 /// `superseded:<the successor's id>` ([`superseded_reason`]).
@@ -135,8 +132,9 @@ const SUPERSEDED_PREFIX: &str = "superseded:";
 /// site (its strict misses, counted by the run path).
 pub const DRIFT_REASON: &str = "drift";
 
-/// The strict misses in a row that retire a program [`DRIFT_REASON`] (CUA
-/// E2 drift, CALLS row): the run that makes them this many retires it.
+/// The strict misses in a row that retire a program [`DRIFT_REASON`] by
+/// default (CUA E2 drift, CALLS row): the run that makes them this many
+/// retires it. The owner's `browser.library.drift_misses` key moves the count.
 pub const STRICT_MISSES_BEFORE_DRIFT: u32 = 3;
 
 /// A program's strict misses in a row after one run (CUA E2 drift, CALLS
@@ -173,66 +171,6 @@ pub fn superseded_reason(successor: EntityId) -> String {
 fn superseded_by(reason: &str) -> Option<EntityId> {
     let successor = reason.strip_prefix(SUPERSEDED_PREFIX)?;
     EntityId::from_hex(successor).ok()
-}
-
-/// Whose word a library row records: an actor, or no one once that actor
-/// was erased. It reads and writes as the actor's id, or as
-/// [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LibraryActor {
-    Actor(EntityId),
-    Erased,
-}
-
-impl LibraryActor {
-    /// Whether this is `actor`.
-    #[must_use]
-    pub fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-}
-
-impl Serialize for LibraryActor {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => id.serialize(serializer),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for LibraryActor {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-/// What one outcome of a program's lineage was: a library run that met its
-/// postcondition, one that did not, or a repair that filed a successor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecentOutcome {
-    Pass,
-    Miss,
-    Repair,
-}
-
-/// One outcome of a program's lineage, and when.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecentRun {
-    pub outcome: RecentOutcome,
-    pub at: u64,
 }
 
 /// Adds `outcome` at `at` to a lineage's newest outcomes, keeping the last
@@ -293,21 +231,6 @@ impl WorkflowRecord {
             last_run_at: self.last_run_at,
             strict_misses: self.strict_misses,
         }
-    }
-}
-
-/// A lineage's newest [`RECENT_RUNS`] outcomes, counted.
-fn recent_counts(recent: &[RecentRun]) -> RecentCounts {
-    let recent = &recent[recent.len().saturating_sub(RECENT_RUNS)..];
-    let count = |outcome: RecentOutcome| {
-        let counted = recent.iter().filter(|run| run.outcome == outcome).count();
-        u32::try_from(counted).unwrap_or(u32::MAX)
-    };
-    RecentCounts {
-        pass: count(RecentOutcome::Pass),
-        miss: count(RecentOutcome::Miss),
-        repair: count(RecentOutcome::Repair),
-        of: u32::try_from(RECENT_RUNS).unwrap_or(u32::MAX),
     }
 }
 

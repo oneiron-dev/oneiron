@@ -51,6 +51,10 @@ struct TombstonePersistence<'a> {
     /// A history-free cut that failed its proof (FIX 6520): stored as
     /// before, and this txn owes the erasure sweep the window.
     owes_compaction: bool,
+    /// Whether `snapshot` was exported history-free, as
+    /// [`Vault::resolve_window_snapshot_mode`] resolved it: the window's pin
+    /// read before the export (census L6-05).
+    history_free: bool,
 }
 
 /// What a write does when the pad tombstones it staged fail to publish after
@@ -219,6 +223,13 @@ impl Vault {
             // pin are settled under the lock, before the publish txn opens
             // below: each takes a write txn of its own, which cannot nest
             // inside the publish txn.
+            //
+            // All of it runs inside the live-window turn (L7-45): the
+            // tombstone commit builds a tombstone index over the shared doc,
+            // so no peer import lands in it from the merge to the commit.
+            // The merge's own Observer B runs inside the turn, which is
+            // re-entrant.
+            let turn = materializer.enter_live_window();
             let merged_update_keys =
                 merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
             // The snapshot-mode decision, the gate staging, the tombstone
@@ -295,7 +306,7 @@ impl Vault {
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
                         let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
                         let snapshot =
-                            Self::export_window_snapshot_in_mode(&window.doc, history_free)?;
+                            self.export_window_snapshot_in_mode(&wtxn, &window.doc, history_free)?;
                         let vv = doc_version_vector(&window.doc);
                         Ok((delete_update, snapshot, vv))
                     })?;
@@ -313,12 +324,14 @@ impl Vault {
                         delete_update: delete_update.as_ref(),
                         scrubbed_update_keys: &merged_update_keys,
                         owes_compaction,
+                        history_free,
                     },
                 )?;
                 wtxn.commit()?;
                 self.notify_tombstone_publication(id, &window_key, value);
                 delete_update
             };
+            drop(turn);
             // Outbound routing is the LAST act, after the publish txn
             // committed: a refusal or a failed persist must never put the
             // tombstone on the wire.
@@ -379,7 +392,8 @@ impl Vault {
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
-        let (snapshot, owes_compaction) = Self::export_window_snapshot_in_mode(&doc, history_free)?;
+        let (snapshot, owes_compaction) =
+            self.export_window_snapshot_in_mode(&wtxn, &doc, history_free)?;
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist_in_txn(
             &mut wtxn,
@@ -391,6 +405,7 @@ impl Vault {
                 delete_update: delete_update.as_ref(),
                 scrubbed_update_keys: &merged_update_keys,
                 owes_compaction,
+                history_free,
             },
         )?;
         wtxn.commit()?;
@@ -753,14 +768,27 @@ impl Vault {
     }
 
     /// Exports the window snapshot under a mode already resolved by
-    /// [`Self::resolve_window_snapshot_mode`] — a pure document operation,
-    /// safe to run inside the publish transaction — and whether it is a
-    /// history-free cut that failed its proof (FIX 6520).
+    /// [`Self::resolve_window_snapshot_mode`] — a document operation and a
+    /// hold read, safe to run inside the publish transaction `txn` — and
+    /// whether the window owes the erasure sweep a compaction for it: a
+    /// history-free cut that failed its proof (FIX 6520), or a cut not taken
+    /// because a legal hold keeps a row the doc's history carries (OF-470,
+    /// census L6-05 round 1). That snapshot keeps all the history, and the
+    /// compaction it owes defers while the hold stands.
     #[cfg(feature = "sync")]
     fn export_window_snapshot_in_mode(
+        &self,
+        txn: &heed::RoTxn<'_>,
         doc: &loro::LoroDoc,
         history_free: bool,
     ) -> Result<(Vec<u8>, bool)> {
+        if history_free
+            && crate::sync::carrier_holds::CarrierInventory::of_window(doc)
+                .held_in_txn(&self.store, txn)?
+        {
+            tracing::warn!("tombstone publish: a legal hold keeps the window's history");
+            return crate::store::loro_document::export_snapshot(doc).map(|bytes| (bytes, true));
+        }
         if history_free {
             let cut = crate::sync::window::tip_window_cut(doc)?;
             Ok((cut.bytes, !cut.proved))
@@ -886,6 +914,7 @@ impl Vault {
             window_key,
             persistence.snapshot,
             persistence.version_vector,
+            persistence.history_free,
         )?;
         if persistence.owes_compaction {
             crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(

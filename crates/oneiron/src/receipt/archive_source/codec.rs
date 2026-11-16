@@ -8,7 +8,6 @@ use crate::{
     store::Store,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 /// The domain an archived source's id hashes its canonical bytes under.
 pub(super) const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,23 +132,10 @@ impl std::io::Write for SameBytes<'_> {
         Ok(())
     }
 }
-pub(super) fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-pub(super) fn invalid() -> Error {
-    Error::InvalidConfig("archived receipt source is malformed, mismatched or retired".into())
-}
-
-pub(super) fn is_inert_holder(bytes: &[u8]) -> bool {
-    crate::claim::decode_claim_body(bytes, true).is_ok_and(|body| {
-        body.source == Some(crate::claim::ClaimSource::Imported)
-            && matches!(
-                body.approval,
-                crate::claim::ClaimApprovalStatus::Proposed
-                    | crate::claim::ClaimApprovalStatus::Rejected
-            )
-    })
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::receipt::archive_source::codec::{
+    digest, invalid, is_inert_holder,
+};
 
 #[cfg(feature = "sync")]
 pub(crate) fn receipt_archive_holder(bytes: &[u8]) -> Option<EntityId> {
