@@ -49,6 +49,7 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+pub(crate) use super::esign_rules_doors::*;
 // The caller's own actor and person refs (FIX 1047).
 pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::self_actor_doors::*;
@@ -184,6 +185,7 @@ pub(crate) use super::weave_admin_doors::{
 pub(crate) use super::inbox_group_doors::*;
 // The inquiry rows (INQUIRE-1 PR 5), likewise.
 pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::schedule_doors::*;
 pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
@@ -294,8 +296,18 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::stream_recovery_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
+// The owner's room facet set door (L7-39 PR 3), likewise.
+pub(crate) use super::project_room_facet_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's claim-refinement reserve and offer doors (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::claim_refinement_doors::*;
+// The owner's held-out admission door for a hub skill (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_activation_doors::*;
+// The owner's ingress door for a shared-skill merge offer (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_merge_doors::*;
+// A run's own skill pack load on its attached live run (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_pack_load_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;

@@ -674,10 +674,16 @@ pub(crate) enum RowPlacement {
     Structure { dependencies: Vec<EntityId> },
 }
 
-/// Where the arming row `bytes` goes: its actor's, held while the
-/// conversation it listens to is.
-pub(crate) fn arming_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
-    Some(match decode_arming(bytes).ok()? {
+/// Where the arming row `bytes`, filed under `map_key`, goes: its actor's,
+/// held while the conversation it listens to is. `None` for bytes that read
+/// as no arming, or one filed under another registration, which admit
+/// refuses and no writer files (FIX SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED).
+pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
+    let row = decode_arming(bytes).ok()?;
+    if arming_key(row.registration()) != map_key {
+        return None;
+    }
+    Some(match row {
         ArmingRow::Armed(arming) => RowPlacement::Owned {
             owner: arming.actor,
             dependencies: arming.conversation.into_iter().collect(),
@@ -689,11 +695,17 @@ pub(crate) fn arming_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
     })
 }
 
-/// Where the wake row `bytes` goes: an `Owed` row is its actor's, held while
-/// its turn and conversation are; an `Admitted` row is ids alone, held while
-/// its turn is.
-pub(crate) fn wake_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
-    Some(match decode_wake(bytes).ok()? {
+/// Where the wake row `bytes`, filed under `map_key`, goes: an `Owed` row is
+/// its actor's, held while its turn and conversation are; an `Admitted` row
+/// is ids alone, held while its turn is. `None` for bytes that read as no
+/// wake, or one filed under another wake, which admit refuses and no writer
+/// files.
+pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
+    let row = decode_wake(bytes).ok()?;
+    if wake_key(row.key()) != map_key {
+        return None;
+    }
+    Some(match row {
         WakeRow::Owed(wake) => RowPlacement::Owned {
             owner: wake.authority.actor(),
             dependencies: vec![wake.turn.turn, wake.turn.conversation],

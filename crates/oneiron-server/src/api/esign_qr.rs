@@ -68,12 +68,12 @@ fn capability(headers: &HeaderMap) -> Option<EsignQrCapability> {
 
 async fn report(State(server): State<Arc<SyncServer>>, headers: HeaderMap) -> Response {
     let Some(token) = capability(&headers) else {
-        return refused(&server, QR_REPORT_PATH);
+        return refused(&server, QR_REPORT_PATH).await;
     };
     let vault = Arc::clone(&server.vault);
     match tokio::task::spawn_blocking(move || vault.esign_qr_page(&token)).await {
         Ok(Ok(page)) => Json(page).into_response(),
-        Ok(Err(_)) | Err(_) => refused(&server, QR_REPORT_PATH),
+        Ok(Err(_)) | Err(_) => refused(&server, QR_REPORT_PATH).await,
     }
 }
 
@@ -96,7 +96,7 @@ async fn pdf(
         capability(&headers),
         serde_json::from_slice::<QrPdfBody>(&body),
     ) else {
-        return refused(&server, QR_PDF_PATH);
+        return refused(&server, QR_PDF_PATH).await;
     };
     let vault = Arc::clone(&server.vault);
     match tokio::task::spawn_blocking(move || vault.esign_qr_sealed_pdf(&token, item)).await {
@@ -115,7 +115,7 @@ async fn pdf(
             )
                 .into_response()
         }
-        Ok(Err(_)) | Err(_) => refused(&server, QR_PDF_PATH),
+        Ok(Err(_)) | Err(_) => refused(&server, QR_PDF_PATH).await,
     }
 }
 
@@ -123,16 +123,27 @@ async fn pdf(
 /// erased alike, and on `/esign/verify/pdf` a document whose QR PDF download
 /// is off. Each refusal counts in the wire window beside its route's call,
 /// under no caller, so guesses at a capability ask the call-volume question
-/// past the per-verb row; none is refused for its rate.
-fn refused(server: &SyncServer, path: &str) -> Response {
-    let _ = server
-        .wire_telemetry
-        .record_capability_refusal(&format!("POST {path}"), oneiron_vault_contract::now_ts());
+/// past the per-verb row; none is refused for its rate. The count waits on
+/// the blocking pool, never on a runtime worker (FIX
+/// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+async fn refused(server: &SyncServer, path: &str) -> Response {
+    let route = format!("POST {path}");
+    crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+        telemetry.record_capability_refusal(&route, now)
+    })
+    .await;
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error":{"code":"verification_unavailable"}})),
     )
         .into_response()
+}
+
+/// Counts one capability refusal on the report route, as `report` counts
+/// it: the door for `tests/wire_counts_off_runtime.rs`.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn count_capability_refusal_for_test(server: &SyncServer) {
+    let _ = refused(server, QR_REPORT_PATH).await;
 }
 
 pub(super) async fn private_response(
