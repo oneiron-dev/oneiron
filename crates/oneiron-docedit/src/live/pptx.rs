@@ -12,7 +12,7 @@ use super::LiveError;
 use super::conversion::Conversion;
 use super::convert::{self, HELD_MEDIA};
 use super::points::GeomPath;
-use super::{diagram, held, points};
+use super::{diagram, points};
 use crate::edit::{AssetRef, ConnectorPreset, Digest, IdMarks, Preset};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
