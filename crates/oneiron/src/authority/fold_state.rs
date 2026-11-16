@@ -62,6 +62,9 @@ pub struct AuthorityFold {
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
+    /// Concurrent entries may share an id or a nonce: each stays here as spent
+    /// evidence (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39), so no
+    /// reader may take one entry here as the single use of its id or nonce.
     pub federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     pub consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
@@ -87,6 +90,10 @@ pub struct AuthorityFold {
     /// The owner choices that wait for the owner's proof and still ask, by
     /// entry: read through [`AuthorityFold::waiting_owner_choices`].
     pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
+    /// What the vault asks of its owner, and how each act of the web sign-in
+    /// setting landed: read through [`AuthorityFold::owner_key_requirement`]
+    /// and [`AuthorityFold::web_sign_in_acts`].
+    pub(super) owner_key_requirement: super::owner_proof::FoldedOwnerKeyRequirement,
     /// This install's pinned root while the fold holds it as a valid root:
     /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
     /// accepted roster revisions alone.
@@ -175,6 +182,12 @@ pub struct AuthorityFold {
     /// Well-signed key records that count for nothing under this install's
     /// pin: valid entries without effect.
     pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    /// The rows of the device revocations the fold applied as verified
+    /// restrictive facts, valid rows or not: a revocation on a losing
+    /// confirmation's branch holds only as a fact. The stale-roster window
+    /// reads them beside the valid entries (Sol review F1 on #8608).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) verified_device_revocations: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
