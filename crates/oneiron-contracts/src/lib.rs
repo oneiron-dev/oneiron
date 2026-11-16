@@ -19,6 +19,7 @@ pub mod memory;
 pub mod msgpack;
 pub mod posterior;
 pub mod record_layout;
+pub mod recorded_seconds;
 pub mod registry;
 pub mod retrieval_quality;
 pub mod retrieval_telemetry;
@@ -37,3 +38,4 @@ pub use oneiron_fingerprint as fingerprint;
 // The same root aliases `oneiron` has, so moved code keeps its `crate::` paths.
 pub use crate::entity_id::EntityId;
 pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::recorded_seconds::RecordedSeconds;
