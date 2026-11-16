@@ -199,6 +199,17 @@ pub(crate) fn admit_witness(
         if input.thread_audience.is_some() || regeneration.is_some() {
             return Err(invalid());
         }
+        // CHAT-ORDINARY-ROOM-REPLY-TO-TRUNK: a turn this write mints lands on
+        // the trunk, so one that names a thread's TURN as its parent or
+        // anchor is refused, never shown to the whole room. A reply in an
+        // ordinary room's thread is a DAG reply (`reply_in_thread`).
+        if stored_body.is_none() && names_thread_turn_in(vault, txn, input)? {
+            return Err(Error::InvalidConfig(
+                "an ordinary room's witness lands a new turn on its trunk: a reply in one of \
+                 its threads goes through the conversation DAG's reply door"
+                    .into(),
+            ));
+        }
         // FIX 2027: a quote rides a turn in any room (ARCH-0006a:229), one
         // per message (FIX 2028). Its speaker takes part here, on a seat or a
         // live Ready join, and each selection is one the speaker's own read
@@ -638,6 +649,34 @@ pub(crate) fn admit_witness(
     )?;
     super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
     Ok(RoomWitness { quoted, thread })
+}
+
+/// Whether a message of `input` names, as its reply parent or its thread
+/// anchor (`room_reply_to`, `room_thread_of`), a live TURN that sits in a
+/// thread: its body carries a thread binding. A value that names no live
+/// TURN names no thread here.
+fn names_thread_turn_in(vault: &Vault, txn: &heed::RoTxn<'_>, input: &WitnessTurn) -> Result<bool> {
+    let named = input
+        .messages
+        .iter()
+        .filter_map(|message| message.metadata.as_ref())
+        .flat_map(|metadata| {
+            ["room_reply_to", "room_thread_of"]
+                .into_iter()
+                .filter_map(move |field| metadata.get(field)?.as_str())
+        })
+        .filter_map(|value| EntityId::from_hex(value).ok());
+    for turn in named {
+        if let LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_TURN,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &turn)?
+            && thread_binding(&body)?.is_some()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The read a quote's selection passes in the witness's own write snapshot
