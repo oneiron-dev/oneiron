@@ -140,11 +140,7 @@ fn an_evidence_item_with_a_dead_read_is_refused_and_the_batch_commits() {
         }],
     )
     .expect("commit");
-    assert!(
-        seeded.items[0].landed,
-        "the head lands: {:?}",
-        seeded.items
-    );
+    assert!(seeded.items[0].landed, "the head lands: {:?}", seeded.items);
     let head = seeded.items[0].rows[0];
     kill_read(&fixture);
     let committed = commit(
@@ -162,7 +158,10 @@ fn an_evidence_item_with_a_dead_read_is_refused_and_the_batch_commits() {
     let [item] = committed.items.as_slice() else {
         panic!("one item: {:?}", committed.items);
     };
-    assert!(!item.landed, "the item with a dead read is refused: {item:?}");
+    assert!(
+        !item.landed,
+        "the item with a dead read is refused: {item:?}"
+    );
     assert_eq!(item.reasons, vec![READ_NOT_LIVE.to_owned()]);
     assert_eq!(
         refusal_receipt(&fixture.vault, committed.batch, "evidence").expect("read"),
