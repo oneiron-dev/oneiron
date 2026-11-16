@@ -107,6 +107,15 @@ pub(crate) fn walk_notes(
     walk(&open_root(root)?, root, NOTES, visit)
 }
 
+/// Visits every `.json` file under `root`, passing over hidden files and
+/// folders: the path shown, and the file.
+pub(crate) fn walk_json(
+    root: &Path,
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    walk(&open_root(root)?, root, JSON, visit)
+}
+
 /// A notes rescan names folders that do not open or list and goes on, so
 /// their earlier notes stay until a later scan can read them (FIX 10246).
 /// Opening or listing the root, an unreadable file and a walk refusal still
@@ -169,6 +178,15 @@ const NOTES: Wanted = Wanted {
     // A folder of any width is read (rule 5): its notes and their text are
     // measured against the import's `[limits]` rows instead.
     entries: usize::MAX,
+};
+
+/// A Slack export's walk: every `.json` file, the lists and each
+/// conversation's day files, passing over hidden entries. Its width is a
+/// notes walk's.
+const JSON: Wanted = Wanted {
+    extensions: &["json"],
+    any_case: false,
+    ..NOTES
 };
 
 /// A Files source's walk (FIX 6942): every regular file, hidden ones too,
