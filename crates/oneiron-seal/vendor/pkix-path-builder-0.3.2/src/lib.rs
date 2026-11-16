@@ -437,7 +437,8 @@ struct Frame {
     /// `next()` call, that frame is immediately backtracked rather than
     /// trying its candidates (the recursive DFS short-circuits on anchor
     /// match; the iterator preserves that semantic), unless the iterator
-    /// explores past anchors (`PathCandidates::explore_past_anchor`).
+    /// explores past anchors (`PathCandidates::explore_past_anchor`), where
+    /// it is set on every anchor match, yielded or not.
     anchor_yielded: bool,
 }
 
@@ -538,12 +539,13 @@ pub struct PathCandidates<'a> {
     /// True once the iterator has yielded a fatal error or exhausted
     /// the search space; subsequent calls return `None`.
     done: bool,
-    /// When true, a frame that yielded its anchor-matched chain goes on to
-    /// its pool candidates on the next call instead of backtracking.
-    /// Oneiron local change (FIX PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH): only
-    /// the second pass of [`build_first_valid_path_with_config`] sets it, so
-    /// an anchor that shares its DN with a pool intermediate under another
-    /// key cannot hide the path through that intermediate.
+    /// When true, a frame whose issuer matched an anchor goes on to its pool
+    /// candidates instead of backtracking, and only chains that go past such
+    /// a match are yielded. Oneiron local change (FIX
+    /// PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH): only the second pass of
+    /// [`build_first_valid_path_with_config`] sets it, so an anchor that
+    /// shares its DN with a pool intermediate under another key cannot hide
+    /// the path through that intermediate.
     explore_past_anchor: bool,
 }
 
@@ -648,7 +650,16 @@ impl<'a> Iterator for PathCandidates<'a> {
                     .any(|a| pkix_path::names_match(&a.subject, cur_issuer));
                 if matched {
                     self.frames.last_mut().expect("non-empty").anchor_yielded = true;
-                    return Some(Ok(self.path.clone()));
+                    // With `explore_past_anchor`, yield only a chain that goes
+                    // past an earlier anchor match: the flag-free iterator
+                    // yields every other chain, and the first pass has
+                    // already validated each of those.
+                    let below = self.frames.len() - 1;
+                    if !self.explore_past_anchor
+                        || self.frames[..below].iter().any(|f| f.anchor_yielded)
+                    {
+                        return Some(Ok(self.path.clone()));
+                    }
                 }
             }
 
@@ -961,9 +972,13 @@ pub fn build_path_with_config(
 /// intermediate under a different key, the path through that intermediate
 /// is never yielded. When every first-pass candidate fails `validate_path`,
 /// a second pass runs that goes on into a frame's pool candidates after its
-/// anchor match, and returns the first chain it yields that validates. A
+/// anchor match. It yields only chains that go past such a match (the first
+/// pass tried every other one) and validates at most
+/// `RECOVERY_MAX_CANDIDATES` (16) of them, so a hostile pool in which every
+/// intermediate is named like an anchor costs at most 16 validations more
+/// than the first pass. The first of them that validates is returned. A
 /// chain the first pass validates is returned unchanged; if the second pass
-/// finds none (or exhausts its budget), the first pass's
+/// finds none (or reaches its cap or budget), the first pass's
 /// [`Error::NoValidPath`] is returned unchanged (FIX
 /// PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH).
 ///
@@ -1077,11 +1092,21 @@ where
     }
 }
 
+/// Most chains the second pass of [`build_first_valid_path_with_config`]
+/// validates (Oneiron local change). Every one goes past a failed anchor
+/// match; the intended case (a trusted list naming an issuing CA by a new
+/// key) needs one per DN-sharing anchor on the path, so 16 leaves room for
+/// several, while a pool built to match an anchor at every frame cannot
+/// turn one rejected chain into thousands of signature checks.
+const RECOVERY_MAX_CANDIDATES: usize = 16;
+
 /// The second pass of [`build_first_valid_path_with_config`] (Oneiron local
 /// change, FIX PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH): the same depth-first
 /// search with a fresh budget, going on into a frame's pool candidates after
-/// its anchor match. Returns the first yielded chain that validates, or
-/// `None` when the search ends (exhausted or out of budget) without one.
+/// its anchor match and yielding only chains past such a match. Returns the
+/// first of at most [`RECOVERY_MAX_CANDIDATES`] yielded chains that
+/// validates, or `None` when the search ends (exhausted, out of budget or at
+/// the cap) without one.
 fn first_valid_past_anchors<V>(
     target: &Certificate,
     pool: &CertPool,
@@ -1095,7 +1120,7 @@ where
 {
     let mut iter = PathCandidates::new(target, pool.as_slice(), anchors, config);
     iter.explore_past_anchor = true;
-    for candidate in iter {
+    for candidate in iter.take(RECOVERY_MAX_CANDIDATES) {
         let chain = candidate.ok()?;
         if pkix_path::validate_path(&chain, anchors, policy, verifier).is_ok() {
             return Some(chain);

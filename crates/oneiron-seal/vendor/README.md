@@ -189,7 +189,9 @@
   `git log -p` on this directory shows each change):
   - `tests/anchor_dn_shared_with_intermediate.rs` (new) and its
     `[[test]]` table in `Cargo.toml`: an anchor that shares its DN with a
-    pool intermediate under another key must not end the search. Its three
+    pool intermediate under another key must not end the search, and a
+    pool whose every intermediate is named like one of two anchors gets
+    at most 16 more validations than the first pass. Its three
     public NIST PKITS certificates (`GoodCACert`,
     `TrustAnchorRootCertificate`, `ValidCertificatePathTest1EE`) are copied
     byte for byte from the pkix-path 0.3.2 archive
@@ -204,10 +206,14 @@
     its first pass; when every candidate fails `validate_path`, the new
     private `first_valid_past_anchors` runs a second `PathCandidates`
     search, with a fresh budget, under the new private
-    `explore_past_anchor` flag: a frame that yielded its anchor-matched
-    chain goes on to its pool candidates instead of backtracking. The first
-    chain it yields that validates is returned; otherwise the first pass's
+    `explore_past_anchor` flag: a frame whose issuer matched an anchor goes
+    on to its pool candidates instead of backtracking, and only chains that
+    go past such a match are yielded (the first pass tried every other
+    one). At most `RECOVERY_MAX_CANDIDATES` (16) of them are validated; the
+    first that validates is returned, otherwise the first pass's
     `NoValidPath`, unchanged. `build_path`, `build_path_candidates` and
-    every chain the first pass validates are unchanged; only the all-fail
-    path does up to twice the search and validation work, each pass
-    bounded by `dfs_budget`.
+    every chain the first pass validates are unchanged. The all-fail path
+    costs at most 16 validations more than upstream's (found by the Sol
+    review: without the cap, a ten-certificate pool named like two anchors
+    turned one rejected chain into 10,000 signature checks), plus a second
+    search bounded by `dfs_budget` frame entries.
