@@ -583,9 +583,7 @@ fn admit_agent_proxy(
     if args.tier == AgentTier::ReadOnly {
         return;
     }
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let at = oneiron_base::unix_seconds_now();
     if let Err(error) = vault.admit_proxy_connector(owner, agent, at) {
         eprintln!(
             "agent {}: the OpenAI proxy is not admitted: {error}; the owner admits it at POST /v1/owner/connectors/proxy",

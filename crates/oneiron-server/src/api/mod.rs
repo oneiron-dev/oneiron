@@ -101,6 +101,7 @@ mod entity;
 mod error_map;
 mod esign;
 mod esign_qr;
+mod first_party_html;
 mod inquiry_peer;
 mod oauth_server;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;

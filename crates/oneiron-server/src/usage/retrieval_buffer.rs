@@ -125,7 +125,7 @@ impl RetrievalMeterBuffer {
         }
         if let Err(error) =
             self.ledger
-                .record_meters(&batch.rows, &batch.dropped, super::keys::now_secs())
+                .record_meters(&batch.rows, &batch.dropped, super::keys::unix_seconds_now())
         {
             self.put_back(batch);
             tracing::warn!(

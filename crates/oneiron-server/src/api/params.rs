@@ -10,9 +10,8 @@ use axum::extract::rejection::QueryRejection;
 use axum::http::HeaderMap;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Json;
+pub(super) use oneiron_base::unix_seconds_now;
 use serde::Deserialize;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
 
@@ -72,12 +71,6 @@ pub(super) fn hex_bytes(bytes: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
-}
-
-pub(super) fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
 
 // ─── Search Routes ────────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ use oneiron::voice_identity::ref_bank::{
 };
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{EntityId, ModelLocality};
+use oneiron_base::unix_seconds_now;
 use serde::Deserialize;
 
 use super::refusal;
@@ -435,7 +436,7 @@ async fn provision_record(
         VoiceBankRefusal::VendorCloneFailed(error.to_string())
     })?;
     let vendor_voice_id = vendor.id;
-    let cloned_at = now_secs();
+    let cloned_at = unix_seconds_now();
     let awaiting = vendor.awaiting_verification;
     let recorded = match actor {
         Some(actor) => server.vault.record_voice_target_clone_as(
@@ -629,10 +630,4 @@ fn target_receipt(record: &VoiceTargetRecord) -> VoiceTargetReceipt {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

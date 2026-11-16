@@ -202,7 +202,7 @@ fn artifact_ref_round_trip_is_canonical() {
 fn row_starts_with_schema_version() {
     let record = sample_record();
     let bytes = encode_build_cache_row(&record).expect("encode");
-    assert_eq!(bytes[0], 2);
+    assert_eq!(bytes[0], 3);
     let decoded = decode_build_cache_row(&bytes).expect("decode");
     assert_eq!(decoded, record);
     let key = BUILD_CACHE_REAPI_ROW.key_bytes(record.action_key.as_bytes());
