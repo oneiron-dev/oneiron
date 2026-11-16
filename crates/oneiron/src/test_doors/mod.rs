@@ -54,6 +54,7 @@ pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 pub mod history_import_rows;
+pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
