@@ -104,11 +104,11 @@ pub use self::review_request::SlideReviewLimitsInput;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
-    ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits,
-    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
-    DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, FolderItemInput, KeptProposal,
-    NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
-    SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
+    AdmittedArtifactVersion, ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit,
+    ArtifactAskUnits, ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest,
+    BornFromRequest, BornFromView, DeckProposeOutcome, DeckProposeRequest, DiscardedProposal,
+    FolderItemInput, KeptProposal, NativeOutputRequest, ProposalSettleRequest, ReleasedWait,
+    SlideReviewOutcome, SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
 pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;

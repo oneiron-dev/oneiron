@@ -88,14 +88,14 @@ raw_writes=$(python3 scripts/ratchet/raw_write_census.py) \
   || die "metric collection failed for raw_write_census"
 
 # Hand-started hashes outside the fingerprint door and its allowlist (PLAN-UC-04
-# stage 0). Its own script, because the pipeline pre-flight also runs it as the
-# merge gate (`--check`, lead 13:55 Sun 15 Nov), and the allowlist needs per-file scopes.
+# stage 0). Its own script, because the allowlist needs per-file scopes. The count blocks
+# no merge: the merge pipeline reports a raise to the change's author (AGENTS.md, Ratchets).
 raw_hashers=$(python3 scripts/ratchet/raw_hasher_starts.py --count .) \
   || die "metric collection failed for raw_hasher_starts"
 
 # Lists of names spelled by hand outside a Register (Fable pass 25). Its own script for the same
-# reasons as raw_hasher_starts: the pre-flight runs `--check` once the gate goes live, and the
-# allowlist carries a reason per path. It also fails on two Registers with one name.
+# reason as raw_hasher_starts: the allowlist carries a reason per path. It blocks no merge
+# either. It also fails on two Registers with one name.
 hand_names=$(python3 scripts/ratchet/hand_name_tables.py --count .) \
   || die "metric collection failed for hand_name_tables"
 

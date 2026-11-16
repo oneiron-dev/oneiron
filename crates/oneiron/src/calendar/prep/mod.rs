@@ -36,14 +36,12 @@
 //!
 //! ## Two bridges this layer stands on, deliberately
 //!
-//! * **Wake shape.** [`PrepWake`] is the engine-side image of
-//!   `oneiron_vault_contract::WakeEntry` carrying `Schedule::Exact`.
-//!   `crates/oneiron` does not depend on the contract crate at this commit (the
-//!   path dep is ONE-1783's reserved `Cargo.toml` append), so the three fields
-//!   ride this struct and map one-to-one when that dep lands — exactly as
-//!   CAL-07's [`super::outcome::OutcomeCheckInWake`] already does. CAL never
-//!   plans a window, so [`PREP_WAKE_SCHEDULE_KIND`] pins the `exact` arm as a
-//!   value a caller can assert without the dep.
+//! * **Wake shape.** [`plan_prep_wake`] returns the supervisor contract's own
+//!   `oneiron_vault_contract::WakeEntry`, always on `Schedule::Exact` — as
+//!   CAL-07's [`super::outcome::plan_outcome_check_in`] does. CAL never plans
+//!   a window. On the server the elected home node's card pass
+//!   ([`crate::calendar::run_calendar_card_pass`]) is the clock that delivers
+//!   the due instant.
 //! * **Commitment trigger.** The prior-commitment section keys on
 //!   `commitment.record` rows, decoded with the commitment codec: a live open
 //!   promise involving the meeting or its people. Every other CLAIM row, a
@@ -68,7 +66,6 @@ pub use self::pack::{
     build_prep_pack,
 };
 pub use self::wake::{
-    CHECK_IN_RE_ASK_LOCAL_HOUR, DEFAULT_PREP_LEAD_SECS, PREP_WAKE_REASON_TAG,
-    PREP_WAKE_SCHEDULE_KIND, PrepEvent, PrepPolicy, PrepWake, plan_check_in_re_ask, plan_prep_wake,
-    prep_is_eligible, prep_wake_id,
+    CHECK_IN_RE_ASK_LOCAL_HOUR, DEFAULT_PREP_LEAD_SECS, PREP_WAKE_REASON_TAG, PrepEvent,
+    PrepPolicy, plan_check_in_re_ask, plan_prep_wake, prep_is_eligible, prep_wake_id,
 };
