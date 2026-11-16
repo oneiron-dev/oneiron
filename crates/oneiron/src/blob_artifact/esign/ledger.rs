@@ -345,15 +345,7 @@ pub(super) fn append_inspected(
     // The commitments the draft names move with the event that lands here:
     // born inert with the draft, opened by `esign.completed`, released by a
     // decline, void or expiry (ARCH-0064 §3).
-    super::commitments::apply_in(
-        vault,
-        txn,
-        document,
-        &state.document,
-        &row.event,
-        claim,
-        now,
-    )?;
+    super::commitments::apply_in(vault, txn, document, &state.document, &row, claim, now)?;
     Ok(state)
 }
 
