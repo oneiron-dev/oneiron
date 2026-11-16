@@ -83,8 +83,15 @@ async fn served(
     models: &ModelsConfig,
 ) -> (Arc<Vault>, axum::Router, AiHost) {
     let vault = Arc::new(Vault::open(dir, VaultConfig::device()).unwrap());
+    let (server, host) = server_over(&vault, models).await;
+    (vault, build_app(server), host)
+}
+
+/// A server over `vault` with its AI host attached under `models`, as serve
+/// builds one.
+async fn server_over(vault: &Arc<Vault>, models: &ModelsConfig) -> (Arc<SyncServer>, AiHost) {
     let server = SyncServer::new(
-        Arc::clone(&vault),
+        Arc::clone(vault),
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),
             ..Default::default()
@@ -92,7 +99,7 @@ async fn served(
     )
     .unwrap();
     let (server, host) = AiHost::attach(server, Some(models)).await;
-    (vault, build_app(Arc::new(server)), host)
+    (Arc::new(server), host)
 }
 
 /// `ai.steps.submit` as the host root's owner, for `step_key` with
@@ -297,6 +304,52 @@ fn a_parked_steps_resumes_keep_its_declared_attempts() {
         assert_eq!(done["result"]["status"], "failed", "{done:#}");
         assert_eq!(done["result"]["failure"]["class"], "retryable", "{done:#}");
         assert_eq!(fake.seen().len(), 3, "{done:#}");
+        host.shutdown().await;
+    });
+}
+
+/// A step parked before a restart resumes on its own on the next server
+/// (STEP-PARK-BOOT-RESUME): the step parks, the server stops before the
+/// offer is back, and a new server over the same vault, at its start, resumes
+/// it under the host root it holds, with no submission; the second send
+/// answers. On main nothing resumes the step after a restart: it stays
+/// parked until its key is submitted again.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_parked_step_resumes_after_a_restart_with_no_submission() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![Reply::Status(503), Reply::text("resumed after the restart")],
+            None,
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        let config = models(
+            &fake.base_url,
+            "health_rest_secs = 2\nstep_rest_wait_secs = 0",
+        );
+        let (first, host) = server_over(&vault, &config).await;
+        let first_server = Arc::downgrade(&first);
+        let app = build_app(first);
+        let body = receipt(&app, submit(&vault, "health-parks-restart", 3)).await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        assert_eq!(fake.seen().len(), 1, "{body:#}");
+        // The first server stops before the offer is back, and the resume
+        // task it started ends with it.
+        drop(app);
+        host.shutdown().await;
+        assert!(first_server.upgrade().is_none(), "the first server stopped");
+        let (second, host) = server_over(&vault, &config).await;
+        oneiron_server::test_doors::model_step_boot::resume_parked_model_steps(&second);
+        let app = build_app(second);
+        let done = settled(&app, &vault, "health-parks-restart", 20).await;
+        assert_eq!(done["result"]["status"], "finished", "{done:#}");
+        assert!(
+            done.to_string().contains("resumed after the restart"),
+            "{done:#}"
+        );
+        assert_eq!(fake.seen().len(), 2, "{done:#}");
         host.shutdown().await;
     });
 }
