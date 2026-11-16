@@ -5,5 +5,6 @@
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 pub use crate::authority::fold_memory_door::{
-    Folded, Index, Rows, State, States, fold, index, projected_bytes, rows, states,
+    Folded, Index, Rows, State, States, family_entries, fold, index, merge_gain, projected_bytes,
+    rows, states,
 };

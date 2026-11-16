@@ -1,10 +1,9 @@
 //! The authority-internal half of the fold memory measurement door
 //! ([ROSTER-KEY-LOG-FLOOD] PLAN v2, step one; root FIX-LIST 25305): the
 //! fold's phases one at a time, so an integration test under a counting
-//! allocator can weigh what each phase holds. Re-run for PR 2 (fold states
-//! share structure) on the run index of PR 1: the ancestor index is an
-//! [`AncestorIndex`], and the causal floors pass is no longer weighed (the
-//! floors come from the rows since #8449, and PR 2 leaves that pass alone).
+//! allocator can weigh what each phase holds. Re-run for PR 4 (the floor,
+//! from a re-measurement) at PR 3's head: the door also reports the index
+//! ids and runs, the merge gain, and the entries of the run's own family.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,6 +78,39 @@ impl Index {
     pub fn counted_pairs(&self) -> u64 {
         self.counted_pairs
     }
+
+    /// Every id of the index: each row and each claimed parent the log
+    /// lacks.
+    pub fn ids(&self) -> u64 {
+        self.ancestors.node_count() as u64
+    }
+
+    /// The runs of every node's ancestry summed.
+    pub fn runs(&self) -> u64 {
+        self.ancestors.run_count()
+    }
+}
+
+/// The merge gain of `rows` under `index`: over every row with 2 or more
+/// parent claims, its ancestor count less 1 and less its first parent's
+/// ancestor count (the entries `merge_states` adds to its clone of the
+/// first parent's state).
+pub fn merge_gain(rows: &Rows, index: &Index) -> u64 {
+    rows.0
+        .iter()
+        .map(|(hash, entry)| {
+            if entry.parent_hashes.len() < 2 {
+                return 0;
+            }
+            let len = |hash: &AuthorityEntryHash| {
+                index
+                    .ancestors
+                    .get(hash)
+                    .map_or(0, |past| past.len() as u64)
+            };
+            len(hash).saturating_sub(1 + len(&entry.parent_hashes[0]))
+        })
+        .sum()
 }
 
 /// The fold's context on a log with no handoff, no sequence floor and no
@@ -126,6 +158,15 @@ impl States {
         self.0.values().map(grown_entries).sum()
     }
 
+    /// The `family` entries ([`family_entries`]) of every row's state,
+    /// summed.
+    pub fn family_entries(&self, family: &str) -> usize {
+        self.0
+            .values()
+            .map(|state| family_entries_inner(state, family))
+            .sum()
+    }
+
     /// A copy of the state of the row with the most ancestors (the first by
     /// hash among equals).
     pub fn deepest(&self, index: &Index) -> State {
@@ -161,6 +202,58 @@ impl State {
     /// grow by one a row ([`grown_entries`]).
     pub fn grown_entries(&self) -> usize {
         grown_entries(&self.0)
+    }
+}
+
+/// The entries `state` holds in the field(s) that `family`'s rows grow:
+/// the one field below for the five first families (as [`grown_entries`]),
+/// the family's own for the rest.
+pub fn family_entries(state: &State, family: &str) -> usize {
+    family_entries_inner(&state.0, family)
+}
+
+fn family_entries_inner(state: &FoldState, family: &str) -> usize {
+    match family {
+        "confirm" => state.federation_confirms.len(),
+        "critical" => state.critical_write_confirms.len(),
+        "enroll" | "enroll-p256" | "enroll-p256-owner" => state.roster.len(),
+        "residence" => state.residence_directives.len(),
+        "agents" => state.actor_bindings.len(),
+        "slip-mint" => state.slips.mints.len(),
+        "slip-revoke" => state.slips.revoked.len() + state.slips.explicit_revoked.len(),
+        "world-edit" => state
+            .worlds
+            .iter()
+            .map(|(_, frontier)| frontier.live.len() + frontier.superseded.len())
+            .sum(),
+        "machine-revision" => state
+            .machines
+            .iter()
+            .map(|(_, chains)| {
+                chains
+                    .values()
+                    .map(|chain| chain.revisions.len())
+                    .sum::<usize>()
+            })
+            .sum(),
+        "owner-work" => state.owner_work.request_count() + state.owner_work.result_count(),
+        "rescope" => state
+            .federation_pacts
+            .iter()
+            .map(|(_, pact)| pact.narrowings.len() + pact.superseded_narrowings.len())
+            .sum(),
+        "refused-world-edit" => state.refused_world_edits.len(),
+        "refused-grant-travel" => state.refused_grant_travel.len(),
+        "refused-export" => state.refused_export_acts.len(),
+        "actor-revoke" => {
+            state.actor_binding_revocations.len()
+                + state
+                    .actor_revocation_hashes
+                    .iter()
+                    .map(|(_, hashes)| hashes.len())
+                    .sum::<usize>()
+        }
+        other => panic!("unknown family {other}"),
     }
 }
 
