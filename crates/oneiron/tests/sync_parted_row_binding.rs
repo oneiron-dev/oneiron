@@ -8,8 +8,9 @@
 //! content of the discarded row the parts join to, and erased it when the
 //! key's holder went. It now defers the window. The checkpoint capture
 //! named the key's holder on the whole window; it now names none. A correct
-//! parted row places as before. A turn program row is placed by its body,
-//! whatever its key (the D5 guard).
+//! parted row places as before. A turn program row filed under its own key
+//! is placed by its body; filed under another key, it is placed under no one
+//! (D5, UC-10 PR 6).
 //!
 //! The erase-reach review (Astra, 15 Nov 19:16) added three: a manifest
 //! keeps no part of another map, a capture that reads only part of the
