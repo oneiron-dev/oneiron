@@ -940,8 +940,10 @@ crate::side_table::side_tables! {
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
-    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
-    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody
+    /// identity; this label changes presentation only. Admitted by the side-row wall, as the
+    /// purpose is: every agent's handle card shows it (SECRET-HANDLE-LABEL-UNWALLED). Key: id16
+    /// (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Authored [accepts: crate::store::secret_handle_labels::accepts_masked]
         [restore: live] [family: unclassified] [tier: canonical];
     /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
     SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked]
