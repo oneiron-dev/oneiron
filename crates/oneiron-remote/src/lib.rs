@@ -44,6 +44,8 @@
 mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
+// UC-02 B0: the one language boundary, verb input and output as the engine's JSON text.
+mod call_json;
 mod caps;
 mod embedded;
 mod error;
@@ -63,6 +65,7 @@ use std::path::Path;
 use oneiron::authority::MachineDeviceClass;
 use oneiron::memory::{MemoryError, RecallEffort};
 
+pub use crate::call_json::error_json;
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_CODEBASE_FILES, MAX_ENTITY_PAYLOAD_BYTES, MAX_REMOTE_REQUEST_BYTES,
     MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number,
@@ -118,18 +121,12 @@ pub struct HostRootProfile {
     pub wrong_root: bool,
 }
 
-/// Current wall-clock time, in whole Unix seconds.
-///
-/// The SDK's own clock read, because the engine's is crate-private. This is
-/// the value an omitted `occurredAt`/`occurred_at` is stamped with, and it is
-/// read at the CALL boundary so a long-lived handle does not stamp writes with
-/// the time it was constructed.
-#[must_use]
-pub fn unix_seconds_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
+/// Current wall-clock time, in whole Unix seconds: the engine's one clock
+/// read, re-exported for the SDK. This is the value an omitted
+/// `occurredAt`/`occurred_at` is stamped with, and it is read at the CALL
+/// boundary so a long-lived handle does not stamp writes with the time it was
+/// constructed.
+pub use oneiron_base::unix_seconds_now;
 
 /// Resolves an optional caller timestamp into engine Unix seconds (I14).
 ///
