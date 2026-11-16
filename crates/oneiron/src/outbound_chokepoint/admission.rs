@@ -875,9 +875,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         )?;
     }
     if let Some(admission) = invite_admission {
+        // A passport that moved since the admission is the hygiene wall's
+        // refusal, and a store failure an internal one: the facade names
+        // each, as for the admission itself.
         admission
             .commit_in_txn(vault, &mut wtxn, dedupe_now)
-            .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite publication failed"))?;
+            .map_err(IntentLedgerError::Calendar)?;
     }
     if let Some(key) = dedupe_key.as_deref() {
         dedupe::reserve(vault, &mut wtxn, key, &pending.id, dedupe_now)?;
