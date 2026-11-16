@@ -78,6 +78,17 @@
 //! tombstone stays, and that the open CLAIM's rides: withholding it would
 //! leave the member a row the owner deleted.
 //!
+//! A ninth test gives the member a grant narrower than every record: it reads
+//! base reality's default project, where a PERSON put here is stamped at
+//! birth. Such a grant takes a tombstone of a row the export does not keep
+//! only where its delete captured a scope the grant reads (FIX 10161). A plain
+//! delete captures a stamped PERSON's scope and retires its stamp; the owner
+//! writes it again over its header-only shell, which takes no stamp, and
+//! purges it. The new row has no scope, so its capture must hold none: the
+//! test asserts the narrower grant does not take its tombstone by the scope
+//! captured of the deleted form. A PERSON purged once in the same scope is
+//! the control: its tombstone rides.
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The `LEAK:`
 //! assertion comes last, except in the eighth test, whose last assertion
 //! (`MISSED DELETE:`) checks that the open CLAIM's tombstone still travels.
@@ -88,9 +99,11 @@
 #![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, Scope,
+    ScopeAxis, ScopeId,
 };
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::sync::schema::create_window_doc;
@@ -110,6 +123,7 @@ use oneiron::{
 };
 use oneiron_authority::federation::scope_codec::read_preset;
 use rmpv::Value;
+use std::collections::BTreeSet;
 
 /// The shared vault the federation grant names.
 const SHARED_VAULT_ID: u64 = 7;
@@ -331,6 +345,17 @@ struct Shared {
 }
 
 fn shared_vault(role: FederationGrantRole, preset: FederationGrantPreset) -> Shared {
+    // Every role exports under the same Scope, so the role is the only
+    // difference between a member's export and a co-Owner's.
+    shared_vault_reading(role, preset, read_preset())
+}
+
+/// [`shared_vault`], with a federation grant whose Scope is `authority_scope`.
+fn shared_vault_reading(
+    role: FederationGrantRole,
+    preset: FederationGrantPreset,
+    authority_scope: Scope,
+) -> Shared {
     let dir = tempfile::tempdir().expect("tempdir");
     let member = EntityId::now();
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
@@ -364,9 +389,7 @@ fn shared_vault(role: FederationGrantRole, preset: FederationGrantPreset) -> Sha
     let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
     let grant_id = EntityId::now();
     let mut grant = FederationGrant::new(scope, member, role, preset);
-    // Every role exports under the same Scope, so the role is the only
-    // difference between a member's export and a co-Owner's.
-    grant.authority_scope = read_preset();
+    grant.authority_scope = authority_scope;
     put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
         .expect("the member's federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
@@ -817,5 +840,95 @@ fn a_selector_window_carries_a_tombstone_that_names_no_delete_request_beside_a_b
     assert!(
         carries_tombstone(&selected, legacy),
         "MISSED DELETE: the selector window withholds the open CLAIM's tombstone that names no request, beside a body its member reads, so the member keeps the deleted row"
+    );
+}
+
+/// A Scope that reads base reality's default project only, where a PERSON put
+/// here is stamped at birth: narrower than every record, so a tombstone of a
+/// row the export does not keep travels only where its delete captured a
+/// scope the grant reads (FIX 10161).
+fn base_default_project_reader() -> Scope {
+    let mut scope = read_preset();
+    scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
+    scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(default_project_id())]));
+    scope
+}
+
+#[test]
+fn a_narrower_grant_takes_no_tombstone_of_a_row_written_again_by_the_scope_captured_of_its_deleted_form()
+ {
+    let Shared {
+        _dir,
+        vault,
+        scope,
+        selector,
+        now,
+        ..
+    } = shared_vault_reading(
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+        base_default_project_reader(),
+    );
+    // Both land open and stamped at birth into the scope the grant reads.
+    let control = EntityId::now();
+    let rewritten = EntityId::now();
+    for id in [control, rewritten] {
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, at(now), now, &person_body(None))
+            .expect("FIXTURE: the owner's PERSON");
+    }
+    let key = WindowKey::from_timestamp(now);
+    let packed = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
+    persist_window(&vault, &packed, &key);
+
+    // A plain delete captures the stamped row's scope, retires its stamp and
+    // keeps its header-only shell. A local put over the shell writes the row
+    // again and takes no record-scope stamp.
+    assert!(
+        vault
+            .delete_entity_with_reason(&rewritten, DeleteReason::UserDelete)
+            .expect("FIXTURE: the owner's plain delete")
+            .existed,
+        "FIXTURE: the stamped PERSON existed"
+    );
+    let written_at = vault.now_recorded_at();
+    vault
+        .put_entity(
+            &rewritten,
+            ENTITY_TYPE_PERSON,
+            at(written_at),
+            written_at,
+            &person_body(None),
+        )
+        .expect("FIXTURE: the owner writes the deleted PERSON again");
+    for id in [control, rewritten] {
+        assert!(
+            vault
+                .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+                .expect("FIXTURE: the owner's purge")
+                .existed,
+            "FIXTURE: the PERSON {} existed",
+            id.to_hex()
+        );
+    }
+    let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
+    for id in [control, rewritten] {
+        assert!(
+            window.get_map("tombstones").get(&id.to_hex()).is_some(),
+            "FIXTURE: the vault's window holds the tombstone of {}",
+            id.to_hex()
+        );
+    }
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    assert!(
+        carries_tombstone(&selected, control),
+        "FIXTURE: the narrower grant takes the tombstone of a PERSON purged in the scope it reads"
+    );
+    assert!(
+        !carries_tombstone(&selected, rewritten),
+        "LEAK: the narrower grant takes the tombstone of the PERSON written again with no scope, by the scope its plain delete captured of the deleted form"
     );
 }
