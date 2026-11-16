@@ -1,13 +1,17 @@
 //! The owner's live decision-band policy through the typed verb table. Every
 //! transport uses the owner's own unattenuated credential, checked before
 //! hooks by `door_admits` and again here. Rows are scoped by question id,
-//! question version and reversibility; they live for this host's lifetime.
-//! The engine owns learning, version checks, enforcement and resolution.
+//! question version and reversibility. A learn or an enforce writes the row to
+//! the vault first, which checks the version against the stored row, and then
+//! installs it on the host's bands; the host loads every stored row when it
+//! builds its bands, so a learned mode and version stay in effect after a
+//! restart (ARCH-0076 promise-dura-10). The engine owns learning, version
+//! checks, enforcement and resolution.
 use std::sync::Arc;
 
 use oneiron::llm::decision::{
     DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy,
-    DecisionBandReadRequest, LearnedBand,
+    DecisionBandReadRequest, DecisionQuestion, LearnedBand, LearnedBandKey, Reversibility,
 };
 use oneiron::memory::MemoryError;
 
@@ -51,13 +55,16 @@ pub(crate) async fn vault_decisions_bands_learn(
     auth: &CoreAuth,
     input: DecisionBandLearnRequest,
 ) -> Listed<LearnedBand> {
+    let vault = Arc::clone(server.vault());
     as_owner(server, auth, "vault.decisions.bands.learn", move |bands| {
-        bands.learn_shadow(
+        let row = vault.learn_decision_band(
             &input.question,
             input.reversibility,
             input.band,
             input.version,
-        )
+        )?;
+        bands.install_learned_band(band_key(&input.question, input.reversibility), row);
+        Ok(row)
     })
     .await
 }
@@ -67,11 +74,21 @@ pub(crate) async fn vault_decisions_bands_enforce(
     auth: &CoreAuth,
     input: DecisionBandEnforceRequest,
 ) -> Listed<LearnedBand> {
+    let vault = Arc::clone(server.vault());
     as_owner(
         server,
         auth,
         "vault.decisions.bands.enforce",
-        move |bands| bands.enforce(&input.question, input.reversibility),
+        move |bands| {
+            let row = vault.enforce_decision_band(&input.question, input.reversibility)?;
+            bands.install_learned_band(band_key(&input.question, input.reversibility), row);
+            Ok(row)
+        },
     )
     .await
+}
+
+/// Where the host's bands keep the row of `question` under `reversibility`.
+fn band_key(question: &DecisionQuestion, reversibility: Reversibility) -> LearnedBandKey {
+    (question.id, question.version, reversibility)
 }
