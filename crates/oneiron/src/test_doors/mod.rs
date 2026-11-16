@@ -8,6 +8,7 @@ pub mod access_request_seed;
 pub mod advisory_rate_window;
 pub mod agent_definition_scans;
 pub mod agent_health;
+pub mod agent_run_handover;
 pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_provenance;
