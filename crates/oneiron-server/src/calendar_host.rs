@@ -6,7 +6,6 @@
 //! an endpoint whose address is private or the node's own, by its literal
 //! before any byte is sent and by its name's answers in the client's resolver.
 //! A self-hosted node sends as before.
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,7 +52,9 @@ const CALENDAR_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) fn client(
     egress: Option<Arc<HostedEgressGuard>>,
 ) -> oneiron::Result<reqwest::blocking::Client> {
-    ServedChannelSink::guarded_client_with_timeout(CALENDAR_REQUEST_TIMEOUT, egress)
+    // RED: the guard is dropped, as main sends.
+    let _ = egress;
+    ServedChannelSink::client_with_timeout(CALENDAR_REQUEST_TIMEOUT)
 }
 
 /// Whether a managed node's hosted egress guard refuses `url` before any byte
@@ -62,18 +63,9 @@ pub(super) fn client(
 /// [`client`]'s resolver as it connects. `None` (a self-hosted node) refuses
 /// nothing.
 pub(super) fn hosted_guard_refuses(url: &reqwest::Url, egress: Option<&HostedEgressGuard>) -> bool {
-    let Some(guard) = egress else {
-        return false;
-    };
-    let literal = url
-        .host_str()
-        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
-        .and_then(|host| host.parse::<IpAddr>().ok());
-    match literal {
-        Some(ip) => guard.refuses(ip),
-        None => guard.refuses_origin(url),
-    }
-    .is_some()
+    // RED: the guard is dropped, as main sends.
+    let _ = (url, egress);
+    false
 }
 
 /// The refusal a managed node gives a CalDAV or iMIP submission endpoint
