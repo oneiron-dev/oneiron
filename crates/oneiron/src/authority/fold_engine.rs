@@ -572,7 +572,7 @@ pub(super) fn fold_authority_log_once_with(
         super::fold_project::Settled {
             merged,
             valid_entries,
-            by_hash: &by_hash,
+            by_hash: &*by_hash,
             revoke_facts: &revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),

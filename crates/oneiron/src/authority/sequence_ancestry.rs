@@ -120,7 +120,7 @@ pub(super) fn causal_sequence_floors(
 /// reads each row's signature verdict from the fold that judged it
 /// (`fold_judged_entry_state`): one transition a row, where rounds in hash
 /// order took one a row a round (row [ROSTER-KEY-LOG-FLOOD], PR 3). The
-/// answer is the rounds' (`fold_readers_door` keeps them): a transition
+/// answer is the rounds' (`floor_probe_door` keeps them): a transition
 /// reads only its row, the context and its parents' states, and a genesis
 /// claims no parent, so the target folds exactly when every row of its
 /// ancestry folds, in any order. A row whose parent has not folded in id
