@@ -10,7 +10,7 @@ use std::fmt;
 use oneiron_remote::OneironClient;
 use serde_json::Value;
 
-use crate::conflict_decisions::{self, ConflictDecision, Correction, ResolutionInput};
+use crate::conflict_decisions::{self, ConflictDecision, Correction, PinnedClaim, ResolutionInput};
 use crate::extraction_observations::{self, Observations, read_observations};
 use crate::extraction_reply::{BoundExtractionReply, ExtractionOperands, decision_operands};
 use crate::extraction_routing::{self, ExtractionRoutePlan, JudgeSet};
@@ -61,6 +61,21 @@ pub enum SetOutcome {
     Decided(ConflictDecision),
 }
 
+/// Holds one judge set's operands as its Resolution read names them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetOperands {
+    /// Holds the component's union operands in component order.
+    pub candidates: Vec<Value>,
+    /// Holds the set's prior heads pinned at the versions the job read.
+    pub priors: Vec<PinnedClaim>,
+    /// Holds the set's members as component-local positions.
+    pub set_members: Vec<usize>,
+    /// Holds each candidate's operand position in the complete array.
+    pub representatives: Vec<usize>,
+    /// Tells whether a set member's predicate differs from the retained identity's.
+    pub spans_predicates: bool,
+}
+
 /// Hands correction and conflict decisions to the later landing policy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outcome {
@@ -76,6 +91,8 @@ pub struct Outcome {
     pub route: ExtractionRoutePlan,
     /// Holds one outcome per judge set in route-plan order.
     pub sets: Vec<SetOutcome>,
+    /// Holds one operand set per judge set in route-plan order.
+    pub set_operands: Vec<SetOperands>,
 }
 
 /// Explains why the whole decision run stopped without returning partial output.
@@ -213,6 +230,7 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
         .map(|(position, group)| (group.representative_index, position))
         .collect();
     let mut sets = Vec::with_capacity(route.judge_sets.len());
+    let mut set_operands = Vec::with_capacity(route.judge_sets.len());
     for set in &route.judge_sets {
         let rule = if fast_path(set, &observations)? {
             Some(SkipRule::FastPath)
@@ -226,21 +244,35 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
                 Error::InvalidObservations("a skipped set has no prior head".into())
             })?;
             sets.push(SetOutcome::Skipped { prior_head, rule });
+            // A skipped set has no component read: its pins and predicates are
+            // the routed read's, the rows its skip rule judged.
+            let routed = ResolutionInput {
+                input: conflict_decisions::Input {
+                    candidates: &operands,
+                    observations: &observations,
+                },
+                set,
+            };
+            set_operands.push(SetOperands {
+                candidates: component_operands(set, &unions, &union_positions)?,
+                priors: conflict_decisions::prior_pins(routed).map_err(Error::Decisions)?,
+                set_members: local_set(set)?.candidate_indexes,
+                representatives: set.component_indexes.clone(),
+                spans_predicates: conflict_decisions::across(routed).map_err(Error::Decisions)?,
+            });
         } else {
             let component = component_operands(set, &unions, &union_positions)?;
             let component_observations = observe(input, &component)?;
             let local = local_set(set)?;
             check_component(set, &observations, &component_observations)?;
-            let mut decision = verdict::resolution(
-                input.client,
-                ResolutionInput {
-                    input: conflict_decisions::Input {
-                        candidates: &component,
-                        observations: &component_observations,
-                    },
-                    set: &local,
+            let asked = ResolutionInput {
+                input: conflict_decisions::Input {
+                    candidates: &component,
+                    observations: &component_observations,
                 },
-            )?;
+                set: &local,
+            };
+            let mut decision = verdict::resolution(input.client, asked)?;
             if let Some(identity) = decision.identity {
                 decision.identity =
                     Some(*set.component_indexes.get(identity).ok_or_else(|| {
@@ -250,6 +282,16 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
                     })?);
             }
             sets.push(SetOutcome::Decided(decision));
+            // The operands are the ones the Resolution read was asked with.
+            let priors = conflict_decisions::prior_pins(asked).map_err(Error::Decisions)?;
+            let spans_predicates = conflict_decisions::across(asked).map_err(Error::Decisions)?;
+            set_operands.push(SetOperands {
+                candidates: component,
+                priors,
+                set_members: local.candidate_indexes,
+                representatives: set.component_indexes.clone(),
+                spans_predicates,
+            });
         }
     }
     Ok(Outcome {
@@ -259,6 +301,7 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
         selection,
         route,
         sets,
+        set_operands,
     })
 }
 

@@ -10,6 +10,7 @@
 //! `extraction_selection` groups their evidence unions and chooses ready candidates.
 //! `extraction_routing` routes ready groups against admitted priors and judge sets.
 //! `conflict_decisions` builds bound verdict packs and reduces their answers as pure policy.
+//! `conflict_resolution` plans one reply's conflict items and merged-value steps without landing claims.
 //! `extraction_decisions` decides one reply through bound reads without landing claims.
 //!
 //! The crate's normal dependencies are `oneiron-remote`, `serde` and
@@ -17,6 +18,7 @@
 //! line in CI.
 
 pub mod conflict_decisions;
+pub mod conflict_resolution;
 pub mod conflict_settle;
 pub mod extraction_decisions;
 pub mod extraction_observations;

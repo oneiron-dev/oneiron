@@ -182,7 +182,8 @@ pub fn correction(
     Ok(built)
 }
 
-fn across(input: ResolutionInput<'_>) -> Result<bool, Error> {
+/// Tells whether a set member's predicate differs from the retained identity's.
+pub(crate) fn across(input: ResolutionInput<'_>) -> Result<bool, Error> {
     let identity = input
         .input
         .observations
@@ -197,6 +198,28 @@ fn across(input: ResolutionInput<'_>) -> Result<bool, Error> {
     Ok(across)
 }
 
+/// Pins each of the set's prior heads at the version its observations served.
+pub(crate) fn prior_pins(input: ResolutionInput<'_>) -> Result<Vec<PinnedClaim>, Error> {
+    input
+        .set
+        .prior_heads
+        .iter()
+        .map(|claim| {
+            let prior = input
+                .input
+                .observations
+                .priors
+                .iter()
+                .find(|row| &row.claim == claim)
+                .ok_or_else(|| Error::Observations("set prior pin was not served".into()))?;
+            Ok(PinnedClaim {
+                claim: claim.clone(),
+                version: prior.version.clone(),
+            })
+        })
+        .collect()
+}
+
 fn resolution_pack(
     input: ResolutionInput<'_>,
     read: ExtractionRead,
@@ -207,19 +230,7 @@ fn resolution_pack(
     for position in &input.set.candidate_indexes {
         candidate(input.input, *position)?;
     }
-    for claim in &input.set.prior_heads {
-        let prior = input
-            .input
-            .observations
-            .priors
-            .iter()
-            .find(|row| &row.claim == claim)
-            .ok_or_else(|| Error::Observations("set prior pin was not served".into()))?;
-        built.priors.push(PinnedClaim {
-            claim: claim.clone(),
-            version: prior.version.clone(),
-        });
-    }
+    built.priors = prior_pins(input)?;
     Ok(built)
 }
 

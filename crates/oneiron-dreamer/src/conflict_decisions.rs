@@ -17,6 +17,7 @@ mod questions;
 mod steps;
 
 pub use answers::{read_answers, read_layout};
+pub(crate) use questions::{across, prior_pins};
 pub use questions::{
     correction, correction_final, correction_pages, identity_final, resolution, resolution_final,
     resolution_pages,
