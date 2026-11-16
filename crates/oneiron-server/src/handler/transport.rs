@@ -205,6 +205,9 @@ pub(super) struct GuardedTransport<S> {
     live_person: Option<live_person::LivePerson>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
+    /// Set only while a selector answer's frame is draining: judged again after
+    /// each wait on the peer (SELECTOR-RELEASE-POINT = B).
+    pub(super) answer: Option<crate::selector_release::ReleasedAnswer>,
     conn_id: u32,
     /// The socket's own `write_buffer_size`, mirrored so the refusal below can
     /// be stated against it.
@@ -267,6 +270,7 @@ where
             live_owner: None,
             live_person: None,
             app_jti: None,
+            answer: None,
             conn_id,
             write_through_threshold,
             peer_codecs: WireCodecs::NONE,
@@ -350,6 +354,11 @@ where
                 .zip(self.live_owner.as_ref())
                 .is_some_and(|(vault, owner)| !owner.credential_is_live(vault))
             || self.person_membership_ended()
+    }
+
+    /// Whether the selector answer draining no longer stands.
+    fn answer_withdrawn(&self) -> bool {
+        self.answer.as_ref().is_some_and(|answer| !answer.stands())
     }
 
     /// Whether the served vault's deletion marker is present, or unreadable:
@@ -571,17 +580,23 @@ where
         let Some(socket) = self.socket.as_mut() else {
             return false;
         };
-        if std::future::poll_fn(|cx| socket.poll_ready_unpin(cx))
-            .await
-            .is_err()
+        // A selector answer, judged as it was released, is judged again only once this waits.
+        let mut waited = false;
+        if std::future::poll_fn(|cx| {
+            let ready = socket.poll_ready_unpin(cx);
+            waited |= ready.is_pending();
+            ready
+        })
+        .await
+        .is_err()
         {
             tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
             return false;
         }
-        if self.credential_revoked() {
+        if self.credential_revoked() || (waited && self.answer_withdrawn()) {
             tracing::warn!(
                 conn_id = self.conn_id,
-                "credential revoked — closing live session instead of sending"
+                "credential revoked or answer withdrawn — closing live session instead of sending"
             );
             // No application bytes are queued; try the close frame without
             // letting control-frame backpressure delay dropping the socket.
@@ -691,6 +706,7 @@ where
     /// flush park on the same sink under the same rules, and two copies of a
     /// security wait drift.
     async fn guarded_flush_loop(&mut self, what: &'static str) -> bool {
+        let mut waited = false;
         loop {
             // BEFORE the poll, not only after it. `start_send` is a synchronous
             // queue-and-return, so a revocation landing between the pre-handover
@@ -700,11 +716,11 @@ where
             // consult ever runs. Checking only at a park makes the guard depend
             // on the peer being slow, which is exactly backwards: the fast peer
             // is the one that gets the frame.
-            if self.credential_revoked() {
+            if self.credential_revoked() || (waited && self.answer_withdrawn()) {
                 tracing::warn!(
                     conn_id = self.conn_id,
                     stage = what,
-                    "credential revoked mid-wait — aborting transport"
+                    "credential revoked or answer withdrawn mid-wait — aborting transport"
                 );
                 self.abort();
                 return false;
@@ -726,7 +742,7 @@ where
                     return false;
                 }
                 // Back to the loop head, which re-consults before re-polling.
-                FlushStep::Parked => {}
+                FlushStep::Parked => waited = true,
             }
         }
     }

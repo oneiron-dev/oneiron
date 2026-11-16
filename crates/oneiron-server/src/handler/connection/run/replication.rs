@@ -446,17 +446,21 @@ pub(super) async fn handle_connection(
                 // A queued selector answer leaves only while the grant and
                 // the authority it was made under stand, judged once per
                 // answer before any part of it leaves (SELECTOR-RELEASE-POINT
-                // = B).
+                // = B), and again by its send after each wait on the peer.
                 let answer = crate::selector_release::queued_answer_frame(&data).map(|answer| {
                     (
                         conn_state.selector_answers.release(server.vault(), &answer),
                         answer.frame.to_vec(),
                     )
                 });
+                let mut released_answer = None;
                 let data = match answer {
                     None => data,
-                    Some((true, frame)) => frame,
-                    Some((false, frame)) if frame.first() == Some(&protocol::TAG_WINDOW_SYNC) => {
+                    Some((Some(released), frame)) => {
+                        released_answer = Some(released);
+                        frame
+                    }
+                    Some((None, frame)) if frame.first() == Some(&protocol::TAG_WINDOW_SYNC) => {
                         // A federation UPDATE: not sent. A selector socket is
                         // sent no ready notice, so its next fetch asks again,
                         // judged under the grant as it is then.
@@ -473,13 +477,13 @@ pub(super) async fn handle_connection(
                     // none, still goes below, so the peer's attempt lands
                     // nothing and is asked for again, served under the grant
                     // as it is then.
-                    Some((false, frame))
+                    Some((None, frame))
                         if frame.first()
                             == Some(&oneiron::sync::transport::TAG_ASSET_BODY_DATA) =>
                     {
                         continue;
                     }
-                    Some((false, frame)) => {
+                    Some((None, frame)) => {
                         if !crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
                             // A refusal or a served body's End, which carry
                             // no rows.
@@ -603,9 +607,11 @@ pub(super) async fn handle_connection(
                     transport.app_jti = None;
                     continue;
                 }
+                transport.answer = released_answer;
                 let released =
                     send_released_outcome(&server, &conn_state, &mut transport, data).await;
                 transport.app_jti = None;
+                transport.answer = None;
                 match released {
                     Released::Failed => break,
                     // A window answer whose copy or envelope could not be made
