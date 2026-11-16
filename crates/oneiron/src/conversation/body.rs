@@ -64,8 +64,7 @@ pub(crate) fn validate_put_in_txn(
                 return Err(invalid("member must be a PERSON"));
             }
         }
-        let rows = membership::rows_in(store, txn, id)?;
-        let members = membership::members_at_rows(&rows, u64::MAX);
+        let members = membership::current_members_in(store, txn, id)?;
         if members != body.member_ids.iter().copied().collect() {
             return Err(state("membership changes require the membership door"));
         }
