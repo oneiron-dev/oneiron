@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::attempt_queue::AttemptQueue;
+use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast;
 
 use super::{HousekeepingAdmission, SyncServer, admit_every_pass};
@@ -57,7 +58,7 @@ impl SyncServer {
             .await
             .unwrap_or(None);
             let sleep = next_due
-                .map(|due| due.saturating_sub(unix_now()))
+                .map(|due| due.saturating_sub(unix_seconds_now()))
                 .map(Duration::from_secs)
                 .unwrap_or(IDLE_SLEEP)
                 .clamp(PASS_SPACING, IDLE_SLEEP);
@@ -102,10 +103,4 @@ impl SyncServer {
             }
         }
     }
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

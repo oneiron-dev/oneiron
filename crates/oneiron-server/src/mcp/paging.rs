@@ -553,6 +553,11 @@ pub(crate) struct McpPageSnapshot {
     /// continuation is released off this device only while they are known
     /// and every one of them may leave it (DEC-0005).
     pub(crate) rows: Option<Vec<oneiron::EntityId>>,
+    /// The rows of `rows` the caller's own read admitted when page one's
+    /// cursor was minted, sorted and unique; empty until then. A continuation
+    /// is served only while the caller's read at that call still admits every
+    /// one of them (ARCH-0028 #mcp-continuation-open).
+    pub(crate) read_rows: Vec<oneiron::EntityId>,
 }
 
 /// The state returned after a valid cursor is consumed before any producer or

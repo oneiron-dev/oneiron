@@ -111,8 +111,8 @@ const UNCLEAR: SideTable<String, StoredUnclear, Raw> =
 const UNCLEAR_RAW: SideTable<Vec<u8>, StoredUnclear, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_UNCLEAR);
 
-const ROW_VERSION: u8 = 2;
-const ROW_LABEL: &str = "unclear attribution row";
+#[doc(hidden)]
+use oneiron_records::skill_attribution::unclear::{ROW_LABEL, ROW_VERSION};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredUnclear {
