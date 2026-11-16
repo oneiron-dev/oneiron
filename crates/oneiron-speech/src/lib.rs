@@ -8,7 +8,11 @@
 //! (`oneiron::voice_cascade::TtsSeamClient`). The server's media rungs speak
 //! `tts::hosted` (Cartesia and ElevenLabs, `tts::{cartesia, elevenlabs}`) and
 //! `tts::voxcpm2` (the VoxCPM2 worker's render framing), and its voice
-//! cloner `design::hosted` (`design::{cartesia, elevenlabs}`).
+//! cloner `design::hosted` (`design::{cartesia, elevenlabs}`). An
+//! OpenAI-compatible provider's speech and transcription calls are
+//! `tts::openai_compat` and `asr::openai_compat`, each a media backend
+//! (`oneiron::llm::media::MediaBackend`) over the provider's shared
+//! `oneiron_llm::openai_compat::OpenAiMediaClient`.
 //!
 //! The VoxCPM2 and hosted TTS adapters stay in core
 //! (`oneiron::voice_cascade::{voxcpm2, hosted_tts}`): each sends inside the
@@ -16,6 +20,7 @@
 
 /// Speech-to-text wires.
 pub mod asr {
+    pub mod openai_compat;
     pub mod soniox;
 }
 
@@ -25,6 +30,7 @@ pub mod tts {
     pub mod elevenlabs;
     pub mod hosted;
     pub mod irodori_moss;
+    pub mod openai_compat;
     pub mod voxcpm2;
 }
 

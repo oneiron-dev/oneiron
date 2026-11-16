@@ -73,7 +73,6 @@ impl Vault {
             "gate.connector_key.suspend",
             &suspended,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &suspended, at)?;
         wtxn.commit()?;
@@ -133,7 +132,6 @@ impl Vault {
             "gate.connector_key.resume",
             &resumed,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &resumed, at)?;
         wtxn.commit()?;
@@ -156,7 +154,6 @@ impl Vault {
             "gate.connector_key.revoke",
             &revoked,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &revoked, at)?;
         wtxn.commit()?;
@@ -193,7 +190,6 @@ impl Vault {
             "gate.connector_key.remove",
             &removed,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &removed, at)?;
         wtxn.commit()?;
@@ -273,7 +269,6 @@ impl Vault {
             "gate.connector_key.rotate",
             &rotated,
             policy.read_frontier_hash()?,
-            at,
         )?;
         wtxn.commit()?;
         Ok(rotated)

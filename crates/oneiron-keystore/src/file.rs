@@ -116,7 +116,7 @@ impl LocalFileKeystore {
         if !Path::new("/proc").exists() {
             return;
         }
-        let wanted = slot.map(|s| s.name());
+        let wanted = slot.map(super::KeystoreSlot::name);
         let own = std::process::id();
         let entries = match fs::read_dir(&self.dir) {
             Ok(entries) => entries,
@@ -155,7 +155,7 @@ impl LocalFileKeystore {
                 if slot_part != wanted {
                     continue;
                 }
-            } else if slot_part.split('.').any(|part| part.is_empty()) {
+            } else if slot_part.split('.').any(str::is_empty) {
                 continue;
             }
             if !pid_text.bytes().all(|b| b.is_ascii_digit())

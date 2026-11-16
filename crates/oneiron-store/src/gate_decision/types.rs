@@ -6,21 +6,9 @@ use uuid::Uuid;
 use crate::side_table::key::SideKey;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, SideKey)]
 pub struct GateDecisionId {
     pub bytes: [u8; 16],
-}
-
-impl SideKey for GateDecisionId {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.bytes);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Some(Self {
-            bytes: bytes.try_into().ok()?,
-        })
-    }
 }
 
 impl GateDecisionId {
@@ -44,6 +32,37 @@ impl GateDecisionId {
     #[must_use]
     pub fn to_hex(self) -> String {
         bytes_to_hex_lower(&self.bytes)
+    }
+}
+
+/// A named engine part that writes a Gate receipt and is not an actor row:
+/// the `actor_class` tokens that are not edge classes (`human`, `agent`,
+/// `system`). `Owner` and `Engine` keep the two tokens writers use today
+/// beside `human` and `system`, so no reader of `actor_class` changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GateEnginePart {
+    PolicyModel,
+    Sandbox,
+    BookingHttpGuard,
+    ConnectorCaller,
+    FirstParty,
+    Owner,
+    Engine,
+}
+
+impl GateEnginePart {
+    /// The `actor_class` token a receipt from this part carries.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PolicyModel => "policy_model",
+            Self::Sandbox => "sandbox",
+            Self::BookingHttpGuard => "booking.http_guard",
+            Self::ConnectorCaller => "connector_caller",
+            Self::FirstParty => "first_party",
+            Self::Owner => "owner",
+            Self::Engine => "engine",
+        }
     }
 }
 
