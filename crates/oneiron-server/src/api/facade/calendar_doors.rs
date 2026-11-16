@@ -223,7 +223,8 @@ pub(crate) async fn calendar_connector_write(
 
 use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewRequest,
+    CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
 
 pub(crate) async fn calendar_ics_status(
@@ -236,6 +237,20 @@ pub(crate) async fn calendar_ics_status(
         auth,
         "calendar.ics.status",
         move |_, memory, owner| feed::status(&memory, &owner, &input),
+    )
+    .await
+}
+
+pub(crate) async fn calendar_ics_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarIcsFeedReviewRequest,
+) -> Listed<CalendarIcsFeedConsent> {
+    as_owner(
+        server,
+        auth,
+        "calendar.ics.review",
+        move |_, memory, owner| feed::review(&memory, &owner, &input),
     )
     .await
 }
@@ -256,6 +271,7 @@ pub(crate) async fn calendar_ics_poll(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.config.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(MemoryError::bad_request)?;
             let fetcher =

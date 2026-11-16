@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::poll::enqueue_ics_feed_poll_in_txn;
 use super::{
     IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
-    ics_feed_cursor_snapshot, run_ics_feed_poll_with_screener,
+    IcsPropertyContinuationPayload, consent, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
 };
 use crate::calendar::safeguard::{CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener};
 use crate::calendar::setting_keys::ICS_FEED;
@@ -37,6 +37,32 @@ pub struct CalendarIcsFeedStatus {
     pub config: IcsFeedPollConfig,
     pub cursor: Option<IcsFeedCursorSnapshot>,
     pub last_poll: Option<CalendarIcsPollCompletion>,
+    /// The feed's import consent (CAL-02): its first completed poll's review,
+    /// or the owner's decision on it.
+    pub consent: CalendarIcsFeedConsent,
+}
+
+pub use super::consent::CalendarIcsFeedConsent;
+
+/// The owner's decision on an installed feed's first-poll review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarIcsFeedReviewDecision {
+    /// The feed's standing consent: the review's claims land Approved, and
+    /// so does every later poll's.
+    Approve,
+    /// The review's claims are declined, and the feed polls no more.
+    Decline,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarIcsFeedReviewRequest {
+    pub system: String,
+    /// The `review_ref` the feed's status showed; a review that moved since
+    /// refuses.
+    pub review_ref: String,
+    pub decision: CalendarIcsFeedReviewDecision,
 }
 
 fn check_owner(
@@ -82,7 +108,8 @@ pub(crate) fn registration_in_txn(
 /// once; an installed feed is immutable (a change or a clear is refused; a new configuration
 /// takes a new system), and a system an earlier feed polled under is never installed again.
 /// Installing a feed starts its poll chain, due at once, in the same write; a chain already
-/// pending for the feed is adopted, never forked.
+/// pending for the feed is adopted, never forked. A feed whose import waits on its owner, or
+/// was declined (CAL-02), starts no chain: the owner's approval starts it.
 ///
 /// # Errors
 ///
@@ -127,7 +154,9 @@ pub(crate) fn ics_feed_changed_in_txn(
             "this system named an earlier feed; use a new system".into(),
         ));
     }
-    enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
+    if consent::poll_hold_in_txn(vault, txn, &config)?.is_none() {
+        enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
+    }
     Ok(())
 }
 
@@ -151,10 +180,12 @@ pub fn status(
         .map(|row| {
             let cursor = ics_feed_cursor_snapshot(memory.vault(), &row.config)
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            let consent = consent::consent_view(memory.vault(), &row.config)?;
             Ok(CalendarIcsFeedStatus {
                 config: row.config,
                 cursor,
                 last_poll: row.last_poll,
+                consent,
             })
         })
         .transpose()
@@ -194,6 +225,9 @@ pub fn observe_poll(
         } => CalendarIcsPollResult::PausedNeedsInput {
             inbox_exception_ref: inbox_exception_ref.to_hex(),
         },
+        IcsPollRunState::AwaitingReview { claims } => {
+            CalendarIcsPollResult::AwaitingReview { claims }
+        }
     };
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
@@ -248,8 +282,12 @@ pub fn run_installed_poll(
 ) -> MemoryResult<CalendarIcsPollCompletion> {
     let safeguard_enabled = inbound_safeguard_enabled(memory)?;
     let vault = memory.vault();
+    // A held feed is not fetched; the poll re-reads the hold under its turn.
+    if let Some(hold) = consent::poll_hold(vault, config)? {
+        return Err(MemoryError::bad_request(hold));
+    }
     let now = vault.now_recorded_at();
-    let outcome = run_ics_feed_poll_with_screener(
+    let outcome = super::poll::run_feed_poll(
         vault,
         fetcher,
         screener,
@@ -257,7 +295,120 @@ pub fn run_installed_poll(
         config,
         now,
         now,
+        Some(owner),
     )
     .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     observe_poll(memory, owner, config, poll_ref, outcome)
+}
+
+/// Whether an installed feed's next poll waits on its owner (CAL-02): its
+/// first poll's review is open, or the owner declined it. The host completes
+/// such a queued poll unpolled; the owner's approval starts a new chain.
+///
+/// # Errors
+/// The store's.
+pub fn poll_waits_on_owner(vault: &Vault, config: &IcsFeedPollConfig) -> crate::Result<bool> {
+    Ok(consent::poll_hold(vault, config)?.is_some())
+}
+
+/// The owner's one decision on an installed feed's first-poll review
+/// (CAL-02-FEED-CONSENT = A): one consent receipt over the exact claim set,
+/// every claim still waiting settled the same way in that transaction, and
+/// the decision kept as the feed's consent. An approval is the feed's
+/// standing consent and starts its poll chain again; a decline ends it.
+///
+/// # Errors
+/// Not the authenticated owner, no installed feed, no open review, a review
+/// that moved since `review_ref` was read, or a refused settlement.
+pub fn review(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: &CalendarIcsFeedReviewRequest,
+) -> MemoryResult<CalendarIcsFeedConsent> {
+    let vault = memory.vault();
+    let now = vault.now_recorded_at();
+    let approve = input.decision == CalendarIcsFeedReviewDecision::Approve;
+    let (config, decided, metrics) = memory.with_verified_actor_write_txn(|txn| {
+        check_owner(memory, owner, txn)?;
+        let row = registration_in_txn(vault, txn, &input.system)?
+            .ok_or_else(|| MemoryError::not_found("ICS feed is not configured"))?;
+        let (decided, metrics) = consent::decide_review_in_txn(
+            vault,
+            txn,
+            owner,
+            &row.config,
+            &input.review_ref,
+            approve,
+            now,
+        )?;
+        Ok((row.config, decided, metrics))
+    })?;
+    consent::record_metrics(vault, metrics);
+    if approve {
+        enqueue_ics_feed_poll(vault, config, vault.now_recorded_at())
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    }
+    Ok(decided)
+}
+
+/// One queued property continuation of a feed, run as the owner: the
+/// imported claims it admits settle under the installed feed's consent
+/// (CAL-02), as the feed's polls settle theirs. A continuation of a system
+/// with no installed feed, or of another source's admission under the
+/// feed's system (a CalDAV connector's pull), admits as it always has.
+///
+/// # Errors
+/// The owner no longer holds, or the continuation or a settlement failed.
+pub fn run_installed_continuation(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    screener: Option<&dyn CalendarBodyScreener>,
+    payload: &IcsPropertyContinuationPayload,
+) -> MemoryResult<()> {
+    let safeguard_enabled = inbound_safeguard_enabled(memory)?;
+    let vault = memory.vault();
+    let admitted = super::admission::run_ics_property_continuation_admitting(
+        vault,
+        screener,
+        safeguard_enabled,
+        payload,
+    )
+    .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    let installed = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        registration_in_txn(vault, &txn, &payload.system)?
+    };
+    let Some(row) = installed else {
+        return Ok(());
+    };
+    if !continues_feed_poll(&row.config, payload)? {
+        return Ok(());
+    }
+    consent::settle_continuation(
+        vault,
+        owner,
+        &row.config,
+        &admitted,
+        vault.now_recorded_at(),
+    )?;
+    Ok(())
+}
+
+/// Whether `payload` continues one of `config`'s own polls: it reads a
+/// version of the feed's own archive, and its claims cite that archive. A
+/// connector admission under the same system reads its pulled resource and
+/// cites its pull record, so the feed's consent never settles its claims.
+fn continues_feed_poll(
+    config: &IcsFeedPollConfig,
+    payload: &IcsPropertyContinuationPayload,
+) -> MemoryResult<bool> {
+    let archive = super::fetch::ics_feed_archive(config)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    let prefix = format!("{}#v", archive.to_hex());
+    let names_archive = |reference: &str| {
+        reference
+            .strip_prefix(prefix.as_str())
+            .is_some_and(|version| version.parse::<u64>().is_ok())
+    };
+    Ok(names_archive(&payload.blob_ref) && names_archive(&payload.source_version))
 }
