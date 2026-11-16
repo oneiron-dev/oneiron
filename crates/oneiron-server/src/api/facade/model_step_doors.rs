@@ -191,8 +191,9 @@ fn parked_on_held_root(
 
 /// The caller the host root `issuer` makes, in memory: the root slip this
 /// server retains, verified again now, under its own token's fingerprint,
-/// as a request presenting that root is (FIX 4744 rebuilds a resumed call's
-/// caller the same way).
+/// as a request presenting that root is. FIX 4744 rebuilds a resumed call's
+/// caller through the same constructor, from the root its call recorded;
+/// no call was recorded here, so the retained root is verified afresh.
 fn held_root_caller(
     server: &SyncServer,
     issuer: &oneiron::authority::HostSlipIssuer,

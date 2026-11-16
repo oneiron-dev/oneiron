@@ -87,8 +87,8 @@ async fn served(
     (vault, build_app(server), host)
 }
 
-/// A server over `vault` with its AI host attached under `models`, as serve
-/// builds one.
+/// A server over `vault` with its AI host attached under `models`, as
+/// [`served`] builds one.
 async fn server_over(vault: &Arc<Vault>, models: &ModelsConfig) -> (Arc<SyncServer>, AiHost) {
     let server = SyncServer::new(
         Arc::clone(vault),
