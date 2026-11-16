@@ -633,30 +633,25 @@ impl ImplicitSpeechIntent {
     }
 }
 
-/// The attachment of run `record`'s `output` as its result MESSAGE carries
+/// The attachment of run `run_id`'s `output` as its result MESSAGE carries
 /// it: the preview its card shows now, withheld while the body is not
-/// clean, and the facets that read the rest.
+/// clean, and the facets that read the rest. A large trailing answer and a
+/// plain `say(result)` (L8-25) carry the same.
 pub(super) fn message_result_attachment(
     storage: &ExecutorStorage<'_>,
-    record: &CodeRunReplayRecord,
+    run_id: EntityId,
     output: &CodeRunRawOutput,
 ) -> Result<crate::memory::MessageResultAttachment> {
-    let read = crate::code_run::ResultRead::new(
-        storage,
-        record.run_id,
-        output.clone(),
-        None,
-        None,
-        false,
-    )?
-    .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
+    let read =
+        crate::code_run::ResultRead::new(storage, run_id, output.clone(), None, None, false)?
+            .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
     let card = read.card(storage)?;
     let preview = card["preview"]
         .as_str()
         .unwrap_or(CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
         .to_owned();
     let truncated = output.preview.truncated || preview != output.preview.text;
-    crate::memory::MessageResultAttachment::of(record.run_id, output, preview, truncated)
+    crate::memory::MessageResultAttachment::of(run_id, output, preview, truncated)
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).
@@ -721,6 +716,14 @@ pub(super) fn reply_output_path(seq: u64) -> String {
 /// one reply.
 pub(crate) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
+}
+
+/// A bridge call's result a verb hook's view stands in for, stored whole
+/// for the record only (ARCH-0080 Redact: the vault keeps the real result).
+/// It is outside every path [`is_result_output_path`] admits, so no read of
+/// the run's results resolves it, by name, handle or occurrence ref.
+pub(crate) fn record_only_output_path(bridge_seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.record-only.json")
 }
 
 /// A value a program passed to `store`, named by its digest and the run's

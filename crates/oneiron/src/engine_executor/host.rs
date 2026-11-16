@@ -13,7 +13,10 @@ mod replay_context;
 mod reply;
 mod results;
 pub(super) mod resume_preflight;
+mod say_result;
 mod skill_delivery;
+#[cfg(oneiron_test_support)]
+mod spill_door;
 mod type_feedback;
 
 use super::cancel::StepCancellation;
@@ -24,7 +27,8 @@ use super::stack_floor::on_callable_stack;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
-    recoverable_output_path, result_handle_json, store_result_output_path, write_json,
+    record_only_output_path, recoverable_output_path, result_handle_json, store_result_output_path,
+    write_json,
 };
 use super::types::{
     CallableProgram, EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime,
@@ -62,6 +66,8 @@ pub(super) use self::deadline_replay::DeadlineReplay;
 pub(super) use self::prompt::executor_turn_instruction;
 pub(crate) use self::prompt::{executor_declarations_block, executor_system_prompt};
 use self::results::recorded_output;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::spill_door::spill_before_record;
 pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 
 pub(super) struct RecordingJsHost<'a, 's> {

@@ -25,6 +25,7 @@ pub mod reply_evidence;
 mod run_position;
 mod run_signals;
 mod self_brief;
+mod session_refusal;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
@@ -60,6 +61,8 @@ pub use self::run_position::{CodeRunPosition, code_run_position};
 pub use self::self_brief::{
     BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
 };
+// FIX OFF-RECORD-RUN-POLICY-REFUSAL-500: a session's refusal of a run's act.
+pub use self::session_refusal::is_session_act_refusal;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
@@ -68,10 +71,10 @@ pub(crate) use self::step_evidence::step_evidence_page;
 pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};
 pub(crate) use self::store::{
     bridge_result_output_path, clean_for_context, holds_reply_content, is_result_output_path,
-    mask_known_text, observation_output_path, parse_result_read_path, result_handle_json,
-    result_read_path_for, resumed_output_wait, script_output_path, store_agent_verb_write_answer,
-    store_ordinal_base, store_result_output_path, terminal_output_seq,
-    write_receipt_result_output_path,
+    mask_known_text, observation_output_path, parse_result_read_path, record_only_output_path,
+    result_handle_json, result_read_path_for, resumed_output_wait, script_output_path,
+    store_agent_verb_write_answer, store_ordinal_base, store_result_output_path,
+    terminal_output_seq, write_receipt_result_output_path,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
@@ -90,6 +93,8 @@ pub use self::host::resume_preflight::{
 pub(crate) use self::host::executor_declarations_block;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::host::executor_system_prompt;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::host::spill_before_record;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
