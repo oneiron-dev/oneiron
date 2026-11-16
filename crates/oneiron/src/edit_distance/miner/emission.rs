@@ -3,7 +3,7 @@
 use rmpv::Value;
 
 use super::config::{
-    GATE_OUTCOME_REJECTED, MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
+    MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
     MINED_EVIDENCE_ROW_LABEL, MINER_CLUSTER_HASH_DOMAIN, MINER_EVIDENCE_RECORD_ID_DOMAIN,
     MINER_PREFERENCE_CONFIDENCE, MINT_MARK_ROW_LABEL, PREDICATE_PREFERENCE_PHRASING,
     PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM, PREFERENCE_VALUE_KEY_RATIONALE,
@@ -26,6 +26,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
@@ -205,7 +206,23 @@ fn preference_is_stale(
         .store
         .gate_decisions_for_claim_in_txn(txn, claim_id.as_bytes())?
         .iter()
-        .filter(|decision| decision.outcome == GATE_OUTCOME_REJECTED)
+        .filter(|decision| match decision.gate_outcome() {
+            Some(GateReceiptOutcome::Rejected) => true,
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => false,
+        })
         .map(|decision| decision.created_at)
         .max();
     Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(wait)))
