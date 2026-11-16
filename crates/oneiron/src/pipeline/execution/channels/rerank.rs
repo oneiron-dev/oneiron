@@ -52,11 +52,15 @@ pub(super) struct RerankApplied {
 /// #rerank-door-open: later stages respect the reranked group; RULING
 /// RERANK-GROUP-ORDER = A). A ruled precedence may still put a row the
 /// reranker did not score ahead of one it did: critical rows first, base
-/// before non-base, the OF-023 clamp, the named-entity pass. Every other
-/// stage reorders within the block and within the rest, never across it:
-/// the ladder's access factor and serialization's score sort through the
-/// scores (see [`cap_unscored`]), community diversity and the skill re-sort
-/// through [`RerankedBlock::keep_group_places`]. Empty when no rerank ran.
+/// before non-base, the OF-023 clamp, the named-entity pass, and the
+/// relationship key's demote (ARCH-0022 A2/ONE-1347: the key is enforced as
+/// world and facet are, and a policy row demotes another companion's claims
+/// in place of dropping them, so with enough rows in scope a demote keeps
+/// the top the default drop keeps). Every other stage reorders within the
+/// block and within the rest, never across it: the ladder's access factor
+/// and serialization's score sort through the scores (see
+/// [`cap_unscored`]), community diversity and the skill re-sort through
+/// [`RerankedBlock::keep_group_places`]. Empty when no rerank ran.
 #[derive(Default)]
 pub(in crate::pipeline) struct RerankedBlock(HashSet<EntityId>);
 
