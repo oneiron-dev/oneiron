@@ -116,6 +116,7 @@ pub mod scope_summary;
 pub mod scratchpad_wake;
 pub mod seat_park_model_step;
 pub mod shared_act_family;
+pub mod side_key_hex_case;
 pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_package;
