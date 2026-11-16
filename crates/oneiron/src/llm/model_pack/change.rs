@@ -13,6 +13,8 @@
 //! that pack, the revert installs the version the update kept again, after
 //! its bytes pass an install's checks once more (FIX 20192).
 
+use std::cell::RefCell;
+
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -83,6 +85,39 @@ pub struct ModelPackRevert {
     pub blocked: Option<ModelPackRevertBlock>,
     /// The owner's model pack setting after the call.
     pub setting: ModelPackSetting,
+}
+
+thread_local! {
+    /// The pack in effect before the revert this thread is writing, read before the revert
+    /// installed a replaced version again, while the revert writes its pin: the key's hook
+    /// records the revert's move from it ([`revert_before`]). The hook runs inside the revert's
+    /// own call that writes the pin, on the same thread.
+    static REVERT_BEFORE: RefCell<Option<Option<ModelPackReceipt>>> = const { RefCell::new(None) };
+}
+
+/// Holds a revert's pack before it for the key's hook while the revert writes its pin, and
+/// drops it when that write returns or unwinds.
+struct RevertBefore;
+
+impl RevertBefore {
+    fn hold(before: Option<ModelPackReceipt>) -> Self {
+        REVERT_BEFORE.set(Some(before));
+        Self
+    }
+}
+
+impl Drop for RevertBefore {
+    fn drop(&mut self) {
+        REVERT_BEFORE.set(None);
+    }
+}
+
+/// The pack in effect before the revert this thread is writing, taken once by the hook of
+/// `models.pack_preference`: a revert that installs a replaced version again moves the vault
+/// from the pack it followed before that install, which the row's prior value no longer selects
+/// among the packs installed after it. `None` outside a revert's write.
+pub(crate) fn revert_before() -> Option<Option<ModelPackReceipt>> {
+    REVERT_BEFORE.take()
 }
 
 /// The pack a revert returns to, and where it is now.
@@ -311,11 +346,14 @@ impl Vault {
                             model_pack_revert_preference(target.pack()),
                             format!("{MODEL_PACK_REVERT_VERB} of change {}", request.change_ref),
                         )?;
-                        let outcome =
-                            self.set_setting_in_txn(txn, SettingCaller::Owner(owner), &change)?;
-                        // The key's hook records a change of the row. A row that already
-                        // pinned the pack records none, though a version installed again
-                        // may have moved the pack in effect.
+                        // The key's hook records a change of the row, from the pack in effect
+                        // before the revert installed anything again.
+                        let outcome = {
+                            let _held = RevertBefore::hold(before.clone());
+                            self.set_setting_in_txn(txn, SettingCaller::Owner(owner), &change)?
+                        };
+                        // A row that already pinned the pack records none, though a version
+                        // installed again may have moved the pack in effect.
                         if !changed_the_row(&outcome) {
                             self.note_active_model_pack_in_txn(
                                 txn,

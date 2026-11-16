@@ -31,6 +31,7 @@ use crate::skill_hub::pack_catalog::InstalledModelPack;
 mod change;
 mod retirement;
 
+pub(super) use change::revert_before;
 pub use change::{
     MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB, ModelPackChangeCause,
     ModelPackRevert, ModelPackRevertBlock, ModelPackRevertRequest, model_pack_revert_preference,

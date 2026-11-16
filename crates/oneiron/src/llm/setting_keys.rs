@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ModelLocality;
 use super::manifest::{self, ModelSlot};
-use super::model_pack::{MODEL_PACK_REVERT_VERB, ModelPackChangeCause};
+use super::model_pack::{MODEL_PACK_REVERT_VERB, ModelPackChangeCause, revert_before};
 use super::routing::DescriptionPolicy;
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -108,7 +108,9 @@ fn model_pack_change_cause(change: &SettingChange) -> ModelPackChangeCause {
 /// The model pack preference is one value row at the vault, so the revert and a retirement's
 /// move, which write that row, always decide: a pin of it is refused. A season or pack pin names
 /// one the vault can follow now. The change records the move of the pack in effect, with its
-/// notice and revert (FIX 5369); the pack before it is the one the row's prior value selects.
+/// notice and revert (FIX 5369), from the pack the row's prior value selects; a revert's, from
+/// the pack in effect before it ([`revert_before`]): a version the revert installed again changed
+/// what that prior value selects.
 fn note_model_pack_preference_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -128,7 +130,10 @@ fn note_model_pack_preference_in_txn(
             .0
     };
     vault.check_model_pack_preference_in_txn(txn, &preference(change.value.as_ref()))?;
-    let before = vault.model_pack_selected_in_txn(txn, &preference(change.prior.as_ref()))?;
+    let before = match revert_before() {
+        Some(before) => before,
+        None => vault.model_pack_selected_in_txn(txn, &preference(change.prior.as_ref()))?,
+    };
     vault.note_active_model_pack_in_txn(txn, before, model_pack_change_cause(change))
 }
 
