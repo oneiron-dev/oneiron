@@ -76,7 +76,7 @@ fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
         let mut manifest: AnalyzerManifest =
             serde_json::from_slice(&stored).expect("stored manifest must parse");
         assert_eq!(manifest.analyzer_version, ANALYZER_VERSION);
-        assert_eq!(manifest.analyzer_version, "v3");
+        assert_eq!(manifest.analyzer_version, "v4");
         manifest.analyzer_version = "v2".to_owned();
         let json = manifest.canonical_json().expect("canonical json");
         let hash = manifest.canonical_hash().expect("canonical hash");

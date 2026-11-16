@@ -21,11 +21,9 @@
 //! the pushed workspace; no process, home directory or session file moves.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::LlmBackend;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::authority::OwnerActKind;
@@ -46,9 +44,10 @@ use super::work_binding::{
     head_hop,
 };
 use super::{
-    ByoEndpointBackendFactory, ByoEndpointSpec, ByoaConnectorSpec, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaResult, ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy,
-    SeatPassedOver, SkippedRunnerSeat, SkippedRunnerSeatView, StagedJob,
+    ByoEndpointBackendFactory, ByoEndpointBinding, ByoEndpointSpec, ByoaConnectorSpec,
+    ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaResult,
+    ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy, SeatPassedOver, SkippedRunnerSeat,
+    SkippedRunnerSeatView, StagedJob,
 };
 
 /// The step key the hand-over binds its runner work under: the bind keeps
@@ -205,7 +204,7 @@ pub enum RunnerContinueCaller<'a> {
 struct ContinueEndpoints;
 
 impl ByoEndpointBackendFactory for ContinueEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend(
             "the continue door serves no endpoint connector".to_owned(),
         ))

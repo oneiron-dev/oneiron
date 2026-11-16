@@ -23,13 +23,13 @@ use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::codebase::RepoRef;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, ByoEndpointBackendFactory, ByoEndpointSpec, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaResult, ContinueOutsideWorkCheckRequest,
-    ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest, ContinueOutsideWorkView,
-    DrySeatFallback, OfficialDreamerSeat, OfficialSeatRegistry, OfficialSeatRoute,
-    OfficialSeatSpec, OnSeatSpent, ProviderAdapterRegistry, RunnerContinueCaller, RunnerSeat,
-    RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPassedOver, SeatPlacementApproval,
-    hosted_seat_bound, register_official_dreamer_providers,
+    BYOA_ATTEMPT_KIND, ByoEndpointBackendFactory, ByoEndpointBinding, ByoEndpointSpec,
+    ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaResult,
+    ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest,
+    ContinueOutsideWorkView, DrySeatFallback, OfficialDreamerSeat, OfficialSeatRegistry,
+    OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent, ProviderAdapterRegistry,
+    RunnerContinueCaller, RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPassedOver,
+    SeatPlacementApproval, hosted_seat_bound, register_official_dreamer_providers,
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::habit::TaskRole;
@@ -50,7 +50,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
-use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, LlmBackend, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use serde_json::json;
 
 const IMPORTED_AT: u64 = 1_700_100_000;
@@ -326,7 +326,7 @@ impl CheckoutLiveness for NoLiveness {
 struct NoEndpoints;
 
 impl ByoEndpointBackendFactory for NoEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend("the test serves no endpoint".to_owned()))
     }
 }
