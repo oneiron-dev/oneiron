@@ -58,6 +58,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's world access of an agent too.
+pub(crate) use super::agent_world_access_doors::*;
 // The owner's verdict on a plan-doc (plan mode) too.
 pub(crate) use super::plan_doc_doors::*;
 // A check-in holder's answer (ROLES-CHECKIN P2.3c), likewise.
@@ -102,8 +104,10 @@ pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::hosted_import_doors::*;
 pub(crate) use super::identity_doors::*;
-// The image organ's edit door (L4-15) too.
-pub(crate) use super::image_edit_doors::vault_artifacts_image_edit;
+// The image organ's edit and preview doors (L4-15, L4-16) too.
+pub(crate) use super::image_edit_doors::{
+    vault_artifacts_image_edit, vault_artifacts_image_preview,
+};
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;

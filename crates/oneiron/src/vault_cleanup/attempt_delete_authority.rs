@@ -17,7 +17,10 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 pub(super) struct DeleteAuthority {
     pub(super) actor: EntityId,
     pub(super) role: &'static str,
-    pub(super) grant: Option<EntityId>,
+    /// The Admin's live vault grant and its membership role, an Admin or a
+    /// Deputy (check-in judges the confirm under it, 2k5e); none for the
+    /// Owner.
+    pub(super) grant: Option<(EntityId, FederationGrantRole)>,
 }
 
 pub(super) fn require_delete_in_txn(
@@ -84,7 +87,7 @@ pub(super) fn require_delete_in_txn(
             return Ok(DeleteAuthority {
                 actor,
                 role: "admin",
-                grant: Some(id),
+                grant: Some((id, role)),
             });
         }
     }

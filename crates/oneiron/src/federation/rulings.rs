@@ -4,27 +4,10 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
+#[doc(hidden)]
+pub use oneiron_records::federation::rulings::{AdminRuling, AdminRulingReceipt};
 use serde_json::Value;
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AdminRuling {
-    pub id: String,
-    pub holder: String,
-    pub grant_ref: String,
-    pub vault_id: u64,
-    pub key: String,
-    pub value: Value,
-    pub learned_at: u64,
-    pub ledger_order: u64,
-}
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AdminRulingReceipt {
-    pub ruling: AdminRuling,
-    pub previous_ruling: Option<String>,
-    pub previous_holder: Option<String>,
-    pub previous_value: Option<Value>,
-}
+
 pub(crate) const RULING_PREDICATE: &str = "federation.admin_ruling";
 pub(super) fn ruling_anchor_id(vault_id: u64) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(
