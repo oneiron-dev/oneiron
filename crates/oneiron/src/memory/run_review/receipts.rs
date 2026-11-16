@@ -73,10 +73,7 @@ pub(crate) fn run_settlement_receipts(
                     FIELD_REVERT_HANDLE.to_owned(),
                     settlement.revert_handle.clone(),
                 ),
-                (
-                    FIELD_CHANGE_REF.to_owned(),
-                    change.member.change().to_owned(),
-                ),
+                (FIELD_CHANGE_REF.to_owned(), change.member.change()),
             ]);
             let receipt = ReceiptRecord {
                 receipt_id: format!("proposal_outcome:run:{run}:{index}"),

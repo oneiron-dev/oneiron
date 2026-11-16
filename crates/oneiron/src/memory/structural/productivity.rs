@@ -81,15 +81,8 @@ pub struct ProductivityCreateRequest {
     pub parent_ref: Option<String>,
 }
 
-/// The productivity tree under one TASK.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProductivityTreeRequest {
-    /// Root TASK ref (short-id ref or hex).
-    pub root_ref: String,
-    /// Levels below the root to walk; `0` ⇒ the root alone.
-    pub max_depth: u32,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::structural::productivity::ProductivityTreeRequest;
 
 /// The readable `ChildOf` tree under a root, root first, then by depth and id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
