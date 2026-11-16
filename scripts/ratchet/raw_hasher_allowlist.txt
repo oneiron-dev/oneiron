@@ -51,3 +51,4 @@ crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn 
 crates/oneiron-organ-host/src/seal/custody_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-organ-host/src/seal/file_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-server/src/control_keys.rs sha256  # HMAC-SHA256 API-key digests at rest
+crates/oneiron/src/campaign/one_click_unsubscribe.rs all  # one-click List-Unsubscribe link MAC (RFC 8058): keyed BLAKE3 under the vault's link key
