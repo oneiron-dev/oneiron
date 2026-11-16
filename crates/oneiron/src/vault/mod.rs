@@ -258,6 +258,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// The text embedder this vault's live pending-text reconciler runs, which
+    /// `vault.worlds.vectors` judges each world by (FIX [WORLD-VECTORS-FACT]).
+    /// In memory only; none until a host builds a reconciler.
+    pub(crate) host_text_embedder: crate::embed::world_vectors::HostTextEmbedderSlot,
     /// The floor its guests' network work charges: the one its serving host
     /// attached ([`Vault::attach_host_net_floor`]), else the process's
     /// descriptor line (FIX 6299).

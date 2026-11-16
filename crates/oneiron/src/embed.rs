@@ -24,6 +24,7 @@ mod space_move;
 mod space_probe;
 mod turn;
 pub(crate) mod world_space;
+pub mod world_vectors;
 pub use binding_move::{
     BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
 };
@@ -286,6 +287,9 @@ pub struct PendingEmbeddingReconciler {
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
     rung_role: routing::RungRole,
+    /// The primary embedder, held on the vault for `vault.worlds.vectors`
+    /// while this reconciler lives.
+    _registration: world_vectors::HostTextEmbedderRegistration,
 }
 
 #[cfg(feature = "sync")]
@@ -295,6 +299,8 @@ impl PendingEmbeddingReconciler {
         vault: std::sync::Arc<crate::Vault>,
         embedder: std::sync::Arc<dyn Embedder>,
     ) -> Self {
+        let registration =
+            world_vectors::HostTextEmbedderRegistration::register(&vault, embedder.as_ref());
         Self {
             vault,
             embedder,
@@ -302,6 +308,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
+            _registration: registration,
         }
     }
 
