@@ -81,11 +81,9 @@ pub(super) fn hosted_guard_refuses(url: &reqwest::Url, egress: Option<&HostedEgr
 pub(crate) const PRIVATE_ENDPOINT_REFUSAL: &str =
     "calendar endpoint names a private or node address, which a hosted node does not reach";
 
-/// Admits an owner's CalDAV or iMIP submission endpoint at the shared network
-/// boundary ([`hosted_guard_refuses`]); the setup doors run it before they
-/// install one, and the wire and the submission before they send. An
-/// endpoint that does not parse is left to the setup door's own endpoint rule
-/// (`validate_endpoint`).
+/// Admits the owner's installed iMIP submission endpoint at the shared network
+/// boundary ([`hosted_guard_refuses`]) before the send. An endpoint that does
+/// not parse is left to the request, which fails as before.
 ///
 /// # Errors
 ///
@@ -150,9 +148,11 @@ impl CalendarSendClients {
 /// Extends the existing served sink, rather than running a second executor.
 pub(crate) struct CalendarChannelSink<'a> {
     vault: &'a Vault,
+    /// The managed node's hosted egress guard the iMIP send admits its
+    /// endpoint with; `None` on a self-hosted node.
+    egress: Option<Arc<HostedEgressGuard>>,
     ordinary: ServedChannelSink<'a>,
     client: reqwest::blocking::Client,
-    egress: Option<Arc<HostedEgressGuard>>,
 }
 
 impl<'a> CalendarChannelSink<'a> {
@@ -164,10 +164,10 @@ impl<'a> CalendarChannelSink<'a> {
     ) -> Self {
         Self {
             vault,
+            egress: clients.egress.clone(),
             ordinary: ServedChannelSink::with_client(vault, clients.ordinary.clone())
                 .with_line_push_allowance(line_push_allowance),
             client: clients.calendar.clone(),
-            egress: clients.egress.clone(),
         }
     }
 

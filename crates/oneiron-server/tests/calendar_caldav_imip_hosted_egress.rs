@@ -2,11 +2,11 @@
 //! FIX [CALDAV-SEAL-SKIP-HOSTED-EGRESS]: CalDAV and the iMIP submission go out
 //! through the one shared network boundary (ARCH-0046 :327, RC84: "Web
 //! fetching, the calendar and sealing all go out through it"; a hosted node
-//! refuses private addresses). On a managed node the calendar setup doors
-//! refuse a CalDAV or submission endpoint whose address literal is private or
-//! the node's own; the CalDAV wire and the iMIP send refuse it before any byte
-//! is sent; a name that answers with one fails at connect. A self-hosted node
-//! reaches a loopback endpoint as before.
+//! refuses private addresses). On a managed node the CalDAV wire and the iMIP
+//! send refuse a CalDAV or submission endpoint whose address literal is
+//! private or the node's own before any byte is sent; a name that answers
+//! with one fails at connect. A self-hosted node reaches a loopback endpoint
+//! as before.
 //!
 //! Red: the head with the guard dropped (`calendar_host::client` unguarded,
 //! `hosted_guard_refuses` always false), as main sends: the managed-node tests
@@ -76,11 +76,11 @@ fn hosted_node_refuses_a_caldav_or_submission_endpoint_on_a_private_or_node_addr
         "https://192.168.0.7/submit".to_owned(),
         "https://169.254.169.254/latest/meta-data".to_owned(),
     ] {
-        let configure = admit_calendar_endpoint(Some(hosted_guard()), &endpoint)
-            .expect_err("a hosted node's setup door refuses a private or node endpoint");
+        let admission = admit_calendar_endpoint(Some(hosted_guard()), &endpoint)
+            .expect_err("a hosted node's iMIP admission refuses a private or node endpoint");
         assert!(
-            configure.contains("private or node address"),
-            "{endpoint}: configure: {configure}"
+            admission.contains("private or node address"),
+            "{endpoint}: admission: {admission}"
         );
         let caldav = caldav_propfind(Some(hosted_guard()), &endpoint)
             .expect_err("a hosted node's CalDAV wire refuses a private or node endpoint");
@@ -120,7 +120,7 @@ fn hosted_node_refuses_an_endpoint_name_that_resolves_to_loopback() {
 #[test]
 fn self_hosted_node_reaches_a_loopback_endpoint_as_before() {
     let endpoint = |port: u16| format!("http://127.0.0.1:{port}/dav/");
-    admit_calendar_endpoint(None, &endpoint(1)).expect("a self-hosted setup door admits loopback");
+    admit_calendar_endpoint(None, &endpoint(1)).expect("a self-hosted node admits loopback");
 
     let (server, port) = answer_once("207 Multi-Status");
     assert_eq!(caldav_propfind(None, &endpoint(port)), Ok(207));

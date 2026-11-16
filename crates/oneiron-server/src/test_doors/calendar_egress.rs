@@ -1,17 +1,17 @@
 //! Doors to the calendar's network boundary for CalDAV and the iMIP
-//! submission (FIX [CALDAV-SEAL-SKIP-HOSTED-EGRESS]): the setup doors'
-//! endpoint admission, the CalDAV wire's endpoint and client, the iMIP send's
-//! admission and submission client, and one request on each client, with or
-//! without a managed node's hosted egress guard. The owner proof, the seat
-//! row and the credential the real doors also need are left out: they decide
-//! nothing about where a request may go.
+//! submission (FIX [CALDAV-SEAL-SKIP-HOSTED-EGRESS]): the CalDAV wire's
+//! endpoint and client, the iMIP send's endpoint admission and submission
+//! client, and one request on each client, with or without a managed node's
+//! hosted egress guard. The owner proof, the seat row and the credential the
+//! real wire and send also need are left out: they decide nothing about where
+//! a request may go.
 
 use std::sync::Arc;
 
 use oneiron::web_fetch::HostedEgressGuard;
 
-/// What `calendar.connector.configure` and `calendar.imip.configure` run on
-/// the owner's endpoint before they install it.
+/// What the iMIP send runs on the installed submission endpoint before it
+/// sends.
 ///
 /// # Errors
 ///
