@@ -117,6 +117,7 @@ pub mod mail_landing;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+pub mod mail_reply_send;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;

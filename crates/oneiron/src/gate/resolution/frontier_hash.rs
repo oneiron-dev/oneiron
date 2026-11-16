@@ -147,6 +147,23 @@ pub(super) fn hash_policy_frontier_v0(
             hash_str(hasher, row.project_ref.as_deref().unwrap_or(""));
             hash_u64(hasher, row.secs);
         }
+        // The mode rows release or hold sends (PLAN L3-35): hashed only when
+        // present, so a row of waits alone keeps its exact frontier hash.
+        if !policy.modes().is_empty() {
+            hash_str(hasher, "mode");
+            hash_len(hasher, policy.modes().len());
+            for row in policy.modes() {
+                hash_str(hasher, &row.row_ref);
+                hash_str(hasher, row.act.as_str());
+                hash_str(hasher, row.world_ref.as_deref().unwrap_or(""));
+                hash_str(hasher, row.project_ref.as_deref().unwrap_or(""));
+                hash_str(hasher, row.mode.as_str());
+                hash_str(
+                    hasher,
+                    row.ask_per.map_or("", crate::check_in::AskPer::as_str),
+                );
+            }
+        }
     }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
