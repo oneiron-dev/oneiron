@@ -319,6 +319,7 @@ impl Vault {
             message_occurred: vec![occurred_at],
             source_audience: None,
             attribution: SourceAttribution::Unbound,
+            facet: None,
         };
         let receipt =
             self.memory(agent, EdgeActorClass::Agent)
