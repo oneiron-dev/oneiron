@@ -338,7 +338,7 @@ fn names_owner_as_human(owner: &AuthenticatedOwner, claims: &crate::authority::S
 /// scope its verb-table row needs, read as a server reads a slip's verbs
 /// (`read` or `core:read` for a Read row, `write` or `core:write` for a
 /// Write row).
-fn slip_reaches_verb(credential: &crate::authority::VerifiedSlip, verb: &str) -> bool {
+pub(crate) fn slip_reaches_verb(credential: &crate::authority::VerifiedSlip, verb: &str) -> bool {
     if credential.allows_verb(verb) {
         return true;
     }
