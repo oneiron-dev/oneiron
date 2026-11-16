@@ -29,12 +29,8 @@ const RECEIPT: SideTable<HandoffId, HomeAck, Named> =
 const TRANSFER: SideTable<HandoffId, HandoffTransfer, Named> =
     SideTable::new(&side_table::HOME_HANDOFF_TRANSFER);
 
-/// Which end of a handoff this node was.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum HandoffRole {
-    Source,
-    Target,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::sync::home_handoff::store::HandoffRole;
 
 /// The newest generation this node froze or adopted. A move at or below it
 /// is stale here.
