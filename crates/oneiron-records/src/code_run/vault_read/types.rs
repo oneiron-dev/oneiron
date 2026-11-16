@@ -58,7 +58,9 @@ pub struct CoreBodyOmitted {
     /// The read's whole body budget.
     #[serde(rename = "maxBytes")]
     pub max_bytes: u64,
-    /// The omitted body's stored length.
+    /// The omitted body's length as its reader reads it: the stored body
+    /// for the owner, the released body for every other reader. A body
+    /// withheld from its reader carries no marker.
     #[serde(rename = "bodyBytes")]
     pub body_bytes: u64,
     /// The row's short id with the omitted body's own content hash, which a

@@ -100,14 +100,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         }
     }
 
-    /// Bounds the stored body bytes one `memory.query` or
-    /// `memory.hydrate_many` answer decodes to `bound`, its host's
+    /// Bounds the body bytes one `memory.query` or `memory.hydrate_many`
+    /// answer decodes to `bound`, its host's
     /// `[limits].projection_body_bytes` (H27), as the `/v1` doors bound
-    /// theirs. A Summary or Full body the rest of the budget cannot hold is
-    /// not decoded: its row keeps its id, kind and time and carries
-    /// [`super::CoreBodyOmitted`] in its place. A single hydrate takes no
-    /// budget and returns its body whole. Without this every admitted body
-    /// decodes.
+    /// theirs: each body at the length its reader reads, the stored body's
+    /// for the owner. A Summary or Full body the rest of the budget cannot
+    /// hold is not decoded: its row keeps its id, kind and time and carries
+    /// [`super::CoreBodyOmitted`] in its place. A body withheld from its
+    /// reader takes no budget and carries no marker. A single hydrate takes
+    /// no budget and returns its body whole. Without this every admitted
+    /// body decodes.
     #[must_use]
     pub fn with_projection_body_bytes(mut self, bound: usize) -> Self {
         self.projection_body_bytes = Some(bound);
@@ -302,37 +304,41 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             else {
                 continue;
             };
-            // A body decodes only while the answer's budget holds it (H27),
-            // charged at its stored length as the /v1 doors charge theirs.
-            let decoded = bodies
-                .as_mut()
-                .is_none_or(|bodies| bodies.admits(body.len()));
-            items.push(match bodies.as_ref() {
-                Some(bodies) if !decoded => bodies.omitted(
+            // Every reader but the owner reads the body the typed Nulled rule
+            // releases (ruling EXPORTDOORS Q4 = A); the owner's is the stored
+            // body. A body decodes only while the answer's budget holds it
+            // (H27), charged at the length of the body its reader reads,
+            // which is the stored length for the owner, as the /v1 doors
+            // charge theirs. A withheld body takes no budget and leaves no
+            // marker, so its length never reaches a reader who may not read
+            // it (REVIEW2 #7571 P2-1).
+            let released = released_body_for(reads_stored, entity_type, &body)
+                .map_err(|error| engine_failure(METHOD, &error))?;
+            let decoded = released.as_deref().is_none_or(|released| {
+                bodies
+                    .as_mut()
+                    .is_none_or(|bodies| bodies.admits(released.len()))
+            });
+            items.push(match (bodies.as_ref(), released.as_deref()) {
+                (Some(bodies), Some(released)) if !decoded => bodies.omitted(
                     self.scoped_read.vault(),
                     OmittedRow {
                         id: result.id,
                         entity_type,
                         learned_at,
                         score: Some(result.score),
-                        body_bytes: body.len(),
+                        body_bytes: released.len(),
                         content_hash,
                     },
                 ),
-                _ => {
-                    // Every reader but the owner reads the body the typed
-                    // Nulled rule releases (ruling EXPORTDOORS Q4 = A).
-                    let released = released_body_for(reads_stored, entity_type, &body)
-                        .map_err(|error| engine_failure(METHOD, &error))?;
-                    entity_record_from_parts(
-                        &result.id,
-                        entity_type,
-                        learned_at,
-                        Some(result.score),
-                        released.as_deref(),
-                        view,
-                    )
-                }
+                (_, released) => entity_record_from_parts(
+                    &result.id,
+                    entity_type,
+                    learned_at,
+                    Some(result.score),
+                    released,
+                    view,
+                ),
             });
         }
         Ok(CoreQueryResponse {
@@ -557,11 +563,27 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             };
             return Ok((response, None));
         };
+        // This adapter serves MCP tools: a repo file reads masked (FIX 7608).
+        // Every reader but the owner reads the body the typed Nulled rule
+        // releases (ruling EXPORTDOORS Q4 = A); a withheld one leaves the
+        // item without a body. A served form is read from released rows.
+        let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
+            .map_err(|error| engine_failure(method, &error))?;
+        let reads_stored = self
+            .scoped_read
+            .reads_stored_bodies()
+            .map_err(|error| engine_failure(method, &error))?;
+        let released = released_body_for(reads_stored, entity_type, &body)
+            .map_err(|error| engine_failure(method, &error))?;
         // An item of a batch decodes its body only while the batch's budget
-        // holds it (H27).
-        let mut decoded = bodies
-            .as_deref_mut()
-            .is_none_or(|bodies| bodies.admits(body.len()));
+        // holds it (H27), charged at the length of the body its reader reads.
+        // A withheld body takes no budget and leaves no marker, so its length
+        // never reaches a reader who may not read it (REVIEW2 #7571 P2-1).
+        let mut decoded = released.as_deref().is_none_or(|released| {
+            bodies
+                .as_deref_mut()
+                .is_none_or(|bodies| bodies.admits(released.len()))
+        });
         // A generated image is served down its ladder for `reader` (OF-329).
         let mut served = None;
         if decoded && entity_type == ENTITY_TYPE_ASSET {
@@ -573,44 +595,28 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 crate::memory::HydratedAsset::Omitted { .. } => decoded = false,
             }
         }
-        let item = match bodies.as_deref() {
-            Some(bodies) if !decoded => bodies.omitted(
+        let item = match (bodies.as_deref(), released.as_deref()) {
+            (Some(bodies), Some(released)) if !decoded => bodies.omitted(
                 self.scoped_read.vault(),
                 OmittedRow {
                     id,
                     entity_type,
                     learned_at,
                     score: None,
-                    body_bytes: body.len(),
+                    body_bytes: released.len(),
                     content_hash: stored_hash,
                 },
             ),
-            _ => {
-                // This adapter serves MCP tools: a repo file reads masked
-                // (FIX 7608).
-                let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
-                    .map_err(|error| engine_failure(method, &error))?;
-                // Every reader but the owner reads the body the typed Nulled
-                // rule releases (ruling EXPORTDOORS Q4 = A); a withheld one
-                // leaves the item without a body. A served form is read from
-                // released rows.
-                let reads_stored = self
-                    .scoped_read
-                    .reads_stored_bodies()
-                    .map_err(|error| engine_failure(method, &error))?;
-                let released = released_body_for(reads_stored, entity_type, &body)
-                    .map_err(|error| engine_failure(method, &error))?;
-                entity_record_from_parts(
-                    &id,
-                    entity_type,
-                    learned_at,
-                    None,
-                    served
-                        .as_ref()
-                        .map_or(released.as_deref(), |(form, _)| Some(form.as_slice())),
-                    view,
-                )
-            }
+            (_, released) => entity_record_from_parts(
+                &id,
+                entity_type,
+                learned_at,
+                None,
+                served
+                    .as_ref()
+                    .map_or(released, |(form, _)| Some(form.as_slice())),
+                view,
+            ),
         };
         // A Standard item carries no body, so it serves no form.
         let served = served

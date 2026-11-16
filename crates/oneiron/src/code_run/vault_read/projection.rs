@@ -56,11 +56,13 @@ pub(super) fn entity_record_from_parts(
     }
 }
 
-/// The stored body bytes one multi-row read may still decode, its host's
+/// The body bytes one multi-row read may still decode, its host's
 /// `[limits].projection_body_bytes` (H27), as the `/v1` doors bound theirs.
-/// Each body is charged at its stored length before it decodes. A body the
-/// rest of the budget cannot hold is not decoded, and the budget keeps its
-/// credit.
+/// Each body is charged before it decodes, at the length of the body its
+/// reader reads: the stored body for the owner (a hydrated repo file
+/// masked, FIX 7608), the released body for every other reader; a withheld
+/// body is never charged. A body the rest of the budget cannot hold is not
+/// decoded, and the budget keeps its credit.
 #[derive(Debug)]
 pub(super) struct ProjectionBodyBudget {
     bound: usize,
@@ -134,7 +136,8 @@ pub(super) struct OmittedRow {
     pub(super) entity_type: u8,
     pub(super) learned_at: u64,
     pub(super) score: Option<f32>,
-    /// The stored length of the body left out.
+    /// The length of the body left out, as its reader reads it (see
+    /// [`ProjectionBodyBudget`]), never a withheld body's.
     pub(super) body_bytes: usize,
     /// The content-hash byte of the stored revision the row was read from.
     pub(super) content_hash: u8,
