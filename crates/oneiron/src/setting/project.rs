@@ -185,13 +185,21 @@ pub(super) fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec
 }
 
 /// The basis a row's projection records (stage 7b-2): the target's act `revision` while every
-/// act a reader of it meets counts in full here, as stage 7a-2 recorded it; otherwise a
-/// fingerprint of the revision and of each act's count, so a pass reads the row again when a
-/// head's count moves and its revision does not (a removal it raced arrives, a hold ends).
-fn basis_of(revision: [u8; 32], counts: &ChoiceCounts) -> [u8; 32] {
-    if counts
-        .values()
-        .all(|counted| counted.count == ChoiceCount::Full)
+/// act a reader of it meets counts in full here and its heads do not conflict, as stage 7a-2
+/// recorded it; otherwise a fingerprint of the revision, of each act's count and, where the
+/// heads conflict, of the act the register holds in force (`in_force`, the last act every head
+/// descends from, judged the same way: an act no count names), so a pass reads the row again
+/// when a head's count moves and its revision does not (a removal it raced arrives, a hold
+/// ends), and when the conflict's act loses its standing.
+fn basis_of(
+    revision: [u8; 32],
+    counts: &ChoiceCounts,
+    (conflict, in_force): (bool, Option<AuthorityEntryHash>),
+) -> [u8; 32] {
+    if !conflict
+        && counts
+            .values()
+            .all(|counted| counted.count == ChoiceCount::Full)
     {
         return revision;
     }
@@ -204,6 +212,9 @@ fn basis_of(revision: [u8; 32], counts: &ChoiceCounts) -> [u8; 32] {
             ChoiceCount::Safe { held: true } => 2,
         };
         basis.part(act).u64(count);
+    }
+    if conflict {
+        basis.u64(1).part(&in_force.unwrap_or([0; 32]));
     }
     basis.finish().into_bytes()
 }
@@ -650,7 +661,8 @@ pub(super) fn project_target_in_txn(
     let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
         return Ok(None);
     };
-    let basis = basis_of(fold.revision, &fold.counts);
+    let in_force = fold.in_force.as_ref().map(|head| head.act);
+    let basis = basis_of(fold.revision, &fold.counts, (fold.conflict, in_force));
     if PROJECTIONS
         .get(&vault.store, txn, &target_key(target))?
         .is_some_and(|projection| projection.basis == basis)
@@ -971,11 +983,12 @@ impl Vault {
                 return Ok(SettingsProjected::default());
             }
             let mut moved = Vec::new();
-            for (target, revision, counts) in self.policy_setting_revisions_in_txn(&txn)? {
-                let basis = basis_of(revision, &counts);
-                let projected = PROJECTIONS.get(&self.store, &txn, &target_key(target))?;
+            for target in self.policy_setting_revisions_in_txn(&txn)? {
+                let fallback = (target.conflict, target.in_force);
+                let basis = basis_of(target.revision, &target.counts, fallback);
+                let projected = PROJECTIONS.get(&self.store, &txn, &target_key(target.target))?;
                 if projected.is_none_or(|projection| projection.basis != basis) {
-                    moved.push(target);
+                    moved.push(target.target);
                 }
             }
             moved

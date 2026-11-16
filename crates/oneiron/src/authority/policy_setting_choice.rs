@@ -417,30 +417,30 @@ impl Vault {
     }
 
     /// Every setting target the fold names in `txn`, each with its
-    /// revision and what each act a reader of it meets counts for here: what
-    /// the setting projection compares with the basis it last projected
-    /// (stage 7a-2; the counts stage 7b-2).
+    /// revision, what each act a reader of it meets counts for here, and
+    /// where its heads conflict the act the register holds in force: what the
+    /// setting projection compares with the basis it last projected (stage
+    /// 7a-2; the counts and the conflict's act stage 7b-2).
     pub(crate) fn policy_setting_revisions_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, [u8; 32], ChoiceCounts)>> {
+    ) -> Result<Vec<SettingTargetBasis>> {
         let view = self.authority_view_readonly_in_txn(txn)?;
         Ok(view
             .policy_settings
             .targets
             .iter()
-            .map(|(target, folded)| {
-                let counts = view
+            .map(|(target, folded)| SettingTargetBasis {
+                target: *target,
+                revision: folded.revision(POLICY_SETTING_REVISION_CONTEXT),
+                counts: view
                     .policy_settings
                     .counts
                     .get(target)
                     .cloned()
-                    .unwrap_or_default();
-                (
-                    *target,
-                    folded.revision(POLICY_SETTING_REVISION_CONTEXT),
-                    counts,
-                )
+                    .unwrap_or_default(),
+                conflict: !folded.conflict.is_empty(),
+                in_force: folded.in_force.as_ref().map(|head| head.act),
             })
             .collect())
     }
@@ -618,6 +618,20 @@ pub(crate) struct SettingSlotFold {
     /// each live head, and each act one that does not count in full
     /// replaced, followed back.
     pub(crate) counts: ChoiceCounts,
+}
+
+/// One setting target as the projection pass compares it with the basis it
+/// last projected ([`Vault::policy_setting_revisions_in_txn`]).
+pub(crate) struct SettingTargetBasis {
+    pub(crate) target: EntityId,
+    /// Its revision.
+    pub(crate) revision: [u8; 32],
+    /// What each act a reader of it meets counts for here (stage 7b-2).
+    pub(crate) counts: ChoiceCounts,
+    /// Whether the acts that stand left different values.
+    pub(crate) conflict: bool,
+    /// The act the register holds in force; `None` when no act stands.
+    pub(crate) in_force: Option<AuthorityEntryHash>,
 }
 
 /// One setting act the projection reads: its hash, and its op when the
