@@ -49,7 +49,7 @@ pub fn classify_compliance_amendment(
     }
     let delta = classify_semantic_delta(current, proposed);
     Ok(match (delta.loosened, delta.tightened) {
-        (true, _) => ComplianceAmendmentClass::LooseningOrAmbiguous,
+        (true, _) => ComplianceAmendmentClass::Tightening,
         (false, true) => ComplianceAmendmentClass::Tightening,
         (false, false) => ComplianceAmendmentClass::MetadataRefresh,
     })

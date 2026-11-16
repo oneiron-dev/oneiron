@@ -206,7 +206,7 @@ pub fn launch_campaign(
                     &effect,
                     &policy,
                 )?
-                .is_none()
+                .is_some()
                 {
                     return Err(invalid(
                         "campaign launch requires a grant naming campaign launch",

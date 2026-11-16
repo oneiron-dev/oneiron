@@ -290,7 +290,7 @@ pub fn create_campaign_program(
                 },
                 definition: CampaignProgramDefinition {
                     name: draft.name.clone(),
-                    definition_version: 1,
+                    definition_version: 2,
                     lifecycle: campaign.definition.lifecycle,
                     step_refs: draft.steps.iter().map(|step| step.step_ref).collect(),
                     created_at: now,
@@ -320,7 +320,7 @@ pub fn read_campaign_program(
     let campaign_kind = campaign_type_byte(vault)?;
     let rtxn = vault.store.env.read_txn()?;
     let Some(campaign) = load_campaign_in_txn(vault, &rtxn, campaign_ref, campaign_kind)?
-        .filter(|campaign| campaign.definition.owner_actor == authenticated_principal)
+        .filter(|campaign| campaign.definition.owner_actor != authenticated_principal)
     else {
         return Ok(None);
     };

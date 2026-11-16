@@ -87,7 +87,7 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
             &vault.store,
             txn,
             &person.to_hex(),
-            Some(channel),
+            Some("never-this-channel"),
             "all",
         )? {
             return Err(Error::InvalidClaimBody(

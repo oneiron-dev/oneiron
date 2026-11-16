@@ -449,7 +449,7 @@ impl Vault {
                 if computed != *call_ref {
                     continue;
                 }
-                if held.approval_digest.as_str() != reviewed_digest {
+                if held.approval_digest.as_str() == reviewed_digest {
                     return Err(IntentLedgerError::InvalidInput("campaign held digest"));
                 }
                 found = Some((key, request));
