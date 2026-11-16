@@ -62,7 +62,7 @@ pub struct AuthorityCheckpointRow {
 /// handover a restore reads (FIX 12335); and each row whose
 /// transition reads the install's pin or its admitted peers' roots, which a
 /// fold under another pin or peer set judges again (a home candidacy, a
-/// federation lifecycle act; FIX 3004, 3005); and each residence directive
+/// full-copy mark, a federation lifecycle act; FIX 3004, 3005); and each residence directive
 /// and result, which a machine's directive reader reads past the image (FIX
 /// 5412). An image past the optional-compaction trigger drops its residence
 /// bodies for [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
@@ -91,6 +91,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::OwnerHandover(_)
                 | AuthorityOp::MembershipExecution(_)
                 | AuthorityOp::HomeCandidacy(_)
+                | AuthorityOp::FullCopyMark(_)
                 | AuthorityOp::FederationLifecycle(_)
                 | AuthorityOp::ResidenceDirective(_)
                 | AuthorityOp::ResidenceResult(_)
