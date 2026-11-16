@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use oneiron::booking::SessionKey;
 
-use crate::api::{BookingHttpDisposition, BookingTurn};
+use crate::api::{BookingHttpDisposition, BookingTurn, write_holding_line_place};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::server::SyncServer;
 
@@ -204,13 +204,13 @@ pub async fn hold_dropped_during_its_write(
 
 /// A hold's write as the executor runs it once admitted
 /// (`api::booking::lifecycle::run_booking_verb`): `write` on the blocking
-/// pool, awaited by the request, whose turn holds its place in the line.
+/// pool through the executor's own [`write_holding_line_place`], which holds
+/// the turn's place in the line until `write` returns.
 async fn hold_write(
-    turn: BookingTurn<'_>,
+    mut turn: BookingTurn<'_>,
     write: impl FnOnce() + Send + 'static,
 ) -> Result<(), String> {
-    let _turn = turn;
-    tokio::task::spawn_blocking(write)
+    write_holding_line_place(turn.take_place(), write)
         .await
-        .map_err(|_| "the hold's write stopped".to_owned())
+        .map_err(|error| error.message().to_owned())
 }

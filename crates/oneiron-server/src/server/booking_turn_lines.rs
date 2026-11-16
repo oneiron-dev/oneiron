@@ -9,7 +9,9 @@
 //! since FIX 128-131 it spends none of the per-minute windows, and its
 //! quarantine admission is never rate limited. A line is keyed by that page
 //! session ([`SessionKey`], bound to the page). Nothing here is persisted, and
-//! a line nobody is in is forgotten.
+//! a line nobody is in is forgotten. A place in a line owns its share of the
+//! lines, so a hold's write can keep it past its request (FIX
+//! BOOKING-CANCELLED-HOLD-DETACHED-WRITE).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -21,8 +23,11 @@ use tokio::time::Instant;
 /// Every booking window some authenticated request is in line for.
 #[derive(Default)]
 pub(crate) struct BookingTurnLines {
-    lines: Mutex<HashMap<SessionKey, Line>>,
+    lines: Lines,
 }
+
+/// The lines by window, shared with every membership of them.
+type Lines = Arc<Mutex<HashMap<SessionKey, Line>>>;
 
 /// One window's line: a semaphore of one permit, which tokio hands out in
 /// the order it was asked for, and how many requests are in the line,
@@ -36,19 +41,22 @@ struct Line {
 /// until it is dropped, by whichever way its request ends: answered, past
 /// its deadline, or cancelled while it waited (a client gone before the
 /// line reached it). The last member out forgets the line.
-struct LineMembership<'a> {
-    lines: &'a BookingTurnLines,
+struct LineMembership {
+    lines: Lines,
     window: SessionKey,
 }
 
 /// A request's place at the head of its window's line. It is held while the
 /// request runs admission, waits for the window and writes what it was
-/// admitted for; dropping it lets the next request in the line go on.
-pub(crate) struct LinePlace<'a> {
+/// admitted for; dropping it lets the next request in the line go on. A
+/// write that outlives its request (a client gone while a hold's write
+/// runs) holds the place until it returns, since that write still commits
+/// (FIX BOOKING-CANCELLED-HOLD-DETACHED-WRITE).
+pub(crate) struct LinePlace {
     // Fields drop in this order: the head passes to the next request in the
     // line before this request's membership leaves it.
     _head: OwnedSemaphorePermit,
-    _membership: LineMembership<'a>,
+    _membership: LineMembership,
 }
 
 impl BookingTurnLines {
@@ -56,11 +64,7 @@ impl BookingTurnLines {
     /// request ahead to be answered. `None` when the deadline came first: the
     /// request has left the line, holding nothing. A request dropped while
     /// it waits leaves the line too.
-    pub(crate) async fn join(
-        &self,
-        window: SessionKey,
-        deadline: Instant,
-    ) -> Option<LinePlace<'_>> {
+    pub(crate) async fn join(&self, window: SessionKey, deadline: Instant) -> Option<LinePlace> {
         let (membership, turn) = {
             let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
             let line = lines.entry(window).or_insert_with(|| Line {
@@ -70,7 +74,7 @@ impl BookingTurnLines {
             line.members = line.members.saturating_add(1);
             (
                 LineMembership {
-                    lines: self,
+                    lines: Arc::clone(&self.lines),
                     window,
                 },
                 Arc::clone(&line.turn),
@@ -97,13 +101,9 @@ impl BookingTurnLines {
     }
 }
 
-impl Drop for LineMembership<'_> {
+impl Drop for LineMembership {
     fn drop(&mut self) {
-        let mut lines = self
-            .lines
-            .lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(line) = lines.get_mut(&self.window) {
             line.members = line.members.saturating_sub(1);
             if line.members == 0 {
