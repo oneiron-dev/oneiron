@@ -127,7 +127,7 @@ async fn run_constraint_turn_in(
     let settings = parse_seat_settings(server)?;
 
     // ── the one admission call, in the listing class ────────────────────
-    let mut turn = turn::Turn::new(server, transport);
+    let mut turn = turn::Turn::new(server, transport.credential.is_some());
     let caller = transport.caller();
     let (now, disposition) = loop {
         let now = now_secs()?;
@@ -209,6 +209,7 @@ async fn run_constraint_turn_in(
                     let one_turn = ConstraintSessionCaps {
                         max_turns: 1,
                         max_model_calls: 1,
+                        max_offered_slots: caps.max_offered_slots,
                     };
                     let outcome = block_on(run_constraint_turn(
                         &oracle,

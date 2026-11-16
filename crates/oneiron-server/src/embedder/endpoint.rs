@@ -302,6 +302,9 @@ pub(crate) struct HttpEmbedder {
     /// Where the paid doors write their rows, kept so the pods' door, built
     /// when the pool binds later, writes to the same sink.
     receipts: OnceLock<Arc<dyn oneiron::llm::run_admission::RunReceiptSink>>,
+    /// The line the paid doors spend on, kept so the pods' door spends on
+    /// it too.
+    background: OnceLock<Arc<super::admitted::BackgroundLine>>,
 }
 
 /// The pool document batches lease a pod from (ARCH-0019 §5, the batch
@@ -414,6 +417,7 @@ impl HttpEmbedder {
             pod_paid: OnceLock::new(),
             pods: OnceLock::new(),
             receipts: OnceLock::new(),
+            background: OnceLock::new(),
         }))
     }
 
@@ -455,6 +459,7 @@ impl HttpEmbedder {
                 &pool_clone,
                 &self.model_key,
                 Arc::clone(receipts),
+                self.background.get().map_or_else(Arc::default, Arc::clone),
             ) {
                 tracing::warn!(
                     endpoint = %self.endpoint,
@@ -572,6 +577,14 @@ impl HttpEmbedder {
     ) {
         if self.receipts.set(receipts).is_err() {
             tracing::warn!(endpoint = %self.endpoint, "a remote embedder's receipts are kept once");
+        }
+    }
+
+    /// Keeps `background`, the line the paid doors spend on: the pods' door
+    /// is built when the pool binds later, and spends on it too. Kept once.
+    pub(crate) fn keep_background_line(&self, background: Arc<super::admitted::BackgroundLine>) {
+        if self.background.set(background).is_err() {
+            tracing::warn!(endpoint = %self.endpoint, "a remote embedder's background line is kept once");
         }
     }
 
@@ -1223,6 +1236,7 @@ pub(crate) fn resolve_transform_with_broker(
         &embedder,
         config,
         Arc::new(crate::models::ServerReceipts::default()),
+        &Arc::default(),
     )?;
     let served = embedder.served()?;
     let transform = served.transform.clone();
