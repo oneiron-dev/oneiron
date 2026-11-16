@@ -499,7 +499,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/routine.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const | RoutineOutcome, RoutineTrail | Moved from `crates/oneiron/src/llm/decision/routine.rs` (lib split R2: record types below the lib) |
 | `src/llm/defaults/mod.rs` | src | s | 1 mod · 2 re-export | — | — |
 | `src/llm/defaults/submit.rs` | src | s | 1 struct · 1 enum | PurposeDefaultProposal, PurposeDefaultProposalStatus | Moved from `crates/oneiron/src/llm/defaults/submit.rs` (lib split R2: record types below the lib) |
-| `src/llm/manifest/doors.rs` | src | s | 1 struct · 8 re-export | OneironerBundleReceipt | Moved from `crates/oneiron/src/llm/manifest/doors.rs` (lib split R2: record types below the lib) |
+| `src/llm/manifest/doors.rs` | src | s | 1 struct · 7 re-export | OneironerBundleReceipt | Moved from `crates/oneiron/src/llm/manifest/doors.rs` (lib split R2: record types below the lib) |
 | `src/llm/manifest/encoder_export.rs` | src | s | 2 struct · 6 fn | CheckpointPin, SharedBaseFork | Moved from `crates/oneiron/src/llm/manifest/encoder_export.rs` (lib split R2: record types below the lib) |
 | `src/llm/manifest/mod.rs` | src | s | 2 mod · 14 re-export | — | — |
 | `src/llm/mod.rs` | src | s | 11 mod · 268 re-export · 1 crate-vis | — | — |
