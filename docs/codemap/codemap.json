@@ -2653,6 +2653,7 @@
      "path": "src/artifact_hosting/backend_principal.rs",
      "purpose": "A published app's own pairing identity, without engine-action grants",
      "surface": {
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -2700,7 +2701,7 @@
      "path": "src/artifact_hosting/mod.rs",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 9,
       "mod": 1,
       "re-export": 6
@@ -5460,6 +5461,7 @@
      "path": "src/authority/owner_key_enrollment_door.rs",
      "purpose": "The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x…",
      "surface": {
+      "crate-vis": 3,
       "fn": 6,
       "struct": 3
      }
@@ -5737,7 +5739,7 @@
      "path": "src/authority/retired_signers.rs",
      "purpose": "A handoff retires its predecessor for good (engine-crates-03)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -5865,9 +5867,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/slip_pairing/principal.rs",
-     "purpose": "What a pairing link's principal may name: its facets and an organization's administration powers",
+     "purpose": "What a pairing link's principal may name: its facets, an organization's administration powers and an app…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -5970,7 +5972,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 22,
       "re-export": 3
      }
@@ -12755,7 +12757,7 @@
      "path": "src/calendar/prep/mod.rs",
      "purpose": "CAL-06 prep pack: the render-time context pack a meeting earns at T-45",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
@@ -12773,6 +12775,16 @@
       "fn": 1,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/prep/setting_keys.rs",
+     "purpose": "The calendar's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B): when and for which meetings a prep…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -30436,7 +30448,7 @@
      "path": "src/dreamer_consolidation/redirty.rs",
      "purpose": "The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 23
      }
     },
     {
@@ -31544,7 +31556,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationWatermark",
@@ -31553,7 +31565,7 @@
      "path": "src/dreamer_consolidation/watermark.rs",
      "purpose": "Dirty-TURN progress: the consolidation watermark and its working set",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 4,
       "re-export": 1,
       "struct": 2
@@ -39773,7 +39785,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "re-export": 2
      }
     },
@@ -90413,6 +90425,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/install_key_revocation.rs",
+     "purpose": "Doors for `tests/owner_enrol.rs` Part 3 (REVIEW-7987): a host-root revocation of this install's own key…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -90603,7 +90625,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 138,
+      "mod": 140,
       "re-export": 1
      }
     },
@@ -91097,6 +91119,16 @@
      "purpose": "Turn programs between a vault's machines (FIX 5266, untangle 6.9a): plant an arming and the wake a landed…",
      "surface": {
       "fn": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/turn_words.rs",
+     "purpose": "Doors for `tests/turn_words_edge_rewire.rs`: whether a TURN holds a re-dirty carrier pending for every…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -91950,7 +91982,7 @@
      "path": "src/vault/actors_memory.rs",
      "purpose": "Vault actor binding, structural kinds and code-memory attachment",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 26,
       "struct": 1
      }
@@ -99081,6 +99113,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/artifact_backend_grant.rs",
+     "purpose": "A published app's backend holds verbs only under Grant rows the owner mints as their own act, default none…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101934,6 +101974,14 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_enrol.rs",
+     "purpose": "OWNER-ENROL (Engine TASK 14 Nov 16:10), part 1: a member whose Owner standing ends keeps no owner key and no…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_export_keeps_credentials.rs",
      "purpose": "Public-path pins for the Owner's whole-vault archive credential promises (ARCH-0038 #promise-cons-06, owner…",
      "surface": {}
@@ -101992,6 +102040,22 @@
      "notable": [],
      "path": "tests/pack_keys_booking.rs",
      "purpose": "PACK-SETTINGS-ALL W1: each of four owner choices defaults to today's behaviour, and an owner value changes it",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_calendar.rs",
+     "purpose": "The calendar's two pack Setting keys move the prep lead and the check-in re-ask hour",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_calendar_prep.rs",
+     "purpose": "The calendar's prep ceiling, external-only rule and check-in windows follow their pack Setting keys",
      "surface": {}
     },
     {
@@ -103455,6 +103519,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_words_edge_rewire.rs",
+     "purpose": "L2-08 (ARCH-0026 #sieve-open): words a TURN's edges, a deleted MESSAGE or a document edit change reach the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -103877,7 +103949,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105242,7 +105314,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 141,
+     "files": 143,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105417,10 +105489,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 268,
+   "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7657,
-   "test_files": 1407
+   "source_files": 7660,
+   "test_files": 1412
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -110047,7 +110119,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SendPolicy"
@@ -110055,8 +110127,18 @@
      "path": "src/send.rs",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/send/reply_forms.rs",
+     "purpose": "The two forms a reached reply goes back in: one segment, read whole and stripped, or a stream, relayed as it…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -110303,10 +110385,10 @@
      "purpose": "—"
     },
     "send": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…"
     },
     "serve": {
@@ -110338,9 +110420,9 @@
      "purpose": "A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture"
     }
    },
-   "over_bar": 2,
+   "over_bar": 1,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 9
   },
   "oneiron-browser": {
@@ -115080,65 +115162,89 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AssetMedia",
       "AssetOrigin",
-      "Call",
-      "ContractError",
-      "CreatedSlide",
       "DeckAsset",
       "DeckCreateArgs",
-      "DeckCreated",
       "DeckNames",
-      "DeckPlaceholder",
-      "DeckRead",
       "DeckReadArgs",
-      "DeckShape",
-      "DeckSlide",
       "DeckTransactionArgs",
-      "Description",
       "DocumentLocationArgs",
       "DocxLimits",
       "DocxProjectArgs",
       "DocxReadArgs",
       "DocxReviseArgs",
       "DocxValidateArgs",
+      "GraphicSettings",
+      "KeptBriefArgs",
+      "PackageLimits",
+      "PptxCommentsArgs",
+      "PptxCommentsInspectArgs",
+      "RecalcClockArgs",
+      "SlideCreationId",
+      "XlsxProjectArgs",
+      "XlsxReadArgs",
+      "XlsxRecalcArgs"
+     ],
+     "path": "src/contract/args.rs",
+     "purpose": "The args of the op table's calls: the ceilings a caller supplies, each op's typed args, and the types their…",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract/description.rs",
+     "purpose": "What `contract.describe` answers from: the op table's discovery rows, the JSON schemas of a call and a…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Call",
+      "ContractError",
+      "CreatedSlide",
+      "DeckCreated",
+      "DeckPlaceholder",
+      "DeckRead",
+      "DeckShape",
+      "DeckSlide",
+      "Description",
       "Done",
       "Editability",
       "ErrorCode",
-      "GraphicSettings",
       "InputInfo",
-      "KeptBriefArgs",
       "Op",
       "OpInfo",
       "Output",
       "OutputInfo",
       "OutputSpec",
-      "PackageLimits",
       "Ports",
-      "PptxCommentsArgs",
-      "PptxCommentsInspectArgs",
-      "RecalcClockArgs",
       "RecalcPort",
       "Recalculated",
       "Reply",
       "ShapeKind",
-      "SlideCreationId",
       "ThreadAnchor",
-      "UnverifiedUnit",
-      "XlsxProjectArgs",
-      "XlsxReadArgs",
-      "XlsxRecalcArgs"
+      "UnverifiedUnit"
      ],
      "path": "src/contract/mod.rs",
      "purpose": "The document engine's contract (ARCH-0075 section 2, \"an organ crate with a hosted API\"): one versioned…",
      "surface": {
       "const": 6,
-      "enum": 7,
-      "fn": 14,
-      "struct": 40,
+      "enum": 5,
+      "fn": 8,
+      "re-export": 2,
+      "struct": 19,
       "trait": 1
      }
     },
@@ -117752,9 +117858,9 @@
      "purpose": "One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full…"
     },
     "contract": {
-     "files": 2,
+     "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The document engine's contract (ARCH-0075 section 2, \"an organ crate with a hosted API\"): one versioned…"
     },
@@ -117913,9 +118019,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 2,
+   "over_bar": 1,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 194,
+   "source_files": 196,
    "test_files": 17
   },
   "oneiron-dreamer": {
@@ -120876,18 +120982,22 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "GeminiEventStream"
+     ],
      "path": "src/gemini/stream.rs",
      "purpose": "Gemini typed stream decoding",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -121304,8 +121414,7 @@
      "path": "src/openai_compat/stream.rs",
      "purpose": "OpenAI chunk decoding with correlated text, reasoning, and tool fragments",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -156604,7 +156713,7 @@
      "path": "src/models/anthropic.rs",
      "purpose": "The Anthropic-compatible transport: any `/v1/messages` server",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -156690,6 +156799,16 @@
      "notable": [],
      "path": "src/models/broker_responses.rs",
      "purpose": "OpenAI Responses through the credential broker, one upgraded socket per call",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_stream.rs",
+     "purpose": "A brokered streamed reply read as the HTTP transport reads its own (`http.rs` `next_sse`), so the OpenAI and…",
      "surface": {
       "crate-vis": 2
      }
@@ -156939,7 +157058,7 @@
      "path": "src/models/gemini_chat.rs",
      "purpose": "The Gemini API's chat transport (FIX 1816): a `gemini` provider's chat rungs send `generateContent` and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -157564,7 +157683,7 @@
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -161939,6 +162058,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/broker_stream_key_secret.rs",
+     "purpose": "L6-29: a `key_secret` provider's chat streams through the credential broker, on the runtime's same-user…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -163397,7 +163524,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 153,
+     "files": 154,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -163574,8 +163701,8 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1900,
-   "test_files": 292
+   "source_files": 1901,
+   "test_files": 293
   },
   "oneiron-setting-contract": {
    "files": [
@@ -167183,7 +167310,7 @@
      "surface": {
       "const": 11,
       "enum": 1,
-      "fn": 6,
+      "fn": 5,
       "struct": 4
      }
     },
@@ -167222,9 +167349,9 @@
      "path": "src/gate_reason.rs",
      "purpose": "Gate outcomes, stable reason codes, and pure metric classification",
      "surface": {
-      "const": 3,
+      "const": 2,
       "enum": 4,
-      "fn": 11
+      "fn": 9
      }
     },
     {
@@ -173168,6 +173295,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/gate_engine_part_names.rs",
+     "purpose": "`GateEnginePart`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/gate_receipt_outcome_tokens.rs",
      "purpose": "UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2)",
      "surface": {}
@@ -174850,7 +174985,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 20
+   "test_files": 21
   },
   "oneiron-testkit": {
    "files": [
