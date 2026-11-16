@@ -1,7 +1,7 @@
 //! The catalogue keys the Setting primitive's tests set (DESIGN 15-setting-primitive, stage 0.1).
 //! They exist only under `--cfg oneiron_test_support`; no engine code reads them.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
 
 use crate::check_in::ActClass;
 use crate::entity_id::EntityId;
@@ -58,14 +58,17 @@ fn window_no_wider(a: &u64, b: &u64) -> bool {
     a <= b
 }
 
-/// How many changes `test.hooked` has seen.
-static HOOKED_CHANGES: AtomicU64 = AtomicU64::new(0);
-
-/// How many times `test.after_commit`'s after-commit hook has run.
-static AFTER_COMMITS: AtomicU64 = AtomicU64::new(0);
-
-/// The value of `test.after_commit` a fresh read saw when its hook last ran.
-static AFTER_COMMIT_SEEN: AtomicU64 = AtomicU64::new(u64::MAX);
+// The hooks count per thread: a change's hook runs inside its write, and an after-commit hook
+// right after it, both on the thread that writes. A test reads the counts of its own writes and
+// never another test's.
+thread_local! {
+    /// How many changes `test.hooked` has seen on this thread.
+    static HOOKED_CHANGES: Cell<u64> = const { Cell::new(0) };
+    /// How many times `test.after_commit`'s after-commit hook has run on this thread.
+    static AFTER_COMMITS: Cell<u64> = const { Cell::new(0) };
+    /// The value of `test.after_commit` a fresh read saw when its hook last ran on this thread.
+    static AFTER_COMMIT_SEEN: Cell<u64> = const { Cell::new(u64::MAX) };
+}
 
 fn seven() -> u64 {
     7
@@ -104,8 +107,8 @@ fn no_ids() -> Vec<String> {
 }
 
 /// `test.mentioned_ids`'s erase: the list without the erased entity's 32 hex, when it names it.
-#[allow(clippy::ptr_arg)] // the hook's type is `fn(&T, EntityId)` with `T = Vec<String>`
-fn drop_mention(ids: &Vec<String>, erased: EntityId) -> Option<Vec<String>> {
+/// The key's hook takes `&Vec<String>`; a closure passes the list here as a slice.
+fn drop_mention(ids: &[String], erased: EntityId) -> Option<Vec<String>> {
     let hex = erased.to_hex();
     ids.contains(&hex)
         .then(|| ids.iter().filter(|id| **id != hex).cloned().collect())
@@ -120,14 +123,14 @@ fn count_change(
     _txn: &mut heed::RwTxn<'_>,
     _change: &SettingChange,
 ) -> Result<()> {
-    HOOKED_CHANGES.fetch_add(1, Ordering::SeqCst);
+    HOOKED_CHANGES.set(HOOKED_CHANGES.get() + 1);
     Ok(())
 }
 
-/// How many changes `test.hooked`'s hook has run for.
+/// How many changes `test.hooked`'s hook has run for on this thread.
 #[must_use]
 pub fn hooked_changes() -> u64 {
-    HOOKED_CHANGES.load(Ordering::SeqCst)
+    HOOKED_CHANGES.get()
 }
 
 /// `test.after_commit`'s after-commit hook: it reads the key in a read of its own, which sees
@@ -140,20 +143,20 @@ fn note_after_commit(vault: &crate::Vault) {
         .ok()
         .and_then(|txn| TEST_AFTER_COMMIT.read_in_txn(vault, &txn, &[], None).ok())
         .map_or(u64::MAX, |resolved| resolved.value);
-    AFTER_COMMIT_SEEN.store(seen, Ordering::SeqCst);
-    AFTER_COMMITS.fetch_add(1, Ordering::SeqCst);
+    AFTER_COMMIT_SEEN.set(seen);
+    AFTER_COMMITS.set(AFTER_COMMITS.get() + 1);
 }
 
-/// How many times `test.after_commit`'s after-commit hook has run.
+/// How many times `test.after_commit`'s after-commit hook has run on this thread.
 #[must_use]
 pub fn after_commits() -> u64 {
-    AFTER_COMMITS.load(Ordering::SeqCst)
+    AFTER_COMMITS.get()
 }
 
-/// The value of `test.after_commit` its hook's own read saw on its last run.
+/// The value of `test.after_commit` its hook's own read saw on its last run on this thread.
 #[must_use]
 pub fn after_commit_seen() -> u64 {
-    AFTER_COMMIT_SEEN.load(Ordering::SeqCst)
+    AFTER_COMMIT_SEEN.get()
 }
 
 crate::setting::setting_keys! {
@@ -219,7 +222,8 @@ crate::setting::setting_keys! {
     };
     /// A list of entities, 32 hex each: an erase takes the erased one out of the value.
     pub TEST_MENTIONED_IDS: Vec<String> = "test.mentioned_ids" {
-        kind: Kind::new(no_ids).erase_mentions(drop_mention),
+        kind: Kind::new(no_ids)
+            .erase_mentions(|ids: &Vec<String>, erased: EntityId| drop_mention(ids, erased)),
     };
     /// A learned rate in [0, 1]: a fit learns it under its seeds, at the goal, project, task
     /// type and vault scopes.
