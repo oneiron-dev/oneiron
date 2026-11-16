@@ -1150,9 +1150,7 @@ fn git_smart_http_large_push_streams_without_buffering() {
 fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() {
     use oneiron::memory::origin_doors::OriginPublicationsRequest;
     use oneiron::origin::lfs::LfsOid;
-    use oneiron::setting::{
-        SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
-    };
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
 
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
@@ -1190,15 +1188,9 @@ fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() 
         .set_setting(
             SettingCaller::Owner(&proof),
             SetSetting {
-                key: "origin.lfs_path_rules".to_owned(),
-                item: None,
                 scope: SettingScope::Repo(repo_id),
-                mode: SettingMode::Value,
-                value: Some(rules),
                 expected_revision: Some(0),
-                why: None,
-                check_in_ref: None,
-                weight_runs: None,
+                ..SetSetting::vault_value("origin.lfs_path_rules", rules)
             },
         )
         .expect("the owner sets the origin's LFS path rules");
