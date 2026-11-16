@@ -24,7 +24,7 @@ use std::sync::Arc;
 use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_TURN;
-use oneiron::test_doors::task_ask_reader::task_answer_unit_admitted;
+use oneiron::test_doors::graph_ask_centre::task_answer_unit_admitted;
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
