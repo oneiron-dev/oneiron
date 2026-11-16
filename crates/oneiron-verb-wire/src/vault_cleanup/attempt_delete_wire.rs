@@ -5,6 +5,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::check_in::CheckInDecision;
+
 /// One explicitly selected completed-attempt archive. These fields grant no authority.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -45,4 +47,8 @@ pub struct AttemptArchiveDeleteReceiptView {
     pub receipt_ref: String,
     pub role: String,
     pub grant_ref: Option<String>,
+    /// The confirm's check-in decision: the Owner's `own_proof`, an Admin's
+    /// `never_ask`, a Deputy's `sure`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
