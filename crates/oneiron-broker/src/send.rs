@@ -182,6 +182,16 @@ impl Sender {
         }
         let headers = reply_headers(response.headers(), secret);
         let body = strip(secret, &raw);
+        if call.shape.answers_file_content() && body.as_slice() != raw.as_slice() {
+            // A file's content goes whole or not at all: a marker in place
+            // of its bytes would pass as the file.
+            return (
+                Outcome::Failed {
+                    reason: Failure::ReplyHoldsKey,
+                },
+                empty,
+            );
+        }
         let status = response.status().as_u16();
         (Outcome::Answered { status, headers }, body)
     }

@@ -171,6 +171,45 @@ the same. The row asks whether everything is okay, and the report names it in
 `serve`'s queue lands queued sessions in passes of about that much; a session
 past it lands alone, and its rows ask in `serve`'s log.
 
+## Export zips: the archive pre-check
+
+Before anything of an export zip is read, one pass reads the zip's own entry
+list, the same way every time:
+
+- An entry whose path would leave the export's folder (`../x`, `/etc/x`), a
+  symbolic link, and a device file, FIFO or socket are skipped, never read,
+  and listed in `warnings` (`"warning": "archive_entry_skipped"`, its `name`
+  and `reason`: `escaping_path`, `symbolic_link` or `special_file`). The
+  rest of the zip imports.
+- The import is refused, and nothing lands, when two entries share their
+  bytes (overlapping entries), when two entries have one name, when the zip
+  declares more entries than `[import] archive_max_entries` (262,144 unless
+  set), or when `conversations.json` does not start as JSON.
+- The bytes it unzips are counted as they come, whatever the zip's headers
+  say. With `[import] storage_cap_bytes` set, the import reads at most the
+  cap less what the vault's folder already holds, and stops there. Unset (the
+  default), a local vault has no cap; Oneiron Cloud sets it for each plan.
+
+```toml
+[import]
+archive_max_entries = 262144      # raise it for a zip with more entries
+# storage_cap_bytes = 10737418240 # the vault's storage cap, in bytes
+```
+
+A Google Takeout `.zip` imported into a mailbox (`vault.mail.sources.import_mbox`)
+passes the same check, with each mbox file's first bytes checked as an mbox. Its
+entry cap is the call's own `archive_max_entries` input (262,144 when absent),
+which the refusal names; its report lists the skipped entries in
+`skipped_entries`.
+
+A hosted import (`oneiron import <chatgpt|claude> <zip> --hosted`, or an
+upload to the vault's own hostname) passes it when its job decodes the
+export. The job's progress (`vault.imports.get`) lists the skipped entries in
+its `parse` phase, `skipped_entries` (the zip's first 100, with their
+`reason`) and `skipped_entry_count` (all of them); both are absent when none
+was skipped. A refused zip ends the job `failed`, with the refusal in
+`failure`, and nothing lands.
+
 ## The report
 
 stdout is one JSON document of counts: per conversation (its source id, kind,

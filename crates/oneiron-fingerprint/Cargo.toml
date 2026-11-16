@@ -1,0 +1,40 @@
+[package]
+name = "oneiron-fingerprint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "One fingerprint rule for engine digests: purposes from one registry, one framing rule, one canonical record form"
+publish = false
+
+# A leaf crate on purpose: its only engine dependency is the dependency-free
+# oneiron-hex, so the broker and the vault contract can reach it without an
+# `oneiron` edge (fable pass 22, DESIGN section 1.8).
+
+[dependencies]
+blake3 = { workspace = true }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
+# The K door only: a stored digest that keeps its SHA-256 bytes until stage 9 (PLAN-UC-04).
+sha2 = "0.10"
+# The canonical record form (DESIGN section 1.5). The broker turns `record` off.
+rmp = { version = "0.8", optional = true }
+rmp-serde = { workspace = true, optional = true }
+rmpv = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+# `preserve_order` (workspace): a JSON map keeps insertion order, so one map in two orders is testable.
+serde_json = { workspace = true }
+
+[features]
+default = ["record"]
+record = ["dep:rmp", "dep:rmp-serde", "dep:rmpv", "dep:serde"]
+
+[[test]]
+name = "fingerprint_rules"
+required-features = ["record"]
+
+[lints]
+workspace = true
