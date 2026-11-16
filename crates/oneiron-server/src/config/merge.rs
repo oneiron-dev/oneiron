@@ -377,6 +377,7 @@ struct FileServeConfig {
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
+    phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -453,6 +454,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             channel_endpoints: value.channel_endpoints,
             apns: value.apns,
             linear: value.linear,
+            phonetic_embedder: value.phonetic_embedder,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -552,6 +554,8 @@ struct PartialServeConfig {
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
+    /// `[phonetic_embedder]` is file-only, as `[line]` is.
+    phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -651,6 +655,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
+            .field("phonetic_embedder", &self.phonetic_embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -760,6 +765,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             channel_endpoints: None,
             apns: None,
             linear: None,
+            phonetic_embedder: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
