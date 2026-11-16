@@ -432,7 +432,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 12 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | m | 198 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 199 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | s | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
@@ -472,7 +472,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/model_manifest_doors.rs` | src | m | 7 crate-vis | — | Typed owner doors over the existing manifest, route and provider seams |
 | `src/api/facade/model_pack_doors.rs` | src | s | 3 crate-vis | — | Typed owner doors over the vault's model pack setting (FIX 5367) and the pack change revert (FIX 5369) |
 | `src/api/facade/model_setting_doors.rs` | src | s | 2 crate-vis | — | Field-specific owner doors for the host's Responses store setting |
-| `src/api/facade/model_step_doors.rs` | src | m | 3 crate-vis | — | Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the… |
+| `src/api/facade/model_step_doors.rs` | src | m | 4 crate-vis | — | Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the… |
 | `src/api/facade/model_stream_doors.rs` | src | m | 8 crate-vis | — | Owner-proof shared model streams: subscriptions can attach before one admitted producer opens |
 | `src/api/facade/non_base_world_claim_fraction_doors.rs` | src | s | 2 crate-vis | — | Typed doors over the owner's non-base world claim fraction (ARCH-0004 #world-scope; FIX… |
 | `src/api/facade/note_doors.rs` | src | s | 5 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
@@ -522,6 +522,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/secret_lift_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067) |
 | `src/api/facade/secret_use_doors.rs` | src | s | 2 crate-vis | — | The host door of `self.use` (OF-560) |
 | `src/api/facade/self_actor_doors.rs` | src | s | 1 crate-vis | — | `self.actor` (FIX 1047): the actor the caller's credential binds, as the facade binds every write of his… |
+| `src/api/facade/setting_catalogue_doors.rs` | src | s | 3 crate-vis | — | The host doors of the Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1)… |
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 5 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 21 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
@@ -2101,6 +2102,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/house_finish_role.rs` | test | s | — | — | The role a workspace's house runs its org in when the owner finishes the workspace… |
 | `tests/image_organ_route.rs` | test | m | — | — | `vault.artifacts.image.edit` through the real facade router (L4-15; the Engine's rulings of 13 Nov 09:34 and… |
 | `tests/inference_defaults.rs` | test | s | — | — | Owner-grade HTTP edit/read proof for resident inference policy rows |
+| `tests/inference_door_refusal.rs` | test | s | — | — | Both inference doors name the vault policy's typed refusal (STEP-DOOR-REFUSAL-REASON): `ai.steps.submit` and… |
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |
 | `tests/inquiry_federation.rs` | test | L | — | — | INQUIRE-1 PR 5 (federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2, Q4, Q7 = A): the inquiry verbs and… |
 | `tests/it/agent_credentials.rs` | test | s | — | — | A local agent's identity and read credential, from the shipped CLI |
@@ -2181,6 +2183,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_courtesy_delete_doors.rs` | test | m | — | — | Public-door promise tests for the `vault.courtesy_delete` family (ruling L4-23 = A: each test proves a… |
 | `tests/vault_export_doors.rs` | test | L | — | — | Public-door promise tests for the scoped and kept `vault.export` family (ruling L4-23 = A: each test proves… |
 | `tests/vault_members_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the… |
+| `tests/vault_notes_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.notes` family (the server serves all 27 verbs; editor.bind/close… |
 | `tests/vault_seal_doors.rs` | test | L | — | — | Owner-door promise tests for the `vault.seal` family (ARCH-0079 P1/P2/P3) |
 | `tests/vault_secrets_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.secrets` family (ruling L4-23 = A: each test proves a promise at… |
 | `tests/vault_shared_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.shared` family (ARCH-0043 = A: each test proves a promise at the… |
