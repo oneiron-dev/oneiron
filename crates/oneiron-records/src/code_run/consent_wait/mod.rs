@@ -147,6 +147,10 @@ pub fn source(name: &str, tool: &str) -> String {
 fn wire_session_manifest(
     manifest: oneiron_container::SessionManifest,
 ) -> oneiron_browser::SessionManifest {
+    // Every field the browser answer's shape has is named; the rest stay
+    // out. A guest's pressure (`guest_pressure`, FIX 8013) is a code guest's
+    // evidence: a stdio or seat runner has none, and that shape does not
+    // carry it.
     let oneiron_container::SessionManifest {
         backend,
         runtime,
@@ -158,6 +162,7 @@ fn wire_session_manifest(
         fence_proof,
         fence_unproven,
         image_release,
+        ..
     } = manifest;
     oneiron_browser::SessionManifest {
         backend,

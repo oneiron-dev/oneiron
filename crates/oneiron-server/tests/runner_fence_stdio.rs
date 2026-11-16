@@ -4,8 +4,9 @@
 //! a few of this process's variables, is restarted after it exits with a
 //! new session manifest, and is not sent anything when it never answers
 //! `initialize`; a call whose child reads no more ends when the server
-//! stops; its endpoint names its settings, and a credential is never put in
-//! its environment.
+//! stops; a process the child started stops with the child, even once the
+//! child itself has exited; its endpoint names its settings, and a
+//! credential is never put in its environment.
 //!
 //! The child is a Python stand-in, written to a temp directory beside the
 //! vault. Run the tests with `--test-threads=1`: the process environment
@@ -40,9 +41,12 @@ const LEAK: &str = "ONEIRON_STDIO_TEST_LEAK";
 /// for `tools/call probe` says for each path whether it could read it,
 /// whether it could make a temp file, the variables it got, and how its
 /// own `roots/list` request was answered; `tools/call exit` exits unanswered.
+/// `tools/call helper` starts a helper process that keeps the stand-in's
+/// standard streams open, answers with the helper's pid as its one line, and
+/// with the argument `exit` set exits once it has answered.
 /// With `PROBE_DEAF=<path>` it makes that file once initialized and reads
 /// nothing more.
-const STAND_IN: &str = r#"import json, os, sys, tempfile, time
+const STAND_IN: &str = r#"import json, os, subprocess, sys, tempfile, time
 
 def send(message):
     sys.stdout.write(json.dumps(message) + "\n")
@@ -98,6 +102,14 @@ while True:
     elif method == "tools/call":
         if message["params"]["name"] == "exit":
             os._exit(3)
+        if message["params"]["name"] == "helper":
+            helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            send({"jsonrpc": "2.0", "id": message["id"], "result": {
+                "content": [{"type": "text", "text": "helper started"}],
+                "structuredContent": {"lines": [str(helper.pid)], "pid": os.getpid()}}})
+            if message["params"].get("arguments", {}).get("exit"):
+                os._exit(0)
+            continue
         send({"jsonrpc": "2.0", "method": "notifications/message",
               "params": {"level": "info", "data": "probing"}})
         lines = probe(message["params"].get("arguments", {}))
@@ -548,4 +560,85 @@ fn a_stdio_connectors_endpoint_names_its_settings_and_its_env_holds_no_credentia
         "https://mcp.example.com/mcp"
     );
     assert_eq!(http.http_endpoint(), Some("https://mcp.example.com/mcp"));
+}
+
+/// Whether process `pid` runs: it has a `/proc` entry and is not a zombie
+/// whose parent has yet to reap it.
+#[cfg(target_os = "linux")]
+fn runs(pid: u64) -> bool {
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    // The state follows the command name, which is in parentheses.
+    stat.rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .is_some_and(|state| state != "Z" && state != "X")
+}
+
+/// Whether process `pid` stops running within `bound`.
+#[cfg(target_os = "linux")]
+fn stops_within(pid: u64, bound: Duration) -> bool {
+    let waited = Instant::now();
+    while runs(pid) {
+        if waited.elapsed() > bound {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    true
+}
+
+/// The helper pid a `tools/call helper` answer names, and the pid of the
+/// child that answered.
+#[cfg(target_os = "linux")]
+fn helper_of(said: Option<(Vec<String>, u64)>) -> (u64, u64) {
+    let (lines, child) = said.expect("the child answered");
+    let helper = lines
+        .first()
+        .and_then(|line| line.parse().ok())
+        .expect("the helper's pid");
+    (helper, child)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_process_a_stdio_child_started_stops_with_the_child_even_once_the_child_has_exited() {
+    let layout = layout();
+    let fence = HostRunnerFence::for_vault(&layout.vault).expect("runner fence");
+    let registry = ConnectorStdioRegistry::default();
+    let connector = section(&layout, "");
+    // The first child starts a helper that holds its output, answers, and
+    // exits.
+    let (first, _) = call(
+        &registry,
+        &connector,
+        &fence,
+        "helper",
+        json!({ "exit": true }),
+    );
+    let (first_helper, first_child) = helper_of(first);
+    assert!(
+        stops_within(first_child, Duration::from_secs(10)),
+        "the first child exits once it has answered"
+    );
+    assert!(
+        runs(first_helper),
+        "its helper runs on after it (is python3 on PATH?)"
+    );
+    // The next call finds that child gone and starts another; the old
+    // child's group goes as it is dropped.
+    let (second, _) = call(&registry, &connector, &fence, "helper", json!({}));
+    let (second_helper, second_child) = helper_of(second);
+    assert_ne!(second_child, first_child, "a new child serves the call");
+    assert!(
+        stops_within(first_helper, Duration::from_secs(10)),
+        "the helper of a child that exited is stopped once that child is dropped: pid {first_helper}"
+    );
+    assert!(runs(second_helper), "the running child's helper runs");
+    registry.stop();
+    assert!(
+        stops_within(second_helper, Duration::from_secs(10)),
+        "the helper of a running child is stopped with the registry: pid {second_helper}"
+    );
+    assert!(!runs(second_child), "the child itself is stopped");
 }
