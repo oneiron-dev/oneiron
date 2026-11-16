@@ -10197,8 +10197,6 @@ dependencies = [
 [[package]]
 name = "pkix-path-builder"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16a5a90f17f74b968ff011c3c9b51a8b5692467abc7552d35c4311592f76ffec"
 dependencies = [
  "der 0.7.10",
  "pkix-path",

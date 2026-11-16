@@ -151,3 +151,37 @@
     lenient/strict outcomes. Callers retain admission until the content drops.
     The esign preflight's leading dictionaries use their existing section
     stage; the object-stream parser keeps its separate pre-admitted bound.
+
+## pkix-path-builder-0.3.2 (FIX PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH)
+
+- Source: `https://static.crates.io/crates/pkix-path-builder/pkix-path-builder-0.3.2.crate`
+- Recorded SHA-256 of the `.crate` archive:
+  `16a5a90f17f74b968ff011c3c9b51a8b5692467abc7552d35c4311592f76ffec`
+  (matches the `checksum` recorded for pkix-path-builder 0.3.2 in the
+  pre-vendor `Cargo.lock`, and the archive in the Cargo cache)
+- Upstream VCS: `.cargo_vcs_info.json` names commit
+  `fab4245f9290739af521ad1298828e6f37a44bb8` of `MarkAtwood/crate-pkix`,
+  path `pkix-path-builder`.
+- License: Apache-2.0 OR MIT, from the manifest's `license` field; the
+  archive ships no licence file. Both are on the deny.toml allow list; no
+  allowance change.
+- Contents: the unpacked archive, every file. The archive's own
+  `Cargo.lock` is carried verbatim and is inert in the workspace, as for
+  pkix-chain: the root lockfile resolves this package. The test fixtures
+  are public BetterTLS certificates; the archive contains no private key
+  material. Upstream's PKITS cases in `tests/build_first_valid_path.rs` and
+  `tests/integration.rs` read `../pkix-path/tests/pkits/certs`, a sibling
+  directory of upstream's repository that the archive does not ship, so
+  they run only with that directory in place (it is in the pkix-path 0.3.2
+  archive).
+- Wiring: a `[patch.crates-io]` path entry in both the root `Cargo.toml`
+  and `.cargo/config.toml`, a `[[patch.unused]]` entry in the
+  `apps/web/src-tauri` and `components/schema-validator` lock files, the
+  directory in the root workspace `exclude` (so its tests run on their own:
+  `cargo test --manifest-path crates/oneiron-seal/vendor/pkix-path-builder-0.3.2/Cargo.toml`),
+  and the `Cargo.lock` entry without its `source` and `checksum` lines
+  (dependency list unchanged). Nothing in the workspace names the crate
+  directly: pkix-chain 0.4.1 depends on it (`0.3.2`, feature `std`), and
+  `crates/oneiron-organ-host` calls it through `pkix_chain::pkix_path_builder`.
+- Formatting: these files keep upstream formatting; the local patch is
+  written in it. Never run the workspace formatter over this directory.
