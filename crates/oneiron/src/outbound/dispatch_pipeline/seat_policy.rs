@@ -1,6 +1,7 @@
 //! Connector-neutral seat wall and its host-supplied LinkedIn policy adapter.
 use std::collections::BTreeMap;
 
+use crate::linkedin_connector::setting_keys::LinkedInSeatSettings;
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::OutboundDispatchRequest;
 use crate::outbound::linkedin_policy::{
@@ -139,10 +140,28 @@ impl SeatLedgerCount {
     }
 }
 
+/// The owner's seat settings for `request`: read only when it carries a LinkedIn seat's facts,
+/// else the shipped ones, which no seat reads.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn seat_settings_for(
+    vault: &crate::Vault,
+    request: &OutboundDispatchRequest,
+) -> crate::Result<LinkedInSeatSettings> {
+    if request.linkedin_sandbox_policy.is_some() {
+        LinkedInSeatSettings::read(vault)
+    } else {
+        Ok(LinkedInSeatSettings::default())
+    }
+}
+
 pub(super) fn evaluate_seat_policy(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
     ledger: SeatLedgerCount,
+    settings: &LinkedInSeatSettings,
 ) -> Option<SeatPolicyDecision> {
     // The channel as the capability lookup read it: a spelling that lookup
     // accepts cannot step around the seat wall.
@@ -153,10 +172,10 @@ pub(super) fn evaluate_seat_policy(
             .then(|| LinkedInSeatPolicyDecision::seat_policy_missing().into());
     };
     // FIX 8813: a daily cap's hold waits for the host's reset, or the next
-    // UTC midnight when it names none, on the request's clock.
-    let policy = &ledger
-        .raise(policy)
-        .with_caps_reset_after(request.occurred_at);
+    // midnight of the owner's cap day (UTC unless the owner set their own)
+    // when it names none, on the request's clock. The owner's sweep setting
+    // decides a request its host flags as a sweep.
+    let policy = &settings.apply(ledger.raise(policy), request.occurred_at);
     let send_decision =
         policy.evaluate_outbound(&channel, &verb_contract.kind, request.occurred_at);
     if channel == LINKEDIN_CHANNEL

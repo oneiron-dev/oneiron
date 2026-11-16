@@ -28,13 +28,19 @@
 //! - a grant is stamped on the vault's own clock (NO-DOOR ND-095, the door
 //!   half of `secret_lease::tests::the_typed_instant_path_stamps_from_the_vault_clock_and_honours_its_bound`):
 //!   its expiry is its stamp plus the ttl, clamped to 1..=3600 s, and the
-//!   caller names no instant and no tier.
+//!   caller names no instant and no tier;
+//! - a grant never outlives the credential that asked for it (FIX
+//!   SELF-SECRETS-GRANT-NO-ABSOLUTE-BOUND): a materialize and a renewal both
+//!   end at that credential's end when the ttl would run past it. The
+//!   attempt queue keeps no lease deadline, so the credential's end is the
+//!   run's one absolute bound, as a seat helper's grant takes its slip's.
 //!
 //! Every answer is metadata and never carries the value or its base64
 //! (`verbs/secret_grant.rs`: "Every answer here is metadata").
 //!
-//! These promises hold on main. Their red proof is a seeded fault (Test rules
-//! v2, rule 5), named in the PR.
+//! The first four promises held on main before this file's last one; their
+//! red proof is a seeded fault (Test rules v2, rule 5), named in the PR. The
+//! credential bound is red on the main it was fixed on.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -94,6 +100,9 @@ const ROTATED: &[u8] = b"self_secrets_doors_rotated_value";
 /// The engine's default and largest grant ttl, in seconds.
 const DEFAULT_TTL: u64 = 900;
 const MAX_TTL: u64 = 3600;
+/// How long the agent's short credential lives, in seconds: under both
+/// ttls above, so either one asked would run past its end.
+const SHORT_CREDENTIAL: u64 = 600;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -142,6 +151,13 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> TestResult<Self> {
+        Self::with_credential_lifetime(None).await
+    }
+
+    /// [`Self::new`] with the agent's credential ending `lifetime` seconds
+    /// after it was issued, when given; otherwise it lives as the host's
+    /// root does.
+    async fn with_credential_lifetime(lifetime: Option<u64>) -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -193,6 +209,10 @@ impl Fixture {
             "core:read".to_owned(),
             "core:write".to_owned(),
         ]));
+        if let Some(lifetime) = lifetime {
+            claims.expires_at = claims.issued_at.saturating_add(lifetime);
+            claims.ttl_secs = lifetime;
+        }
         let slip = vault.mint_capability_slip(&issuer, claims)?;
 
         let mut fixture = Self {
@@ -555,6 +575,65 @@ fn a_grant_is_stamped_on_the_vault_clock_with_its_ttl_clamped() -> TestResult {
                 "a spec naming {field} is refused: {status} {body}"
             );
         }
+        Ok(())
+    })
+}
+
+/// A grant never outlives the credential that asked for it (FIX
+/// SELF-SECRETS-GRANT-NO-ABSOLUTE-BOUND). The run's agent holds a credential
+/// that ends [`SHORT_CREDENTIAL`] seconds after it was issued. A grant whose
+/// ttl ends first keeps its stamp plus the ttl; the default ttl and the
+/// longest one each end at the credential's end; and a renewal asking the
+/// longest ttl ends there too. Red on main, where each runs its whole ttl
+/// past the credential.
+#[test]
+fn a_grant_never_outlives_the_credential_that_asked_for_it() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::with_credential_lifetime(Some(SHORT_CREDENTIAL)).await?;
+        let credential_end = fixture.slip.claims.expires_at;
+        let mut longest = None;
+        for (ttl, lifetime) in [(Some(60), Some(60)), (None, None), (Some(MAX_TTL), None)] {
+            let mut spec = fixture.grant_spec();
+            if let Some(ttl) = ttl {
+                spec["ttl_secs"] = json!(ttl);
+            }
+            let (status, view) = fixture.verb("materialize", spec).await?;
+            assert_eq!(status, StatusCode::OK, "ttl {ttl:?}: {view}");
+            let granted = view["granted_at"].as_u64().expect("a granted_at");
+            let expires = view["expires_at"].as_u64().expect("an expires_at");
+            let asked = granted + ttl.unwrap_or(DEFAULT_TTL);
+            match lifetime {
+                Some(lifetime) => assert_eq!(
+                    (expires, expires < credential_end),
+                    (granted + lifetime, true),
+                    "ttl {ttl:?}: a ttl that ends before the credential keeps the stamp plus \
+                     the ttl: {view}"
+                ),
+                None => assert_eq!(
+                    (expires, asked > credential_end),
+                    (credential_end, true),
+                    "ttl {ttl:?}: a ttl that would run past the credential ends at its end \
+                     {credential_end}: {view}"
+                ),
+            }
+            longest = Some(grant_id(&view));
+        }
+
+        let grant = longest.expect("the longest ask minted a grant");
+        let (status, renewed) = fixture
+            .verb("renew", json!({"grant": grant, "ttl_secs": MAX_TTL}))
+            .await?;
+        assert_eq!(status, StatusCode::OK, "the agent renews: {renewed}");
+        let granted = renewed["granted_at"].as_u64().expect("a granted_at");
+        assert_eq!(
+            (
+                renewed["status"].as_str(),
+                renewed["expires_at"].as_u64(),
+                granted + MAX_TTL > credential_end,
+            ),
+            (Some("active"), Some(credential_end), true),
+            "a renewal asking the longest ttl ends at the credential's end too: {renewed}"
+        );
         Ok(())
     })
 }

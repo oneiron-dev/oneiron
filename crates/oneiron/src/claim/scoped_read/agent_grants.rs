@@ -225,8 +225,13 @@ impl ScopedRead<'_> {
     }
 
     /// The row under `grant` alone: the Grant first admits the row's record
-    /// position, then the row's own admission runs under the floor a proof
-    /// of the Grant gives this key, `request` met on top as the read met it.
+    /// position and holds it inside the Grant's facets, then the row's own
+    /// admission runs under the floor a proof of the Grant gives this key,
+    /// `request` met on top as the read met it. The position names no facet
+    /// (`Scope::admits`) and an identity key carries no facet limit of its
+    /// own, so the facets are judged here: a Grant limited to some facets
+    /// reads only their records (owner ruling FACET-READ = A; Astra delta
+    /// review of #8340, D1).
     #[expect(
         clippy::too_many_arguments,
         reason = "one Grant's row admission takes the row, its request and the held authority"
@@ -241,7 +246,9 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
         grant: &Scope,
     ) -> Result<bool> {
-        if !self.grant_admits_position_in(rtxn, id, raw, grant)? {
+        if !self.grant_admits_position_in(rtxn, id, raw, grant)?
+            || !self.row_inside_facets_in(rtxn, id, raw, &grant.facets)?
+        {
             return Ok(false);
         }
         let floor = policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(grant));
@@ -323,7 +330,7 @@ fn reader_grants_in(
     if crate::authority::principal_standing_in_txn(vault, txn, reader, class, "read")?.is_none() {
         return Ok(Vec::new());
     }
-    let now = vault.instant_in_txn(txn)?.secs();
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let (grants, undecoded) = vault.agent_grants_reporting_in_txn(txn)?;
     if !undecoded.is_empty() {
