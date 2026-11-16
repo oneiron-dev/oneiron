@@ -609,6 +609,26 @@ pub(crate) fn entity_owns_revision_in_txn(
     Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
 }
 
+/// Drops `id`'s retained frontier of `revision`, so this store no longer
+/// holds that revision's bytes, as a shallow document adopted by sync lacks
+/// them: the test door of the graph-FS memory fork's `history_not_held`
+/// (L3-39).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn forget_retained_revision(
+    vault: &Vault,
+    id: &EntityId,
+    revision: RevisionRef,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        FRONTIER.delete(&vault.store, txn, &(*id, revision.0))?;
+        Ok(())
+    })
+}
+
 pub(crate) fn read_entity_revision_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,

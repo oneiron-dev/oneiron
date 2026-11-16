@@ -6,11 +6,19 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// A reference selects content, never authority. Historical references name
-/// retained imported snapshots, not a local folder on the serving host.
+/// retained imported snapshots or a memory frontier the engine handed out,
+/// not a local folder on the serving host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GraphFsReference {
     LiveHead,
-    ForkHash { repo: EntityId, hash: String },
+    /// With `repo`, a repository fork by its content hash. Without it, the
+    /// vault's memory at a frontier: `hash` is the 32-hex frontier a mount
+    /// reported (L3-39), and every row reads as it stood there.
+    ForkHash {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<EntityId>,
+        hash: String,
+    },
     RepoSnapshot { snapshot: EntityId },
 }

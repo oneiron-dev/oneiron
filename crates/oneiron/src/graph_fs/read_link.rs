@@ -38,10 +38,14 @@ impl GraphFsResolver<'_, '_> {
             return Ok(no_read);
         };
         let claim_id = parse_entity_id(claim_hex)?;
-        let read = self
-            .scoped_read
-            .read(&[PointRead::id(claim_id)], None)?
-            .single();
+        // At a memory fork the target reads as it stood at the frontier.
+        let read = if self.memory_fork().is_some() {
+            self.file_row(claim_id)?
+        } else {
+            self.scoped_read
+                .read(&[PointRead::id(claim_id)], None)?
+                .single()
+        };
         Ok(GraphFsLinkRead {
             value: read
                 .value

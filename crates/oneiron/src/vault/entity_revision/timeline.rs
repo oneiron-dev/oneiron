@@ -76,10 +76,6 @@ fn latest_in_txn(
 /// # Errors
 ///
 /// Storage errors, and a head row that is not eight bytes.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(dead_code, reason = "the graph-FS memory fork (L3-39 PR 2) reads it")
-)]
 pub(crate) fn memory_frontier_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -98,10 +94,6 @@ pub(crate) fn memory_frontier_in_txn(
 /// # Errors
 ///
 /// Storage errors, and a timeline row that is not sixteen bytes.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(dead_code, reason = "the graph-FS memory fork (L3-39 PR 2) reads it")
-)]
 pub(crate) fn revision_at_frontier_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,

@@ -45,6 +45,7 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
         | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
         | oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE
+        | oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD
         | oneiron::memory::MEMORY_CODE_PACED_HOLD
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         // A row's world setting, a frozen vault and a render that met its
@@ -81,6 +82,8 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
             Some("model_pin_unavailable")
         }
+        // L3-39: a memory fork names a revision this machine holds no bytes of.
+        oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD => Some("history_not_held"),
         // FIX 8753: a call its budget window paced waits in its caller's
         // line; the agent reads the name and `resets_at`, not the sentence.
         oneiron::memory::MEMORY_CODE_PACED_HOLD => Some("paced_hold"),

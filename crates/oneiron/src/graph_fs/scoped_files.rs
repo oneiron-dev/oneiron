@@ -12,13 +12,15 @@ impl GraphFsResolver<'_, '_> {
     /// The mount's file rows for `reads`. A mount whose handle reads repo
     /// bytes masked reads them in the known-value pass's own snapshot (FIX
     /// 8966), so the thread holds one read transaction (FIX
-    /// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
+    /// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT). A memory fork reads each row
+    /// at the revision it held at the frontier, in the same snapshot as the
+    /// timeline lookup that names it.
     pub(super) fn file_rows(
         &self,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
-        if !self.repo_masked() {
+        if !self.repo_masked() && self.memory_fork().is_none() {
             return self
                 .scoped_read
                 .read_projected(reads, requested, |txn, rows| {
@@ -26,11 +28,46 @@ impl GraphFsResolver<'_, '_> {
                 });
         }
         let _bodies = self.scoped_read.prepare_point_read::<Error>()?;
-        self.scoped_read.vault().with_known_snapshot(|known, txn| {
-            self.scoped_read
+        if !self.repo_masked() {
+            let txn = self.scoped_read.vault().store.env.read_txn()?;
+            return self.file_rows_in_txn(&txn, reads, requested, None);
+        }
+        self.scoped_read
+            .vault()
+            .with_known_snapshot(|known, txn| self.file_rows_in_txn(txn, reads, requested, Some(known)))
+    }
+
+    /// [`Self::file_rows`] in `txn`. At a memory fork an id with no held
+    /// revision at the frontier reads as no row, as a withheld row does, and
+    /// takes no place in the scoped read.
+    fn file_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        known: Option<Option<&crate::store::known_value_index::KnownValues>>,
+    ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
+        let Some(frontier) = self.memory_fork() else {
+            return self
+                .scoped_read
                 .read_projected_in_txn(txn, reads, requested, |txn, rows| {
-                    self.served_file_rows_in_txn(txn, rows, Some(known))
-                })
+                    self.served_file_rows_in_txn(txn, rows, known)
+                });
+        };
+        let slots = self.fork_reads_in_txn(txn, frontier, reads)?;
+        let pinned: Vec<PointRead<'_>> = slots.iter().flatten().copied().collect();
+        let read = self
+            .scoped_read
+            .read_projected_in_txn(txn, &pinned, requested, |txn, rows| {
+                self.served_file_rows_in_txn(txn, rows, known)
+            })?;
+        let mut rows = read.value.into_iter();
+        Ok(ScopedReadResult {
+            value: slots
+                .iter()
+                .map(|slot| slot.and_then(|_| rows.next().flatten()))
+                .collect(),
+            receipt: read.receipt,
         })
     }
 

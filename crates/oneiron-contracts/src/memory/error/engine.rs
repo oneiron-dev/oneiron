@@ -131,6 +131,13 @@ impl From<Error> for MemoryError {
                 message,
                 &["Verify the identifier and retry."],
             ),
+            // The row stands and the reader may read it now; this machine
+            // holds no bytes of the revision the frontier names (L3-39).
+            ErrorKind::HistoryNotHeld => Self::new(
+                MEMORY_CODE_HISTORY_NOT_HELD,
+                message,
+                &["Read the row at the live head, or read this frontier where the row's history is held."],
+            ),
             // FORBIDDEN like the gate family beside it, but with its OWN
             // remedies: the generic arm points at pending consents and at
             // resubmitting as proposed, and both are exactly what this error
