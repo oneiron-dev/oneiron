@@ -220,6 +220,13 @@ impl CommParties {
     pub(crate) fn refs(&self) -> impl Iterator<Item = EntityId> {
         self.0.values().copied()
     }
+
+    /// Every active key, with the party it resolves to, in key order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, EntityId)> {
+        self.0
+            .iter()
+            .map(|(party_key, party)| (party_key.as_str(), *party))
+    }
 }
 
 /// The standing `predicate` claims on `channel_class` that `party_ref`

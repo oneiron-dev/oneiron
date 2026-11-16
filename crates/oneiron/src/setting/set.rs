@@ -15,8 +15,8 @@ use super::read::{
 };
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
-    set_line, spec_named, widen_line, widen_line_at, widen_scope_line,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
+    spec_named, widen_line, widen_line_at, widen_scope_line,
 };
 use crate::Vault;
 use crate::batch::secret_scan::admit_typed;
@@ -276,7 +276,7 @@ impl Vault {
                 admit_typed(
                     self,
                     txn,
-                    (wall_place(spec), key.encode().as_slice()),
+                    (wall_place(spec).as_str(), key.encode().as_slice()),
                     &mut json,
                 )?;
                 Some(spec.kind.from_json(json)?)
@@ -293,12 +293,10 @@ impl Vault {
     }
 }
 
-/// Where the side-row wall says it found a secret in a setting value (OF-067).
-const fn wall_place(spec: &SettingSpec) -> &'static str {
-    match spec.restore {
-        Restore::Live => "side:SETTING",
-        Restore::Content => "side:SETTING_CONTENT",
-    }
+/// Where the side-row wall says it found a secret in a setting value (OF-067): `side:` and the
+/// declared name of the table the key's rows live in.
+fn wall_place(spec: &SettingSpec) -> String {
+    format!("side:{}", table_of(spec).decl().name)
 }
 
 /// Runs the `after_commit` of each key whose change applied with a sequence, once per change,

@@ -131,6 +131,9 @@ pub struct PreparedShadowStep {
     pub(crate) replies: Vec<FrozenReply>,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     pub(crate) scan_bytes: u64,
+    /// The owner's `code_run.result_search.max_context`, frozen for the
+    /// arm's reads.
+    pub(crate) search_max_context: usize,
 }
 
 impl PreparedShadowStep {
@@ -340,6 +343,7 @@ fn prepare_step_source(
         foreign,
         replies,
         scan_bytes: vault.limit_watch().bound(EngineLimit::CodeResultScanBytes),
+        search_max_context: crate::code_run::setting_keys::result_search_max_context(vault)?,
     }))
 }
 
