@@ -72,7 +72,7 @@ impl ArchivedSideRowRefresh {
 /// The fixed dependency order of the owning landing groups.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArchivedSideGroup {
-    /// Independent settings and customization history.
+    /// Independent owner settings.
     Settings,
     /// Grants whose holders have already been restored.
     AgentDef,
@@ -96,7 +96,7 @@ pub(crate) enum ArchivedSideGroup {
     ProjectHistory,
     /// Message-stream defaults for new sessions.
     Memory,
-    /// Dreamer action-mode policy.
+    /// Dreamer free-time receipts.
     DreamerRunner,
     /// Served-origin LFS path rules.
     OriginLfs,
@@ -152,14 +152,9 @@ pub(crate) enum ArchivedSideGroup {
 pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGroup> {
     use ArchivedSideGroup as Group;
     match source_table {
-        name if name == side_table::BACKUP_POLICY.name
-            || name == side_table::BOARD_LAYOUT_SETTINGS.name
-            || name == side_table::CUSTOMIZATION_EVENT.name
-            || name == side_table::CUSTOMIZATION_SETTINGS.name
+        name if name == side_table::BOARD_LAYOUT_SETTINGS.name
             || name == side_table::MODEL_OWNER_FALLBACK.name
-            || name == side_table::MODEL_OWNER_RESPONSES_STORE.name
             || name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name
-            || name == side_table::PLUGIN_SUGGESTIONS_ENABLED.name
             || name == side_table::ROOM_THREADS_ADMIN_DELETE.name
             || name == side_table::ROOM_THREADS_ADMIN_WALK_IN.name
             || name == side_table::SNAPSHOT_READ_SETTINGS.name
@@ -194,11 +189,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         {
             Some(Group::Memory)
         }
-        name if name == side_table::DREAMER_ACTION_MODE_POLICY.name
-            || name == side_table::DREAMER_FREE_TIME_RECEIPT.name =>
-        {
-            Some(Group::DreamerRunner)
-        }
+        name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
         name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
