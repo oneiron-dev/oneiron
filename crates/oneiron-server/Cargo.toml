@@ -325,6 +325,13 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The channel identity door cases root their owner on a `MemoryKeystore` and install the
+# owner's lifecycle grants through `conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "vault_channel_identities_doors"
+path = "tests/vault_channel_identities_doors.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # A key_secret provider's streamed chat registers its sentinel key in a test
 # vault and answers event streams from the broker's TLS fake provider.
 [[test]]
