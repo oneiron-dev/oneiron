@@ -56,6 +56,7 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
+use crate::config::ConnectorHostConfig;
 use crate::config::connectors::normalize_name;
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -212,23 +213,70 @@ pub(super) fn engine(error: oneiron::Error) -> OwnerError {
     }
 }
 
-/// The endpoint this host installed under the connector's name.
-fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+/// The section this host installed under the connector's normalized name.
+fn installed_config<'a>(server: &'a SyncServer, name: &str) -> Option<&'a ConnectorHostConfig> {
     server
         .config
         .connectors
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+        .map(|(_, installed)| installed)
 }
 
-/// The connector's name as the engine stores it, and its installed endpoint.
+/// The endpoint this host installed under the connector's name: a URL, or
+/// a stdio connector's `stdio:` endpoint (row L8-27).
+fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+    installed_config(server, name).map(|installed| installed.installed_endpoint(name))
+}
+
+fn not_installed() -> OwnerError {
+    OwnerError::Invalid("this host installed no transport for the connector".to_owned())
+}
+
+/// The connector's name as the engine stores it, and the HTTP endpoint it
+/// is installed at. A stdio connector is refused here: a refresh, a probe
+/// run and a pack check speak MCP over HTTP; a stdio connector is
+/// registered and attested (row L8-27).
 pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
     let name = normalize_name(connector);
-    let endpoint = installed_endpoint(server, &name).ok_or_else(|| {
-        OwnerError::Invalid("this host installed no transport for the connector".to_owned())
-    })?;
+    let endpoint = installed_config(server, &name)
+        .ok_or_else(not_installed)?
+        .http_endpoint()
+        .ok_or_else(|| {
+            OwnerError::Invalid(
+                "this connector is installed as mcp_stdio: this step speaks MCP over HTTP; a \
+                 stdio connector is registered and attested"
+                    .to_owned(),
+            )
+        })?
+        .to_owned();
     Ok((name, endpoint))
+}
+
+/// Lists the connector `name`'s tools where this host installed it, at
+/// `pinned` as [`host::discover`] takes it: over HTTP with the credential
+/// `secret_ref` names, or from a fenced stdio child, which presents none
+/// until the broker path (B2, row L8-27). Either way the connector's issuer
+/// bindings are read first (FIX 9303).
+fn discover_installed(
+    server: &SyncServer,
+    name: &str,
+    installed: &ConnectorHostConfig,
+    secret_ref: Option<&str>,
+    pinned: Option<&str>,
+) -> OwnerResult<host::Discovery> {
+    let endpoint = installed.http_endpoint();
+    if endpoint.is_none() && secret_ref.is_some() {
+        return Err(OwnerError::Invalid(
+            "a stdio connector presents no credential until the broker path".to_owned(),
+        ));
+    }
+    host::with_credential(server.vault(), secret_ref, name, |auth| match endpoint {
+        Some(endpoint) => host::discover(&host::client()?, endpoint, auth, pinned),
+        None => host::discover_stdio(server.runner_fence().as_deref(), name, installed, pinned),
+    })
+    .map_err(engine)?
+    .map_err(engine)
 }
 
 /// The catalog key registered under a name.
@@ -337,17 +385,21 @@ fn register_connector(
     request: RegisterRequest,
 ) -> OwnerResult<Registered> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let name = normalize_name(&request.connector);
+    let installed = installed_config(server, &name).ok_or_else(not_installed)?;
+    let endpoint = installed.installed_endpoint(&name);
     if vault.describe_connector(&name)?.is_some() {
         return Err(OwnerError::Invalid(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let discovery = host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
-        host::discover(&host::client()?, &endpoint, auth, None)
-    })
-    .map_err(engine)?
-    .map_err(engine)?;
+    let discovery = discover_installed(
+        server,
+        &name,
+        installed,
+        request.secret_ref.as_deref(),
+        None,
+    )?;
     if let Some(unknown) = request
         .tools
         .keys()

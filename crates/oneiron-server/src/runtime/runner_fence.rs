@@ -58,7 +58,8 @@ impl HostRunnerFence {
     /// with the outcome its session's manifest carries and a private temp
     /// directory as its `TMPDIR`. The temp directory exists before the rule
     /// is built, so the runner can write there even where the system temp
-    /// directory is on the way to a removed tree.
+    /// directory is on the way to a removed tree. A runner with no `workdir`
+    /// of its own starts in that temp directory (`/` where none was made).
     ///
     /// The runner still runs, unfenced and unproven, on a host whose proof
     /// failed (a rule the host did not prove may refuse the spawn itself: a
@@ -69,11 +70,11 @@ impl HostRunnerFence {
     /// there needs that repository. Canon `#fence-unproven`: the engine
     /// never refuses the run.
     #[must_use]
-    pub fn command(&self, program: impl AsRef<OsStr>, workdir: &Path) -> RunnerCommand {
+    pub fn command(&self, program: impl AsRef<OsStr>, workdir: Option<&Path>) -> RunnerCommand {
         let scratch = runner_scratch();
         let (command, outcome) = if !self.outcome.proven {
             (oneiron_spawn::command(program), self.outcome.clone())
-        } else if self.needs_removed_tree(workdir) {
+        } else if workdir.is_some_and(|dir| self.needs_removed_tree(dir)) {
             tracing::warn!(
                 "runner fence: a runner's working tree needs a removed tree (a masked \
                  checkout's repository in the vault); it runs unproven"
@@ -99,7 +100,11 @@ impl HostRunnerFence {
     /// spawn) starts again this way. Canon `#fence-unproven`: the engine
     /// never refuses the run.
     #[must_use]
-    pub fn unfenced_command(&self, program: impl AsRef<OsStr>, workdir: &Path) -> RunnerCommand {
+    pub fn unfenced_command(
+        &self,
+        program: impl AsRef<OsStr>,
+        workdir: Option<&Path>,
+    ) -> RunnerCommand {
         RunnerCommand::new(
             oneiron_spawn::command(program),
             self.unproven(),
@@ -142,14 +147,20 @@ pub struct RunnerCommand {
 }
 
 impl RunnerCommand {
-    /// `command` started in `workdir`, with `scratch` as its `TMPDIR`.
+    /// `command` started in `workdir`, with `scratch` as its `TMPDIR`. A
+    /// runner with no `workdir` of its own starts in `scratch` (`/` where
+    /// none was made).
     fn new(
         mut command: Command,
         outcome: RunnerFenceOutcome,
-        workdir: &Path,
+        workdir: Option<&Path>,
         scratch: Option<tempfile::TempDir>,
     ) -> Self {
-        command.current_dir(workdir);
+        command.current_dir(
+            workdir
+                .or_else(|| scratch.as_ref().map(tempfile::TempDir::path))
+                .unwrap_or(Path::new("/")),
+        );
         if let Some(scratch) = &scratch {
             command.env("TMPDIR", scratch.path());
         }

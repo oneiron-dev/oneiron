@@ -205,7 +205,7 @@ impl OfficialCliSeatExecutor {
             self.prepare_cli(&mut command, spec);
             return Ok((command.spawn().map_err(spawn_failed)?, None, None));
         };
-        let mut runner = fence.command(&spec.program, &self.workdir);
+        let mut runner = fence.command(&spec.program, Some(&self.workdir));
         self.prepare_cli(&mut runner.command, spec);
         let fenced = runner.command.spawn();
         let child = match fenced {
@@ -214,7 +214,7 @@ impl OfficialCliSeatExecutor {
                     error = %error,
                     "runner fence: a fenced seat CLI did not start; it starts again unproven"
                 );
-                runner = fence.unfenced_command(&spec.program, &self.workdir);
+                runner = fence.unfenced_command(&spec.program, Some(&self.workdir));
                 self.prepare_cli(&mut runner.command, spec);
                 runner.command.spawn()
             }
