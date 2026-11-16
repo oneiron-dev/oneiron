@@ -8,27 +8,37 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 #[path = "extraction_verdict/support.rs"]
+#[allow(dead_code)]
 mod support;
 
 use oneiron::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, ConfidenceBand,
+    VerdictBasis,
 };
+use oneiron::dreamer_consolidation::decode_consolidation_evidence;
 use oneiron::dreamer_consolidation::selection::SelectionConfig;
 use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
+use oneiron::provenance::{
+    PREDICATE_EDGE_PROVENANCE, SupersessionStatus, decode_edge_provenance_body,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
-use oneiron::test_doors::derive::{batches_of, claim_lifecycle, refusal_receipt, source_version};
+use oneiron::test_doors::derive::{
+    batches_of, claim_lifecycle, derive_item_receipts, reader_claim_rows, refusal_receipt,
+    source_version, supports,
+};
 use oneiron::test_doors::derive_conflict;
 use oneiron::test_doors::derive_verbs::{define_agent, grant_derive_rows, revert_as_owner};
 use oneiron::test_doors::extraction_inputs::{
     append_extraction_turn_words, enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
+use oneiron::test_doors::extraction_outputs::recorded_outputs;
 use oneiron::test_doors::extraction_routing::native_routes;
 use oneiron::test_doors::open_candidate::build_native_candidate;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{AttemptId, EdgeActorClass, EntityId, Vault};
+use oneiron::{AttemptId, EdgeActorClass, EdgeKind, EntityId, Vault, WriteActor};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -58,6 +68,13 @@ const CONTESTS_HEAD: &str = "gate.deny.derive.candidate_contests_head";
 const DUPLICATE: &str = "gate.deny.derive.candidate_duplicate";
 /// The refusal of a Candidate item whose landing is refused.
 const LANDING_REFUSED: &str = "gate.deny.derive.candidate_landing_refused";
+/// The refusal of an item naming a batch-local row that is unavailable: a
+/// refused item's, or an attached candidate's, which created support rather
+/// than a named claim.
+const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
+/// The allowance an attached candidate's receipt names: support now stands on
+/// the head, and no new claim does.
+const CANDIDATE_ATTACHED: &str = "gate.allow.derive.candidate_attached";
 
 /// The predicate the extraction fixture asserts.
 const FOOD: &str = "preference.food";
@@ -444,12 +461,16 @@ fn a_candidate_keeps_its_confidence() -> TestResult<()> {
     Ok(())
 }
 
-/// A candidate that meets a stored head lands nothing, restating or
-/// contesting; native routes the same operands to an attachment and to a
+/// A candidate equal to a stored head attaches its evidence to the head: the
+/// item lands with the support record and no approval, the head's bytes stay
+/// as they are, and the cited TURN supports the head. An unequal candidate
+/// still contests. Native routes the same operands to an attachment and to a
 /// judge set. The head is user-stated and the candidate cites one TURN, so
-/// it does not qualify as observed beside the head.
+/// it does not qualify as observed beside the head. If the stager landed a
+/// claim instead, the route's own id would read back; if it refused, the
+/// item would not land.
 #[test]
-fn a_candidate_that_meets_a_head_lands_nothing() -> TestResult<()> {
+fn a_candidate_equal_to_a_head_attaches_its_evidence() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let words = ["owen chooses black coffee"];
     let (vault, attempt_id, turns, subject) = extraction_attempt_with_turns(&dir, "owen", &words)?;
@@ -457,19 +478,82 @@ fn a_candidate_that_meets_a_head_lands_nothing() -> TestResult<()> {
     let head = land_head(&vault, subject, "green tea")?;
     let hex = extraction_attempt_hex(attempt_id);
     let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let turn = EntityId::from_hex(&turns[0].0)?;
+    let before = vault.get(&head)?.ok_or("the head's bytes")?;
+    let dreamer_id = dreamer(&vault)?;
+    let before_rows = reader_claim_rows(&vault, dreamer_id, EdgeActorClass::System)?;
+    assert!(before_rows.contains(&head), "the head stands before the attach");
 
     let same = operand_for(&subject.to_hex(), json!("green tea"), &turns[0]);
     let routes = native_routes(&vault, &hex, now_ms, std::slice::from_ref(&same))?;
     assert_eq!(routes["choices"][0]["kind"], json!("attach"));
+    assert_eq!(
+        routes["candidates"][0]["claim"].as_str(),
+        routes["choices"][0]["claim"].as_str(),
+        "the route names one own id"
+    );
+    let own = EntityId::from_hex(
+        routes["choices"][0]["claim"].as_str().ok_or("the route's own id")?,
+    )?;
+    assert_ne!(own, head, "the own id is not the head");
     let spec = candidate_spec("first", member(same, 0.0, vec![]));
     let answer = commit_dreamer(
         &vault,
         Some(attempt_id),
         json!({"items": [spec], "sources": []}),
     )?;
-    assert_eq!(answer["items"][0]["landed"], false, "{answer}");
-    assert_eq!(answer["items"][0]["rows"], json!([]));
-    assert_eq!(answer["items"][0]["reasons"], json!([RESTATES_HEAD]));
+    let item = &answer["items"][0];
+    assert_eq!(item["landed"], true, "{answer}");
+    assert_eq!(item["kind"], "candidate");
+    assert_eq!(item["rows"].as_array().ok_or("rows")?.len(), 1, "{answer}");
+    assert!(
+        item.get("approval").is_none(),
+        "an attachment lands no claim, so no approval: {answer}"
+    );
+    assert!(item["receipt"].is_string(), "{answer}");
+    let support = EntityId::from_hex(item["rows"][0].as_str().ok_or("the row")?)?;
+    assert_ne!(support, head, "the row is the support record, not the head");
+    let record = vault.get_claim(&support)?.ok_or("the support record")?;
+    assert_eq!(record.predicate, PREDICATE_EDGE_PROVENANCE);
+    assert_eq!(record.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(
+        vault.get(&head)?.ok_or("the head still stands")?,
+        before,
+        "the head's bytes stay as they are"
+    );
+    assert!(supports(&vault, turn, head)?, "the TURN supports the head");
+    assert_eq!(
+        vault.sources(&head, EdgeKind::Supports, None)?,
+        vec![turn],
+        "the public edge read shows the TURN behind the head"
+    );
+    let after_rows = reader_claim_rows(&vault, dreamer_id, EdgeActorClass::System)?;
+    assert_eq!(
+        after_rows.len(),
+        before_rows.len() + 1,
+        "exactly one row is new"
+    );
+    assert!(
+        after_rows.contains(&head) && after_rows.contains(&support),
+        "the new row is the support record"
+    );
+    assert_ne!(support, own, "the row is support, not the candidate's own id");
+    assert!(
+        vault.get_claim(&own)?.is_none(),
+        "no claim stands at the candidate's own id"
+    );
+    assert!(
+        recorded_outputs(&vault, attempt_id)?.is_empty(),
+        "a stamp door records no attempt outputs"
+    );
+    let receipts = derive_item_receipts(&vault, &head)?;
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| receipt.outcome == "approved"
+                && receipt.reasons == vec![CANDIDATE_ATTACHED.to_owned()]),
+        "the allowance receipt names the head: {receipts:?}"
+    );
 
     let other = operand_for(&subject.to_hex(), json!("black coffee"), &turns[0]);
     let routes = native_routes(&vault, &hex, now_ms, std::slice::from_ref(&other))?;
@@ -486,6 +570,248 @@ fn a_candidate_that_meets_a_head_lands_nothing() -> TestResult<()> {
 
     let stored = vault.get_claim(&head)?.ok_or("the head still stands")?;
     assert_eq!(stored.value, RmpValue::from("green tea"));
+    Ok(())
+}
+
+/// The committer's revert takes an attachment back: the batch's own Dreamer
+/// reverts, not the owner, and the support is gone while the head stands
+/// with its earlier evidence, which here is none. If the candidate arm
+/// missed attachments, the support would still stand and the item would be
+/// left, not reverted.
+#[test]
+fn the_committer_s_revert_takes_an_attachment_back() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let words = ["owen chooses black coffee"];
+    let (vault, attempt_id, turns, subject) = extraction_attempt_with_turns(&dir, "owen", &words)?;
+    assert_eq!(turns.len(), 1);
+    let head = land_head(&vault, subject, "green tea")?;
+    let turn = EntityId::from_hex(&turns[0].0)?;
+    let before = vault.get(&head)?.ok_or("the head's bytes")?;
+    assert!(vault.sources(&head, EdgeKind::Supports, None)?.is_empty());
+    let operand = operand_for(&subject.to_hex(), json!("green tea"), &turns[0]);
+    let spec = candidate_spec("first", member(operand, 0.0, vec![]));
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [spec], "sources": []}),
+    )?;
+    assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+    let support = EntityId::from_hex(answer["items"][0]["rows"][0].as_str().ok_or("the row")?)?;
+    assert!(supports(&vault, turn, head)?);
+    let batch = EntityId::from_hex(answer["batch"].as_str().ok_or("the batch")?)?;
+    // The committer reverts as itself: it is the batch's actor, and its
+    // subjectless Derive verdict passes exactly as the commit's own
+    // subjectful one did (same grant, same landing rows, no target to
+    // reach), so no owner proof is needed.
+    let dreamer_id = dreamer(&vault)?;
+    let reverted = vault.derive_revert(
+        WriteActor::new(dreamer_id, EdgeActorClass::System),
+        None,
+        batch,
+    )?;
+    assert_eq!(reverted.batch, batch);
+    assert_eq!(reverted.reverted, vec!["first".to_owned()]);
+    assert!(reverted.left.is_empty());
+    assert!(!supports(&vault, turn, head)?, "the support is retracted");
+    assert!(vault.sources(&head, EdgeKind::Supports, None)?.is_empty());
+    assert_eq!(
+        vault.get(&head)?.ok_or("the head still stands")?,
+        before
+    );
+    assert_eq!(claim_lifecycle(&vault, head)?, Some("active".to_owned()));
+    assert_ne!(
+        claim_lifecycle(&vault, support)?,
+        Some("active".to_owned()),
+        "the support record no longer stands"
+    );
+    Ok(())
+}
+
+/// A later item naming an attached candidate is refused: the candidate created
+/// support, not a named claim, so the name is unavailable. Person is the only
+/// extraction-facet kind that names a batch-local row. If a support id were
+/// registered, Person would reach its stager instead of DEPENDENCY_REFUSED;
+/// resolving an unregistered name would abort the commit instead of answering.
+#[test]
+fn a_later_item_naming_an_attached_candidate_is_refused() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let words = ["owen chooses black coffee"];
+    let (vault, attempt_id, turns, subject) = extraction_attempt_with_turns(&dir, "owen", &words)?;
+    assert_eq!(turns.len(), 1);
+    let head = land_head(&vault, subject, "green tea")?;
+    let operand = operand_for(&subject.to_hex(), json!("green tea"), &turns[0]);
+    let first = candidate_spec("first", member(operand, 0.0, vec![]));
+    let second = json!({
+        "kind": "person",
+        "spec": {"local": "owen", "name": "Owen", "evidence": [{"local": "first"}]},
+    });
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [first, second], "sources": []}),
+    )?;
+    assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+    assert_eq!(answer["items"][1]["landed"], false, "{answer}");
+    assert_eq!(answer["items"][1]["rows"], json!([]));
+    assert_eq!(
+        answer["items"][1]["reasons"],
+        json!([DEPENDENCY_REFUSED]),
+        "{answer}"
+    );
+    let stored = vault.get_claim(&head)?.ok_or("the head still stands")?;
+    assert_eq!(stored.value, RmpValue::from("green tea"));
+    Ok(())
+}
+
+/// An attachment matches native's support record, every field but the record's
+/// own id, clocks and stored provenance, against native's code by reading: no
+/// test door runs native's own attach (its shell stays private and its sealed
+/// write cannot be built outside its module), so no parity door of about 60
+/// lines exists, and this test pins the shared body's fields instead
+/// (`dreamer_promotion/scoped.rs`, `provenance/writes.rs`). Any field
+/// mismatch fails: both paths call the shared attach body, so a difference
+/// means the derive call site passes something native does not.
+#[test]
+fn an_attachment_matches_native_s_support_record() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let words = ["owen chooses black coffee"];
+    let (vault, attempt_id, turns, subject) = extraction_attempt_with_turns(&dir, "owen", &words)?;
+    assert_eq!(turns.len(), 1);
+    let head = land_head(&vault, subject, "green tea")?;
+    let turn = EntityId::from_hex(&turns[0].0)?;
+    let dreamer_id = dreamer(&vault)?;
+    let operand = operand_for(&subject.to_hex(), json!("green tea"), &turns[0]);
+    let spec = candidate_spec("first", member(operand, 0.0, vec![]));
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [spec], "sources": []}),
+    )?;
+    assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+    let support = EntityId::from_hex(answer["items"][0]["rows"][0].as_str().ok_or("the row")?)?;
+    let record = vault.get_claim(&support)?.ok_or("the support record")?;
+    let head_body = vault.get_claim(&head)?.ok_or("the head")?;
+    // The wrapper: predicate, subject, confidence with its band and basis,
+    // approval, lifecycle, then every other field the writer sets or leaves
+    // (`provenance/writes.rs`).
+    assert_eq!(record.predicate, PREDICATE_EDGE_PROVENANCE);
+    assert_eq!(
+        record.subject,
+        ClaimSubject::Edge {
+            source: turn,
+            kind: EdgeKind::Supports,
+            target: head,
+        }
+    );
+    assert_eq!(record.confidence, 1.0f32);
+    assert_eq!(record.confidence_band, ConfidenceBand::Certain);
+    assert_eq!(record.confidence_basis, VerdictBasis::DeterministicFallback);
+    assert_eq!(record.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(record.lifecycle, ClaimLifecycleStatus::Active);
+    assert!(record.salience.is_none());
+    assert!(record.evidence.is_none(), "the wrapper's evid stays empty");
+    assert!(record.valid_from.is_none());
+    assert!(record.valid_to.is_none());
+    // The meet of the Dreamer's Generated floor with the user-stated TURN.
+    assert_eq!(record.source, Some(ClaimSource::Generated));
+    assert!(record.world.is_none());
+    assert!(record.rel.is_none(), "the relationship key is all");
+    assert!(record.session_tag.is_none());
+    assert!(!record.stale);
+    // The witness TURN carries no FacetOf edge, so the writer takes the
+    // vault default facet; the row lands in the project its ends share.
+    assert_eq!(record.scope_facet, vault.default_facet()?);
+    assert_eq!(record.scope_project, head_body.scope_project);
+    // The typed value: all ten record fields (`provenance/codec.rs`).
+    let body = decode_edge_provenance_body(&record.value)?;
+    assert_eq!(body.actor_entity_ref, dreamer_id);
+    assert_eq!(body.confidence, 1.0f32);
+    assert_eq!(body.supersession_status, SupersessionStatus::Confirmed);
+    assert_eq!(body.actor_class, Some(EdgeActorClass::System));
+    assert!(body.source_revision_ref.is_some(), "the source revision is pinned");
+    assert!(body.body_snapshot_ref.is_some(), "the head bytes are pinned");
+    assert!(body.valid_from.is_none());
+    assert!(body.valid_to.is_none());
+    assert!(body.substrate_ref.is_none());
+    assert!(body.reasoning_effort.is_none());
+    // The scope: exactly taint and derived evidence.
+    let scope = record.scope.as_ref().ok_or("the support's scope")?;
+    let RmpValue::Map(entries) = scope else {
+        return Err("the support's scope is a map".into());
+    };
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        map_at(scope, "evidence_taint").and_then(RmpValue::as_str),
+        Some("generated")
+    );
+    // The derived evidence: the envelope decoded, then its locators in full.
+    // The attach carries no conflict answers, so no answers key rides along.
+    let derived = map_at(scope, "derived_evidence").ok_or("the derived evidence")?;
+    assert!(map_at(derived, "answers_open_conflict").is_none());
+    let envelope = decode_consolidation_evidence(derived)?.ok_or("the evidence envelope")?;
+    assert_eq!(envelope.refs, vec![turn]);
+    assert!(envelope.chain.is_empty());
+    assert_eq!(envelope.source_meet, ClaimSource::Generated);
+    let RmpValue::Map(fields) = derived else {
+        return Err("the derived evidence is a map".into());
+    };
+    assert_eq!(fields.len(), 4, "refs, chain, source_meet, locators");
+    let locators = map_at(derived, "locators").ok_or("the locators")?;
+    let RmpValue::Array(locators) = locators else {
+        return Err("the locators are an array".into());
+    };
+    assert_eq!(locators.len(), 1);
+    let row = &locators[0];
+    let RmpValue::Map(row_fields) = row else {
+        return Err("the locator is a map".into());
+    };
+    assert_eq!(row_fields.len(), 4, "source, hash, range, messages");
+    let source_id = map_at(row, "source_id")
+        .and_then(RmpValue::as_slice)
+        .ok_or("the locator source")?;
+    assert_eq!(source_id, turn.as_bytes().as_slice());
+    let hash = map_at(row, "content_hash")
+        .and_then(RmpValue::as_slice)
+        .ok_or("the content hash")?;
+    assert_eq!(hash.len(), 32);
+    assert!(map_at(row, "claim_id").is_none(), "a TURN locator names no claim");
+    let range = map_at(row, "byte_range").ok_or("the byte range")?;
+    let RmpValue::Array(range) = range else {
+        return Err("the byte range is an array".into());
+    };
+    assert_eq!(range.len(), 2);
+    assert_eq!(range[0].as_u64(), Some(0), "a whole-text range starts at zero");
+    assert!(range[1].as_u64().is_some_and(|end| end > 0));
+    let spans = map_at(row, "messages").ok_or("the message spans")?;
+    let RmpValue::Array(spans) = spans else {
+        return Err("the message spans are an array".into());
+    };
+    assert!(!spans.is_empty(), "the range covers message bytes");
+    for span in spans {
+        let RmpValue::Map(span_fields) = span else {
+            return Err("a message span is a map".into());
+        };
+        assert_eq!(span_fields.len(), 3, "message, span, revision");
+        let message = map_at(span, "message")
+            .and_then(RmpValue::as_slice)
+            .ok_or("the span message")?;
+        assert_eq!(message.len(), 16);
+        let bounds = map_at(span, "span").ok_or("the span bounds")?;
+        let RmpValue::Array(bounds) = bounds else {
+            return Err("the span bounds are an array".into());
+        };
+        assert_eq!(bounds.len(), 2);
+        let (Some(from), Some(to)) = (bounds[0].as_u64(), bounds[1].as_u64()) else {
+            return Err("the span bounds are integers".into());
+        };
+        assert!(from <= to);
+        let revision = map_at(span, "revision")
+            .and_then(RmpValue::as_slice)
+            .ok_or("the span revision")?;
+        assert_eq!(revision.len(), 32);
+        assert!(map_at(span, "frontier").is_none(), "no document frontier");
+        assert!(map_at(span, "attribution").is_none(), "a native child names no speaker");
+    }
     Ok(())
 }
 
