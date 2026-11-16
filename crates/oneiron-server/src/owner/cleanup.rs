@@ -16,7 +16,7 @@
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{Memory, MemoryError};
-use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::vault_cleanup::{
     self, ArchivedEntity, CleanupDecideRequest, CleanupDecideView, CleanupDigest, CleanupKind,
     CleanupPosture, CleanupProposal, CleanupRevertEntry, CleanupRevertReason, CleanupReviewRequest,
@@ -362,9 +362,7 @@ pub(crate) fn configure(
 
 /// The owner's change of one cleanup key (`cleanup.posture`,
 /// `cleanup.task_retention_days`) through the Setting door, as
-/// `vault.settings.set` makes it: an owner's change lands at once, and the
-/// posture key refuses the automatic posture in its write while the rollout
-/// blockers are open.
+/// `vault.settings.set` makes it: an owner's change lands at once.
 fn set_cleanup_key(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -374,16 +372,7 @@ fn set_cleanup_key(
     vault
         .set_setting(
             SettingCaller::Owner(owner),
-            SetSetting {
-                key: key.to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(value),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
+            SetSetting::vault_value(key, value),
         )
         .map(|_| ())
 }
