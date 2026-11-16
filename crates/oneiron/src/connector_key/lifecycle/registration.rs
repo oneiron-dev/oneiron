@@ -272,7 +272,7 @@ impl Vault {
             true,
         )?;
         if let Some(old_connector) = old_connector
-            && old_connector != new_index_key.connector
+            && old_connector != new_index_key.text
         {
             CONNECTOR_INDEX.delete(
                 &self.store,
