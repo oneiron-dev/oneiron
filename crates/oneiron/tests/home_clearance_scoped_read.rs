@@ -13,7 +13,10 @@
 //! Naming a room lifts the home only for a reader that stands in it (Astra on
 //! L5-02 PR 3, finding 3): the outside reader, which is not in the room,
 //! reads no stamped claim inside it, and a member of the room, on its own
-//! delegated read slip, reads them inside the room and not outside it.
+//! delegated read slip, reads them inside the room and not outside it. A
+//! lane built inside the room while its reader stood there withholds them
+//! again once the reader leaves the room, though the lane is kept (pipeline
+//! review round 1 of #8177, P1 1): each read finds the standing again.
 //!
 //! The same four claims about one PERSON as the read-doors test (unstamped,
 //! public, private, sensitive). Deterministic: in-process vault, no server,
@@ -74,6 +77,10 @@ struct Fixture {
     private_stamped: EntityId,
     sensitive_stamped: EntityId,
     room: EntityId,
+    /// The vault's owner, who seats the room.
+    owner: EntityId,
+    /// The room's other member, whose credential `member_slip` is.
+    member: EntityId,
 }
 
 /// One seeded claim about `subject`, holding `text`, stamped `sensitivity`
@@ -273,6 +280,8 @@ impl Fixture {
             private_stamped,
             sensitive_stamped,
             room,
+            owner,
+            member: other,
         })
     }
 
@@ -400,6 +409,39 @@ fn a_member_reads_stamped_claims_inside_its_room_only() -> TestResult {
     assert!(
         !lane_reads(&outside, &fixture.sensitive_stamped)?,
         "the point read outside any room withholds the sensitive stamped claim from the member lane"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_kept_room_lane_withholds_stamped_claims_once_its_reader_leaves() -> TestResult {
+    let fixture = Fixture::new()?;
+    let inside = fixture.member_lane()?.within_room_facets(fixture.room);
+    assert!(
+        lane_reads(&inside, &fixture.sensitive_stamped)?,
+        "control: the point read inside its room serves the member lane the sensitive stamped claim"
+    );
+    fixture.vault.leave_member(
+        fixture.room,
+        fixture.member,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        fixture.vault.now_recorded_at(),
+    )?;
+    assert!(
+        !fixture.vault.stands_in_room(fixture.room, fixture.member)?,
+        "control: the member no longer stands in the room"
+    );
+    assert!(
+        lane_reads(&inside, &fixture.unstamped)?,
+        "control: the kept lane still serves the unstamped claim"
+    );
+    assert!(
+        !lane_reads(&inside, &fixture.sensitive_stamped)?,
+        "the kept lane withholds the sensitive stamped claim once its reader left the room"
+    );
+    assert!(
+        !lane_reads(&inside, &fixture.private_stamped)?,
+        "the kept lane withholds the private stamped claim once its reader left the room"
     );
     Ok(())
 }
