@@ -61,6 +61,14 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+        // The last-bound-owner guard under the same conditional law (round-1
+        // P1 of #7900): only when nothing settled this delete yet does this
+        // purge linearize it. Once the tombstone published, the publish
+        // transaction already decided the guard; re-deciding here would refuse
+        // a call peers already obey.
+        if !authority_settled {
+            self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
+        }
         // A due confirmed erase nothing has published re-proves here that it
         // still waits, before any marker, scrub or purge (FIX 6337).
         let requester = due

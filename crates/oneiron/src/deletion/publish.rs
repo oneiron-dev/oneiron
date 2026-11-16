@@ -559,6 +559,19 @@ impl Vault {
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                // The last-bound-owner guard at this delete's linearizing
+                // commit (round-1 P1 of #7900): a hard delete publishes before
+                // it purges, so the publish decides the guard and the later
+                // purge must not re-decide a call peers already obey. A soft
+                // delete's scrub transaction already decided it, so soft
+                // publications skip this.
+                .and_then(|()| {
+                    if value.reason.is_hard() {
+                        self.refuse_last_bound_owner_delete_in(&wtxn, id)
+                    } else {
+                        Ok(())
+                    }
+                })
                 .and_then(|()| {
                     self.store.delete_guards.precheck_goal_delete(
                         &self.store,

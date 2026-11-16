@@ -28,6 +28,7 @@ pub mod connector_key_suspend;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
+pub mod delete_guard_race;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;

@@ -28,7 +28,11 @@ impl Vault {
     /// holding an Active `human` binding lets the delete through, as does a
     /// row that holds no live owner binding. An unrooted vault binds no one.
     /// Revisit once an owner recovery ceremony exists.
-    fn refuse_last_bound_owner_delete_in(
+    ///
+    /// The guard phase runs this as the early refusal; each linearizing write
+    /// transaction re-runs it against its own view, which is the check that
+    /// decides (round-1 P1 of #7900).
+    pub(crate) fn refuse_last_bound_owner_delete_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
