@@ -1,7 +1,8 @@
 //! The managed (hosted) node's web-fetch egress guard (SCAN C447). A hosted
 //! node's fetcher never reaches the infrastructure it runs on: loopback,
-//! link-local (169.254.0.0/16, fe80::/10), the node's own addresses and the
-//! cloud metadata endpoints. Nor does it reach a private network (FIX 7657):
+//! link-local (169.254.0.0/16, fe80::/10), the node's own addresses (the
+//! address every Tailscale node answers itself among them) and the cloud
+//! metadata endpoints. Nor does it reach a private network (FIX 7657):
 //! RFC1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), CGNAT
 //! (100.64.0.0/10) and IPv6 ULA (fc00::/7), except in a network the hosting
 //! operator lets it reach ([`HostedPrivateNetwork`],
@@ -27,11 +28,13 @@
 //! [`WebFetchError::HostedPrivateNetwork`]).
 //!
 //! An operator's network admits its addresses at every check, by address
-//! alone. An operator's origin admits a private address only where the guard
-//! knows the name: a name's own answers, resolved at the check, and a URL
-//! whose scheme and port that origin lists. A check that sees only an
-//! address (an address-literal URL, a raw connection) refuses every private
-//! address outside the operator's networks.
+//! alone, except that a name an operator origin lists stays bound to the
+//! schemes and ports its origins list. An operator's origin admits a private
+//! address only where the guard knows the name: a name's own answers,
+//! resolved at the check, and a URL whose scheme and port that origin lists.
+//! A check that sees only an address (an address-literal URL, a raw
+//! connection) refuses every private address outside the operator's
+//! networks.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
@@ -60,12 +63,29 @@ const CLOUD_METADATA_V4: [Ipv4Addr; 3] = [
     Ipv4Addr::new(168, 63, 129, 16),
 ];
 
-/// Cloud metadata endpoints on IPv6: AWS's (fd00:ec2::254) and Google
-/// Cloud's (fd20:ce::254).
-const CLOUD_METADATA_V6: [Ipv6Addr; 2] = [
+/// Cloud metadata and credential endpoints on IPv6, all inside ULA: AWS's
+/// instance metadata (fd00:ec2::254) and EKS Pod Identity agent
+/// (fd00:ec2::23), Google Cloud's (fd20:ce::254), Oracle Cloud's
+/// (fd00:c1::a9fe:a9fe), Scaleway's (fd00:42::42) and Akamai (Linode)'s
+/// (fd00:a9fe:a9fe::1). An operator who admits ULA
+/// (HOSTED-EGRESS-OPERATOR-SETTING) still never reaches one.
+const CLOUD_METADATA_V6: [Ipv6Addr; 6] = [
     Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254),
+    Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0023),
     Ipv6Addr::new(0xfd20, 0x00ce, 0, 0, 0, 0, 0, 0x0254),
+    Ipv6Addr::new(0xfd00, 0x00c1, 0, 0, 0, 0, 0xa9fe, 0xa9fe),
+    Ipv6Addr::new(0xfd00, 0x0042, 0, 0, 0, 0, 0, 0x0042),
+    Ipv6Addr::new(0xfd00, 0xa9fe, 0xa9fe, 0, 0, 0, 0, 0x0001),
 ];
+
+/// The address every Tailscale node answers itself (its MagicDNS resolver
+/// and local services), inside CGNAT: the node's own daemon, never a peer,
+/// so one of the node's own addresses even where the operator admits the
+/// tailnet's network.
+const TAILSCALE_NODE_SERVICE_V4: Ipv4Addr = Ipv4Addr::new(100, 100, 100, 100);
+/// Its IPv6 twin, inside ULA.
+const TAILSCALE_NODE_SERVICE_V6: Ipv6Addr =
+    Ipv6Addr::new(0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0x0053);
 
 /// What a hosted node's fetcher may not reach, judged by resolved address.
 #[derive(Clone)]
@@ -112,9 +132,10 @@ impl HostedEgressGuard {
     /// private networks the hosting operator lets the fetcher reach
     /// (HOSTED-EGRESS-OPERATOR-SETTING), in place of any it admitted. An
     /// admitted network admits no infrastructure inside it: a cloud
-    /// metadata endpoint in CGNAT or ULA, or one of the node's own
-    /// addresses, stays refused. A listed origin's name stays bound to the
-    /// schemes and ports its origins list ([`Self::refuses_origin`]).
+    /// metadata endpoint this guard lists in CGNAT or ULA, Tailscale's node
+    /// address, or one of the node's own addresses, stays refused. A listed
+    /// origin's name stays bound to the schemes and ports its origins list
+    /// ([`Self::refuses_origin`]).
     #[must_use]
     pub fn with_private_networks(
         mut self,
@@ -260,8 +281,8 @@ impl HostedEgressGuard {
     }
 
     /// Refuses `url`, a page the fetcher is asked for, when it resolves to
-    /// hosted infrastructure or to a private network no operator origin
-    /// admits.
+    /// hosted infrastructure or to a private address no operator network or
+    /// origin admits.
     pub(super) fn admit(&self, url: &Url) -> WebFetchResult<()> {
         match self.refuses_url(url) {
             Some(refused) => Err(refused.fetch_error(url.as_str())),
@@ -315,7 +336,8 @@ impl HostedEgressGuard {
 }
 
 /// Whether `ip`, already unwrapped, is infrastructure on every node: loopback,
-/// "this host", link-local or a cloud metadata endpoint.
+/// "this host", link-local, a cloud metadata endpoint or Tailscale's node
+/// address.
 fn is_infrastructure(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -323,12 +345,14 @@ fn is_infrastructure(ip: IpAddr) -> bool {
                 || v4.octets()[0] == 0
                 || v4.is_link_local()
                 || CLOUD_METADATA_V4.contains(&v4)
+                || v4 == TAILSCALE_NODE_SERVICE_V4
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_unicast_link_local()
                 || CLOUD_METADATA_V6.contains(&v6)
+                || v6 == TAILSCALE_NODE_SERVICE_V6
         }
     }
 }

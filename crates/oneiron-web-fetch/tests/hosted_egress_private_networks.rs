@@ -32,13 +32,21 @@ const CGNAT: [&str; 3] = ["100.64.0.1", "100.127.255.254", "64:ff9b::6440:101"];
 const ULA: [&str; 2] = ["fd12:3456::1", "fc00::1"];
 
 /// Infrastructure, some of it inside an admittable network: the node's own
-/// address (RFC1918), Alibaba Cloud's metadata endpoint (CGNAT) and the AWS
-/// and Google Cloud IPv6 metadata endpoints (ULA).
-const INFRASTRUCTURE: [&str; 9] = [
+/// address (RFC1918); Alibaba Cloud's metadata endpoint and Tailscale's node
+/// address (CGNAT); the AWS (metadata and EKS Pod Identity), Google Cloud,
+/// Oracle Cloud, Scaleway and Akamai IPv6 metadata endpoints and Tailscale's
+/// IPv6 node address (ULA).
+const INFRASTRUCTURE: [&str; 15] = [
     NODE,
     "100.100.100.200",
+    "100.100.100.100",
     "fd00:ec2::254",
+    "fd00:ec2::23",
     "fd20:ce::254",
+    "fd00:c1::a9fe:a9fe",
+    "fd00:42::42",
+    "fd00:a9fe:a9fe::1",
+    "fd7a:115c:a1e0::53",
     "127.0.0.1",
     "169.254.169.254",
     "0.0.0.0",

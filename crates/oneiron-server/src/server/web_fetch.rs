@@ -46,11 +46,13 @@ impl SyncServer {
         self
     }
 
-    /// The guard a managed node checks every outbound fetch with, `None` on a
-    /// self-hosted node: the web fetcher's, and the OAuth server's fetch of a
-    /// client ID metadata document (FIX 4902). The managed switch every
+    /// The guard a managed node checks its owner's outbound fetches with,
+    /// `None` on a self-hosted node: the web fetcher's and the calendar ICS
+    /// feed polls'. A URL an outside party names takes
+    /// [`Self::untrusted_url_egress_guard`] instead. The managed switch every
     /// hosted-only rule reads is set only by managed boot, which alone passes
-    /// the operator's private networks and origins.
+    /// the operator's private networks and origins
+    /// ([`ManagedArgs::carry_hosted_egress`](crate::managed::ManagedArgs::carry_hosted_egress)).
     pub(crate) fn hosted_egress_guard(&self) -> Option<Arc<HostedEgressGuard>> {
         self.managed_issuer.is_some().then(|| {
             Arc::new(

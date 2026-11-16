@@ -283,7 +283,7 @@ fn fetch_error(error: WebFetchError) -> MemoryError {
             crate::memory::MEMORY_CODE_FORBIDDEN,
             error.to_string(),
             &[
-                "A hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its named private origin.",
+                "A hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the networks and origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its private network or its named private origin.",
             ],
         ),
         // A same-site crawl records a cross-site redirect per page; only a

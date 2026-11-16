@@ -257,12 +257,13 @@ pub enum WebFetchError {
     HostedInfrastructure { url: String },
 
     /// A managed (hosted) node's fetcher refused a destination that reaches
-    /// a private network (RFC1918, CGNAT, ULA) at no origin the hosting
-    /// operator allows (FIX 7657), as [`Self::HostedInfrastructure`] is
+    /// a private network (RFC1918, CGNAT, ULA) in no network and at no origin
+    /// the hosting operator allows (FIX 7657, HOSTED-EGRESS-OPERATOR-SETTING),
+    /// as [`Self::HostedInfrastructure`] is
     /// refused. The message names [`HOSTED_PRIVATE_NETWORK_REASON`]; `url` is
     /// the requested page, credential-redacted.
     #[error(
-        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
+        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the networks and origins the hosting operator allows; a self-hosted node fetches it, or the hosting operator can allow its private network or its named private origin"
     )]
     HostedPrivateNetwork { url: String },
 
