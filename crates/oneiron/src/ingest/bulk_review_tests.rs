@@ -177,7 +177,7 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     let (_dir, vault, owner, batch) = fixture()?;
     let other = second_owner(&vault);
     let denied = vault.decline_imported_claim_batch(&owner, &batch)?;
-    assert_eq!(denied.gate_outcome(), "denied");
+    assert_eq!(denied.gate_outcome().as_str(), "rejected");
     for decider in [&owner, &other] {
         assert!(spent(
             vault
