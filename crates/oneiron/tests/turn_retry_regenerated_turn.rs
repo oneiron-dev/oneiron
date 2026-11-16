@@ -618,7 +618,9 @@ fn an_agents_retry_lands_when_its_reads_omit_its_own_sitting() -> TestResult {
     answer_retry_lands(&fixture, &exchange, &action)
 }
 
-/// Red on main, as above: the chat host's reply sits in owen's sitting.
+/// Red on main at source trust, as on a default vault: the Retry's TURN
+/// pended on `gate.pending.source_trust`, while the `/session` reference
+/// check passed. The chat host's reply sits in owen's sitting.
 #[test]
 fn an_agents_retry_lands_when_its_reply_sat_in_the_callers_sitting() -> TestResult {
     let (fixture, exchange, action) = narrowed_retry(ReplySitting::CallersBoundByTheChatHost)?;
