@@ -549,18 +549,6 @@ async fn paid_booking(
     (payment_id, cancel_token)
 }
 
-/// One settle pass at `at`, run off the runtime as the settle worker runs it:
-/// the Stripe client blocks, and the fake Stripe answers on this runtime.
-async fn settle_pass(fixture: &Fixture, at: u64) -> BookingDepositSettlementDrain {
-    let vault = Arc::clone(&fixture.server.vault);
-    let base = fixture.server.booking_deposit_stripe_base().to_owned();
-    tokio::task::spawn_blocking(move || {
-        settle_deposits_once(&vault, &base, at).expect("settle pass")
-    })
-    .await
-    .expect("the settle pass ran")
-}
-
 /// The POST /v1/refunds calls the fake saw.
 fn refund_posts(stripe: &Shared) -> usize {
     stripe
@@ -1148,7 +1136,7 @@ async fn a_capture_a_restricted_key_may_not_make_stays_owed_and_lands_once_the_k
     let pass_at = |pass: u64| now - (3 - pass) * 3_601;
     for pass in 0..3_u64 {
         let asked_before = capture_posts();
-        let drain = settle_pass(&fixture, pass_at(pass)).await;
+        let drain = run_settle_pass(&fixture, pass_at(pass)).await;
         assert_eq!(
             drain.failed, 0,
             "pass {pass}: a refused capture fails no move for good"
@@ -1174,7 +1162,7 @@ async fn a_capture_a_restricted_key_may_not_make_stays_owed_and_lands_once_the_k
     // The owner gives the key the permission: the next pass captures, once.
     let refused_captures = capture_posts();
     stripe.lock().expect("fake stripe").refuse_intent_moves = false;
-    let drain = settle_pass(&fixture, pass_at(3)).await;
+    let drain = run_settle_pass(&fixture, pass_at(3)).await;
     assert_eq!(
         drain.captured, 1,
         "the owed capture runs once the key may capture"
@@ -1255,7 +1243,7 @@ async fn a_refund_the_owner_made_by_hand_is_not_made_again_once_the_key_may_refu
     // asked, and the refund stays owed.
     stripe.lock().expect("fake stripe").refuse_refunds = true;
     let now = now_secs().expect("clock");
-    let drain = settle_pass(&fixture, now - 3_601).await;
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
     assert_eq!(drain.failed, 0, "a refused refund fails no move for good");
     assert_eq!(drain.refunded, 0, "a refused refund is no refund");
     let refused_posts = refund_posts(&stripe);
@@ -1282,7 +1270,7 @@ async fn a_refund_the_owner_made_by_hand_is_not_made_again_once_the_key_may_refu
         ));
         stripe.refuse_refunds = false;
     }
-    let drain = settle_pass(&fixture, now).await;
+    let drain = run_settle_pass(&fixture, now).await;
     assert_eq!(drain.failed, 0, "the landing pass fails no move");
     assert_eq!(
         drain.refunded, 1,
@@ -1332,7 +1320,7 @@ async fn a_hand_refund_short_of_what_is_owed_is_never_topped_up_by_the_settle_ro
             1_000,
             "succeeded",
         ));
-    let drain = settle_pass(&fixture, pass_at(0)).await;
+    let drain = run_settle_pass(&fixture, pass_at(0)).await;
     assert_eq!(
         drain.failed, 0,
         "a short hand refund fails no move for good"
@@ -1355,7 +1343,7 @@ async fn a_hand_refund_short_of_what_is_owed_is_never_topped_up_by_the_settle_ro
             1_500,
             "pending",
         ));
-    let drain = settle_pass(&fixture, pass_at(1)).await;
+    let drain = run_settle_pass(&fixture, pass_at(1)).await;
     assert_eq!(drain.failed, 0, "a held hand refund fails no move for good");
     assert_eq!(drain.refunded, 0, "a refund Stripe holds is no refund yet");
     assert_eq!(
@@ -1366,7 +1354,7 @@ async fn a_hand_refund_short_of_what_is_owed_is_never_topped_up_by_the_settle_ro
 
     // Stripe finishes the second hand refund: the two cover what is owed.
     stripe.lock().expect("fake stripe").refunds[1].status = "succeeded".to_owned();
-    let drain = settle_pass(&fixture, pass_at(2)).await;
+    let drain = run_settle_pass(&fixture, pass_at(2)).await;
     assert_eq!(drain.failed, 0, "the landing pass fails no move");
     assert_eq!(
         drain.refunded, 1,
