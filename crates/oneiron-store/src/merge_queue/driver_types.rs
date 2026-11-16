@@ -58,6 +58,9 @@ pub enum QueueDriveHoldReason {
     WaitingCheck,
     /// A predecessor's symbol declaration still holds the run entry.
     WaitingSymbols,
+    /// A later batch of a split enqueue waits for the batch it follows to
+    /// land ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+    WaitingFollowedBatch,
     /// A member lacks its unanimous critic review, or a removed public name
     /// waits for a person review (FIX 4365).
     WaitingReview,
@@ -192,6 +195,7 @@ pub enum QueueDriveStatus {
     Driving,
     WaitingCheck,
     WaitingSymbols,
+    WaitingFollowedBatch,
     WaitingReview,
     WaitingAdmission,
     HeldNeedsNewBase,
@@ -218,6 +222,7 @@ impl From<QueueDriveHoldReason> for QueueDriveStatus {
         match reason {
             QueueDriveHoldReason::WaitingCheck => Self::WaitingCheck,
             QueueDriveHoldReason::WaitingSymbols => Self::WaitingSymbols,
+            QueueDriveHoldReason::WaitingFollowedBatch => Self::WaitingFollowedBatch,
             QueueDriveHoldReason::WaitingReview => Self::WaitingReview,
             QueueDriveHoldReason::WaitingAdmission => Self::WaitingAdmission,
             QueueDriveHoldReason::HeldNeedsNewBase => Self::HeldNeedsNewBase,

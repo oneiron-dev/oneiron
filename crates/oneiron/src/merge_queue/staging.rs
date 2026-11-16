@@ -4,6 +4,7 @@
 //! adds a later proposal's changed lines to the bytes earlier ones staged,
 //! from their one verified base. CALL A keeps the automatic driver's
 //! same-path pairs out of staging, so it never reaches this composition.
+use super::batch_split::{FOLLOWED_BATCH_ENDED, FollowedBase, split_proposals};
 use super::composition::LineComposition;
 use super::survivors::{SurvivorCaller, SurvivorFormation};
 use super::types::QueueRecord;
@@ -27,7 +28,8 @@ use std::path::{Path, PathBuf};
 pub(super) const SPECULATION_WIDTH: usize = 6;
 
 /// The most proposals one batch holds: its path mask is a `u64` whose
-/// all-ones value names the slow check's path.
+/// all-ones value names the slow check's path. An enqueue of more forms
+/// consecutive batches ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
 pub(super) const MAX_BATCH_PROPOSALS: usize = 63;
 
 /// The masks a batch of `count` proposals stages, ascending: for each window
@@ -48,6 +50,10 @@ pub(super) fn speculative_masks(count: usize) -> Vec<u64> {
 
 impl MergeQueue<'_> {
     /// Admit reviewed proposals from the last green tree, without applying them.
+    /// More than [`MAX_BATCH_PROPOSALS`] form consecutive batches in request
+    /// order, each staged on the head the one before it landed; the answer
+    /// is the first, whose `followed_by` names the next
+    /// ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
     pub fn enqueue(&self, proposals: Vec<MergeProposal>) -> Result<MergeBatch> {
         let formed =
             self.enqueue_checked::<std::convert::Infallible>(proposals, |_| Ok(Ok(None)))?;
@@ -60,7 +66,9 @@ impl MergeQueue<'_> {
     /// judges every changed path, a rename's new name among them, against
     /// the retained whitelist of a registered repository in this queue's
     /// folder (FIX 4299); a batch it accepts is never revoked by a later
-    /// whitelist change.
+    /// whitelist change. A request of more than [`MAX_BATCH_PROPOSALS`]
+    /// forms its consecutive batches in this one writer, all or none, and
+    /// answers the first.
     pub(super) fn enqueue_checked<R>(
         &self,
         proposals: Vec<MergeProposal>,
@@ -71,11 +79,11 @@ impl MergeQueue<'_> {
         self.require_current(&queue)?;
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
-        let mut batch = self.queued_batch(&mut queue, proposals)?;
+        let mut batches = self.queued_batches(&mut queue, proposals)?;
         let locator = self.repo.repo_ref().locator();
-        let changed: Vec<String> = batch
-            .proposals
+        let changed: Vec<String> = batches
             .iter()
+            .flat_map(|batch| &batch.proposals)
             .flat_map(|proposal| &proposal.files)
             .flat_map(|file| {
                 let renamed = file
@@ -85,7 +93,7 @@ impl MergeQueue<'_> {
                 std::iter::once(file.path.clone()).chain(renamed)
             })
             .collect();
-        let saved = self.save_checked(&queue, &mut batch, |txn| {
+        let saved = self.save_checked(&queue, &mut batches, |txn| {
             let accepted = admit(txn)?;
             if accepted.is_ok() {
                 let paths = changed.iter().map(String::as_str);
@@ -97,7 +105,33 @@ impl MergeQueue<'_> {
         if let Err(refused) = saved {
             return Ok(Err(refused));
         }
-        Ok(Ok(batch))
+        let first = batches
+            .into_iter()
+            .next()
+            .ok_or_else(|| invalid("a merge enqueue forms at least one batch"))?;
+        Ok(Ok(first))
+    }
+
+    /// The Queued batches of `proposals` on `queue`'s current head and
+    /// green, in request order: one per [`MAX_BATCH_PROPOSALS`] of them.
+    /// Each after the first follows the one before it, and that one names
+    /// it as followed by it ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]); not
+    /// yet saved.
+    fn queued_batches(
+        &self,
+        queue: &mut QueueRecord,
+        proposals: Vec<MergeProposal>,
+    ) -> Result<Vec<MergeBatch>> {
+        let mut batches: Vec<MergeBatch> = Vec::new();
+        for group in split_proposals(proposals) {
+            let mut batch = self.queued_batch(queue, group)?;
+            if let Some(previous) = batches.last_mut() {
+                previous.followed_by = Some(batch.id.clone());
+                batch.follows = Some(previous.id.clone());
+            }
+            batches.push(batch);
+        }
+        Ok(batches)
     }
 
     /// A new Queued batch of `proposals` on `queue`'s current head and
@@ -128,6 +162,8 @@ impl MergeQueue<'_> {
             selected_tests,
             run_order: None,
             drive: None,
+            follows: None,
+            followed_by: None,
         })
     }
 
@@ -179,6 +215,14 @@ impl MergeQueue<'_> {
         // refused; an owner or trusted batch waits on none (FIX 6867).
         if !self.run_batch_ready(&batch)? {
             return Ok(batch);
+        }
+        // A later batch of a split enqueue waits Queued for the batch it
+        // follows, then stages on the head that one landed.
+        match self.followed_base(&batch)? {
+            FollowedBase::First => {}
+            FollowedBase::Waiting => return Ok(batch),
+            FollowedBase::Landed(head) => batch.expected_head = head,
+            FollowedBase::Ended => return Err(invalid(FOLLOWED_BATCH_ENDED)),
         }
         if batch.expected_head != queue.pointers.head {
             return Err(Error::ConcurrentWrite(
@@ -524,15 +568,17 @@ fn compose_staged(
         .ok_or_else(stale)
 }
 
-/// A run's accepted order narrowed to its `survivors`: the same work,
-/// declaration, predecessors and sequence (FIX 7066).
-pub(super) fn survivor_run_order(
+/// A run's accepted order narrowed to `members`: the same work,
+/// declaration, predecessors and sequence (FIX 7066). A survivors batch
+/// keeps it for its survivors, and each batch of a split enqueue for its
+/// own proposals ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+pub(super) fn narrowed_run_order(
     order: Option<RepoQueueOrder>,
-    survivors: &[MergeProposal],
+    members: &[MergeProposal],
 ) -> Option<RepoQueueOrder> {
     order.map(|mut order| {
         order.proposals.retain(|stored| {
-            survivors
+            members
                 .iter()
                 .any(|proposal| proposal.id == stored.to_hex())
         });
@@ -542,11 +588,10 @@ pub(super) fn survivor_run_order(
 
 pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
     // More than one window is admitted whole and speculated a window at a
-    // time (FIX 9948); the mask's width is the batch's one bound.
-    if proposals.is_empty() || proposals.len() > MAX_BATCH_PROPOSALS {
-        return Err(invalid(
-            "a merge batch holds one to 63 proposals, the width of its path mask",
-        ));
+    // time (FIX 9948). The mask's width bounds each batch, not the request:
+    // more form consecutive batches ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+    if proposals.is_empty() {
+        return Err(invalid("a merge enqueue holds at least one proposal"));
     }
     let mut ids = BTreeSet::new();
     let mut total = 0_usize;

@@ -129,7 +129,7 @@ impl MergeQueue<'_> {
                 .iter()
                 .flat_map(|proposal| proposal.files.iter().map(|file| file.path.as_str())),
         )?;
-        let run_order = super::staging::survivor_run_order(source.run_order.clone(), &survivors);
+        let run_order = super::staging::narrowed_run_order(source.run_order.clone(), &survivors);
         let child = MergeBatch {
             schema_version: 1,
             id: child_id.clone(),
@@ -149,6 +149,10 @@ impl MergeQueue<'_> {
                 survivor_of: Some(source.id.clone()),
                 ..QueueBatchDrive::default()
             }),
+            // A followed batch's survivors carry its landing; the batch
+            // that follows it walks the survivor link to them.
+            follows: None,
+            followed_by: None,
         };
         let drive = source.drive.get_or_insert_with(QueueBatchDrive::default);
         drive.survivor = Some(QueueSurvivorLink::Batch(child_id.clone()));

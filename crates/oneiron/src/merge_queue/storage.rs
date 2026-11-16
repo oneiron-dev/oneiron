@@ -87,6 +87,10 @@ impl MergeQueue<'_> {
             || batch.id != id
             || batch.proposals.is_empty()
             || batch.proposals.len() > super::staging::MAX_BATCH_PROPOSALS
+            || [&batch.follows, &batch.followed_by]
+                .into_iter()
+                .flatten()
+                .any(|link| link == id || validate_id(link).is_err())
         {
             return Err(Error::CorruptedIndex("merge batch identity or schema"));
         }
@@ -174,41 +178,50 @@ impl MergeQueue<'_> {
         self.vault.wake_merge_queue();
         Ok(())
     }
-    /// [`Self::save`] of one new batch whose writer's first act is `admit`
-    /// (FIX 6867): it answers the run order the batch keeps, stamped with
-    /// the queue sequence that accepted it, or a refusal, which writes
-    /// nothing. A run's admission is judged in this writer, not before it,
-    /// and only an accepted batch gets its admission receipt (FIX 4338).
+    /// [`Self::save`] of one enqueue's new batches whose writer's first act
+    /// is `admit` (FIX 6867): it answers the run order the batches keep,
+    /// stamped with the queue sequence that accepted them, or a refusal,
+    /// which writes nothing. A run's admission is judged in this writer, not
+    /// before it, and only accepted batches get their admission receipts
+    /// (FIX 4338). Consecutive batches of a split enqueue each keep the
+    /// order narrowed to their own proposals, all in this one writer
+    /// ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
     pub(super) fn save_checked<R>(
         &self,
         state: &QueueRecord,
-        batch: &mut MergeBatch,
+        batches: &mut [MergeBatch],
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<Option<RepoQueueOrder>, R>>,
     ) -> Result<std::result::Result<(), R>> {
         check_row_size(&QUEUE_STATE.encode_value(state)?)?;
         let mut txn = self.vault.store.env.write_txn()?;
-        batch.run_order = match admit(&txn)? {
+        let order = match admit(&txn)? {
             Ok(order) => order.map(|order| RepoQueueOrder {
                 sequence: state.sequence,
                 ..order
             }),
             Err(refused) => return Ok(Err(refused)),
         };
-        check_row_size(&BATCHES.encode_value(batch)?)?;
-        self.record_batch_receipts_in_txn(&mut txn, batch)?;
+        let split = batches.len() > 1;
+        for batch in &mut *batches {
+            batch.run_order = if split {
+                super::staging::narrowed_run_order(order.clone(), &batch.proposals)
+            } else {
+                order.clone()
+            };
+            check_row_size(&BATCHES.encode_value(batch)?)?;
+            self.record_batch_receipts_in_txn(&mut txn, batch)?;
+        }
         QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
-        BATCHES.put(
-            &self.vault.store,
-            &mut txn,
-            &self.batch_key(&batch.id),
-            batch,
-        )?;
-        put_batch_index(
-            &self.vault.store,
-            &mut txn,
-            &self.repo.identity().as_hex(),
-            batch,
-        )?;
+        let repo_hex = self.repo.identity().as_hex();
+        for batch in &*batches {
+            BATCHES.put(
+                &self.vault.store,
+                &mut txn,
+                &self.batch_key(&batch.id),
+                batch,
+            )?;
+            put_batch_index(&self.vault.store, &mut txn, &repo_hex, batch)?;
+        }
         txn.commit()?;
         self.vault.wake_merge_queue();
         Ok(Ok(()))

@@ -4,6 +4,7 @@
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
 mod batch_index;
+mod batch_split;
 mod candidate_intake;
 mod check_execute;
 mod check_exhaust;
