@@ -39,6 +39,7 @@ pub mod consent_graduation_demotion;
 pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod contact_family_heads;
+pub mod conversation_membership_index;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;

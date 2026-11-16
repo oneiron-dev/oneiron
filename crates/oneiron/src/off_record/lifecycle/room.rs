@@ -816,7 +816,7 @@ pub(super) fn is_member_in_txn(
     {
         return Ok(false);
     }
-    Ok(vault.members_in_txn(txn, room)?.contains(&actor))
+    vault.is_member_in_txn(txn, room, actor)
 }
 
 pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
