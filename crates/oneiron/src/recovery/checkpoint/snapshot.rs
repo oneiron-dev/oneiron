@@ -161,6 +161,17 @@ impl Vault {
         let mut pads_carried = 0_usize;
         for entry in DB_MANIFEST {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+                let imaged;
+                let mut value = value;
+                if entry.name == "vault_meta" {
+                    let Some(candidate) =
+                        crate::code_run::replay_rows::image_value(&self.store, &txn, key, value)?
+                    else {
+                        return Ok(None);
+                    };
+                    imaged = candidate;
+                    value = &imaged;
+                }
                 if !filter.takes(entry.name, key, value) {
                     return Ok(None);
                 }
