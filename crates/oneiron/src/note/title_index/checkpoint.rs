@@ -47,10 +47,8 @@ fn author_of(key: &[u8]) -> Option<EntityId> {
 /// Whether `digest` is a title digest as the live index spells it: 64
 /// lower-case hex characters.
 fn is_digest(digest: &[u8]) -> bool {
-    digest.len() == DIGEST_HEX_LEN
-        && digest
-            .iter()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    std::str::from_utf8(digest)
+        .is_ok_and(|text| oneiron_hex::is_lower_hex(text, Some(DIGEST_HEX_LEN)))
 }
 
 /// A reservation key's author and digest, each in the one spelling the live

@@ -9,10 +9,8 @@
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
-    AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
-    DreamerAdmittedAttempt, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt,
+    DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -114,24 +112,24 @@ pub fn enqueue_extraction_attempt(
     }
 }
 
-/// Admits the next Meso consolidation attempt under
-/// [`EXTRACTION_LEASE_OWNER`] at `now`, through the consolidation lane's own
-/// admission.
+/// Admits the requested Meso extraction attempt under
+/// [`EXTRACTION_LEASE_OWNER`] at `now`, through the production admission tail.
 ///
 /// # Errors
 ///
 /// The vault's, or an admission of nothing or of another scope.
-pub fn admit_extraction_attempt(vault: &Vault, now: u64) -> Result<DreamerAdmittedAttempt> {
+pub fn admit_extraction_attempt(
+    vault: &Vault,
+    id: AttemptId,
+    now: u64,
+) -> Result<DreamerAdmittedAttempt> {
     let scope = DreamerConsolidationScope::Meso;
-    let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
-        admitted,
-    )) = DreamerRunnerStore::new(vault).admit_next_consolidation(
-        AdmitDreamerConsolidationAttempt {
-            scope,
-            local_node_id: crate::identity::load_or_mint_client_id(vault)?,
-            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-            admission: AdmitDreamerAttempt {
+    let outcome = vault.with_write_txn_grouped(|txn| {
+        DreamerRunnerStore::new(vault).admit_requested_attempt_in_txn(
+            txn,
+            scope.attempt_kind(),
+            id,
+            AdmitDreamerAttempt {
                 lease_owner: EXTRACTION_LEASE_OWNER.to_owned(),
                 now,
                 budget_id: "extraction-inputs".to_owned(),
@@ -139,9 +137,10 @@ pub fn admit_extraction_attempt(vault: &Vault, now: u64) -> Result<DreamerAdmitt
                 reserve_units: 1,
                 started_milestone: None,
             },
-        },
-    )?
-    else {
+        )
+    })?;
+    vault.store.notify_attempt_observers();
+    let DreamerAdmissionOutcome::Admitted(admitted) = outcome else {
         return Err(Error::InvalidConfig(
             "no extraction attempt was admitted".into(),
         ));
@@ -168,7 +167,7 @@ pub fn enqueue_admitted_extraction_attempt(
     now: u64,
 ) -> Result<(AttemptId, DreamerAdmittedAttempt)> {
     let id = enqueue_extraction_attempt(vault, turns, now)?;
-    let admitted = admit_extraction_attempt(vault, now)?;
+    let admitted = admit_extraction_attempt(vault, id, now)?;
     if admitted.status.attempt.id != id {
         return Err(Error::InvalidConfig(
             "the consolidation lane admitted another attempt".into(),
