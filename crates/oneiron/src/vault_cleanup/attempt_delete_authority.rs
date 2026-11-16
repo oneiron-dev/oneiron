@@ -1,5 +1,7 @@
 //! Restore-equivalent owner and live vault Admin authority for attempt cleanup.
 //! Attempts have no disclosure position: this is a vault control-plane act.
+//! With the owner's `vault_cleanup.attempt_delete.owner_or_admin_only` off, an
+//! agent whose live owner Grant names [`AGENT_DELETE_LINE`] acts too.
 
 use std::collections::BTreeSet;
 
@@ -14,13 +16,21 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
+/// The line an agent's live owner Grant names to preview and delete a
+/// cleanup-archived attempt: the confirm verb's own name.
+pub(super) const AGENT_DELETE_LINE: &str = "vault.archive.attempt.delete.confirm";
+
 pub(super) struct DeleteAuthority {
     pub(super) actor: EntityId,
     pub(super) role: &'static str,
     /// The Admin's live vault grant and its membership role, an Admin or a
     /// Deputy (check-in judges the confirm under it, 2k5e); none for the
-    /// Owner.
+    /// Owner and for an agent.
     pub(super) grant: Option<(EntityId, FederationGrantRole)>,
+    /// An agent's live owner Grant that names [`AGENT_DELETE_LINE`]; none
+    /// for a person. Check-in does not judge an agent at this door: PR 3's
+    /// act gate judges agents.
+    pub(super) agent_grant: Option<EntityId>,
 }
 
 pub(super) fn require_delete_in_txn(
@@ -38,13 +48,14 @@ pub(super) fn require_delete_in_txn(
             actor,
             role: "owner",
             grant: None,
+            agent_grant: None,
         });
     }
     if memory.actor_class() != EdgeActorClass::Human {
-        return Err(forbidden("attempt_delete_no_standing"));
+        return agent_in_txn(memory, txn);
     }
     vault.verify_write_actor_in_txn(txn, &memory.write_actor())?;
-    if !credential_reaches(memory, txn)? {
+    if !credential_reaches(memory, txn, true)? {
         return Err(forbidden("attempt_delete_credential_bounds"));
     }
     let Some(shared) = vault.shared_vault_creation_in_txn(txn)? else {
@@ -88,6 +99,7 @@ pub(super) fn require_delete_in_txn(
                 actor,
                 role: "admin",
                 grant: Some((id, role)),
+                agent_grant: None,
             });
         }
     }
@@ -95,6 +107,39 @@ pub(super) fn require_delete_in_txn(
         || forbidden("attempt_delete_no_standing"),
         MemoryError::from,
     ))
+}
+
+/// An agent deletes only while the owner's key is off, on its own unbounded
+/// credential, under the first live owner Grant that names
+/// [`AGENT_DELETE_LINE`]. Every other non-human caller, and every agent while
+/// the key is on, has no standing.
+fn agent_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<DeleteAuthority> {
+    let vault = memory.vault();
+    if memory.actor_class() != EdgeActorClass::Agent
+        || super::setting_keys::ATTEMPT_DELETE_OWNER_OR_ADMIN_ONLY
+            .read_in_txn(vault, txn, &[], None)?
+            .value
+    {
+        return Err(forbidden("attempt_delete_no_standing"));
+    }
+    if !credential_reaches(memory, txn, false)? {
+        return Err(forbidden("attempt_delete_credential_bounds"));
+    }
+    let actor = memory.actor();
+    match vault.admit_queue_review_policy_in_txn(
+        txn,
+        actor,
+        EdgeActorClass::Agent,
+        AGENT_DELETE_LINE,
+    )? {
+        Ok(grant) => Ok(DeleteAuthority {
+            actor,
+            role: "agent",
+            grant: None,
+            agent_grant: Some(grant),
+        }),
+        Err(_) => Err(forbidden("attempt_delete_no_standing")),
+    }
 }
 
 /// This is the existing vault-wide Admin operation record (membership_gate),
@@ -105,7 +150,14 @@ fn admits_operation(scope: &Scope) -> bool {
     scope.admits("admin", &operation, &Scope::top())
 }
 
-fn credential_reaches(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> crate::Result<bool> {
+/// A presented credential is the caller's own, bound to no invitation, record
+/// or channel, and live; an Admin's (`admin`) also admits the operation record.
+/// No presented credential passes.
+pub(super) fn credential_reaches(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    admin: bool,
+) -> crate::Result<bool> {
     let Some(proof) = memory.presented_credential() else {
         return Ok(true);
     };
@@ -114,7 +166,7 @@ fn credential_reaches(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> crate::Resu
         && claims.invitation_ref.is_none()
         && claims.records.is_empty()
         && claims.channels.is_empty()
-        && admits_operation(proof.scope())
+        && (!admin || admits_operation(proof.scope()))
         && memory.vault().capability_slip_is_live_in_txn(txn, proof)?)
 }
 

@@ -164,8 +164,9 @@ pub use project::{
     ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
     ProjectHistoryPolicy, ProjectHistoryQuestion, ProjectParentWitness, ProjectRank,
     ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof,
-    ProjectRosterWriteOutcome, ProjectRosterWriteRequest, ProjectSeal, ProjectWitness,
-    ProjectWriteOutcome,
+    ProjectRoomFacetsSetRequest, ProjectRoomFacetsState, ProjectRosterWriteOutcome,
+    ProjectRosterWriteRequest, ProjectSeal, ProjectWitness, ProjectWriteOutcome,
+    set_project_room_facets_from_request_as,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
@@ -267,7 +268,9 @@ pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
 
+pub use rooms::RoomClosedSet;
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::room_is_closed_in;
 pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
     ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,

@@ -34,6 +34,31 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        // A membership move this install cannot prove the owner's (row
+        // HOSTED-ROOT-REVOKES-OWNER-KEY): the owner-key refusal, with the
+        // next step and the member as reason codes beside its own.
+        if let Error::Record(crate::error::RecordError::OwnerKeyMoveRefused { member }) = &err {
+            return Self {
+                reason_codes: vec![
+                    crate::error::OWNER_KEY_REQUIRED.to_owned(),
+                    format!(
+                        "{}{}",
+                        crate::error::OWNER_KEY_NEXT_STEP_REASON_PREFIX,
+                        crate::error::OWNER_KEY_MOVE_NEXT_STEP
+                    ),
+                    format!(
+                        "{}{}",
+                        crate::error::OWNER_KEY_MEMBER_REASON_PREFIX,
+                        member.to_hex()
+                    ),
+                ],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    err.to_string(),
+                    &[crate::error::OWNER_KEY_MOVE_SUGGESTION],
+                )
+            };
+        }
         let message = err.to_string();
         if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
             return Self {
@@ -318,6 +343,18 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // The refusal's own words say where to decide; its reason code
+            // lets a client tell it from any other conflict.
+            ErrorKind::OwnerKeyRequired => Self {
+                reason_codes: vec![crate::error::OWNER_KEY_REQUIRED.to_owned()],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "Make this choice on an owner device: a machine that holds the vault's owner key.",
+                    ],
+                )
+            },
             // FIX 12023 W0: the process that serves the vault spends its
             // request nonces; no change to the request helps here.
             ErrorKind::VaultServedElsewhere => Self::new(
