@@ -44,11 +44,12 @@ impl Memory<'_> {
     /// CREATE-ONLY (ONE-1889). This is a migration/create door, not a generic
     /// update verb: every id that already holds a stored entity is refused,
     /// whatever its stored kind and whatever kind is incoming. Fresh mints
-    /// stay fully available — caller-supplied fresh ids and generated ids
-    /// alike — and still commit body, resolved outgoing edges, and text
-    /// fields atomically. Mutating a stored entity is its typed verb's job;
-    /// the prior row is the snapshot of record, so a refusal here destroys
-    /// nothing and mints nothing.
+    /// stay available — caller-supplied fresh ids and generated ids alike,
+    /// except for a TASK, whose id this door always mints (a caller id is
+    /// refused, TASK-ID-SQUAT-BY-STRUCTURAL-PUT) — and still commit body,
+    /// resolved outgoing edges, and text fields atomically. Mutating a
+    /// stored entity is its typed verb's job; the prior row is the snapshot
+    /// of record, so a refusal here destroys nothing and mints nothing.
     pub fn put_structural(&self, input: &StructuralPutInput) -> MemoryResult<EntityRefReceipt> {
         self.put_structural_guarded(input, |_| Ok(()))
     }
