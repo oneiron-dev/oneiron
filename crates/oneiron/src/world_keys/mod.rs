@@ -159,8 +159,9 @@ pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
-    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
-    DataKeyGenerationOutcome, DataKeyGenerationWays, EscrowAddWarning, EscrowAdded,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationAdoption, DataKeyGenerationCause,
+    DataKeyGenerationDraft, DataKeyGenerationOutcome, DataKeyGenerationWays, EscrowAddWarning,
+    EscrowAdded,
     EscrowRetirement, KitPasskey, NewVaultKeyWrap, RecoveryPreset, RecoveryPresetAnyTwoChange,
     RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
     VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,

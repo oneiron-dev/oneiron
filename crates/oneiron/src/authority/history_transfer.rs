@@ -390,6 +390,12 @@ impl Vault {
         // live mirror.
         #[cfg(feature = "sync")]
         self.note_committed_rows(ids.iter().copied().collect());
+        // A data-key generation the import landed is received now: the new
+        // key is adopted with no owner unlock. An error is logged, never
+        // returned: the import stands, and the next one retries.
+        if let Err(error) = self.adopt_data_key_generations() {
+            tracing::warn!(%error, "a received data-key generation was not adopted");
+        }
         Ok(ids)
     }
 

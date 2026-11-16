@@ -23,6 +23,80 @@ impl Vault {
         })
     }
 
+    /// This vault's stored data-key commitment and generation, for the
+    /// test door. Test support only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn stored_data_key_state(&self) -> Result<([u8; 32], u32)> {
+        let txn = self.store.env.read_txn()?;
+        let state = STATE
+            .get(&self.store, &txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        Ok((state.commitment, state.generation))
+    }
+
+    /// Test fixture: takes `from`'s held data key, state and links as this
+    /// vault's own, with a fresh device wrap of this install, and holds the
+    /// key. Both vaults share their store id (an enrolled device opens under
+    /// its home's), so the commitments and link headers stay valid. Refused
+    /// unless `from` holds its key and this vault holds no data key yet. Test
+    /// support only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn clone_data_key_state_from(&self, from: &Vault) -> Result<()> {
+        let held = from
+            .held_vault_key()
+            .ok_or_else(|| refused("the source vault holds no data key"))?;
+        let vault_id = *self.vault_id().as_bytes();
+        if vault_id != *from.vault_id().as_bytes() {
+            return Err(refused(
+                "a device adopts its home's storage id before its data key",
+            ));
+        }
+        let (state, links) = {
+            let txn = from.store.env.read_txn()?;
+            let state = STATE
+                .get(&from.store, &txn, &())?
+                .ok_or_else(|| refused("the source vault has no data key"))?;
+            if state.commitment != held.commitment(&vault_id) {
+                return Err(refused("the source vault holds another vault key"));
+            }
+            (state, from.links_in_txn(&txn)?)
+        };
+        let (device_kek, device_kind) = self.device_kek()?;
+        let envelope = seal_wrap(
+            &vault_id,
+            &state.commitment,
+            &device_kind,
+            &WrapSecret::Kek(device_kek),
+            &held,
+        )?;
+        let id = device_kind.id();
+        self.with_write_txn(|txn| {
+            if STATE.get(&self.store, txn, &())?.is_some() {
+                return Err(refused("this vault already holds a data key"));
+            }
+            let created_at = self.instant_in_txn(txn)?.secs();
+            WRAPS.put(
+                &self.store,
+                txn,
+                &id,
+                &StoredWrap {
+                    info: VaultKeyWrapInfo {
+                        id: id.clone(),
+                        kind: device_kind,
+                        created_at,
+                    },
+                    envelope,
+                },
+            )?;
+            for link in &links {
+                LINKS.put(&self.store, txn, &format!("{:010}", link.generation), link)?;
+            }
+            STATE.put(&self.store, txn, &(), &state)?;
+            Ok(())
+        })?;
+        self.install_vault_key(Arc::clone(&held))
+    }
+
     /// Mints the vault's data key, wraps it to this device's keystore, and holds it
     /// on this handle. Refused when the vault already has one.
     pub fn create_vault_key(&self) -> Result<VaultKeyWrapInfo> {

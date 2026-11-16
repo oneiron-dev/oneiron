@@ -59,6 +59,8 @@ pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 mod generation;
+mod generation_capsule;
+mod generation_receive;
 pub(super) mod kit;
 mod kit_passkey;
 mod recovery_preset;
@@ -75,10 +77,12 @@ pub use self::generation::{
     DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
     DataKeyGenerationOutcome, DataKeyGenerationWays,
 };
+pub use self::generation_receive::DataKeyGenerationAdoption;
 pub(super) use self::recovery_preset::EscrowOrigin;
 pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
 use self::recovery_preset::{
-    admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
+    admit_delivered_key, admit_escrow_opened_key, admit_generation_capsule, admit_presented_capsule,
+    admit_wrap,
 };
 pub use self::vocabulary::{
     KitPasskey, NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,

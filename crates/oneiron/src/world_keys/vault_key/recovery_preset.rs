@@ -65,6 +65,7 @@ const ANY_TWO_NEEDS_KIT: &str =
 const KIT_POINT_ADDED: &str =
     "a passkey's kit piece wrap is written by issuing its kit, not added as a wrap";
 const PRESET_DELIVERED: &str = "recovery preset \"Nobody but me\" refuses a delivered data key: nobody but the owner holds the key";
+const PRESET_GENERATION: &str = "recovery preset \"Nobody but me\" refuses a data-key generation not verified as this machine's own counted delivery: nobody but the owner holds the key";
 const PRESET_ESCROW_OPENED: &str = "recovery preset \"Nobody but me\" refuses a key an escrow recipient opened from an earlier backup: nobody but the owner holds a piece";
 const PRESET_ANSWER_DEVICE: &str = "recovery preset \"Nobody but me\" is entered over the owner API only while this install's device wrap stays, as the answer alone carries the sheet: add it, or set the preset with the CLI, which keeps the sheet in a file first";
 const PRESET_CUSTODY: &str = "recovery preset \"Nobody but me\" needs an owner-held data key, not a \
@@ -148,6 +149,25 @@ impl VaultKeyUnlock<'_> {
 pub(super) fn admit_delivered_key(preset: RecoveryPreset) -> Result<()> {
     if preset.is_nobody_but_me() {
         return Err(refused(PRESET_DELIVERED));
+    }
+    Ok(())
+}
+
+/// Admits a received data-key generation's capsule: under "Nobody but me"
+/// only when the capsule was this machine's, its entry counts in the fold,
+/// and its link chains to the stored commitment. The receive passes the
+/// three facts it checked. Under Standard it admits. This is the delivery
+/// the ruling names, not a box delivery.
+pub(super) fn admit_generation_capsule(
+    preset: RecoveryPreset,
+    capsule_for_this_machine: bool,
+    entry_counts: bool,
+    link_chains: bool,
+) -> Result<()> {
+    if preset.is_nobody_but_me()
+        && !(capsule_for_this_machine && entry_counts && link_chains)
+    {
+        return Err(refused(PRESET_GENERATION));
     }
     Ok(())
 }

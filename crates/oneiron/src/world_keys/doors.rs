@@ -566,6 +566,31 @@ pub(crate) fn recipients(
     out
 }
 
+/// Every machine trusted here with an importable encryption key, except
+/// `this_machine`: the data-key generation's capsule recipients. Trust needs
+/// the owner's "yours", so a removed machine and the serving node are never
+/// listed. This machine writes its own device wrap directly.
+pub(crate) fn generation_recipients(
+    fold: &AuthorityFold,
+    this_machine: EntityId,
+) -> Vec<(EntityId, HybridPublicKey)> {
+    let mut out = Vec::new();
+    for id in fold.machines.keys() {
+        if *id == this_machine {
+            continue;
+        }
+        let Some(trusted) = fold.trusted_machine(*id) else {
+            continue;
+        };
+        // A profile whose key does not import gets no capsule: it could open none.
+        let Ok(public) = HybridPublicKey::from_bytes(&trusted.profile.encryption_key.key) else {
+            continue;
+        };
+        out.push((*id, public));
+    }
+    out
+}
+
 /// Opens `key` from a counted wrap to `recipient` with its `pad`, trying each
 /// envelope.
 pub(crate) fn open_counted(

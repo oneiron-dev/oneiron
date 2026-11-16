@@ -3,6 +3,12 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v29 (OPUS-DATAKEY-GEN PR3): the AUTHORITY_LOG vocabulary gains the
+/// `data_key_generation` op, sealed envelopes gain purpose 32, and the
+/// authority fold keeps each data-key generation's counted delivery records.
+/// ABI 28 vaults fail closed at the ABI gate — there is no migration pass;
+/// rebuild the vault.
+///
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
 /// verb-hook pause from a person's pause and the other engine holds. The
 /// hook invocation is retained on the pause; only that hold can auto-resume.
@@ -131,7 +137,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 28;
+pub const STORAGE_ABI_VERSION: u16 = 29;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

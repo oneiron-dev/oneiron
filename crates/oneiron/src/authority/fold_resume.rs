@@ -151,7 +151,8 @@ impl<'a> RowMeta<'a> {
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
 /// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
 /// world-key records whose envelopes a folded key carries
-/// (`world_key_fold::folded_world_keys`), and the owner work requests,
+/// (`world_key_fold::folded_world_keys`), the data-key records whose link and
+/// capsules a folded generation carries, and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
 /// read past the base. Every other row's summary is all a later fold reads
 /// of it.
@@ -167,6 +168,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
             | AuthorityOp::WorldKeyWraps(_)
+            | AuthorityOp::DataKeyGeneration(_)
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)

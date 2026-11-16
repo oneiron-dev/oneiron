@@ -498,6 +498,7 @@ impl AuthorityStructure {
             }
             AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
+            AuthorityOp::DataKeyGeneration(record) => install_key(record.machine),
             AuthorityOp::ResidenceResult(result) => install_key(result.machine),
             AuthorityOp::GrantTravelSet(set) => install_key(set.machine),
             AuthorityOp::CheckpointPolicySet(set) => install_key(set.machine),
@@ -582,6 +583,7 @@ impl AuthorityStructure {
             },
             AuthorityOp::WorldPrivacy(edit) => machine_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => machine_key(record.machine),
+            AuthorityOp::DataKeyGeneration(record) => machine_key(record.machine),
             AuthorityOp::ResidenceResult(result) => machine_key(result.machine),
             AuthorityOp::GrantTravelSet(set) => machine_key(set.machine),
             AuthorityOp::CheckpointPolicySet(set) => machine_key(set.machine),

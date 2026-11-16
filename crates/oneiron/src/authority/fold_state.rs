@@ -163,6 +163,12 @@ pub struct AuthorityFold {
     /// Well-signed key records that count for nothing under this install's
     /// pin: valid entries without effect.
     pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    /// Every data-key generation with a counted delivery record, keyed by
+    /// generation number.
+    pub(super) data_key_generations: BTreeMap<u32, FoldedDataKeyGeneration>,
+    /// Well-signed delivery records that count for nothing under this
+    /// install's pin: valid entries without effect.
+    pub refused_data_key_generations: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -214,6 +220,11 @@ pub fn actor_binding_is_active(
 }
 
 impl AuthorityFold {
+    /// The heads a new main-log entry names.
+    pub(crate) fn append_heads(&self) -> &BTreeSet<AuthorityEntryHash> {
+        &self.append_heads
+    }
+
     /// The entries this install holds back (FIX 1104): each machine revision
     /// that landed restriction only, and each world edit, grant travel choice
     /// or owner choice that never counts at full strength here. A read for
@@ -386,6 +397,12 @@ pub(super) struct FoldState {
         BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
     /// Well-signed key records that count for nothing here, merged by union.
     pub(super) refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    /// Each data-key generation's counted delivery records, merged by union.
+    pub(super) data_key_generations:
+        BTreeMap<u32, Vec<super::data_key_generation_fold::CountedDataKeyGeneration>>,
+    /// Well-signed delivery records that count for nothing here, merged by
+    /// union.
+    pub(super) refused_data_key_generations: BTreeSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
@@ -647,6 +664,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_world_keys
         .extend(right.refused_world_keys.iter().copied());
+    super::data_key_generation_fold::merge_data_key_generations(
+        &mut merged.data_key_generations,
+        &right.data_key_generations,
+    );
+    merged
+        .refused_data_key_generations
+        .extend(right.refused_data_key_generations.iter().copied());
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());

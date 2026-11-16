@@ -12,8 +12,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
+use super::generation_capsule::{DataKeyGenerationBinding, seal_data_key_capsule};
 use crate::authority::ActAuthority;
+use crate::authority::{
+    AuthorityKey, AuthorityOp, DataKeyGenerationRecord, FrontierSigner, MAX_PARENTS,
+    authority_entry_hash, next_sequence, owner_act_signer_admits, sign_side_entry,
+};
 use crate::config::VaultDataKeyCustody;
+use crate::entity_id::EntityId;
+use crate::world_keys::doors::generation_recipients;
 
 /// Why the owner starts a new data-key generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +84,13 @@ pub struct DataKeyGenerationDraft<'v> {
     next: VaultDataKey,
     /// The commitment of the key the act replaces.
     from_commitment: [u8; 32],
+    /// The authority vault the act delivers under, read with the recipients.
+    authority_vault: [u8; 32],
+    /// The new generation number the capsules are sealed for.
+    generation: u32,
+    /// One sealed capsule of the next key per recipient machine, ascending
+    /// by machine.
+    capsules: Vec<(EntityId, Vec<u8>)>,
     /// This install's device wrap kind.
     device_kind: VaultKeyWrapKind,
     /// The new key's wraps, sealed before the write, by wrap id: this
@@ -149,9 +163,12 @@ impl Vault {
     }
 
     /// Mints the act's draft outside any txn: the next key, this install's
-    /// device wrap, and a sealed wrap of the next key for every presented
-    /// way. The password's Argon2 runs here, never in the write. Unlocks with
-    /// this device's wrap first, as [`Self::checkpoint_key`] does.
+    /// device wrap, a sealed wrap of the next key for every presented way,
+    /// and one sealed capsule of the next key per other trusted owner
+    /// machine. The password's Argon2 runs here, never in the write. Unlocks
+    /// with this device's wrap first, as [`Self::checkpoint_key`] does. The
+    /// install signing key is prepared here, so the write signs without
+    /// touching the keystore.
     pub fn prepare_data_key_generation(
         &self,
         ways: &DataKeyGenerationWays<'_>,
@@ -162,6 +179,22 @@ impl Vault {
             .ok_or_else(|| refused("unlock the vault key first"))?;
         let vault_id = *self.vault_id().as_bytes();
         let from_commitment = held.commitment(&vault_id);
+        let install = self.prepare_install_signing()?;
+        let generation = {
+            let txn = self.store.env.read_txn()?;
+            let state = STATE
+                .get(&self.store, &txn, &())?
+                .ok_or_else(|| refused("the vault has no data key"))?;
+            state
+                .generation
+                .checked_add(1)
+                .ok_or_else(|| refused("the vault's data-key generations are exhausted"))?
+        };
+        let fold = self.authority_fold()?;
+        let authority_vault = fold.vault_id.ok_or_else(|| {
+            refused("the vault has no authority log to carry the new generation")
+        })?;
+        let recipients = generation_recipients(&fold, install);
         // A presented password or passkey must open the wrap of it the
         // vault carries, so the act never seals the new key to other bytes
         // under that way's id. The write checks the wrap is still the one
@@ -191,6 +224,17 @@ impl Vault {
         }
         let next = VaultDataKey::generate()?;
         let next_commitment = next.commitment(&vault_id);
+        let binding = DataKeyGenerationBinding {
+            vault_id: authority_vault,
+            data_vault_id: vault_id,
+            generation,
+            commitment: next_commitment,
+        };
+        let mut capsules = Vec::with_capacity(recipients.len());
+        for (machine, public) in &recipients {
+            let envelope = seal_data_key_capsule(&binding, *machine, public, &next)?;
+            capsules.push((*machine, envelope.to_bytes()));
+        }
         let mut envelopes = BTreeMap::new();
         let mut escrow_fingerprints = BTreeMap::new();
         let (device_kek, device_kind) = self.device_kek()?;
@@ -247,6 +291,9 @@ impl Vault {
         Ok(DataKeyGenerationDraft {
             next,
             from_commitment,
+            authority_vault,
+            generation,
+            capsules,
             device_kind,
             envelopes,
             escrow_fingerprints,
@@ -287,8 +334,11 @@ impl Vault {
     /// Starts a new data-key generation in the caller's write: the wraps of
     /// the presented ways are replaced with wraps of the next key, this
     /// install's device wrap is written (so the new key always keeps a wrap
-    /// here), the confirmed wraps are removed, the link is stored, and the
-    /// state moves to the next generation. An agent is refused
+    /// here), the confirmed wraps are removed, the link is stored, the state
+    /// moves to the next generation, and one owner-signed authority entry
+    /// delivers the new key to every other trusted owner machine. The
+    /// recipient set is read again in the write and must match the draft's.
+    /// An agent is refused
     /// (DATAKEY-GEN-WHO = C); a host-managed or supervisor-delivered key and
     /// a presented way the vault does not carry are refused too. A presented
     /// escrow must name the recipient it was sealed
@@ -334,6 +384,7 @@ impl Vault {
             return Err(refused("this handle holds another vault key"));
         }
         let next_commitment = draft.next_key().commitment(&vault_id);
+        let previous = state.commitment;
         let committed = if transition.sealed() {
             Some(self.staged_wraps_in_txn(txn, None)?)
         } else {
@@ -451,6 +502,99 @@ impl Vault {
                 recovery: state.recovery,
             },
         )?;
+        // The delivery to the owner's other devices, in this same write: the
+        // new commitment, the link, and one capsule per recipient, signed by
+        // this install. A recipient set that moved since the prepare refuses:
+        // the draft's capsules would miss a device or name a removed one.
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let machine = crate::identity::read_machine_id_in_txn(self, txn)?.ok_or_else(|| {
+            refused("this install has no machine identity to sign the new generation")
+        })?;
+        if fold.vault_id != Some(draft.authority_vault) {
+            return Err(refused(
+                "the owner's devices changed during the act; start it again",
+            ));
+        }
+        let live: Vec<EntityId> = generation_recipients(&fold, machine)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let drafted: Vec<EntityId> = draft.capsules.iter().map(|(id, _)| *id).collect();
+        if live != drafted {
+            return Err(refused(
+                "the owner's devices changed during the act; start it again",
+            ));
+        }
+        if generation != draft.generation {
+            return Err(refused("this handle holds another vault key"));
+        }
+        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(|| {
+            refused("this install has no machine identity to sign the new generation")
+        })?;
+        let public_key = key.verifying_key().to_bytes();
+        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+            return Err(refused(
+                "this install has no live machine profile in the vault's roster to sign the new generation",
+            ));
+        }
+        let joiner = FrontierSigner::Install(machine, &key);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
+        let signer = AuthorityKey::Ed25519(public_key);
+        let seq = next_sequence(&fold, &signer)?;
+        let parents = fold.append_heads().clone();
+        if parents.len() > MAX_PARENTS {
+            return Err(refused(
+                "the authority log has more concurrent heads than the new generation may name; start it again",
+            ));
+        }
+        let record = DataKeyGenerationRecord {
+            vault: fold.vault_id.ok_or_else(|| {
+                refused("the vault has no authority log to carry the new generation")
+            })?,
+            generation,
+            commitment: next_commitment,
+            previous,
+            link: link.envelope.clone(),
+            machine,
+            capsules: draft.capsules.clone(),
+            cause: match cause {
+                DataKeyGenerationCause::OwnerRequest => {
+                    crate::authority::DataKeyGenerationCause::OwnerRequest
+                }
+                DataKeyGenerationCause::KitOnlySwitch => {
+                    crate::authority::DataKeyGenerationCause::KitOnlySwitch
+                }
+                _ => {
+                    return Err(refused(
+                        "this data-key generation's cause is not known here",
+                    ));
+                }
+            },
+        };
+        let now = self.instant_in_txn(txn)?.secs();
+        let entry = sign_side_entry(
+            &fold,
+            &key,
+            seq,
+            parents,
+            AuthorityOp::DataKeyGeneration(record),
+            now,
+        )?;
+        let entry_hash = authority_entry_hash(&entry)?;
+        let at = crate::TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let counted = after.data_key_generation(generation).is_some_and(|folded| {
+            !folded.conflicted && folded.entries.contains(&entry_hash)
+        });
+        if !counted {
+            return Err(crate::authority::invalid_authority());
+        }
         transition.stage_generation(committed, || self.staged_wraps_in_txn(txn, None))?;
         // No inference snapshot admitted under the old key commits after
         // this write: the draft's pause ended every earlier admission and
