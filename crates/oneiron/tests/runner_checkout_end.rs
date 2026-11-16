@@ -39,17 +39,17 @@ use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::codebase::RepoRef;
 use oneiron::dispatch_byoa::{
-    BindRunnerWork, ByoEndpointBackendFactory, ByoEndpointSpec, ByoaCliExecutor, ByoaDispatcher,
-    ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExecutionFence, ByoaExhaust, ByoaResult,
-    ByoaTerminalDisposition, ByoaTerminalReceipt, CaptureByoaExhaust, CliSandboxSpec, OnSeatSpent,
-    ProviderAdapterRegistry, RunnerSeat, RunnerSeatChoice, RunnerSeatPolicy, RunnerWorkBound,
-    SeatAuth,
+    BindRunnerWork, ByoEndpointBackendFactory, ByoEndpointBinding, ByoEndpointSpec,
+    ByoaCliExecutor, ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError,
+    ByoaExecutionFence, ByoaExhaust, ByoaResult, ByoaTerminalDisposition, ByoaTerminalReceipt,
+    CaptureByoaExhaust, CliSandboxSpec, OnSeatSpent, ProviderAdapterRegistry, RunnerSeat,
+    RunnerSeatChoice, RunnerSeatPolicy, RunnerWorkBound, SeatAuth,
 };
 use oneiron::git_wire::GitWire;
 use oneiron::origin::publication::OriginPublicationStatus;
 use oneiron::origin::smart_http::{self, DoorSeam, ServeRequest, ServeSink};
 use oneiron::task_verb::TaskCreateSpec;
-use oneiron::{EdgeActorClass, EntityId, LlmBackend, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const HOLDER: &str = "one";
@@ -81,7 +81,7 @@ impl CheckoutLiveness for NoLiveness {
 struct NoEndpoints;
 
 impl ByoEndpointBackendFactory for NoEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend(
             "the test serves no endpoint connector".to_owned(),
         ))
