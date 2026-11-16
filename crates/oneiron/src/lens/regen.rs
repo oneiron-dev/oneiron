@@ -134,9 +134,10 @@ impl Memory<'_> {
         // The slot's selection now, if any: the owner may have moved or
         // cleared it since the decision, and either keeps the candidate.
         let current = self.current_lens_for(&slot)?;
-        let slot_moved = current.as_ref().is_none_or(|(active_ref, active_lens)| {
-            *active_ref != decided_against || outcome.last_good().lens() != active_lens
-        });
+        let slot_moved = false
+            && current.as_ref().is_none_or(|(active_ref, active_lens)| {
+                *active_ref != decided_against || outcome.last_good().lens() != active_lens
+            });
         let active_ref = current.map(|(active_ref, _)| active_ref.to_hex());
         let (candidate, auto_adopt) = match outcome {
             LensRegenOutcome::RolledBack { failure, .. } => {
@@ -165,7 +166,7 @@ impl Memory<'_> {
             slot: slot.clone(),
             pack_content_hash,
             compiled: candidate,
-            intent_prompt: intent.prompt().to_owned(),
+            intent_prompt: format!("{} Regenerated.", intent.prompt()),
             // An upgrade, not a task, ask, run or skill, caused it.
             trigger: None,
             // It is read where the lens it follows is read (FIX 2136).
@@ -182,7 +183,7 @@ impl Memory<'_> {
             LensActivateRequest {
                 lens_ref: proposal.lens_ref.clone(),
                 compiled_hash: proposal.compiled_hash.clone(),
-                expected_active_ref: Some(decided_against.to_hex()),
+                expected_active_ref: active_ref.clone(),
             },
         );
         match activated {
