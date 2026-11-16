@@ -66,12 +66,21 @@
 //!
 //! A seventh test exports a window whose tombstone of the R PERSON names no
 //! delete request, as a malformed peer value does: this engine writes none.
-//! No capture can be bound to such a value, so it reaches no member but an
-//! Owner. The open PERSON's tombstone, which names a request, rides; the test
-//! asserts the R PERSON's does not.
+//! No capture can be bound to such a value, so with no body of its row in the
+//! window it reaches no member but an Owner. The open PERSON's tombstone,
+//! which names a request, rides; the test asserts the R PERSON's does not.
+//!
+//! An eighth test packs three live CLAIMs into a window beside a tombstone of
+//! each, as a peer that sends a body and its tombstone together does. The open
+//! CLAIM's tombstone that names a request rides by its body. A legacy value,
+//! the delete's time alone, names no request, so no capture decides it: the
+//! bodies the window holds do. The test asserts the R CLAIM's legacy
+//! tombstone stays, and that the open CLAIM's rides: withholding it would
+//! leave the member a row the owner deleted.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The `LEAK:`
-//! assertion comes last.
+//! assertion comes last, except in the eighth test, whose last assertion
+//! (`MISSED DELETE:`) checks that the open CLAIM's tombstone still travels.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test selector_tombstone_label`.
@@ -739,5 +748,74 @@ fn a_selector_window_carries_no_tombstone_that_names_no_delete_request_to_a_memb
     assert!(
         !carries_tombstone(&selected, keyed),
         "LEAK: the selector window carries the R PERSON's tombstone that names no request to a member who does not read R"
+    );
+}
+
+#[test]
+fn a_selector_window_carries_a_tombstone_that_names_no_delete_request_beside_a_body_its_member_reads()
+ {
+    let Shared {
+        _dir,
+        vault,
+        member,
+        relationship,
+        scope,
+        selector,
+        now,
+    } = shared_vault(FederationGrantRole::Member, FederationGrantPreset::Member);
+    let named = record(&vault, member, None, now);
+    let legacy = record(&vault, member, None, now);
+    let keyed = record(&vault, member, Some(relationship), now);
+    assert!(
+        reads(&vault, member, legacy),
+        "FIXTURE: the member reads the open CLAIM"
+    );
+    assert!(
+        !reads(&vault, member, keyed),
+        "FIXTURE: the member does not read the R CLAIM"
+    );
+
+    // The window holds each CLAIM's body beside its tombstone, and no delete
+    // here captured a request.
+    let key = WindowKey::from_timestamp(now);
+    let window = create_window_doc("selector", &key);
+    reverse_rematerialize(&vault, &window, &key).expect("the window pack");
+    for id in [named, legacy, keyed] {
+        assert!(
+            window.get_map("entities").get(&id.to_hex()).is_some(),
+            "FIXTURE: the window holds the body of {}",
+            id.to_hex()
+        );
+    }
+    let mut named_value = vec![2_u8];
+    named_value.extend_from_slice(&now.to_le_bytes());
+    named_value.extend_from_slice(&[0xA5; 16]);
+    // A legacy value is the delete's time alone: it names no request.
+    let legacy_value = now.to_le_bytes();
+    let tombstones = window.get_map("tombstones");
+    for (id, value) in [
+        (named, named_value.as_slice()),
+        (legacy, legacy_value.as_slice()),
+        (keyed, legacy_value.as_slice()),
+    ] {
+        tombstones
+            .insert(&id.to_hex(), value)
+            .expect("FIXTURE: the window holds the CLAIM's tombstone");
+    }
+    window.commit();
+
+    let selected = filtered_window_doc(&vault, &window, &key, scope, &selector)
+        .expect("the member's selector window");
+    assert!(
+        carries_tombstone(&selected, named),
+        "FIXTURE: the selector window carries the open CLAIM's tombstone that names a request, beside its body"
+    );
+    assert!(
+        !carries_tombstone(&selected, keyed),
+        "LEAK: the selector window carries the R CLAIM's tombstone that names no request, beside its body, to a member who does not read R"
+    );
+    assert!(
+        carries_tombstone(&selected, legacy),
+        "MISSED DELETE: the selector window withholds the open CLAIM's tombstone that names no request, beside a body its member reads, so the member keeps the deleted row"
     );
 }
