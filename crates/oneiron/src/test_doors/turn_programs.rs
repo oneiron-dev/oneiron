@@ -199,6 +199,31 @@ pub fn plant_timer_arming(
     )
 }
 
+/// Claims the try admitted for `registration` through the program kind's
+/// point-claim door, then holds it as an unfinished program through the
+/// runtime's hold writer. Returns the try and its stored park, including
+/// the exact reason and parked time the owner's release must name.
+/// No pass budget is reserved; settlement fixtures plant their own.
+///
+/// # Errors
+///
+/// No admitted try for the registration, a try that is not ready or is not
+/// a program, or the claim, hold or store writer's errors.
+pub fn hold_admitted_program_try(
+    vault: &Vault,
+    registration: EntityId,
+    now: u64,
+) -> Result<(
+    crate::attempt_queue::AttemptId,
+    crate::dreamer_runner::DreamerParkedAttemptRecord,
+)> {
+    crate::dreamer_runner::turn_program_test_hooks::hold_admitted_program_try(
+        vault,
+        registration,
+        now,
+    )
+}
+
 /// Whether this machine keeps a disarm row for the registration.
 ///
 /// # Errors
