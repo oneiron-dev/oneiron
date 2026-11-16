@@ -32,7 +32,7 @@ separate the samples, answer {\"axes\":[]}.";
 
 /// The recipe's revision: the BLAKE3 hex of its wording.
 fn recipe_revision() -> String {
-    blake3::hash(SYSTEM.as_bytes()).to_hex().to_string()
+    oneiron_contracts::fingerprint::ContentHash::of(SYSTEM.as_bytes()).to_hex()
 }
 
 struct HostRecipe<'a> {
