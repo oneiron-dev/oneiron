@@ -320,6 +320,18 @@ fn authority_history_selection_in_txn(
     })
 }
 
+/// The rows `selection` names on the caller's snapshot
+/// ([`authority_history_selection_in_txn`]), for a door that reads them in
+/// its own writer: an archive custody proof checks the rows a custodian
+/// carried against them (census L5-22 PR 2).
+pub(super) fn selection_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    selection: &AuthorityHistorySelection,
+) -> Result<BTreeSet<AuthorityEntryHash>> {
+    Ok(authority_history_selection_in_txn(vault, txn, selection)?.rows)
+}
+
 /// The vault a row belongs to: a genesis is its own, any other names one.
 fn row_vault(hash: &AuthorityEntryHash, row: &FoldRow) -> Option<AuthorityVaultId> {
     if is_genesis_row(row) {
