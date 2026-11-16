@@ -26,6 +26,10 @@
 //!   `PUT` takes `{ leave_out, seen }`, `leave_out` required. While the
 //!   vault does not let people opt out it is refused ("this vault does not
 //!   allow opt-outs"), and a choice already made is kept and ignored.
+//!   `PUT /me` also takes an optional `person_proof` `{ slip, signature }`
+//!   (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): the person's own slip-key
+//!   proof of their opt back in through a carrier that is not the owner's; it
+//!   needs `seen`.
 //!
 //! A stale `seen` is a conflict, never a silent overwrite.
 //!
@@ -43,7 +47,9 @@ use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, put};
-use oneiron::authority::{ConversationLearningView, ConversationTrainingView, VerifiedSlip};
+use oneiron::authority::{
+    ConversationLearningView, ConversationTrainingView, PersonChoiceProof, VerifiedSlip,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
 use oneiron::feedback::{
@@ -111,7 +117,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "put",
                 path: "/conversation-learning/me",
-                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. Leaving them out works from any machine; it stops new sharing of their messages and withdraws nothing already shared. Once the vault has held an owner key, and while no switch back to web sign-in is in force, letting them back in is refused (409, state owner_key_required) with nothing stored on a machine that is not the owner's and holds no owner key. A stale seen (64 hex) is a conflict.",
+                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen, person_proof}, leave_out required. Refused (409) while the vault does not allow opt-outs. Leaving them out works from any machine; it stops new sharing of their messages and withdraws nothing already shared. Once the vault has held an owner key, and while no switch back to web sign-in is in force, letting them back in is refused (409, state owner_key_required) with nothing stored on a machine that is not the owner's and holds no owner key, unless person_proof {slip, signature} (64 and 128 hex, seen required beside it) is the person's own slip-key proof of the choice; the vault owner proves with an owner key instead. A stale seen (64 hex) is a conflict.",
                 row: None,
                 shape: Some(RestShape::json(set_own_body_schema, own_reply_schema)),
             },
@@ -198,6 +204,23 @@ struct SetOwn {
     /// current one.
     #[serde(default)]
     seen: Option<String>,
+    /// The person's own slip-key proof of the choice (row
+    /// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF); none when they signed none.
+    /// With one, their opt back in lands through any carrier. It needs
+    /// `seen`.
+    #[serde(default)]
+    person_proof: Option<PersonProofBody>,
+}
+
+/// A person's own slip-key proof, as the route reads it: the slip and the
+/// signature as lower-case hex.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PersonProofBody {
+    /// The person's own slip, as 64 hex.
+    slip: String,
+    /// Its binding key's signature over the choice statement, as 128 hex.
+    signature: String,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -408,15 +431,48 @@ async fn set_own(
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<OwnReply> {
+        if body.person_proof.is_some() && body.seen.is_none() {
+            return Err(OwnerError::Invalid(
+                "seen is required with person_proof".to_owned(),
+            ));
+        }
         let seen = seen_revision(body.seen.as_deref())?;
+        let person_proof = body
+            .person_proof
+            .as_ref()
+            .map(|proof| {
+                Ok::<_, OwnerError>(PersonChoiceProof {
+                    slip: parse_revision("person_proof.slip", &proof.slip)?,
+                    signature: parse_signature("person_proof.signature", &proof.signature)?,
+                })
+            })
+            .transpose()?;
         let view = server
             .vault()
-            .set_conversation_training(&person, surface, body.leave_out, seen)
+            .set_conversation_training(&person, surface, body.leave_out, seen, person_proof)
             .map_err(refusal)?;
         Ok(own_reply(&view))
     })
     .await?;
     Ok(Json(answer))
+}
+
+/// The signature a person proof carries: 128 lower-case hex.
+fn parse_signature(field: &str, value: &str) -> OwnerResult<[u8; 64]> {
+    let refused = || OwnerError::Invalid(format!("{field} must be 128 lower-case hex"));
+    if value.len() != 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(refused());
+    }
+    let mut out = [0; 64];
+    for (slot, pair) in out.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        let pair = std::str::from_utf8(pair).map_err(|_| refused())?;
+        *slot = u8::from_str_radix(pair, 16).map_err(|_| refused())?;
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Deserialize)]
