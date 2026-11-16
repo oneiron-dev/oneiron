@@ -282,6 +282,9 @@ pub struct HardEraseWork {
     /// Obligations whose attempt failed; each keeps its row with a retry time.
     pub jobs_failed: u64,
     pub windows_compacted: u64,
+    /// Windows that hold no history and that no scrub changed, left as they
+    /// are rather than cut again (census L6-07).
+    pub windows_unchanged: u64,
     pub windows_deferred_live: u64,
     pub windows_deferred_raced: u64,
     /// Windows whose cut was not proved to root at their tip (FIX 6520).

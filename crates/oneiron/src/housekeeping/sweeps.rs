@@ -557,6 +557,7 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
         windows_unloaded,
         jobs_failed: run.jobs_failed,
         windows_compacted: run.windows_compacted,
+        windows_unchanged: run.windows_unchanged,
         windows_deferred_live: run.windows_deferred_live,
         windows_deferred_raced: run.windows_deferred_raced,
         windows_deferred_unproved: run.windows_deferred_unproved,

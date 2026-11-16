@@ -37,6 +37,11 @@ pub(super) const WINDOW_DRAIN_BOUND: std::time::Duration = std::time::Duration::
 pub(super) enum CompactOutcome {
     /// Persisted state existed and was rebuilt through a shallow snapshot.
     Compacted,
+    /// The window holds no history: it was cut at its tip before, no `u:w:`
+    /// row came since, and no scrub changed it, so a cut would store what it
+    /// holds (census L6-07). Nothing is written and no `fr:w:` is asserted
+    /// again; the window counts as compacted for the completion gate.
+    Unchanged,
     /// No persisted state for this window — nothing to compact. While a
     /// withdrawn generation is due, its queued sends went (OF-013).
     Empty,
@@ -238,6 +243,7 @@ pub(super) fn compact_all_windows(
 
         match compacted {
             Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
+            Ok(CompactOutcome::Unchanged) => run.windows_unchanged += 1,
             Ok(CompactOutcome::Empty) => {}
             Ok(CompactOutcome::RacedDefer) => {
                 tracing::warn!("sweep: window raced between read and compaction write — deferred");
@@ -334,7 +340,9 @@ fn compact_window(
 /// and atomically replace the persistence triple, prune the subsumed `u:w:`
 /// rows, re-assert `fr:w:` and, while a withdrawn generation is due or on a
 /// `full_carriers` pass (FIX 7800), drop the window's queued sends. Returns
-/// whether any persisted state existed.
+/// whether any persisted state existed. A window that holds no history and
+/// that no scrub changed is read and scrubbed, and left as it is
+/// ([`CompactOutcome::Unchanged`], census L6-07).
 #[cfg(feature = "sync")]
 pub(super) fn compact_window_with(
     vault: &Vault,
@@ -379,6 +387,12 @@ pub(super) fn compact_window_with(
     for (_, bytes) in &update_rows {
         import_doc(&doc, bytes)?;
     }
+    // A window a cut rooted at its tip, with no `u:w:` row on top, holds no
+    // history: its tip is its shallow root. Taken before any scrub.
+    let history_free_tip = (update_rows.is_empty()
+        && doc.is_shallow()
+        && doc.shallow_since_frontiers() == doc.oplog_frontiers())
+    .then(|| doc.oplog_frontiers());
 
     // A shallow snapshot drops every row's history, and the erased and
     // withdrawn rows' bytes with it: each row the window carries or carried,
@@ -438,6 +452,16 @@ pub(super) fn compact_window_with(
     withdrawn.held.extend(found.held);
     let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
 
+    // Census L6-07: a history-free window no scrub or withdrawal changed,
+    // with no queued sends to drop, would be cut to what it holds. It is not
+    // rewritten, and peers are not sent to a full resync of it again.
+    doc.commit();
+    if !scrub_sends && history_free_tip.is_some_and(|tip| tip == doc.oplog_frontiers()) {
+        #[cfg(test)]
+        before_compact_write(vault, key, &snapshot_bytes)?;
+        return settle_unchanged_window(vault, address, snapshot_bytes.as_deref(), &destroyed);
+    }
+
     // Strict shallow cut at the latest frontiers (FIX 6520): live state
     // byte-exact, op history (the payload carrier) dropped, identity kept, VV
     // extended by exactly one barrier op when the window has several heads.
@@ -472,15 +496,8 @@ pub(super) fn compact_window_with(
         }
     }
 
-    // Test-only race injection point: lands a concurrent write AFTER the
-    // read phase, BEFORE the compaction write txn, so the in-txn re-read
-    // guards below have something to catch (one-shot).
     #[cfg(test)]
-    inject_race_before_compact_write(vault, key, &snapshot_bytes)?;
-    #[cfg(test)]
-    if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
-        hook();
-    }
+    before_compact_write(vault, key, &snapshot_bytes)?;
 
     // ABORT-ONLY raced-defer signal: the write closure returns `Err` (so
     // `with_write_txn` rolls the txn back, committing NOTHING) and sets this
@@ -578,6 +595,61 @@ pub(super) fn compact_window_with(
         Err(_) if held.get() => Ok(CompactOutcome::HeldDefer),
         Err(err) => Err(err),
     }
+}
+
+/// Settles a window a cut would store as it is (census L6-07). The compaction
+/// write's guards run read-only and nothing is written: a `d:w:` snapshot
+/// replaced or a `u:w:` row landed since the read defers it as raced, and a
+/// legal hold on a row it carries keeps it, as for a cut.
+#[cfg(feature = "sync")]
+fn settle_unchanged_window(
+    vault: &Vault,
+    address: crate::ports::WindowAddress<'_>,
+    snapshot_bytes: Option<&[u8]>,
+    carried: &crate::sync::carrier_holds::CarrierInventory,
+) -> Result<CompactOutcome> {
+    let rtxn = vault.store.env.read_txn()?;
+    let current = vault
+        .store
+        .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+    let updated = vault
+        .store
+        .port_window_updates(&rtxn, address, |_, _| ())?
+        .next()
+        .transpose()?
+        .is_some();
+    if updated || current.as_deref() != snapshot_bytes {
+        return Ok(CompactOutcome::RacedDefer);
+    }
+    match carried.reject_held_in_txn(
+        &vault.store,
+        &rtxn,
+        &crate::store::legal_hold::HoldActor::TIMER,
+    ) {
+        Ok(()) => Ok(CompactOutcome::Unchanged),
+        Err(refused) if super::holds::refused_by_hold(&refused) => Ok(CompactOutcome::HeldDefer),
+        Err(Error::CorruptedIndex("legal hold target")) => {
+            tracing::warn!("sweep: indexed legal hold row missing — window kept as it is");
+            Ok(CompactOutcome::HeldDefer)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// The test-only points between a window's read and its compaction write:
+/// the race injection, which lands a concurrent write so the re-read guards
+/// have something to catch, then the armed hook (each one-shot).
+#[cfg(all(feature = "sync", test))]
+fn before_compact_write(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    snapshot_bytes: &Option<Vec<u8>>,
+) -> Result<()> {
+    inject_race_before_compact_write(vault, key, snapshot_bytes)?;
+    if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
+    Ok(())
 }
 
 /// Drops the queued sends of window `window`, which holds no persisted state

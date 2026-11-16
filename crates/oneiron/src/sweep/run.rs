@@ -36,6 +36,10 @@ pub(crate) struct HardEraseSweepRun {
     pub jobs_deferred_signer_unavailable: u64,
     pub jobs_failed: u64,
     pub windows_compacted: u64,
+    /// Windows read and scrubbed and left as they are: they hold no history
+    /// and no scrub changed them, so a cut would store what they hold
+    /// (census L6-07). They count as compacted for the completion gate.
+    pub windows_unchanged: u64,
     pub windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the
     /// `d:w:` snapshot changed between the read phase and the compaction

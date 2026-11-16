@@ -44,6 +44,11 @@
 //!   discovery would have to load every window doc anyway, and compacting
 //!   everything is strictly safer (it also clears crafted cross-window
 //!   history residue) at the same read cost.
+//! * Every window is read and scrubbed on each pass, but one that holds no
+//!   history is not rewritten (census L6-07): a cut rooted at its tip, no
+//!   `u:w:` row since, no scrub or withdrawal changed it and no queued send
+//!   is due. A cut would store what it holds, so it keeps its `d:w:` row and
+//!   gets no new `fr:w:`; peers resync only the windows a pass rewrote.
 //! * §8c.2 cross-node live-map residue: a concurrent re-put can win LWW
 //!   over the tombstone commit's entities-key delete, leaving the erased
 //!   payload LIVE in the map (gated from LMDB by the `dt:` marker, but
@@ -63,9 +68,10 @@
 //! job — a crash anywhere before that leaves the obligation row in place,
 //! and the re-run is idempotent (shallow-of-shallow is a no-op rebuild).
 //! The completion gate is fail-closed and GLOBAL: a job is finalized only
-//! in a run where EVERY persisted window compacted successfully and none
-//! was deferred — id→window attribution cannot be trusted when any window
-//! is unreadable (a corrupt window might carry anything).
+//! in a run where EVERY persisted window compacted successfully (or was left
+//! unchanged, holding no history) and none was deferred — id→window
+//! attribution cannot be trusted when any window is unreadable (a corrupt
+//! window might carry anything).
 //!
 //! * OPEN (registry-live) windows are DEFERRED, never compacted in place: a
 //!   live doc holds the full history in memory, and its next
