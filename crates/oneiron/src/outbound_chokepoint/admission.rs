@@ -875,9 +875,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         )?;
     }
     if let Some(admission) = invite_admission {
-        // A passport that moved since the admission is the hygiene wall's
-        // refusal, and a store failure an internal one: the facade names
-        // each, as for the admission itself.
+        // The commit's own verdict (a passport that moved since the
+        // admission, a booking identity it cannot bind) reaches the facade as
+        // the admission's does, never as a stale state.
         admission
             .commit_in_txn(vault, &mut wtxn, dedupe_now)
             .map_err(IntentLedgerError::Calendar)?;
