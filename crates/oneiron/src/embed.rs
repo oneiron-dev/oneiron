@@ -21,14 +21,15 @@ mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
 mod session_media;
-/// The owner's "Wait for the night box" key; the build script names its row in the setting
-/// catalogue (`crate::embed::setting_keys::POD_HOURS_WAIT`).
+/// The embedding owner Setting keys (the space move's undo window, "Wait for the night box");
+/// the build script names their rows in the setting catalogue.
 pub(crate) mod setting_keys;
 mod space;
 mod space_card;
 mod space_move;
 mod space_probe;
 mod turn;
+pub(crate) mod world_space;
 pub use binding_move::{
     BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
 };
@@ -97,6 +98,7 @@ pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
     mark_turn_in_txn,
 };
+pub use world_space::{DEVICE_PLACE, space_runs_on_device};
 
 #[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
@@ -229,6 +231,9 @@ struct LeaseBatch {
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
+    world_space: usize,
+    world_space_index_drops: usize,
+    world_space_vector_drops: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -265,6 +270,19 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
+    /// Rows a world with its own text space carries (DEC-0005
+    /// #private-world-vectors): left pending, unleased and unsent, for the
+    /// media pass of the world's space; never embedded into the vault's
+    /// index, here or by a rung.
+    pub world_space: usize,
+    /// Vault-index vectors this pass dropped because a world's order now names
+    /// its own text space for their rows; each row is queued again, pending for
+    /// that space and for the vault's index should the world inherit again.
+    pub world_space_index_drops: usize,
+    /// Text vectors this pass dropped from a device space that no longer takes
+    /// their rows, as a world's order stopped naming it; a row the vault's
+    /// index now takes is queued again.
+    pub world_space_vector_drops: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -425,6 +443,9 @@ impl PendingEmbeddingReconciler {
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
+            world_space: batch.world_space,
+            world_space_index_drops: batch.world_space_index_drops,
+            world_space_vector_drops: batch.world_space_vector_drops,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
@@ -609,9 +630,19 @@ impl PendingEmbeddingReconciler {
     }
 
     fn lease_due_jobs(&self, now_ms: u64) -> Result<LeaseBatch> {
+        // A world's order that names its own text space, or stops naming one,
+        // moves the vectors of the rows it carries before any job is read
+        // (DEC-0005 #private-world-vectors): the rows it queues again lease
+        // in this pass. An order edit that arrives by sync passes no door, so
+        // the pass sweeps on a change of the map rather than a door hook.
+        let sweep = world_space::sweep_world_text_spaces(&self.vault)?;
         let queue = crate::sync::SyncQueue::new(std::sync::Arc::clone(&self.vault))?;
         let jobs = queue.drain_embed_jobs()?;
-        let mut batch = LeaseBatch::default();
+        let mut batch = LeaseBatch {
+            world_space_index_drops: sweep.index_drops,
+            world_space_vector_drops: sweep.space_drops,
+            ..LeaseBatch::default()
+        };
         if jobs.is_empty() {
             return Ok(batch);
         }
@@ -643,6 +674,7 @@ impl PendingEmbeddingReconciler {
             } else {
                 PodHoursWait::Nothing
             };
+            let world_spaces = world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?;
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
             let flagged_remote = rung_endpoint
@@ -679,6 +711,18 @@ impl PendingEmbeddingReconciler {
                     batch.stale_jobs += 1;
                     continue;
                 };
+                // A row a world with its own text space carries embeds into
+                // that space alone (DEC-0005 #private-world-vectors): it stays
+                // pending here, unleased and unsent, for the media pass of the
+                // world's space, and never reaches the primary or a rung. A
+                // world set back to the vault's order leases it again here.
+                if !world_spaces
+                    .of_row(&self.vault.store, wtxn, &job.entity_id)?
+                    .is_empty()
+                {
+                    batch.world_space += 1;
+                    continue;
+                }
 
                 let key = HexId(job.entity_id);
                 if let Some(existing) = tolerate_undecodable_lease(PENDING_EMBEDDING_LEASE.get(
@@ -762,6 +806,24 @@ impl PendingEmbeddingReconciler {
             if let Some(replica) = home_replica
                 && !home_vectors::replica_matches_in_txn(&self.vault, wtxn, &work.input, replica)?
             {
+                return Ok(());
+            }
+            // A world whose order named its own text space since this row was
+            // leased takes it now (DEC-0005 #private-world-vectors): no vault
+            // vector lands, the lease goes, and the row stays pending for the
+            // world's space, as the lease loop leaves it. The sweep that saw
+            // the new map ran before this vector existed, so only this writer
+            // can keep it out of the vault's index.
+            if !world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?
+                .of_row(&self.vault.store, wtxn, &work.input.entity_id)?
+                .is_empty()
+            {
+                clear_pending_embedding_lease_if_matches(
+                    &self.vault,
+                    wtxn,
+                    &work.input.entity_id,
+                    &work.lease,
+                )?;
                 return Ok(());
             }
             let current_before = self
