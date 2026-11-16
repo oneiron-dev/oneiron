@@ -27,13 +27,15 @@ use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use oneiron::authority::{
-    AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey,
-    AuthorityTier, CheckpointRootSigner, DeviceAuthority, HeldAnswerListing, HostSlipIssuer,
-    MachineOwnership, MachineRole, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER,
+    ASK_WORD_PROOF_DOMAIN, AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface,
+    AuthorityAttestation, AuthorityKey, AuthorityTier, CheckpointRootSigner, DeviceAuthority,
+    HeldAnswerListing, HostSlipIssuer, MachineOwnership, MachineRole, ROLE_ADMIN, ROLE_CLOUD,
+    ROLE_OWNER,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{DevicePinRefusal, RecordError, SecretError};
 use oneiron::recovery::PassphraseCost;
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::device_pin::steps_that_waited;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::steward::recover_cloud_account_signed_by_host_root;
@@ -2300,4 +2302,92 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
             .is_err(),
         "and a signer taken before the key was revoked signs no proof after"
     );
+}
+
+/// The ask word proof of the key under the PIN (UC-05 PR 2b) refuses where
+/// its owner act's proof refuses: a signer taken inside a window proves no
+/// ask word once the window is over. It is signed over bytes in the ask word
+/// proof domain alone, and those bytes are never signed as an owner act's
+/// proof.
+#[test]
+fn the_key_under_the_pin_proves_an_ask_word_only_inside_a_window_and_in_its_own_domain() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let key = device.enrol();
+    let taken = device
+        .listed_signer(key)
+        .expect("guard: inside the window the pass gets the signer");
+    let fold = device.vault.authority_fold().expect("authority fold");
+    let ask_word = [ASK_WORD_PROOF_DOMAIN, b" device pin test".as_slice()].concat();
+
+    let proof = taken
+        .sign_ask_word_proof(&device.vault, &fold, &ask_word)
+        .expect("inside the window the key proves an ask word");
+    assert!(verifies_over(key, &ask_word, &proof));
+    assert!(
+        taken
+            .sign_ask_word_proof(&device.vault, &fold, &owner_act_transcript())
+            .is_err(),
+        "an authority transcript is never signed as an ask word's proof"
+    );
+    assert!(
+        taken
+            .sign_owner_proof(&device.vault, &fold, &ask_word)
+            .is_err(),
+        "an ask word is never signed as an owner act's proof"
+    );
+
+    device.pass_the_window();
+    assert_eq!(
+        pin_refusal(taken.sign_ask_word_proof(&device.vault, &fold, &ask_word)),
+        DevicePinRefusal::Required,
+        "a signer taken inside the window proves no ask word once it is over"
+    );
+}
+
+/// The owner's device answers an ask for him with the key under the PIN only
+/// inside a window (`Vault::authenticate_owner_device`, UC-05 PR 2b): outside
+/// it the door answers as an install that holds no owner key, and a right
+/// PIN lets it prove again. The door picks inside its read transaction and
+/// signs after it.
+#[test]
+fn the_owner_device_door_proves_an_ask_word_with_the_key_under_the_pin_only_inside_a_window() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let key = device.enrol();
+    assert!(device.signs(key), "guard: inside the window the key signs");
+    let owner = device
+        .proof
+        .actor_for_read(&device.vault)
+        .expect("the embedded owner's actor");
+
+    device
+        .vault
+        .authenticate_owner_device(owner, GateDecisionId::now())
+        .expect("inside the window the owner's device proves the ask word");
+
+    device.pass_the_window();
+    let refused = device
+        .vault
+        .authenticate_owner_device(owner, GateDecisionId::now())
+        .map(drop);
+    assert!(
+        matches!(refused, Err(Error::Record(RecordError::OwnerKeyRequired))),
+        "outside the window no key of this install proves an ask word: {refused:?}"
+    );
+
+    device
+        .vault
+        .confirm_device_pin(PIN)
+        .expect("the right PIN confirms");
+    device
+        .vault
+        .authenticate_owner_device(owner, GateDecisionId::now())
+        .expect("a right PIN lets the owner's device prove an ask word again");
 }
