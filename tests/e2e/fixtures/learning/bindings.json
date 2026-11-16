@@ -169,8 +169,8 @@
         "OF-351",
         "OF-366"
       ],
-      "todo_reason": "waits on typed experiment child creation, sealed-cohort setup and campaign archive/evidence reads",
-      "binding_note": "Research record/measure/select/weave/prune/promote calls exist. Fork records an already-enqueued child; sealed-cohort public setup and campaign experiment archive reads are not published."
+      "todo_reason": "armed: two campaigns in one case (ARM03-ROOTS = B); no wait remains",
+      "binding_note": "Authoring root: vault.skill_hubs.default.get/put/refs.set, vault.skills.import/receipts/permissions.approve/get, vault.research.create_root, vault.research.bind_authoring, vault.research.evaluate_split (taste through the host decision ladder). Generic root: vault.research.create_root/bind/create_child/advance/select/weave/prune/archive/budget, vault.claims.seed, vault.receipts, vault.evals.families.assign/cases.record/inventory/cohorts.setup/exposure, vault.budgets.rsi.configure/top_up/hold.resume. Fork, search, held-out, basis, release and promote are host effects of vault.research.advance; the archived weave node is the lineage receipt (ARM03-WEAVE-LINEAGE = A)."
     },
     {
       "id": "LEARNING-04",

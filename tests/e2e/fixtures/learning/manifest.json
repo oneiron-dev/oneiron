@@ -10,12 +10,12 @@
         "revision": "learning-v1-2026-10-18"
       },
       "licence": "Apache-2.0",
-      "sha256": "cb8d9e27fe7c9dfe255a6a76e25fb5569abf4ad49604eb3cabda8a638693ecda",
+      "sha256": "d1bb219e9c8d7ef505e79a8d464e45f535a39ac9929b7477e766bc15c68996f7",
       "expectedFacts": {
         "planned_tests": 9,
         "oracle": "independently authored synthetic labels",
-        "runnable_flows": 1,
-        "blocked_flows": 8
+        "runnable_flows": 2,
+        "blocked_flows": 7
       },
       "scenarios": [
         "LEARNING-01",
@@ -83,19 +83,17 @@
         "revision": "f8e2f8397685bc63405bc1a303b65f94aa26c33d"
       },
       "licence": "Apache-2.0",
-      "sha256": "7dd50568df00e2187d32752ebcd82a0ea401063b4ba4ab9b02c52addeaa927fa",
+      "sha256": "b9b1911d2d8831bcbb07dd3f99d1db5b36c865fa682ddb9ea9bef26a869d0df1",
       "expectedFacts": {
         "binding_head": "f8e2f8397685bc63405bc1a303b65f94aa26c33d",
         "blocked_ids": [
           "LEARNING-01",
           "LEARNING-02",
-          "LEARNING-03",
           "LEARNING-04",
           "LEARNING-05",
           "LEARNING-06",
           "LEARNING-07",
-          "LEARNING-08",
-          "LEARNING-09"
+          "LEARNING-08"
         ],
         "basis": "public source shapes, not behavioral expected values"
       },
