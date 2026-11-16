@@ -334,6 +334,11 @@ impl RepoIndexMarks {
         if let Some(row) =
             crate::store::file_key_masks::masked_file_in_txn(&vault.store, txn, source)?
         {
+            // A file the write door sealed whole has no copy: its copy is the
+            // placeholder.
+            if row.sealed {
+                return Ok(None);
+            }
             for (member, spans) in row.places() {
                 for span in spans {
                     crate::origin::secret_marks::add_place(&mut places, &member, span);

@@ -157,6 +157,34 @@ fn a_key_split_one_line_per_item_seals_the_array_that_holds_it() -> TestResult {
     Ok(())
 }
 
+/// More hits in one value than the seal budget takes one at a time (65
+/// tokens as byte values): past the budget, the part of the body that still
+/// holds one is sealed whole, and the write lands (REVIEW-7651 P1). Before,
+/// the 65th hit refused it.
+#[test]
+fn more_hits_than_the_seal_budget_seal_the_part_that_holds_them() -> TestResult {
+    let (_dir, vault, _owner) = open_vault()?;
+    let tokens: Vec<Vec<u8>> = (0..65)
+        .map(|at| format!("TOKEN=ghp_{at:02}23456789abcdefghijklmnopqrstuvwxyz").into_bytes())
+        .collect();
+    let body = serde_json::to_vec(&serde_json::json!({ "name": "owen", "notes": tokens }))?;
+    let before = custody_records(&vault)?;
+    let id = put(&vault, &body).unwrap_or_else(|error| {
+        panic!("more hits than the seal budget no longer refuse: {error:?}")
+    });
+    assert!(
+        custody_records(&vault)? > before,
+        "custody holds the sealed values"
+    );
+    let stored = stored_json(&vault, &id)?;
+    assert_eq!(stored["name"], "owen", "the rest of the write is kept");
+    assert!(
+        is_handle(&stored["notes"]),
+        "the array that still held a hit takes one handle whole: {stored}"
+    );
+    Ok(())
+}
+
 /// A text field whose hit no span places (a token as JSON byte values) is
 /// sealed whole and keeps one handle. Before, the batch was refused.
 #[test]

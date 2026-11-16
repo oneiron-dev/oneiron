@@ -27,7 +27,10 @@
 //! file whole, as for one key of [`SEALED_FILE_CLASS`]: under a standing
 //! grant, or once the owner approves the read, the agent gets the stored
 //! bytes and the read leaves its reveal row. No lease is stamped, as no
-//! custody record holds a key of it.
+//! custody record holds a key of it. A file the write door sealed whole,
+//! whose mark says so, goes to the owner only: it holds a hit no mark
+//! places, so the keys its mark does name open no grant, and its read is
+//! masked.
 //!
 //! A typed body's read (OF-067, FIX 2941) is one read of one projection of
 //! the body, a deck's export or a body's view, whose lifted texts name keys
@@ -630,8 +633,9 @@ fn admitted_keys_in_txn(
 
 /// The keys the mark of the file `hash` names, each with its handle, in one
 /// group per custody class ([`class_groups`]), each group's keys in the
-/// file's order: `None` when no mark covers the file, it names no key, or a
-/// key is not admitted ([`admitted_keys_in_txn`]).
+/// file's order: `None` when no mark covers the file, it names no key, a
+/// key is not admitted ([`admitted_keys_in_txn`]), or the write door sealed
+/// the file whole (`MaskedFile.sealed`).
 fn marked_groups_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -640,6 +644,13 @@ fn marked_groups_in_txn(
     let Some(mark) = masked_file_in_txn(&vault.store, txn, hash)? else {
         return Ok(None);
     };
+    // A file sealed whole goes to the owner only (ARCH-0069
+    // #binary-secrets): it holds a hit no mark places, and a granted read is
+    // served the stored bytes whole, so its marked keys open no grant
+    // (REVIEW-7708 P1).
+    if mark.sealed {
+        return Ok(None);
+    }
     // Every key the mark places: in the stored bytes, and in each member of a
     // container.
     let marked = mark
@@ -654,6 +665,17 @@ fn marked_groups_in_txn(
         return Ok(None);
     }
     class_groups(admitted).map(Some)
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The test door's view of [`marked_groups_in_txn`]: how many key groups
+    /// an agent's read of the stored file `hash` asks for; `None` when no
+    /// grant reaches the file.
+    pub(crate) fn marked_file_key_groups_for_test(&self, hash: &[u8; 32]) -> Result<Option<usize>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(marked_groups_in_txn(self, &txn, hash)?.map(|groups| groups.len()))
+    }
 }
 
 /// `keys` in one group per custody class: the groups in their class word's
