@@ -735,11 +735,7 @@ pub(super) async fn board_people(
     session_id: Option<&str>,
     people_budget_tok: Option<usize>,
 ) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        });
+    let now = oneiron_base::unix_millis_now();
     let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })

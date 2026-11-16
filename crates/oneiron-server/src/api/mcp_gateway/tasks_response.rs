@@ -241,6 +241,7 @@ pub(crate) async fn execute_mcp_generated_verb(
                 health: source.health(),
                 keyframe: None,
                 rows,
+                read_rows: Vec::new(),
             };
             (output, source.health(), carrier, snapshot, producer_epoch)
         };
