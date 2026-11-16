@@ -9,17 +9,26 @@
 //! default all conferred. The owner's own-device row and the Coach's default Steward row
 //! still do.
 //!
+//! An engine-default row no act gives reads only for the verbs in the meet with its agent's
+//! Steward reach, the meet every Steward use reads (Engine RULING
+//! R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C). Before it, a default-shape row put after the owner
+//! revoked the Dreamer's Grant whole, or narrowed it, read with every default verb at each fold
+//! reader. The engine's own default still reads with its default verbs before any revoke.
+//!
 //! Runs on public paths and the test doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test derived_grant_standing`.
 #![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeSet;
+
 use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     EngineControlActor, EngineControlClass, FederationGrant, FederationGrantPreset as Preset,
-    FederationGrantRole as Role, InitialSharedMember, own_device_residence_scope,
+    FederationGrantRole as Role, FederationGrantScope, InitialSharedMember,
+    SystemAgentGrantNarrowing, own_device_residence_scope,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -29,8 +38,9 @@ use oneiron::test_doors::coach::{
     ENGINE_CONTROLS_WORK_BUDGET_VERB, coach, read_and_engine_controls,
 };
 use oneiron::test_doors::grant_act::put_unkeyed_member_grant;
+use oneiron::test_doors::grant_standing::{grant_row_verbs, shared_vault_grant_ids};
 use oneiron::test_doors::steward::{
-    STEWARD_READ_VERB, dreamer, open_owner_carrier_vault, receive_steward_grant_row,
+    STEWARD_READ_VERB, STEWARD_VERBS, dreamer, open_owner_carrier_vault, receive_steward_grant_row,
 };
 use oneiron::test_support::provision_act_carrier;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -218,5 +228,132 @@ fn the_coachs_default_steward_row_gives_its_engine_controls() {
     assert!(
         allowed(&vault, coach, EngineControlClass::WorkBudget),
         "the Coach's default Steward row gives its engine.controls classes"
+    );
+}
+
+/// A personal vault whose install carries acts, its owner and the Dreamer, with the engine's
+/// default Steward Grants stood as a host's first open stands them.
+fn defaults_vault() -> (tempfile::TempDir, Vault, EntityId, EntityId) {
+    let (dir, vault, _, owner) = carrier_vault();
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    vault
+        .provision_system_agent_grants()
+        .expect("the host's first open");
+    (dir, vault, owner, dreamer)
+}
+
+/// `owner` narrows the Dreamer's Grant to `keep` (none revokes it whole), confirming what
+/// breaks when the door asks.
+fn narrow_dreamer(vault: &Vault, owner: EntityId, dreamer: EntityId, keep: &[&str]) {
+    let owner = proof(vault, owner);
+    let keep: BTreeSet<String> = keep.iter().map(|verb| (*verb).to_owned()).collect();
+    let confirm = match vault
+        .narrow_system_agent_grant(&owner, dreamer, &keep, None)
+        .expect("narrowing")
+    {
+        SystemAgentGrantNarrowing::ConfirmRequired { confirm, .. } => confirm,
+        SystemAgentGrantNarrowing::Narrowed { .. } => return,
+        SystemAgentGrantNarrowing::Unchanged => panic!("the narrowing takes a verb"),
+    };
+    assert!(matches!(
+        vault
+            .narrow_system_agent_grant(&owner, dreamer, &keep, Some(confirm))
+            .expect("confirmed narrowing"),
+        SystemAgentGrantNarrowing::Narrowed { .. }
+    ));
+}
+
+fn sorted(verbs: &[&str]) -> Vec<String> {
+    let verbs: BTreeSet<String> = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+    verbs.into_iter().collect()
+}
+
+#[test]
+fn a_default_shape_row_put_after_the_owners_whole_revoke_stands_for_nothing() {
+    let (_dir, vault, owner, dreamer) = defaults_vault();
+    narrow_dreamer(&vault, owner, dreamer, &[]);
+    let forged = receive_steward_grant_row(&vault, dreamer, &STEWARD_VERBS).expect("the row lands");
+
+    assert_eq!(
+        grant_row_verbs(&vault, forged).expect("the fold reader"),
+        None,
+        "after the owner's whole revoke the opt-out's row gives no verb, so a default-shape row \
+         put after it stands for nothing"
+    );
+    assert!(
+        !residence_selector_authorized(&vault, forged, dreamer),
+        "the row backs no selector either"
+    );
+    assert!(
+        vault
+            .engine_default_grants(&proof(&vault, owner))
+            .expect("the engine-defaults door")
+            .iter()
+            .all(|(grant, _)| *grant != forged),
+        "the engine-defaults door shows the owner no such Grant"
+    );
+}
+
+#[test]
+fn a_default_shape_row_put_after_a_narrowing_reads_only_the_kept_verbs() {
+    let (_dir, vault, owner, dreamer) = defaults_vault();
+    narrow_dreamer(&vault, owner, dreamer, &[STEWARD_READ_VERB]);
+    let forged = receive_steward_grant_row(&vault, dreamer, &STEWARD_VERBS).expect("the row lands");
+
+    assert_eq!(
+        grant_row_verbs(&vault, forged).expect("the fold reader"),
+        Some(sorted(&[STEWARD_READ_VERB])),
+        "a row no act gives only narrows the meet: it reads no verb the owner took back"
+    );
+}
+
+#[test]
+fn a_default_shape_row_put_over_the_shared_vault_after_the_whole_revoke_stands_for_nothing() {
+    let (_dir, vault, owner, dreamer) = defaults_vault();
+    narrow_dreamer(&vault, owner, dreamer, &[]);
+    share_with(&vault, owner, EntityId::now(), Role::Member);
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(SHARED),
+        dreamer,
+        Role::Steward,
+        Preset::Steward,
+    );
+    grant.authority_scope.verbs = STEWARD_VERBS
+        .iter()
+        .map(|verb| (*verb).to_owned())
+        .collect();
+    let forged = EntityId::now();
+    put_unkeyed_member_grant(&vault, forged, &grant).expect("the row lands");
+
+    assert_eq!(
+        grant_row_verbs(&vault, forged).expect("the fold reader"),
+        None,
+        "the shared scope's reader holds the meet too"
+    );
+    assert!(
+        !shared_vault_grant_ids(&vault, SHARED)
+            .expect("the membership census")
+            .contains(&forged),
+        "the membership census reads no standing for the row"
+    );
+}
+
+/// Guard: before any revoke the engine's default row reads with its default verbs.
+#[test]
+fn the_engine_default_row_reads_with_its_default_verbs_before_any_revoke() {
+    let (_dir, vault, owner, dreamer) = defaults_vault();
+    let (default, verbs) = vault
+        .engine_default_grants(&proof(&vault, owner))
+        .expect("the engine-defaults door")
+        .into_iter()
+        .find(|(_, receipt)| receipt.agent == dreamer)
+        .map(|(grant, receipt)| (grant, receipt.verbs.into_iter().collect::<Vec<_>>()))
+        .expect("the engine stood the Dreamer's default");
+
+    assert!(!verbs.is_empty(), "the default gives the Dreamer verbs");
+    assert_eq!(
+        grant_row_verbs(&vault, default).expect("the fold reader"),
+        Some(verbs),
+        "the engine's default row reads with the verbs it was stood with"
     );
 }
