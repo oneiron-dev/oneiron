@@ -177,6 +177,39 @@ impl Vault {
         Ok(invitations)
     }
 
+    /// Who added `member` to shared vault `vault_id`: the inviter of the
+    /// member's latest accepted invitation into it. A membership below Owner
+    /// is minted only when its invitation is accepted, and the row stays
+    /// stored as `Accepted`. `None` when no accepted invitation names the
+    /// member, as for the vault's creator. The check-in ladder asks this
+    /// person at rung 2 for a member's own ask (Engine ruling
+    /// CHECKIN-PERSON-GRANT = A).
+    ///
+    /// # Errors
+    ///
+    /// Storage and decode errors.
+    pub(crate) fn member_inviter_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        member: EntityId,
+    ) -> Result<Option<EntityId>> {
+        let latest = self
+            .invitations_of_in_txn(txn, member, vault_id)?
+            .into_iter()
+            .filter_map(|invitation| match invitation.state {
+                SharedInvitationState::Accepted { at } => Some((at, invitation.inviter)),
+                SharedInvitationState::Pending
+                | SharedInvitationState::Declined { .. }
+                | SharedInvitationState::Withdrawn { .. } => None,
+            })
+            .max_by_key(|(at, _)| *at);
+        match latest {
+            Some((_, inviter)) => Ok(Some(EntityId::from_hex(&inviter)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Every pending invitation into `vault_id` unexpired at `now`, whoever
     /// it admits (FIX 2573): the vault's own read of who is invited, beside
     /// each person's read of their own.

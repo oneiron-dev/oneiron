@@ -5,7 +5,9 @@
 //!
 //! * rung 2, the grantor: the `delegated_by` principal of the asker's live
 //!   grant (a delegate's parent, or the owner who minted an owner-agent
-//!   grant), else the principal a companion person was onboarded for;
+//!   grant), else the principal a companion person was onboarded for, else,
+//!   for a person's membership row, who added the member: the inviter of
+//!   their accepted invitation (Engine ruling CHECKIN-PERSON-GRANT = A);
 //! * rung 3, the next holders up the chain: every other live holder of the
 //!   grantor's role on the vault the asker's grant is a membership of;
 //! * rung 4, the Owner role: the vault's live owners.
@@ -38,6 +40,7 @@
 //! holder: the pending row keeps the effect's digest, not the bounds a
 //! standing row covers.
 
+use super::act_class::ActClass;
 use super::mode::CheckInMode;
 use super::pending::{
     HolderAnswer, HolderKind, PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver,
@@ -46,7 +49,7 @@ use super::policy::CheckInScope;
 use super::resolve::{
     CheckInAnswer, CheckInRequest, ResolvedMode, UnsureTest, check_in, resolve_mode,
 };
-use super::role_preset::RolePreset;
+use super::role_preset::{RoleDefault, RolePreset};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -127,8 +130,8 @@ impl RungResolver for VerifiedChain<'_> {
         let Some(grantor) = grantor_in_txn(vault, txn, pending, &grant)? else {
             return Ok(missing(
                 "no verified grantor: the grant names no delegated_by, the asker is no \
-                 onboarded companion, and a spawn parent's or house binder's principal is not \
-                 stored",
+                 onboarded companion, no accepted invitation names who added the member, and a \
+                 spawn parent's or house binder's principal is not stored",
             ));
         };
         match rung {
@@ -154,9 +157,7 @@ impl RungResolver for VerifiedChain<'_> {
         {
             return Ok(false);
         }
-        for (role, holds_power) in
-            holder_standing_in_txn(vault, txn, pending, holder.principal, now)?
-        {
+        for (role, holds_power) in holder_standing_in_txn(vault, txn, pending, holder, now)? {
             let request = CheckInRequest {
                 act: pending.act,
                 role,
@@ -301,8 +302,34 @@ fn grantor_in_txn(
 ) -> Result<Option<EntityId>> {
     match grant.delegated_by {
         Some(by) => Ok(Some(by)),
-        None => crate::workspace_roster::companion_principal_in_txn(vault, txn, pending.asker),
+        None => {
+            match crate::workspace_roster::companion_principal_in_txn(vault, txn, pending.asker)? {
+                Some(principal) => Ok(Some(principal)),
+                None => member_inviter_in_txn(vault, txn, grant),
+            }
+        }
     }
+}
+
+/// Who added the member a membership `grant` names: the inviter of their
+/// latest accepted invitation into the grant's vault
+/// ([`Vault::member_inviter_in_txn`]). A person's membership row stands for
+/// the Grant on the ladder (Engine ruling CHECKIN-PERSON-GRANT = A), and it
+/// carries no `delegated_by`, so its grantor is read from the invitation the
+/// person accepted. `None` for a grant on no vault, a delegate grant, or a
+/// member no accepted invitation names (the vault's creator).
+fn member_inviter_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant: &FederationGrant,
+) -> Result<Option<EntityId>> {
+    let FederationGrantScope::Vault { vault_id } = grant.scope else {
+        return Ok(None);
+    };
+    if grant.role == FederationGrantRole::Delegate {
+        return Ok(None);
+    }
+    vault.member_inviter_in_txn(txn, vault_id, grant.member_ref)
 }
 
 /// `principal` as a holder: a live person, or an agent definition that is
@@ -392,14 +419,18 @@ fn owner_members(
 /// the power for the exact effect: Owner when it is a live owner; else each
 /// live grant naming it on the asker's vault, at the role it reads
 /// ([`grant_role`]), whose verbs (or verb classes) admit the verb and whose
-/// bounds cover where the effect sits ([`covers_effect`]), or not.
+/// bounds cover where the effect sits ([`covers_effect`]), or not. A
+/// person's membership row is read by its roster role's cell instead
+/// ([`person_holds_power`]; CHECKIN-PERSON-POWER = A), as a person asker's
+/// is.
 fn holder_standing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pending: &PendingCheckIn,
-    holder: EntityId,
+    holder: &RungHolder,
     now: u64,
 ) -> Result<Vec<(RolePreset, bool)>> {
+    let (person, holder) = (holder.kind == HolderKind::Person, holder.principal);
     if crate::policy_model::owners_in_txn(vault, txn)?.contains(&holder) {
         return Ok(vec![(RolePreset::Owner, true)]);
     }
@@ -436,12 +467,62 @@ fn holder_standing_in_txn(
         .iter()
         .filter(|grant| grant.confers_with_classes_at(now, &classes))
         .map(|grant| {
-            let holds_power = covers_effect(grant, &pending.scope)
-                && (grant.authority_scope.verbs.contains(&pending.verb)
-                    || grant.class_admits_verb(&pending.verb, &classes));
-            (grant_role(grant, membership), holds_power)
+            let role = grant_role(grant, membership);
+            let holds_power = if person && is_membership_row(grant) {
+                person_holds_power(
+                    grant,
+                    role,
+                    pending.act,
+                    &pending.verb,
+                    &classes,
+                    &pending.scope,
+                )
+            } else {
+                covers_effect(grant, &pending.scope)
+                    && (grant.authority_scope.verbs.contains(&pending.verb)
+                        || grant.class_admits_verb(&pending.verb, &classes))
+            };
+            (role, holds_power)
         })
         .collect())
+}
+
+/// Whether `grant` is a membership row: a vault grant that is no delegate
+/// row and no Owner-issued agent Grant.
+fn is_membership_row(grant: &FederationGrant) -> bool {
+    matches!(grant.scope, FederationGrantScope::Vault { .. })
+        && grant.role != FederationGrantRole::Delegate
+        && !grant.owner_agent
+}
+
+/// Whether a person on their membership row `grant`, at its roster `role`,
+/// holds the power for `act` under `verb` at `scope` (Engine ruling
+/// CHECKIN-PERSON-POWER = A): the role's cell in canon's role table says
+/// (ARCH-0082 #role-defaults). A mode or own proof holds it; an if-named cell
+/// holds it when the row lists the verb, or names a verb class that admits
+/// it; propose and no verb do not. The row's bounds must cover where the
+/// effect sits ([`covers_effect`]). The act's own door still checks the
+/// person's power when the act runs.
+pub(super) fn person_holds_power(
+    grant: &FederationGrant,
+    role: RolePreset,
+    act: ActClass,
+    verb: &str,
+    classes: &AgentVerbClasses,
+    scope: &CheckInScope,
+) -> bool {
+    covers_effect(grant, scope)
+        && match role.default_for(act) {
+            RoleDefault::Mode(_)
+            | RoleDefault::OwnProof
+            | RoleDefault::OwnProofWithVetoWindow
+            | RoleDefault::NotApplicable => true,
+            RoleDefault::IfNamed(_) => {
+                grant.authority_scope.verbs.contains(&verb.to_owned())
+                    || grant.class_admits_verb(verb, classes)
+            }
+            RoleDefault::Propose | RoleDefault::NoVerb => false,
+        }
 }
 
 /// Whether `grant`'s bounds cover where an effect at `scope` sits: its worlds
