@@ -32,11 +32,6 @@ pub struct MaintenanceBuilder<'a> {
     corrupt_claim_ids: Vec<EntityId>,
 }
 
-/// The most retired facet-stamp receipts [`MaintenanceReport`] names; the
-/// total beside them is uncapped.
-#[cfg(feature = "sync")]
-const MAX_HELD_FACET_STAMP_RECEIPTS_IN_REPORT: usize = 100;
-
 /// Aggregate counters for maintenance operations.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MaintenanceReport {
@@ -90,8 +85,16 @@ pub struct MaintenanceReport {
     /// Persisted window docs rebuilt through a shallow snapshot (history
     /// carriers dropped).
     pub sweep_windows_compacted: u64,
-    /// Windows skipped because they are OPEN in a window registry — a live
-    /// doc's next full-snapshot persist would resurrect the carrier.
+    /// Persisted window docs read and scrubbed and left as they are: they
+    /// hold no history and no scrub changed them, so a cut would store what
+    /// they hold (census L6-07). No `fr:w:` is asserted for them again.
+    pub sweep_windows_unchanged: u64,
+    /// Of `sweep_windows_compacted`, the windows cut while a holder kept them
+    /// past the drain bound, under their history-free pin (census L6-05).
+    pub sweep_windows_compacted_held: u64,
+    /// Entity documents a resident holds, skipped as live. A window still
+    /// held at the drain bound is compacted under its pin instead (census
+    /// L6-05), so no window counts here.
     pub sweep_windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the `d:w:`
     /// snapshot changed between the read phase and the compaction write txn
@@ -146,7 +149,8 @@ pub struct MaintenanceReport {
     pub held_facet_stamps_retired: u64,
     /// The retired facet stamps' receipts, in key order, each named by its
     /// key, its kind and its facet and grant ids — never parked content,
-    /// never a secret — capped at `MAX_HELD_FACET_STAMP_RECEIPTS_IN_REPORT`.
+    /// never a secret — at most the owner's
+    /// `maintain.report.facet_receipts_shown` (100 unless set).
     #[cfg(feature = "sync")]
     pub(crate) held_facet_stamp_receipts: Vec<ParkedFacetReceipt>,
     /// How many retired-stamp receipts the vault keeps, named above or not.
@@ -374,6 +378,8 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_jobs_deferred_signer_unavailable = run.jobs_deferred_signer_unavailable;
             report.sweep_jobs_failed = run.jobs_failed;
             report.sweep_windows_compacted = run.windows_compacted;
+            report.sweep_windows_unchanged = run.windows_unchanged;
+            report.sweep_windows_compacted_held = run.windows_compacted_held;
             report.sweep_windows_deferred_live = run.windows_deferred_live;
             report.sweep_windows_deferred_raced = run.windows_deferred_raced;
             report.sweep_windows_deferred_unproved = run.windows_deferred_unproved;
@@ -410,10 +416,10 @@ impl<'a> MaintenanceBuilder<'a> {
                 crate::sync::selector::retire_held_facet_stamps(self.vault)?;
             let receipts = crate::federation::facet_read::parked_facet_receipts(self.vault)?;
             report.held_facet_stamp_receipts_total = receipts.len() as u64;
-            report.held_facet_stamp_receipts = receipts
-                .into_iter()
-                .take(MAX_HELD_FACET_STAMP_RECEIPTS_IN_REPORT)
-                .collect();
+            // The owner's `maintain.report.facet_receipts_shown` (100 unless
+            // set); the total beside them is uncapped.
+            let shown = super::setting_keys::facet_receipts_shown(self.vault)?;
+            report.held_facet_stamp_receipts = receipts.into_iter().take(shown).collect();
         }
 
         Ok(report)

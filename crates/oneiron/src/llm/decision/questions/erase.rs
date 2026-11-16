@@ -10,11 +10,12 @@
 //!
 //! A principal erase deletes the whole family of every question whose any
 //! version names `id` as its principal: all versions, the head, every
-//! answer with its labels and window, the backfill dedups and schedule,
-//! the ask-history entries and mark, the pending, unit-watch, rests-on and
-//! root-source legs, the predicate watches, the artifact-asked stamps and
-//! the unit asks. Nothing stays: reads admit the principal alone, so a
-//! surviving row would strand unreadable, unrefreshable debt.
+//! answer with its labels and window, the deferred outcome marks, the
+//! backfill dedups and schedule, the ask-history entries and mark, the
+//! pending, unit-watch, rests-on and root-source legs, the predicate
+//! watches, the artifact-asked stamps and the unit asks. Nothing stays:
+//! reads admit the principal alone, so a surviving row would strand
+//! unreadable, unrefreshable debt.
 //!
 //! A unit erase deletes the rows that copy or derive from `id`: each answer
 //! on that unit with its labels and window, the backfill dedups and joins
@@ -25,10 +26,19 @@
 //! rechecks liveness and authority, so a dangling id is safe. A one-unit
 //! `tasks.ask` or health question is its one answer, so its one version,
 //! its matching head and its watch go with the answer, as FIX 9918 does.
+//! An erased outcome fact's deferred outcome marks go with it. Every
+//! question version either erase drops takes the Coach's override records of
+//! that version with it (FIX ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS): a
+//! one-unit question erased with its unit keeps a record whose principal is
+//! someone else, and the actor scrub of the person-changed tables, by
+//! principal and source, never meets it.
 
 use std::collections::BTreeSet;
 
-use super::arrival::{PENDING, RESTS_ON, ROOT_SOURCES, UNIT_WATCH, unwatch};
+use super::arrival::{
+    DeferredOutcomeKey, PENDING, QUESTION_DEFERRED_OUTCOME, RESTS_ON, ROOT_SOURCES, UNIT_WATCH,
+    unwatch,
+};
 use super::artifact_refresh::ASKED;
 use super::ask_history::{ASK_HISTORY, ASK_HISTORY_HEAD, AskHistoryEvent, AskHistoryHeadKey};
 use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
@@ -62,6 +72,7 @@ pub(crate) fn erase_questions_for_actor_in_txn(
     let mut answers = Vec::new();
     let mut labels = Vec::new();
     let mut windows = Vec::new();
+    let mut deferred = Vec::new();
     let mut heads = Vec::new();
     let mut backfills = Vec::new();
     let mut backfill_ats = Vec::new();
@@ -88,6 +99,8 @@ pub(crate) fn erase_questions_for_actor_in_txn(
             labels.push(label);
         } else if let Some(window) = WindowKey::decode_key(&key) {
             windows.push(window);
+        } else if let Some(marker) = DeferredOutcomeKey::decode_key(&key) {
+            deferred.push(marker);
         } else if let Some(head) = HeadKey::decode_key(&key) {
             heads.push(head);
         } else if let Some(backfill) = BackfillKey::decode_key(&key) {
@@ -214,6 +227,11 @@ pub(crate) fn erase_questions_for_actor_in_txn(
             QUESTION_WINDOW.delete(&vault.store, wtxn, window)?;
         }
     }
+    for marker in &deferred {
+        if doomed.contains(&marker.question) || marker.fact == *id {
+            QUESTION_DEFERRED_OUTCOME.delete(&vault.store, wtxn, marker)?;
+        }
+    }
     for (version, record) in &versions {
         if doomed.contains(&version.id) {
             QUESTION_VERSION.delete(&vault.store, wtxn, version)?;
@@ -281,6 +299,19 @@ pub(crate) fn erase_questions_for_actor_in_txn(
     }
     for seq in &unit_asks {
         UNIT_ASKS.delete(&vault.store, wtxn, seq)?;
+    }
+    if !doomed.is_empty() || !cascades.is_empty() {
+        super::lifetime::erase_person_changed_records_in_txn(
+            &vault.store,
+            wtxn,
+            |question, version| {
+                doomed.contains(&question)
+                    || cascades.contains(&VersionKey {
+                        id: question,
+                        version,
+                    })
+            },
+        )?;
     }
     // A trained head bound to an erased question version goes with it, its
     // run back to scored (FIX 3864).
