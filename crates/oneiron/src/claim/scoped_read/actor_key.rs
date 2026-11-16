@@ -535,6 +535,17 @@ impl ScopedReadActorKey {
         self.rebuilt_under_floor_basis
     }
 
+    /// Whether the owner's floor may stand beside this key for a reader that
+    /// is a live owner: beside every key not rebuilt under a saved lane's
+    /// grant basis, and beside one rebuilt under a floor's basis and held to
+    /// no named records, held to this key's own bounds (blind review rounds
+    /// 1 and 2 on #8065). The owner's key keeps no records bound, so a key
+    /// held to one keeps it off.
+    pub(crate) fn admits_owner_alternative(&self) -> bool {
+        !self.owner_authority_withheld
+            || (self.rebuilt_under_floor_basis && self.record_bound.is_none())
+    }
+
     /// This key, held to the host action it was built for (FIX 2222): every
     /// read proves again in its own snapshot that the vault is self-hosted
     /// and that the root, or the dev mode, still acts as this owner. Only
@@ -968,9 +979,12 @@ impl ScopedReadActorKey {
     /// proved again at every read), its grant gate (none, the
     /// relationship-only gate, or the access gate), the principal that
     /// gate admitted rows on the grants of, and the actor class it reads as.
+    /// A key rebuilt under a floor's basis holds the floor its owner
+    /// alternative reads under, so a lane frozen again from it keeps that
+    /// standing (blind review round 2 P1 on #8065).
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
-        let owner_standing = if self.owner.is_some() {
+        let owner_standing = if self.owner.is_some() || self.rebuilt_under_floor_basis {
             NativeOwnerStanding::Floor
         } else if self.owner_exemption.is_some() {
             NativeOwnerStanding::Exemption
