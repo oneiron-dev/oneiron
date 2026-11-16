@@ -163,9 +163,10 @@ pub(super) fn native_mail_authorization(
 }
 
 /// Starts one browser session the way a code run does, and closes it. The
-/// evidence is the digest of what the guest's fence proved. Each phase's
-/// outcome moves `readiness` (FIX 7670), and leaves the check's own answer
-/// as it was. The session's sockets and threads charge `floor`, the vault's
+/// evidence is the digest of its manifest: what the guest's fence proved,
+/// and the pids-limit hits it showed by its close, if any (FIX 8013). Each
+/// phase's outcome moves `readiness` (FIX 7670), and leaves the check's own
+/// answer as it was. The session's sockets and threads charge `floor`, the vault's
 /// host floor (FIX 6300). Its backend comes from `backends`, the set the
 /// vault carries (F1-6).
 fn browser_session_ready(
@@ -204,10 +205,13 @@ fn browser_session_ready(
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
     // No starter: the readiness session serves no engine switch. No request
     // handler: its pages take its relay.
-    let session = BrowserSession::attach(guest, transport, relay, retention, None, None)
+    let mut session = BrowserSession::attach(guest, transport, relay, retention, None, None)
         .inspect(|session| readiness.started(session.manifest()))
         .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::DriverAttachFailed))
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
+    // The evidence names the pressure the guest showed by its close (FIX
+    // 8013).
+    session.record_pressure();
     let manifest = session.manifest().clone();
     drop(session);
     let proof = serde_json::to_vec(&manifest)
