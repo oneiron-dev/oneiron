@@ -171,7 +171,9 @@ impl Vault {
     ///
     /// # Errors
     /// What handle resolution returns for a handle no live custody record
-    /// names. [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied)
+    /// names. [`SecretError::SecretTierDenied`](crate::error::SecretError::SecretTierDenied)
+    /// for a secret no model may hold.
+    /// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied)
     /// for a secret a run found, named by another run (FIX 8028).
     pub(crate) fn display_edit_secret_subject_in_txn(
         &self,
@@ -183,6 +185,10 @@ impl Vault {
             crate::secret_custody::reveal::resolve_handle_in_txn(&self.store, txn, handle)?;
         let record = super::read_secret_custody_admission_in_txn(&self.store, txn, &custody)?
             .ok_or_else(|| super::reveal::unknown(&handle))?;
+        // The reveal door's tier refusal: the class's live floor and the
+        // record's widest binding must reach a model.
+        let floor = super::SecretCustodyFloor::resolve(&self.store, txn)?;
+        crate::secret_lease::reveal_tier_admission(&record, &floor)?;
         super::run_bound::reveal_run_admission(&record.name, &handle, attempt)?;
         Ok((handle, custody))
     }
