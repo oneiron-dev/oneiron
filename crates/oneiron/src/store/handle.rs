@@ -63,6 +63,7 @@ pub struct RawDatabases {
 /// every write transaction refuses, so neither its rows nor the key custody
 /// it shares with its replacement change through any handle on it.
 pub struct StoreEnv {
+    id: u64,
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
     mark_check: OnceLock<MarkCheck>,
@@ -80,7 +81,9 @@ pub(in crate::store) struct MarkCheck {
 
 impl StoreEnv {
     pub(in crate::store) fn new(env: Env) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             env,
             sealed: std::sync::atomic::AtomicBool::new(false),
             mark_check: OnceLock::new(),
@@ -155,6 +158,13 @@ impl StoreEnv {
     pub(in crate::store) fn unseal(&self) {
         self.sealed
             .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// A number no other environment opened in this process shares. A write
+    /// names it as it raises the thread's write depth, so a door that waits
+    /// for this environment's writer knows whether the thread holds it.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 }
 
