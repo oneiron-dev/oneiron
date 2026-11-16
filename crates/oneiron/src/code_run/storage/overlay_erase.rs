@@ -31,9 +31,9 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::records::REPLAY_RECORDS;
 use super::replay_bodies::erase_replies;
 use super::replay_capsule::actor_gone_in_store;
+use super::replay_rows;
 use super::response_owners::{ResponseOwner, mark_response_erased_in_txn, response_owner_in_txn};
 use super::wait_delivery::canonical_store;
 use crate::code_run::CodeRunReplayRecord;
@@ -104,12 +104,15 @@ pub(crate) fn erase_gone_actors_in_live_overlays(vault: &Vault, ids: &[EntityId]
     }
 }
 
-/// The keys of the rows `overlay` stages under `prefix`, as one snapshot
-/// reads them; deletions over base are none of them. Under this thread's
-/// installed segment the snapshot is that segment's view.
-fn staged_keys(overlay: &Arc<SessionOverlay>, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+/// The keys of the rows `overlay` stages that `include_key` keeps, as one
+/// snapshot reads them; deletions over base are none of them. Under this
+/// thread's installed segment the snapshot is that segment's view.
+fn staged_keys(
+    overlay: &Arc<SessionOverlay>,
+    include_key: impl Fn(&[u8]) -> bool,
+) -> Result<Vec<Vec<u8>>> {
     let snapshot = overlay.snapshot()?;
-    let plan = snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| key.starts_with(prefix));
+    let plan = snapshot.merge_plan(OverlayKeyspace::VaultMeta, include_key);
     Ok(plan
         .rows
         .into_iter()
@@ -137,7 +140,6 @@ fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityI
     if gone_in(&vault.store.env.read_txn()?).is_empty() {
         return Ok(());
     }
-    let record_prefix = REPLAY_RECORDS.decl().prefix;
     let holder_prefix = HOLDERS.decl().prefix;
     let segment = vault.with_write_txn_grouped(|wtxn| {
         let gone = {
@@ -145,16 +147,16 @@ fn erase_in_overlay(vault: &Vault, overlay: &Arc<SessionOverlay>, ids: &[EntityI
             gone_in(txn)
         };
         let segment = overlay.install_txn_segment()?;
-        let records: Vec<EntityId> = staged_keys(overlay, record_prefix)?
+        let records: Vec<EntityId> = staged_keys(overlay, replay_rows::is_row_key)?
             .iter()
-            .filter_map(|key| key.strip_prefix(record_prefix))
-            .filter_map(<EntityId as SideKey>::decode_key)
+            .filter_map(|key| replay_rows::run_id_of_key(key))
             .collect();
-        let holders: Vec<(EntityId, EntityId, u64)> = staged_keys(overlay, holder_prefix)?
-            .iter()
-            .filter_map(|key| key.strip_prefix(holder_prefix))
-            .filter_map(<(EntityId, EntityId, u64) as SideKey>::decode_key)
-            .collect();
+        let holders: Vec<(EntityId, EntityId, u64)> =
+            staged_keys(overlay, |key| key.starts_with(holder_prefix))?
+                .iter()
+                .filter_map(|key| key.strip_prefix(holder_prefix))
+                .filter_map(<(EntityId, EntityId, u64) as SideKey>::decode_key)
+                .collect();
         if records.is_empty() && holders.is_empty() {
             return Ok(segment);
         }
@@ -179,7 +181,7 @@ fn erase_record_in_txn(
     record_id: EntityId,
     gone: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    let Some(record) = REPLAY_RECORDS.get_lenient(dbs, wtxn, &record_id)? else {
+    let Some(record) = replay_rows::get_lenient(dbs, wtxn, &record_id)? else {
         return Ok(());
     };
     let owner = response_owner_in_txn(dbs, wtxn, &record_id)?;
@@ -196,7 +198,7 @@ fn erase_record_in_txn(
         return Ok(());
     }
     let run = owner.as_ref().map_or(record.run_id, |owner| owner.run);
-    REPLAY_RECORDS.put_erased(dbs, wtxn, &record_id, Erased::of(record)?)?;
+    replay_rows::put_erased(dbs, wtxn, &record_id, Erased::of(record)?)?;
     mark_response_erased_in_txn(dbs, wtxn, record_id, run)
 }
 
