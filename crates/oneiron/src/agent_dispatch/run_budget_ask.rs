@@ -68,7 +68,7 @@ use crate::{EntityId, Vault};
 
 use super::AgentDispatcher;
 use super::spend_calibration::{UsdPriceTarget, UsdUnitPrice};
-use super::spend_record::{SCOPE, SpendScopeId, SpendState};
+use super::spend_record::{SCOPE, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
 use crate::llm::run_admission::LeaseUnit;
 
@@ -243,11 +243,30 @@ fn run_funds_price_in_txn(
     txn: &heed::RoTxn<'_>,
     root: AttemptId,
 ) -> Result<Option<FundsPrice>> {
-    let scope = SpendScopeId::for_attempt(&root);
-    Ok(SCOPE
-        .get(&vault.store, txn, &scope.0)?
+    Ok(run_root_scope_in_txn(vault, txn, root)?
         .filter(|scope| scope.state == SpendState::Open)
         .and_then(|scope| funds_price_in_txn(vault, txn, &scope.unit)))
+}
+
+/// The root scope of the run rooted at `root`: the hard scope whose cap binds
+/// the run's own scope (keyed by `root`). That is the run's own scope when it
+/// is hard, as a pinned budget's or a carve's is; for a run that reserved a
+/// soft scope under a spend scope, the nearest hard scope above it, such as
+/// the owner's root the launch projected against. `None` for a run with no
+/// spend scope. The early ask, the hold's ask and their answers all resolve
+/// this one scope, so a hold asks what its early ask promised (review round 2
+/// of #8217).
+fn run_root_scope_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+) -> Result<Option<SpendScope>> {
+    let Some(own) = SCOPE.get(&vault.store, txn, &SpendScopeId::for_attempt(&root).0)? else {
+        return Ok(None);
+    };
+    AgentDispatcher::new(vault)
+        .binding_cap_in_txn(txn, &own)
+        .map(Some)
 }
 
 /// One amount the owner added to a run or a parked try.
@@ -472,13 +491,16 @@ fn forecast_request(
 
 /// Queues the early ask about the run rooted at `root`, in its root
 /// launch's write, when `statement` projects the launch past the room its
-/// hard root scope has left. A launch under a pinned `budget` names no tree
-/// scope: its hard root is the scope it pinned, keyed by `root` and reserved
-/// before this ask (review round 1 of #8217). Asked only when the vault has
-/// a live owner who may raise that scope (open, hard, carved from no parent,
-/// paid by him or by no named payer) and the vault's USD quote prices its
-/// unit; else the launch statement alone states the shortfall, as before.
-/// `None` when nothing is asked.
+/// hard root scope has left. That scope is the run's root scope
+/// ([`run_root_scope_in_txn`]), read after the launch reserved the run's own
+/// scope: under a pinned `budget`, the scope it pinned (review round 1 of
+/// #8217); under a spend scope, the hard scope above the run's own. Asked
+/// only when the vault has a live owner who may raise that scope (open,
+/// hard, carved from no parent, paid by him or by no named payer) and the
+/// vault's USD quote prices its unit; else the launch statement alone states
+/// the shortfall, as before. A run whose own budget is carved from a spend
+/// scope is bound by its carve, which is no owner's to raise: nothing is
+/// asked (review round 2 of #8217). `None` when nothing is asked.
 ///
 /// # Errors
 ///
@@ -492,10 +514,6 @@ pub(crate) fn queue_forecast_ask_in_txn(
     let Some(available_units) = statement.available_units else {
         return Ok(None);
     };
-    let scope_id = statement
-        .scope
-        .clone()
-        .unwrap_or_else(|| SpendScopeId::for_attempt(&root));
     if statement.expected.units <= available_units {
         return Ok(None);
     }
@@ -505,7 +523,7 @@ pub(crate) fn queue_forecast_ask_in_txn(
     else {
         return Ok(None);
     };
-    let Some(scope) = SCOPE.get(&vault.store, wtxn, &scope_id.0)? else {
+    let Some(scope) = run_root_scope_in_txn(vault, wtxn, root)? else {
         return Ok(None);
     };
     if !super::budget_trap_ask::scope_raisable_by(&scope, principal) {
@@ -515,7 +533,7 @@ pub(crate) fn queue_forecast_ask_in_txn(
         return Ok(None);
     };
     let forecast = RunBudgetForecast {
-        scope: scope_id,
+        scope: scope.scope,
         unit: scope.unit,
         expected_units: statement.expected.units,
         expected_usd_micros: statement.expected.expected_usd_micros,
@@ -598,17 +616,17 @@ fn forecast_add_funds_in_txn(
 }
 
 /// Whether the owner `owner` may overdraft the run rooted at `root`: a run
-/// with no spend scope, or one whose root scope is open, carved from no
-/// parent, and paid by the owner or by no named payer. Another payer's
-/// accepted cap is that payer's to raise.
+/// with no spend scope, or one whose root scope ([`run_root_scope_in_txn`])
+/// is open, carved from no parent, and paid by the owner or by no named
+/// payer. Another payer's accepted cap is that payer's to raise, and a
+/// carve's room is its parent's.
 fn overdraft_open_to_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     root: AttemptId,
     owner: EntityId,
 ) -> Result<bool> {
-    let scope = SpendScopeId::for_attempt(&root);
-    Ok(match SCOPE.get(&vault.store, txn, &scope.0)? {
+    Ok(match run_root_scope_in_txn(vault, txn, root)? {
         None => true,
         Some(scope) => {
             scope.state == SpendState::Open
@@ -828,9 +846,9 @@ fn approve_overdraft_in_txn(
     Ok(true)
 }
 
-/// Raises the open root scope of the run rooted at `root` by `units`, as the
-/// owner `by`'s grant, and wakes every budget trap the new room covers. A run
-/// with no root scope raises nothing.
+/// Raises the open root scope ([`run_root_scope_in_txn`]) of the run rooted
+/// at `root` by `units`, as the owner `by`'s grant, and wakes every budget
+/// trap the new room covers. A run with no root scope raises nothing.
 fn raise_root_scope_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -840,8 +858,8 @@ fn raise_root_scope_in_txn(
     now: u64,
     what: &'static str,
 ) -> Result<()> {
-    let scope_id = SpendScopeId::for_attempt(&root);
-    if let Some(mut scope) = SCOPE.get(&vault.store, wtxn, &scope_id.0)? {
+    if let Some(mut scope) = run_root_scope_in_txn(vault, wtxn, root)? {
+        let scope_id = scope.scope.clone();
         scope.cap_units = scope
             .cap_units
             .checked_add(units)
