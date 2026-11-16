@@ -1,12 +1,12 @@
 {
   "note": "VENDORED CANON SNAPSHOT — do not hand-edit. Generated from oneiron-docs site/src/data/oneiron-contracts.ts at the recorded commit. payloadBlake3 is BLAKE3 over the compact (no-whitespace, authored key order) JSON serialization of `payload`.",
   "docsRepo": "oneiron-docs",
-  "docsCommit": "19822d9efd0a21720b0ef9909ecb9890eab63014",
+  "docsCommit": "36259ffecd3c7ae90a9a9137cefc1577e23ff7d5",
   "docsPath": "site/src/data/oneiron-contracts.ts",
-  "payloadBlake3": "640b00647221b98b0888cad9ac1bf70f2cc0d57fbfc0138dc66e91da38b05338",
+  "payloadBlake3": "bdc5293b75c660f9fe87997d4abdb54da797006a506ef71f887b296796fe9640",
   "payload": {
     "contractVersion": "1.0.0",
-    "storageAbiVersion": 32,
+    "storageAbiVersion": 34,
     "typeByteZones": [
       {
         "range": "0",
