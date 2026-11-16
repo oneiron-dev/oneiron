@@ -590,7 +590,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/served_sink/apns/address.rs` | src | s | 2 const | — | Moved from `crates/oneiron/src/outbound/served_sink/apns/address.rs` (lib split R2: record types below the… |
 | `src/outbound/served_sink/apns/mod.rs` | src | s | 1 mod | — | — |
 | `src/outbound/served_sink/mod.rs` | src | s | 1 mod | — | — |
-| `src/outbound_chokepoint/fanout.rs` | src | s | 2 enum · 3 fn | FanoutApprovalChoice, FanoutPathology | Moved from `crates/oneiron/src/outbound_chokepoint/fanout.rs` (lib split R1: record types below the lib) |
+| `src/outbound_chokepoint/fanout.rs` | src | s | 2 enum · 4 fn | FanoutApprovalChoice, FanoutPathology | Moved from `crates/oneiron/src/outbound_chokepoint/fanout.rs` (lib split R1: record types below the lib) |
 | `src/outbound_chokepoint/mod.rs` | src | s | 1 mod | — | — |
 | `src/outbound_consent/connector_call.rs` | src | s | 1 enum · 1 fn · 7 re-export | SettledConnectorCall | Moved from `crates/oneiron/src/outbound_consent/connector_call.rs` (lib split R2: record types below the lib) |
 | `src/outbound_consent/connector_call_input.rs` | src | s | 1 struct | ConnectorCallInput | Moved from `crates/oneiron/src/outbound_consent/connector_call_input.rs` (lib split R2: record types below… |
@@ -615,7 +615,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/binding.rs` | src | s | 1 struct · 3 fn | PolicyContentBinding | Moved from `crates/oneiron/src/policy_model/binding.rs` (lib split R1: record types below the lib) |
 | `src/policy_model/decide.rs` | src | s | 1 fn · 1 const | — | Moved from `crates/oneiron/src/policy_model/decide.rs` (lib split R1: record types below the lib) |
 | `src/policy_model/enforce.rs` | src | s | 1 struct · 1 enum | PolicyEnforcementVoice, PolicyHelpRouting | Moved from `crates/oneiron/src/policy_model/enforce.rs` (lib split R1: record types below the lib) |
-| `src/policy_model/hold_queue.rs` | src | s | 1 struct · 1 enum | HeldPolicyItem, PolicyHoldResolution | Moved from `crates/oneiron/src/policy_model/hold_queue.rs` (lib split R1: record types below the lib) |
+| `src/policy_model/hold_queue.rs` | src | s | 1 struct · 1 enum · 1 fn | HeldPolicyItem, PolicyHoldResolution | Moved from `crates/oneiron/src/policy_model/hold_queue.rs` (lib split R1: record types below the lib) |
 | `src/policy_model/mod.rs` | src | s | 10 mod · 56 re-export | — | — |
 | `src/policy_model/owner_rows/ledger.rs` | src | s | 1 enum | PolicyProposalStatus | Moved from `crates/oneiron/src/policy_model/owner_rows/ledger.rs` (lib split R1: record types below the lib) |
 | `src/policy_model/owner_rows/mod.rs` | src | s | 2 mod · 15 re-export | — | — |
@@ -626,7 +626,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/relay/trust.rs` | src | s | 2 enum · 2 fn · 1 const | ConnectionClass, RelayTrustDomain | Moved from `crates/oneiron/src/policy_model/relay/trust.rs` (lib split R1: record types below the lib) |
 | `src/policy_model/request.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 re-export | PolicyGenerationParams, PolicyReasoningEffort | Moved from `crates/oneiron/src/policy_model/request.rs` (lib split R1: record types below the lib) |
 | `src/policy_model/reword.rs` | src | s | 1 struct | PolicyRewordRequest | Moved from `crates/oneiron/src/policy_model/reword.rs` (lib split R1: record types below the lib) |
-| `src/policy_model/verdict.rs` | src | s | 2 struct · 4 enum · 6 fn · 4 const · 1 re-export | PolicyClassifyDecision, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyReadError, PolicyVerdictCategory | Moved from `crates/oneiron/src/policy_model/verdict.rs` (lib split R1: record types below the lib) |
+| `src/policy_model/verdict.rs` | src | s | 2 struct · 4 enum · 7 fn · 4 const · 1 re-export | PolicyClassifyDecision, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyReadError, PolicyVerdictCategory | Moved from `crates/oneiron/src/policy_model/verdict.rs` (lib split R1: record types below the lib) |
 | `src/policy_setting_doors.rs` | src | s | 1 struct · 2 re-export | PolicySettingActReceipt | Moved from `crates/oneiron/src/policy_setting_doors.rs` (lib split R1: record types below the lib) |
 | `src/ports/dependent_walk.rs` | src | s | 1 struct · 1 const | DependentWalkCheck | Moved from `crates/oneiron/src/ports/dependent_walk.rs` (lib split R1: record types below the lib) |
 | `src/ports/mod.rs` | src | s | 1 mod · 9 re-export | — | — |
@@ -765,7 +765,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/legal_hold/use_limit.rs` | src | s | 1 struct | CooperativeRestriction | Moved from `crates/oneiron/src/store/legal_hold/use_limit.rs` (lib split R2: record types below the lib) |
 | `src/store/mod.rs` | src | s | 28 mod · 79 re-export · 2 crate-vis | — | — |
 | `src/store/open_gates/mod.rs` | src | s | 1 mod · 6 re-export | — | — |
-| `src/store/open_gates/open_version_keys.rs` | src | s | 1 struct · 5 const | DbManifestEntry | Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the… |
+| `src/store/open_gates/open_version_keys.rs` | src | m | 1 struct · 5 const | DbManifestEntry | Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the… |
 | `src/store/pack_predicate_rewrites.rs` | src | s | 1 struct · 1 enum | PackMigrationMap, PackPredicateRewrite | Moved from `crates/oneiron/src/store/pack_predicate_rewrites.rs` (lib split R2: record types below the lib) |
 | `src/store/pending_gate_consent/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/store/pending_gate_consent/records.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | PendingGateConsentGroup, PendingGateConsentRecord | Moved from `crates/oneiron/src/store/pending_gate_consent/records.rs` (lib split R2: record types below the… |
