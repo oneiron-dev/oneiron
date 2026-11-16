@@ -33,6 +33,13 @@
 //! enrolled later. The register keys an act by its target alone and a
 //! free-time policy act names any target, so an act of another setting that
 //! names the web sign-in target is valid and without effect there.
+//!
+//! A second setting is the fold's own: the recovery box's kit-only switch
+//! ([`PolicySetting::RecoveryBoxKitOnly`], WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH
+//! = A), which the owner's device signs in its preset write for the managed
+//! node that holds the box. It speaks for the owner's way back, so its act
+//! counts only with an owner key's proof, whoever carries it, and an act of
+//! another setting that names its target is without effect there too.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,7 +65,7 @@ pub(crate) struct FoldedPolicySettings {
     pub(crate) targets: BTreeMap<EntityId, FoldedOwnerChoice<[u8; 32]>>,
     /// Well-signed acts without effect: their carrier was not admitted, or
     /// their owner not live, at their parents; and each act of another
-    /// setting that named the web sign-in setting's target.
+    /// setting that named the web sign-in or the kit-only setting's target.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -104,10 +111,13 @@ pub(super) fn apply_policy_setting(
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    // The web sign-in frontier is judged by its target, whatever setting
-    // an act on it names: the register keys an act by its target alone.
+    // The web sign-in and kit-only frontiers are judged by their target,
+    // whatever setting an act on them names: the register keys an act by its
+    // target alone.
     let on_web_sign_in = super::owner_proof::is_web_sign_in_target(set.act.target);
     let web_sign_in = on_web_sign_in && set.setting == PolicySetting::WebSignIn;
+    let on_kit_only = is_recovery_box_kit_only_target(set.act.target);
+    let kit_only = on_kit_only && set.setting == PolicySetting::RecoveryBoxKitOnly;
     let switches_back = web_sign_in
         && set.value.is_some()
         && set.value == super::owner_proof::web_sign_in_switch(state);
@@ -121,7 +131,7 @@ pub(super) fn apply_policy_setting(
         },
         context: POLICY_SETTING_REVISION_CONTEXT,
         persons_own_narrowing: false,
-        owner_key_only: switches_back,
+        owner_key_only: switches_back || on_kit_only,
     };
     let landing = owner_choice_landing(
         state,
@@ -132,10 +142,11 @@ pub(super) fn apply_policy_setting(
         counting,
         restriction_only,
     )?;
-    // Another setting's act on the web sign-in target lands nothing there.
+    // Another setting's act on the web sign-in or kit-only target lands
+    // nothing there.
     let landing = match landing {
         OwnerChoiceLanding::Recorded { hash, .. } | OwnerChoiceLanding::Waiting { hash, .. }
-            if on_web_sign_in && !web_sign_in =>
+            if (on_web_sign_in && !web_sign_in) || (on_kit_only && !kit_only) =>
         {
             OwnerChoiceLanding::Refused(hash)
         }
@@ -149,6 +160,14 @@ pub(super) fn apply_policy_setting(
         state.agent_carried_acts.insert(hash, agent);
     }
     Ok(())
+}
+
+/// Whether `target` is the recovery box kit-only setting's reserved target.
+fn is_recovery_box_kit_only_target(target: EntityId) -> bool {
+    matches!(
+        PolicySetting::RecoveryBoxKitOnly.reserved_target(),
+        Ok(Some(reserved)) if reserved == target
+    )
 }
 
 /// The fold's view of every setting's acts, under this install's pin and
@@ -178,6 +197,39 @@ pub(crate) struct PolicySettingAct {
 }
 
 impl Vault {
+    /// Signs, appends and folds `act` as a `PolicySettingSet` in `txn`, the
+    /// write that made the choice, and fails that write when it cannot: for a
+    /// setting the fold reads with no row of its own, where the signed act is
+    /// the setting itself. The entry hash once the fold in `txn` counted it
+    /// as a valid entry; whether it landed or waits for an owner key's proof
+    /// is the caller's to read.
+    ///
+    /// # Errors
+    /// No live machine profile of this install to carry the act, more heads
+    /// than one entry may name, a fold that did not count it, and storage
+    /// errors.
+    pub(crate) fn append_policy_setting_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: PolicySettingAct,
+    ) -> Result<AuthorityEntryHash> {
+        let PolicySettingAct {
+            act,
+            setting,
+            prior,
+            value,
+        } = act;
+        self.append_carried_act_in_txn(txn, |machine| {
+            AuthorityOp::PolicySettingSet(PolicySettingSet {
+                act,
+                machine,
+                setting,
+                prior,
+                value,
+            })
+        })
+    }
+
     /// `target`'s setting revision in `txn`: the `seen` an act on it names.
     pub(crate) fn policy_setting_revision_in_txn(
         &self,
