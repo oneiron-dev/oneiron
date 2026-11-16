@@ -32,7 +32,7 @@ struct RecoveryKitInput {
 /// No `Debug`: it can carry the kit.
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct RecoveryPresetRequest {
+pub(super) struct RecoveryPresetRequest {
     /// `standard` or `nobody_but_me`; `nobody_but_me_any_two` is refused
     /// here, as it is turned on with its kit.
     preset: RecoveryPreset,
