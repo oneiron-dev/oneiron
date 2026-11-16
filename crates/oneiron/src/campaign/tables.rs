@@ -63,6 +63,11 @@ crate::side_table::side_tables! {
     /// pages scan every CLAIM. Key: id16(claim).
     CAMPAIGN_MEMBER_UNDECODABLE: VaultMeta b"campaign:member_undecodable:v1:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// The vault's key for the one-click unsubscribe links bulk campaign email carries (ARCH-0059
+    /// #opt-out): 32 raw bytes, made on the first origin install, never rotated and never sent.
+    /// Key: ().
+    CAMPAIGN_ONE_CLICK_UNSUBSCRIBE_KEY: VaultMeta b"campaign:one_click_unsubscribe_key:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Persisted binding from a campaign program to the campaign it belongs to. Key: id16.
     CAMPAIGN_PROGRAM: VaultMeta b"campaign:program:v1:" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
