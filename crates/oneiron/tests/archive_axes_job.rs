@@ -15,14 +15,19 @@
 //! sample pinned at an older file-plane revision reads as the file its
 //! revisions keep, whatever body the ASSET holds now, and an installed pin
 //! serves only while its caller reads every sample (#7966 review round 2).
+//! The axes are drawn from the goal too: a controller that reads every sample
+//! but not the goal claim queues nothing and reads no answer, pin or view,
+//! and a goal read revoked since withholds them again (#8786 review round 2).
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_axes_job`.
 #![cfg(oneiron_test_support)]
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use base64::Engine as _;
-use oneiron::authority::MachineRole;
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome};
+use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::autoreason_campaign::archive::{
     ArchiveAxesBrief, ArchiveAxesHost, ArchiveAxesMethod, ArchiveAxesProposal, ArchiveAxesReply,
     ArchiveDescriptor, ArchiveOutputRef, ArchiveQualityMetric, CampaignArchiveInstall,
@@ -34,15 +39,18 @@ use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload};
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{MEMORY_CODE_NOT_FOUND, Memory};
-use oneiron::registry::ENTITY_TYPE_ASSET;
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use oneiron::store::GateDecisionId;
+use oneiron::task_verb::HostBinding;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::write_root_goal;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{
-    research_archive_best, research_archive_get, research_archive_install,
-    research_archive_proposal, research_archive_propose_axes,
+    AgentGrantMintRequest, AgentGrantRevokeRequest, mint_agent_grant_as, research_archive_best,
+    research_archive_get, research_archive_install, research_archive_proposal,
+    research_archive_propose_axes, revoke_agent_grant_as,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -852,4 +860,177 @@ fn an_installed_pin_serves_only_while_its_caller_reads_every_sample() {
     let refused =
         research_archive_best(&owner_memory(&f), request).expect_err("its view is withheld too");
     assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+}
+
+fn owner_proof(f: &Fixture) -> AuthenticatedOwner {
+    f.vault
+        .authenticate_owner(f.owner, &f.owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof")
+}
+
+/// The owner's live read Grant for the root's agent over `bands`; the
+/// grant's row. The samples are ARTIFACT rows and the goal a CLAIM row, so a
+/// Grant over the ARTIFACT band reads every sample and not the goal.
+fn grant_read(f: &Fixture, bands: ScopeAxis<u8>) -> EntityId {
+    let mut scope = Scope::top();
+    scope.bands = bands;
+    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    let minted = mint_agent_grant_as(
+        &f.vault,
+        &owner_proof(f),
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent: f.agent,
+            authority_scope: scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("the owner mints the agent a read Grant");
+    assert!(minted.grant.confers, "the read Grant confers");
+    minted.grant.grant_ref
+}
+
+fn revoke_grant(f: &Fixture, grant_ref: EntityId) {
+    let revoked = revoke_agent_grant_as(
+        &f.vault,
+        &owner_proof(f),
+        ActSurface::ThisInstall,
+        AgentGrantRevokeRequest {
+            grant_ref,
+            seen: None,
+        },
+    )
+    .expect("the owner revokes the Grant");
+    assert!(revoked.changed, "the revoke lands");
+}
+
+/// The campaign root leased, as the root's host leases it: the binding of
+/// the agent running it, the campaign's controller.
+fn lease_root(f: &Fixture, campaign: &Campaign) -> HostBinding {
+    let ClaimOutcome::Claimed(leased) = AttemptQueue::new(&f.vault)
+        .claim(ClaimAttempt {
+            lease_owner: "research-root-host".into(),
+            now: f.vault.now_recorded_at(),
+        })
+        .expect("claim")
+    else {
+        panic!("the campaign root was not leased");
+    };
+    assert_eq!(
+        leased.id,
+        AttemptId::from_bytes(campaign.root.as_bytes()).expect("the root is an attempt id"),
+        "the campaign root is the leased attempt"
+    );
+    HostBinding::from_leased(&leased, None).expect("host binding")
+}
+
+/// The root's agent inside its leased root attempt, under its Grants now.
+fn controller<'a>(f: &'a Fixture, binding: &HostBinding) -> Memory<'a> {
+    f.vault
+        .memory(f.agent, EdgeActorClass::Agent)
+        .with_task_host(binding.clone())
+}
+
+/// The Coach draws the axes from the goal as well as the samples: a
+/// controller that reads every sample but not the goal claim queues no
+/// request, and reads neither the answer the owner's request got nor the
+/// pin installed from it, nor its view (#8786 review round 2).
+#[test]
+fn a_controller_that_cannot_read_the_goal_gets_no_axes() {
+    let f = fixture();
+    let campaign = campaign(&f, "axes-goal-unread");
+    let binding = lease_root(&f, &campaign);
+    grant_read(
+        &f,
+        ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_BLOB_ARTIFACT])),
+    );
+    let refused =
+        research_archive_propose_axes(&controller(&f, &binding), first_request(&f, &campaign))
+            .expect_err("a controller that cannot read the goal queues no request");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    assert!(!woken(&f), "a refused request wakes nothing");
+    assert!(admit(&f).is_none(), "a refused request queues no job");
+    // The owner, who reads the goal, queues the same request.
+    let request = propose(&owner_memory(&f), first_request(&f, &campaign))
+        .expect("the owner queues the request");
+    let state = run_job(&f, &ScriptedHost::new(Some(TWO_AXES), None));
+    let CampaignArchiveProposalState::Proposed { proposal, .. } = state.clone() else {
+        panic!("the Coach proposed: {state:?}");
+    };
+    assert_eq!(
+        proposal_state(&f, request),
+        state,
+        "the owner reads the answer"
+    );
+    let refused = research_archive_proposal(
+        &controller(&f, &binding),
+        CampaignArchiveProposalRequest { request },
+    )
+    .expect_err("the answer is withheld from a controller that cannot read the goal");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    install(&f, &campaign, proposal).expect("the owner installs the proposal");
+    let pin = CampaignArchiveRequest {
+        root: campaign.root,
+    };
+    research_archive_get(&owner_memory(&f), pin.clone()).expect("the pin serves the owner");
+    let refused = research_archive_get(&controller(&f, &binding), pin.clone())
+        .expect_err("the pin is withheld from a controller that cannot read the goal");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    let refused = research_archive_best(&controller(&f, &binding), pin)
+        .expect_err("its view is withheld too");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+}
+
+/// A controller that reads the goal and every sample through one Grant is
+/// served the answer and the pin; once that Grant is revoked it still reads
+/// every sample through another, but no longer the goal, and both are
+/// withheld (#8786 review round 2).
+#[test]
+fn a_goal_read_revoked_since_withholds_the_axes() {
+    let f = fixture();
+    let campaign = campaign(&f, "axes-goal-revoked");
+    let binding = lease_root(&f, &campaign);
+    grant_read(
+        &f,
+        ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_BLOB_ARTIFACT])),
+    );
+    let wide = grant_read(&f, ScopeAxis::All);
+    let request = propose(&controller(&f, &binding), first_request(&f, &campaign))
+        .expect("a controller that reads the goal and every sample queues the request");
+    let state = run_job(&f, &ScriptedHost::new(Some(TWO_AXES), None));
+    let CampaignArchiveProposalState::Proposed { proposal, .. } = state.clone() else {
+        panic!("the Coach proposed: {state:?}");
+    };
+    assert_eq!(
+        research_archive_proposal(
+            &controller(&f, &binding),
+            CampaignArchiveProposalRequest { request },
+        )
+        .expect("the controller reads the answer"),
+        state
+    );
+    install(&f, &campaign, proposal).expect("the owner installs the proposal");
+    let pin = CampaignArchiveRequest {
+        root: campaign.root,
+    };
+    research_archive_get(&controller(&f, &binding), pin.clone())
+        .expect("the pin serves the controller");
+    revoke_grant(&f, wide);
+    let refused = research_archive_proposal(
+        &controller(&f, &binding),
+        CampaignArchiveProposalRequest { request },
+    )
+    .expect_err("a goal read revoked since withholds the answer");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    let refused = research_archive_get(&controller(&f, &binding), pin).expect_err("and the pin");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    assert_eq!(
+        proposal_state(&f, request),
+        state,
+        "the owner still reads the answer"
+    );
 }
