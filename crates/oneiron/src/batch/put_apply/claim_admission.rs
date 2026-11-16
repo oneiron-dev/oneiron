@@ -63,6 +63,13 @@ pub(super) fn admit_claim_put(
             input.allow_reserved_predicate,
             input.replicated,
         )?;
+        // A local generic `channel_identity.*` claim is about a live
+        // identity, born Active, and names its row's own shape; a rewrite of
+        // a family head keeps its predicate, subject and value: no writer can
+        // forge or free a retained address hold.
+        if !input.allow_reserved_predicate && !input.replicated {
+            crate::channel_identity::guard_generic_claim_put_in_txn(store, txn, &id, body)?;
+        }
         crate::authority::verify_machine_claim_in_txn(
             store,
             txn,
@@ -98,6 +105,19 @@ pub(super) fn admit_claim_put(
                     occurred: input.occurred,
                     learned_at: input.learned_at,
                 },
+            )?;
+            // A stored world-access grant starts or stops governing only by
+            // a live owner: its writer at an approval, its closer at a close.
+            // A replicated row never replaces one (`sync::local_claims`).
+            crate::claim::world_access::admit_world_access_transition(
+                store,
+                txn,
+                &id,
+                body,
+                input
+                    .transition
+                    .and_then(crate::batch::VerifiedClaimTransition::closer)
+                    .map(crate::write_envelope::WriteActor::entity_ref),
             )?;
         }
         crate::scope_summary::merge_summary_ref(body)?;
