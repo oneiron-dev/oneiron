@@ -7,9 +7,6 @@
 //! for it (`training_runs`).
 //! `/v1/owner/identity/asks` (OF-123) is the needs-you strip's identity asks,
 //! each with its one-tap choice card, and their answers.
-//! `/v1/owner/proactivity/action-mode` (OF-335) is the owner's action-mode
-//! policy: the state-index window with its targets and the mode bands the
-//! nightly refresh proposes from.
 //! `/v1/owner/self-heal/findings` (OF-418) lists one detector's raised T3
 //! findings with the owner's labels and takes the owner's one label on each,
 //! which a `t2` detector of the same family learns from.
@@ -34,7 +31,6 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixSettled, MAX_CODE_FIX_WORK};
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView;
 use oneiron::dreamer_runner::maintenance::identity::{
@@ -164,40 +160,6 @@ async fn assemble_digest(
     })
     .await?;
     Ok(Json(view))
-}
-
-/// `GET /v1/owner/proactivity/action-mode`: the owner's action-mode policy.
-async fn action_mode(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Option<ActionModePolicy>> {
-    owner(&auth, &server)?;
-    let policy = blocking(move || Ok(server.vault().action_mode_policy()?)).await?;
-    Ok(Json(policy))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct SetActionMode {
-    /// None clears the policy, and no night refreshes an index for it.
-    policy: Option<ActionModePolicy>,
-}
-
-/// `POST /v1/owner/proactivity/action-mode`: replaces the whole policy.
-async fn set_action_mode(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<SetActionMode>,
-) -> OwnerReply<Option<ActionModePolicy>> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let policy = blocking(move || {
-        Ok(server
-            .vault()
-            .set_action_mode_policy(&owner, request.policy)?)
-    })
-    .await?;
-    Ok(Json(policy))
 }
 
 /// `GET /v1/owner/stewardship`: the owner's keep-in-touch rules.
