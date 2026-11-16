@@ -43,7 +43,7 @@ pub(crate) use self::arm::plant_start_marker_in_txn;
 pub(crate) use self::arm::{
     ScheduleCaller, arm_in_txn, arm_setting_jobs, due_at_in_txn, due_by_in_txn,
     erase_schedule_actor_in_txn, erase_schedule_subject_in_txn, finished_at_in_txn,
-    rearm_on_change, request_runs,
+    rearm_on_change, rebuild_schedule_due_in_txn, request_runs,
 };
 pub(crate) use self::jobs::{job_named, jobs};
 pub use self::run::{JobOutcome, JobRun, ScheduleRunReport};
