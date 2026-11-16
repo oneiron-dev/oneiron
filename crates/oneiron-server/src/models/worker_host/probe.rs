@@ -54,6 +54,7 @@ use super::super::http::{get_within_on, post_json_on};
 use super::super::llama_identity::verify_llama_header;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use super::super::rerank::RERANK_PATH;
+use super::super::voxcpm2_speech::socket::VoiceSocketDialer;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
@@ -94,6 +95,7 @@ pub(super) struct HouseProbe {
     /// The bound on one exchange on a launch's own socket: its provider's
     /// timeout.
     socket_timeout: Duration,
+    voice: Option<VoiceSocketDialer>,
 }
 
 impl HouseProbe {
@@ -121,11 +123,23 @@ impl HouseProbe {
             tracing::warn!(model = %wire_model, %error, "model worker probe unavailable");
             error.to_string()
         });
+        let voice = if provider.kind == ProviderKind::Voxcpm2 {
+            match VoiceSocketDialer::new(&provider) {
+                Ok(voice) => Some(voice),
+                Err(error) => {
+                    tracing::warn!(model = %wire_model, %error, "model worker probe unavailable");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Self {
             http,
             wire_model: wire_model.to_owned(),
             slot,
             socket_timeout: Duration::from_secs(provider.timeout_secs),
+            voice,
         }
     }
 
@@ -321,8 +335,14 @@ impl WorkerProbe for HouseProbe {
                 }
                 WorkerKind::VoxCpm2 | WorkerKind::Asr => {
                     let launch = self.launch();
-                    super::media_worker::probe(http, &self.wire_model, expected, launch.as_ref())
-                        .await
+                    super::media_worker::probe(
+                        http,
+                        &self.wire_model,
+                        expected,
+                        launch.as_ref(),
+                        self.voice.as_ref(),
+                    )
+                    .await
                 }
                 _ => WorkerReadiness::Unverified { observed: None },
             }

@@ -62,7 +62,12 @@ pub(super) async fn mcp_current_board_with_roster(
         .map_err(mcp_board_frame_error)?,
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
-    let laid_out = oneiron::context_board::apply_board_layout(&sections, &layout, cap_tok);
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &sections,
+        &layout,
+        cap_tok,
+        oneiron::context_board::fold_attention_rows(&server.vault),
+    );
     let layout_candidate =
         layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
     let mut state_rows = mcp_board_state_rows(&laid_out.sections);
@@ -346,11 +351,7 @@ pub(super) fn mcp_board_sections(
         .map_err(|error| mcp_engine_error("board children failed", error))?;
     let read = mcp_scoped_read(&server.vault, actor)?;
     let people = {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            });
+        let now = oneiron_base::unix_millis_now();
         let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
             read.is_entity_readable(&person)
         })

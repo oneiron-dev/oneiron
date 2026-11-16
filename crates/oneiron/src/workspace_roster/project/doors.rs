@@ -208,6 +208,7 @@ impl Vault {
             next.leader = authority.leader.clone();
             next.board = authority.board.clone();
             next.roster = authority.roster.iter().flatten().cloned().collect();
+            next.room_facets = authority.room_facets.clone();
             self.sign_owner_project_in_txn(
                 txn,
                 owner,

@@ -136,15 +136,26 @@ impl Vault {
         Ok(erased)
     }
 
-    /// The owner's per-call erase, admitted in the erase's own writer.
+    /// The owner's per-call erase, admitted in the erase's own writer, with
+    /// the check-in decision it runs on: the Owner's own proof, and with
+    /// `applied` an asker's approved check-in for this call's erase, spent
+    /// in the same writer (2k2; P25-SHAPE Q1 = A). A call with no row, or
+    /// one already erased, spends it too: the Owner's act ran.
     pub(crate) fn erase_outbound_call_request_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         attempt_id: AttemptId,
         call_seq: u64,
-    ) -> IntentLedgerResult<bool> {
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> IntentLedgerResult<(bool, crate::check_in::CheckInDecision)> {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         owner.revalidate_in_txn(self, &wtxn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut wtxn,
+            crate::check_in::ActClass::Erase,
+            applied,
+        )?;
         let (erased, withdrawn) = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
         let synced = force_sync(self);
@@ -160,7 +171,7 @@ impl Vault {
             self.store
                 .finish_checkpoint_payload_retirements_after_commit();
         }
-        Ok(erased)
+        Ok((erased, decision))
     }
 }
 

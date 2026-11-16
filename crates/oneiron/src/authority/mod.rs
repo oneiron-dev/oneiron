@@ -87,11 +87,15 @@ mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
 mod frontier_join;
+#[cfg(oneiron_test_support)]
+pub(crate) mod frontier_walk_door;
+mod full_copy_mark;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
 mod handover_evidence;
+mod held_answers;
 mod history_admission;
 mod history_coverage;
 mod history_fetch;
@@ -132,6 +136,7 @@ mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_project_slip;
+mod owner_proof;
 mod owner_roots;
 mod owner_work;
 mod owner_work_diagnostics;
@@ -149,6 +154,7 @@ mod revoke_proof;
 mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
+pub(crate) mod setting_keys;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;
@@ -306,9 +312,11 @@ pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
     VerifiedForwardedCaller, forwarded_request_transcript,
 };
+pub(crate) use full_copy_mark::append_install_signed_in_txn;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
+pub use held_answers::{ConfirmedHeldAnswers, HeldAnswerListing, ListedHeldAnswer};
 pub use history_coverage::{
     AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest,
 };
@@ -330,6 +338,8 @@ pub use host_action::{HostActionAuthority, HostActionIdentity};
 #[cfg(oneiron_test_support)]
 pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
+#[cfg(oneiron_test_support)]
+pub(crate) use ingest_observation::decode_ingest_check_key_for_test;
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
 pub use leave_notice_continuity::LeaveNoticeContinuity;
@@ -342,6 +352,7 @@ pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
 };
+pub use machine_answers::MachineAnswerLanding;
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
@@ -352,6 +363,7 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
+pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
@@ -363,14 +375,15 @@ pub use oauth_server::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
     OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR, OAUTH_CIMD_TTL_SECS,
     OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX, OAUTH_CODE_TTL_SECS,
-    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR,
-    OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR, OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES,
-    OAUTH_URI_MAX_BYTES, OAuthAccess, OAuthAuthorizationAllowed, OAuthAuthorizationPending,
-    OAuthAuthorizationStart, OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration,
-    OAuthClientSource, OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal,
-    OAuthTokenRefusal, OAuthTokens, oauth_client_id_is_metadata_url, oauth_code_challenge_admitted,
-    oauth_redirect_uri_admitted, oauth_requested_tier, oauth_scopes_supported,
+    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_NAMED_CLIENT_REDIRECT_URIS,
+    OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX,
+    OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR, OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
@@ -401,6 +414,8 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use slip_replay::decode_nonce_key_for_test;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
@@ -465,8 +480,10 @@ pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
+pub(crate) use held_answers::{drop_held_answer_dismissals_in_txn, is_dismissed_held_answer_row};
 pub(crate) use history_admission::{
-    RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
+    AuthorityAdmissionView, RowsBeside, preflight_authority_rows_beside_in_txn,
+    preflight_authority_rows_in_txn,
 };
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
@@ -474,10 +491,12 @@ pub(crate) use import_order::authority_stage_order;
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
-    AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
+    AuthorityDoor, AuthorityDoorView, DoorFold, OwnerReserveHold, asks_the_owners_work_in_txn,
+    authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
+    end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
 pub(crate) use past_grant_standing::past_standing_history_loads_for_test;
@@ -533,7 +552,7 @@ pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedK
 pub(crate) use world_key_support::{
     KeyFrontier, WideFrontier, next_sequence, own_world_key_records_in_txn,
     owner_root_record_in_txn, owner_root_records_in_txn, scope_head, sign_side_entry,
-    standing_rows, unsigned_side_entry,
+    sign_side_entry_with_owner_proof, standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
 pub(crate) use world_privacy::side_world;

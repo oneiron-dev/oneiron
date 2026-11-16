@@ -94,7 +94,29 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        Proof::Owner => {
+            // Restriction wave 7 (C28, C41): the run-review and hook-regen
+            // reads an agent's own Grant may open under the owner's Setting.
+            // An agent credential passes the preflight with its bound actor
+            // on these rows alone; the engine door judges its Grant and the
+            // key. Every other caller keeps the owner's proof.
+            if matches!(
+                verb,
+                "vault.runs.review"
+                    | "vault.runs.settlement"
+                    | "vault.runs.changes.get"
+                    | "vault.hooks.regen.due"
+                    | "vault.hooks.regen.get"
+                    | "vault.hooks.regen.adopt"
+            ) && auth.actor_class() == Some("agent")
+                && !auth.is_owner_grade()
+            {
+                return crate::api::facade::facade_actor(server, auth)
+                    .map(drop)
+                    .map_err(crate::api::facade::FacadeApiError::into_memory_error);
+            }
+            owner_proof(auth, server, verb).map(drop)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
@@ -147,6 +169,12 @@ pub(in crate::api::facade) fn door_admits(
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
         }
+        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
+        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
+        // withdrawal admits.
+        Proof::RecognitionWithdrawer => {
+            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
+        }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
         Proof::OriginPublish => {
@@ -178,6 +206,12 @@ pub(in crate::api::facade) fn door_admits(
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
         Proof::WorkflowMember => {
+            crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
+        }
+        // A drafted reply's approval (FIX 18868): the mailbox's own person on
+        // their own slip, member or owner, as the door acts under; the door
+        // then admits only the person whose mailbox the draft is from.
+        Proof::MailboxPerson => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
         // A check-in holder's answer (ROLES-CHECKIN P2.3c): a live person on
@@ -252,6 +286,11 @@ pub(in crate::api::facade) fn door_admits(
         // A policy put by a person holding the policy power (FIX 8177), which the manifest writer checks.
         Proof::PolicyPutter => {
             crate::api::facade::gate_policy_doors::policy_putter(server, auth, verb).map(drop)
+        }
+        // A ramp demotion by the owner or a person holding the ramp demotion power (census L7-33), which
+        // the demotion writer checks again.
+        Proof::RampDemoter => {
+            crate::api::facade::graduation_doors::ramp_demoter(server, auth, verb).map(drop)
         }
         // A publish or repoint as the caller on its own slip (FIX 8161), which the outbound Gate judges.
         Proof::ArtifactPublisher => {

@@ -46,8 +46,9 @@ use crate::workspace_roster::RoomWork;
 use super::erase::put_intent_in_txn;
 use super::{Asker, INTENTS, IntentAsk, IntentName, IntentPhase, Reserved};
 
-/// Domain of a leased intent's request digest.
-const LEASED_ASK_DIGEST_CONTEXT: &str = "oneiron spawn leased intent ask v1";
+#[doc(hidden)]
+use oneiron_records::agent_dispatch::planner_live::intent::child::LEASED_ASK_DIGEST_CONTEXT;
+
 /// A planned group's leader's dispatch dedupe key, past the dispatch's own
 /// prefix: `planned:<intent row key hex>:leader`. A member's ends
 /// `:member:<n>`, so it names no leader.
