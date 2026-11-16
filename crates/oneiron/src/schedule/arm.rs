@@ -28,6 +28,8 @@ pub(super) struct ScheduleRow {
     /// The agent that armed it, and the Grant it armed under; `None` for the owner and the
     /// engine.
     pub(super) armed_by: Option<ArmedBy>,
+    /// The trigger's occurrence the next run serves. A retry, a run that stopped at its budget,
+    /// or a run now never moves it: the next occurrence is counted from it.
     pub(super) next_due_at: u64,
     /// When its last run ended; 0 before the first.
     pub(super) finished_at: u64,
@@ -37,6 +39,10 @@ pub(super) struct ScheduleRow {
     pub(super) failures: u32,
     /// When someone asked for a run that has not started yet: due from then.
     pub(super) requested_at: Option<u64>,
+    /// When the occurrence `next_due_at` runs again: at once after a run that stopped at its
+    /// budget, after the backoff after a failure. While set it is the due time in place of
+    /// `next_due_at`.
+    pub(super) resume_at: Option<u64>,
     /// Where an unfinished run goes on from.
     pub(super) cursor: Option<Vec<u8>>,
     /// The run in flight, or the one that goes on from a run that did not run to its end,
@@ -54,11 +60,12 @@ pub(super) struct ArmedBy {
 }
 
 impl ScheduleRow {
-    /// When it is due: its next due time, or a requested run's time when that is earlier.
+    /// When it is due: its occurrence, or the resumed run's time while one is owed, or a
+    /// requested run's time when that is earlier.
     pub(super) fn due_at(&self) -> u64 {
-        self.requested_at.map_or(self.next_due_at, |requested| {
-            requested.min(self.next_due_at)
-        })
+        let due = self.resume_at.unwrap_or(self.next_due_at);
+        self.requested_at
+            .map_or(due, |requested| requested.min(due))
     }
 
     /// A new arming with `trigger` at `now`: due at its first occurrence, with no failure, cursor
@@ -80,6 +87,7 @@ impl ScheduleRow {
             started_at: None,
             failures: 0,
             requested_at: None,
+            resume_at: None,
             cursor: None,
             answering: false,
         })
@@ -135,6 +143,28 @@ pub(super) fn store_row_in_txn(
         None => {
             ROWS.delete(store, txn, &key.to_vec())?;
         }
+    }
+    Ok(())
+}
+
+/// Rebuilds `SCHEDULE_DUE` from `SCHEDULE`: one entry per row, at its due time. A restore lands
+/// the rows, and no image carries the index (`[restore: not_imaged]`).
+pub(crate) fn rebuild_schedule_due_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    let mut stale = Vec::new();
+    for entry in DUE.iter_raw_from(store, txn, &[])? {
+        let (key, _) = entry?;
+        stale.push(key);
+    }
+    for key in stale {
+        DUE.delete(store, txn, &key)?;
+    }
+    let mut due = Vec::new();
+    for row in ROWS.iter_from(store, txn, &[])? {
+        let (key, row) = row?;
+        due.push(due_key(row.due_at(), &key));
+    }
+    for key in due {
+        DUE.put(store, txn, &key, &())?;
     }
     Ok(())
 }

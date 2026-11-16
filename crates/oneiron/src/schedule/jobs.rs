@@ -23,6 +23,10 @@ static JOBS: &[&JobSpec] = &[
     &crate::test_doors::schedule::TEST_OPEN,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_ANSWER,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_FAIL_ONCE,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_REARM,
 ];
 
 /// The job kind whose code is `code`.
