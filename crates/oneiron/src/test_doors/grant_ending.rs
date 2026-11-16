@@ -106,3 +106,29 @@ pub fn give_member_grant_act_alone(
         )
     })
 }
+
+/// Puts the stored body `body` back as the live FEDERATION_GRANT row `id`, byte for byte: a
+/// restore, or a peer the row's tombstone never reached, materializing a Grant row again.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn put_grant_row_body(vault: &Vault, id: EntityId, body: Vec<u8>) -> Result<()> {
+    vault.with_write_txn(|txn| super::grant_act::put_grant_row_in_txn(vault, txn, id, body))
+}
+
+/// The ids of the owner's agent Grants that stand on his counted mint here: the list every
+/// agent Grant reader shares (the registry, the agent's ai operations, its principal standing).
+///
+/// # Errors
+///
+/// A store or authority-fold read failure.
+pub fn standing_agent_grant_ids(vault: &Vault) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::federation::agent_grants_for_store_in_txn(&vault.store, &txn)?
+            .into_iter()
+            .map(|standing| standing.id)
+            .collect(),
+    )
+}

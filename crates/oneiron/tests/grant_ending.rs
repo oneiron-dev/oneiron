@@ -35,8 +35,8 @@ use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TY
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::grant_act::put_keyed_member_grant;
 use oneiron::test_doors::grant_ending::{
-    batch_delete_row, give_member_grant_act_alone, load_install_carrier, standing_grant_in_family,
-    withdraw_lapsed_agent_grant,
+    batch_delete_row, give_member_grant_act_alone, load_install_carrier, put_grant_row_body,
+    standing_agent_grant_ids, standing_grant_in_family, withdraw_lapsed_agent_grant,
 };
 use oneiron::test_doors::grant_standing::{grant_line, grant_row, standing_grant_act};
 use oneiron::test_support::{bind_host_owner, provision_act_carrier, provision_engine_machines};
@@ -717,5 +717,68 @@ fn an_inquiry_edge_terms_change_gives_the_new_terms() {
             .expect("standing read")
             .is_some(),
         "the edge stands on the new terms' giving",
+    );
+}
+
+/// Catches a reader that gives a row put back at a lapsed Grant's id while its end is still
+/// owed (no install key loaded): the end this install owes holds the row back until it counts,
+/// and the counted end after it (pass 28 R3e, in place of the permanent withdrawal marker).
+#[test]
+fn a_lapsed_agent_grant_put_back_while_its_end_is_owed_stands_for_nothing() {
+    let minted = minted_agent_grant();
+    let agent = agent_of(&minted.vault, minted.grant);
+    let MintedAgent {
+        dir,
+        vault,
+        grant,
+        keystore,
+    } = minted;
+    let body = grant_row(&vault, grant)
+        .expect("grant row read")
+        .expect("the minted row is live");
+    assert_eq!(
+        standing_agent_grant_ids(&vault).expect("agent grants"),
+        vec![grant],
+        "setup: the minted Grant stands",
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault again");
+    assert!(
+        withdraw_lapsed_agent_grant(&vault, grant, agent)
+            .expect("a lapse with no loaded key is never refused"),
+        "the lapse withdrew the live agent Grant",
+    );
+    put_grant_row_body(&vault, grant, body).expect("the saved row lands again");
+    assert!(
+        grant_row(&vault, grant).expect("grant row read").is_some(),
+        "setup: the row is live again",
+    );
+    assert_eq!(
+        grant_line(&vault, grant)
+            .expect("grant line")
+            .map(|(_, ended)| ended),
+        Some(false),
+        "setup: the end is still owed, so the line still reads as given",
+    );
+    let standing = standing_agent_grant_ids(&vault).expect("agent grants");
+    assert!(
+        standing.is_empty(),
+        "grant={grant:?}; expected a row put back while its end is owed to stand for nothing; \
+         seen standing={standing:?}",
+    );
+    vault.install_device_keystore(keystore);
+    load_install_carrier(&vault);
+    assert_eq!(
+        grant_line(&vault, grant)
+            .expect("grant line")
+            .map(|(_, ended)| ended),
+        Some(true),
+        "the owed end ended the line once the key loaded",
+    );
+    let standing = standing_agent_grant_ids(&vault).expect("agent grants");
+    assert!(
+        standing.is_empty(),
+        "grant={grant:?}; expected the counted end to hold the put-back row back; \
+         seen standing={standing:?}",
     );
 }
