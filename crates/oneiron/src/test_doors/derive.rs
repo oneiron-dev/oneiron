@@ -11,6 +11,7 @@ use crate::derive::{
 };
 use crate::error::Result;
 use crate::gate::{DeriveCapability, DeriveRefusal};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::write_envelope::{SourceLineage, WriteActor};
 use crate::{EdgeActorClass, EntityId, Vault};
 
@@ -1336,7 +1337,23 @@ pub fn refusal_receipt(vault: &Vault, batch: EntityId, local: &str) -> Result<Op
         .gate_decision_in_txn(&txn, crate::store::GateDecisionId::from_bytes(receipt))?
         .filter(|decision| {
             decision.content_kind == crate::derive::DERIVE_ITEM_CONTENT_KIND
-                && decision.outcome == "deny"
+                && match decision.gate_outcome() {
+                    Some(GateReceiptOutcome::Deny) => true,
+                    Some(
+                        GateReceiptOutcome::Allow
+                        | GateReceiptOutcome::Pending
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                }
         })
         .map(|decision| decision.reason_codes))
 }
