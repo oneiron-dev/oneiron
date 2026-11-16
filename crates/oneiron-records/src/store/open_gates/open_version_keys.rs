@@ -3,12 +3,21 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v29 (FIX ARRIVAL-FLOOR-SIBLING-DIVERGENCE): stored authority-log rows keep
+/// v30 (FIX ARRIVAL-FLOOR-SIBLING-DIVERGENCE): stored authority-log rows keep
 /// their bytes and can change meaning. No arrival floor refuses a roster row,
 /// and a roster row vouches for its own signer's rows below it that this
 /// install's arrival floor refused, so an install that already holds a forked
 /// signer's rows can fold more of them than before. No old-meaning reader or
 /// migration is provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v29 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, device revocation): stored
+/// authority-log rows keep their bytes and change meaning. A `RevokeDevice`
+/// proved on its own signed branch now holds as a revoke fact when a
+/// confirmation collision drops the branch it sits on, so the key it revoked
+/// stays revoked. A stored checkpoint image written before it lacks those
+/// facts and no longer decodes (the authority fold schema moves with it). No
+/// old-meaning reader or migration is provided (the lead's M-1 stored-change
+/// rule, path "loud").
 ///
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
 /// verb-hook pause from a person's pause and the other engine holds. The
@@ -138,7 +147,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 29;
+pub const STORAGE_ABI_VERSION: u16 = 30;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
