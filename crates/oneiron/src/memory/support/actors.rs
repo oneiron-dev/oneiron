@@ -306,23 +306,21 @@ impl Memory<'_> {
 /// Whether the embedded owner still takes the owner shortcuts that skip the
 /// owner-binding check (the read-lane owner key and its write standing, the
 /// room-role Owner arm, the disclosure VaultOwner party, the source-audience
-/// owner PERSON it stands for) in `txn` (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A personal vault's embedded owner and
-/// a rooted vault's always do, as before. On an unrooted vault that holds a
-/// shared-vault creation it does only while the live owner census names it,
-/// the rule [`verify_owner_actor_binding_in_txn`] reads there, so an embedded
-/// owner whom another Owner made an Admin takes none of them.
+/// owner PERSON it stands for) in `txn` (UNROOTED-EMBEDDED-OWNER-SHORTCUTS).
+/// A personal vault's embedded owner always does, as before (the room-role
+/// arm and the source-audience PERSON ask this on an unrooted vault only).
+/// On a vault that holds a shared-vault creation, rooted or not, it does only
+/// while the live owner census names it, the census
+/// [`verify_owner_actor_binding_in_txn`] reads there, so an embedded owner
+/// who handed ownership on, or whom another Owner made an Admin, takes none
+/// of them (ROOTED-EMBEDDED-OWNER-SHORTCUTS). The census, not the binding: a
+/// live Owner's own-device read lane stays the owner's while the host key is
+/// bound to someone else.
 pub(crate) fn embedded_owner_shortcut_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> crate::Result<bool> {
     if vault.shared_vault_creation_in_txn(txn)?.is_none() {
-        return Ok(true);
-    }
-    if vault
-        .authority_view_readonly_in_txn(txn)?
-        .vault_id
-        .is_some()
-    {
         return Ok(true);
     }
     crate::policy_model::is_live_vault_owner_in_txn(

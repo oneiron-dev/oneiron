@@ -324,8 +324,8 @@ pub(crate) fn actor_is_vault_owner_in_txn(
     {
         // The local embedded-owner reader is the host's own-device read lane.
         // A separately paired authority root does not turn it into a peer.
-        // An unrooted shared vault's embedded owner the census no longer
-        // names falls to the owner check below, which refuses it.
+        // A shared vault's embedded owner the census no longer names falls
+        // to the owner check below, which refuses it.
         return Ok(true);
     }
     match verify_vault_owner_in_txn(vault, txn, actor, actor_class) {
