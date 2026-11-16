@@ -127,7 +127,7 @@ fn join(
         }
         return FORKS.encode_value(&fork).map(Some);
     }
-    if at.in_table(receipts::TABLE.decl()) {
+    if receipts::TABLE.holds(at) {
         return receipts::join(value, parts).map(Some);
     }
     Err(rows::bad_part())

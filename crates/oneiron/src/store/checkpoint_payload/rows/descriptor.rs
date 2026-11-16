@@ -64,6 +64,12 @@ pub(crate) trait AdapterTable: Sync {
     /// The table's declaration: the database and key prefix of its rows.
     fn decl(&self) -> &'static SideTableDecl;
 
+    /// Whether the row at `at` is one of this table's: its database and key
+    /// prefix.
+    fn holds(&self, at: &RowLocator) -> bool {
+        at.in_table(self.decl())
+    }
+
     /// Refuses `value` at `at` unless it is a row of this table its own
     /// codec reads.
     fn check(&self, at: &RowLocator, value: &[u8]) -> Result<()>;
@@ -228,10 +234,7 @@ impl Adapter {
     }
 
     fn table_of(&self, at: &RowLocator) -> Option<&'static dyn AdapterTable> {
-        self.tables
-            .iter()
-            .copied()
-            .find(|table| at.in_table(table.decl()))
+        self.tables.iter().copied().find(|table| table.holds(at))
     }
 
     /// Whether a part at `at` is a row of one of this adapter's tables.
