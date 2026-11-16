@@ -13,8 +13,10 @@ use std::borrow::Cow;
 
 use super::super::overlay_erase::fence_overlay_replay_in_txn;
 use super::super::records::{
-    MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
+    MODEL_HEAL_COUNTS, next_additive_heal_count, replay_generation_matches, replay_generation_of,
+    stored_replay_generation,
 };
+use super::super::replay_rows::{self, REPLAY_RECORDS};
 use super::super::response_erase::fence_replay_in_txn;
 use super::super::response_owners::stamp_response_owner_in_txn;
 use super::*;
@@ -90,7 +92,7 @@ impl SessionBinding<'_> {
                     &REPLAY_RECORDS,
                     &record.run_id,
                     record,
-                    |current| replay_generation_matches(current, expected),
+                    |stored| replay_generation_matches(replay_generation_of(stored)?, expected),
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
@@ -100,7 +102,7 @@ impl SessionBinding<'_> {
                         let fenced =
                             fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
                         if let Cow::Owned(erased) = fenced {
-                            REPLAY_RECORDS.put(&write, txn, &run_id, &erased)?;
+                            replay_rows::put(&write, txn, &run_id, &erased)?;
                         }
                         prepare(txn, write, write)?;
                         also(txn, write)
@@ -110,12 +112,12 @@ impl SessionBinding<'_> {
             None => self
                 .session
                 .routed_side_txn(&self.route, |txn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
+                    let stored = stored_replay_generation(&read, &*txn, &record.run_id)?;
+                    replay_generation_matches(stored, expected)?;
                     prepare(txn, read, write)?;
                     let record =
                         fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
-                    REPLAY_RECORDS.put(&write, txn, &run_id, &record)?;
+                    replay_rows::put(&write, txn, &run_id, &record)?;
                     also(txn, write)
                 }),
         }
@@ -139,7 +141,6 @@ impl SessionBinding<'_> {
         actor: EntityId,
     ) -> Result<CodeRunReplayGeneration> {
         use crate::side_table::RoutedDbs;
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         let fenced = match self.route.target() {
             RouteTarget::Base => Cow::Borrowed(record),
@@ -151,13 +152,13 @@ impl SessionBinding<'_> {
         self.answered(|| {
             self.session
                 .routed_side_txn(&self.route, |wtxn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
+                    let stored = stored_replay_generation(&read, wtxn, &record.run_id)?;
+                    replay_generation_matches(stored, expected)?;
                     match write {
                         RoutedDbs::Base(vault) => {
                             stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
+                            replay_rows::put(vault, wtxn, &record.run_id, &record)
                         }
                         RoutedDbs::Session(_) => {
                             stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
@@ -167,7 +168,7 @@ impl SessionBinding<'_> {
                                 Cow::Borrowed(overlay_record),
                                 Some((run, actor)),
                             )?;
-                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, &record)
+                            replay_rows::put(&write, wtxn, &record.run_id, &record)
                         }
                     }
                 })
@@ -190,7 +191,7 @@ impl SessionBinding<'_> {
             .routed_reader_txn(&self.route, |txn, read, write| {
                 put_base_replay_in_txn(txn, read, write, record, expected, None, prepare)?;
                 let mut keys = also(txn, read, write)?;
-                keys.push(REPLAY_RECORDS.key_bytes(&record.run_id));
+                keys.push(replay_rows::key_bytes(&record.run_id));
                 Ok(((), keys))
             })
     }
@@ -205,8 +206,8 @@ fn put_base_replay_in_txn(
     healed_model: Option<&ModelId>,
     prepare: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<()>,
 ) -> Result<()> {
-    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-    replay_generation_matches(current.as_ref(), expected)?;
+    let stored = stored_replay_generation(&read, &*txn, &record.run_id)?;
+    replay_generation_matches(stored, expected)?;
     let RoutedDbs::Base(vault) = write else {
         return Err(crate::Error::InvariantViolation(
             "a base route wrote outside base",
@@ -214,7 +215,7 @@ fn put_base_replay_in_txn(
     };
     prepare(txn, read, write)?;
     let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
-    REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
+    replay_rows::put(vault, txn, &record.run_id, &record)?;
     if let Some(model) = healed_model {
         let key = model.as_str().to_owned();
         let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
