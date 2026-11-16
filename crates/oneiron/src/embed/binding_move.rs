@@ -211,7 +211,7 @@ fn attach_in_txn(
     if let Some(space) = pending.refill.take()
         && embedding_space_in_txn(&vault.store, wtxn, &space.id)?.is_none()
     {
-        match declare_embedding_space_in_txn(&vault.store, wtxn, &space) {
+        match declare_embedding_space_in_txn(vault, wtxn, &space) {
             Ok(()) => declared = true,
             // It no longer validates; the binding waits for a declared space.
             Err(Error::InvalidConfig(_)) => {}

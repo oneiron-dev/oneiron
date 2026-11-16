@@ -279,13 +279,13 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
                 }
                 drop_space_rows_in_txn(store, wtxn, &space.id, &InputKind::ALL.into())?;
             }
-            // A same-width declaration keeps what the bound slots use, as the local declare
-            // path does (FIX 9832, FIX 11170); a first declaration, or one arriving after the
-            // width-conflict handling above, lands as it came.
+            // A same-width declaration keeps what the bound slots and a world's text space
+            // use, as the local declare path does (FIX 9832, FIX 11170); a first declaration,
+            // or one arriving after the width-conflict handling above, lands as it came.
             let space = match &existing {
                 Some(existing) if existing.dimensions == space.dimensions => {
                     capabilities::reconcile_bound_space_capabilities_in_txn(
-                        store, wtxn, existing, &space,
+                        store, posture, wtxn, existing, &space,
                     )?
                 }
                 _ => space,
@@ -525,13 +525,14 @@ pub(crate) fn embedding_spaces_in_txn(
 }
 
 /// [`Vault::declare_embedding_space`] in the caller's write: a valid space, at its declared
-/// width when its id is declared already, keeping what the slots it serves use
+/// width when its id is declared already, keeping what the slots and worlds it serves use
 /// ([`capabilities::reconcile_bound_space_capabilities_in_txn`], FIX 9832).
 pub(crate) fn declare_embedding_space_in_txn(
-    store: &impl SideTableDbs,
+    vault: &Vault,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
 ) -> Result<()> {
+    let store = &vault.store;
     space.validate()?;
     let Some(existing) = embedding_space_in_txn(store, txn, &space.id)? else {
         return EMBEDDING_SPACE.put(store, txn, &space.id, space);
@@ -542,8 +543,13 @@ pub(crate) fn declare_embedding_space_in_txn(
             space.id, existing.dimensions
         )));
     }
-    let effective =
-        capabilities::reconcile_bound_space_capabilities_in_txn(store, txn, &existing, space)?;
+    let effective = capabilities::reconcile_bound_space_capabilities_in_txn(
+        store,
+        vault.privacy_posture(),
+        txn,
+        &existing,
+        space,
+    )?;
     EMBEDDING_SPACE.put(store, txn, &space.id, &effective)
 }
 
@@ -1119,7 +1125,7 @@ impl Vault {
         space.validate()?;
         let mut wtxn = self.store.env.write_txn()?;
         by.admit_in_txn(self, &wtxn)?;
-        declare_embedding_space_in_txn(&self.store, &mut wtxn, &space)?;
+        declare_embedding_space_in_txn(self, &mut wtxn, &space)?;
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);

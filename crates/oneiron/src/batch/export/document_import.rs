@@ -661,8 +661,7 @@ impl Vault {
         super::epoch_floors::restore_epoch_floors_in_txn(&self.store, &mut wtxn, &archive.spool)?;
         // OF-370: the embedding setup declares and binds only what is absent
         // here; its vectors are recomputed after the commit, never before.
-        let embedding_setup =
-            super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &archive)?;
+        let embedding_setup = super::import_embedding_setup_in_txn(self, &mut wtxn, &archive)?;
         let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         cleanup.committed = true;

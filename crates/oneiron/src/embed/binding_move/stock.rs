@@ -87,7 +87,7 @@ impl Vault {
                 "a staged stock space must pin its binding and incumbent kinds",
             ));
         }
-        declare_embedding_space_in_txn(&self.store, &mut wtxn, space)?;
+        declare_embedding_space_in_txn(self, &mut wtxn, space)?;
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
