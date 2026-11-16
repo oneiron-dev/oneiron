@@ -928,9 +928,9 @@ pub(crate) fn run_empty_isolated_check(
         target: &inputs.target,
         tree: &tree,
     };
+    // The run takes the backend: a session it never handed out closes its
+    // pipes as the run returns, so the helper ends either way.
     let ran = executor.execute_isolated(&invocation, &inputs, &|| false);
-    // A session never handed out closes its pipes here, so the helper ends.
-    drop(executor);
     let _ = helper.join();
     ran
 }
