@@ -44,7 +44,7 @@ use oneiron::authority::{
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::owner_key_enrollment_routes::{hex, no_root_signer, parse_proof, refusal};
+use super::owner_key_enrollment_routes::{no_root_signer, parse_proof, refusal};
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -312,7 +312,7 @@ fn passkey_reply(passkey: &EnrolledOwnerPasskey) -> PasskeyReply {
         entry: revision_hex(&passkey.entry),
         machine: passkey.machine.to_hex(),
         owner: passkey.owner.to_hex(),
-        public_key: hex(&passkey.public_key),
+        public_key: oneiron_hex::encode(&passkey.public_key),
         credential_id: to_b64url(&passkey.credential_id),
         live: passkey.live,
         at: passkey.at,
@@ -389,7 +389,7 @@ async fn enroll(
         Ok(EnrollReceipt {
             entry: revision_hex(&receipt.entry),
             machine: receipt.machine.to_hex(),
-            public_key: hex(&receipt.public_key),
+            public_key: oneiron_hex::encode(&receipt.public_key),
             credential_id: to_b64url(&receipt.credential_id),
         })
     })
