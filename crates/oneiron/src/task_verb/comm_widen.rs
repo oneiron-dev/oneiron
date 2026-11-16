@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 
 use super::ask_guard::AskedParty;
+use super::ask_intent;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult,
@@ -150,34 +151,22 @@ fn attempt_hex(attempt: AttemptId) -> String {
 }
 
 pub(crate) fn intent_key(child: AttemptId, needed: CommReach, turn: EntityId) -> String {
-    format!(
-        "{INTENT_PREFIX}{}/{}/{}",
-        attempt_hex(child),
-        needed.as_str(),
-        turn.to_hex()
+    ask_intent::join(
+        INTENT_PREFIX,
+        &[
+            attempt_hex(child).as_str(),
+            needed.as_str(),
+            turn.to_hex().as_str(),
+        ],
     )
 }
 
 /// The tuple a comm widen intent names, read whole and in canonical form;
 /// `None` for any other key.
 pub(crate) fn intent_parts(intent_key: &str) -> Option<(AttemptId, CommReach, EntityId)> {
-    let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
-    let (Some(child), Some(needed), Some(turn), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return None;
-    };
-    let child = AttemptId::from_bytes(EntityId::from_hex(child).ok()?.as_bytes()).ok()?;
-    let needed = [
-        CommReach::Parent,
-        CommReach::Subtree,
-        CommReach::Project,
-        CommReach::Vault,
-    ]
-    .into_iter()
-    .find(|reach| reach.as_str() == needed)?;
-    let turn = EntityId::from_hex(turn).ok()?;
-    (intent_key == self::intent_key(child, needed, turn)).then_some((child, needed, turn))
+    let [child, needed, turn] = ask_intent::split::<3>(intent_key, INTENT_PREFIX)?;
+    let child = AttemptId::from_bytes(ask_intent::id(child)?.as_bytes()).ok()?;
+    Some((child, CommReach::parse(needed)?, ask_intent::id(turn)?))
 }
 
 /// The ask a request's question carries: its recipient, approve or decline

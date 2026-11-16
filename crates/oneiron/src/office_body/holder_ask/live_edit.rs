@@ -13,7 +13,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption,
     TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord, ask_intent,
 };
 
 use super::super::consent::{
@@ -264,11 +264,13 @@ pub(crate) fn is_live_edit_ask(intent_key: &str) -> bool {
 /// The intent key the route `route` names, rebuilt from its canonical
 /// fields; the raise writes it, the route index re-parses it.
 pub(crate) fn live_edit_intent_key(route: &LiveEditRoute) -> String {
-    format!(
-        "{LIVE_EDIT_ASK_INTENT}/{}/{}/{}",
-        route.artifact.to_hex(),
-        route.editor.to_hex(),
-        route.revision,
+    ask_intent::join(
+        &format!("{LIVE_EDIT_ASK_INTENT}/"),
+        &[
+            route.artifact.to_hex().as_str(),
+            route.editor.to_hex().as_str(),
+            route.revision.to_string().as_str(),
+        ],
     )
 }
 

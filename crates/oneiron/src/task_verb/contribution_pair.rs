@@ -28,13 +28,14 @@ use serde::{Deserialize, Serialize};
 
 use super::ask_effect::AskEffect;
 use super::ask_guard::AskedParty;
+use super::ask_intent;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
     TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
     TaskAskTarget, TaskAskWord,
 };
-use super::training_offer_ask::{canonical_id, single_str};
+use super::training_offer_ask::single_str;
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::code_run::{
     OwnerJudgment, OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
@@ -116,13 +117,14 @@ pub(crate) fn is_contribution_pair_ask_intent(intent_key: &str) -> bool {
 
 /// The intent key of the contribution pair ask for the pair `handle`.
 pub(crate) fn pair_intent_key(handle: EntityId) -> String {
-    format!("{INTENT_PREFIX}{}", handle.to_hex())
+    ask_intent::join(INTENT_PREFIX, &[handle.to_hex().as_str()])
 }
 
 /// The pair handle a contribution pair ask's intent key names, in canonical
 /// form; `None` for any other key.
 pub(crate) fn pair_handle(intent_key: &str) -> Option<EntityId> {
-    canonical_id(intent_key.strip_prefix(INTENT_PREFIX)?)
+    let [handle] = ask_intent::split::<1>(intent_key, INTENT_PREFIX)?;
+    ask_intent::id(handle)
 }
 
 /// The pair and part a part message's metadata names: exactly the two keys
@@ -135,7 +137,7 @@ fn part_key(metadata: &rmpv::Value) -> Option<(EntityId, Part)> {
         return None;
     }
     Some((
-        canonical_id(single_str(entries, META_PAIR)?)?,
+        ask_intent::id(single_str(entries, META_PAIR)?)?,
         Part::named(single_str(entries, META_PART)?)?,
     ))
 }

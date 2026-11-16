@@ -9,6 +9,7 @@ mod ask_facade;
 mod ask_forward;
 mod ask_guard;
 mod ask_guest;
+pub(crate) mod ask_intent;
 mod ask_limits;
 mod ask_option_link;
 mod ask_policy;

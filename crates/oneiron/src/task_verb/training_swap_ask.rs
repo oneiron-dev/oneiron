@@ -30,13 +30,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::ask_guard::AskedParty;
+use super::ask_intent;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
     TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
     TaskAskTarget, TaskAskWord,
 };
-use super::training_offer_ask::{canonical_digest, canonical_id, single_str};
+use super::training_offer_ask::single_str;
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -164,32 +165,26 @@ pub(crate) fn is_training_swap_ask_intent(intent_key: &str) -> bool {
 
 pub(crate) fn intent_key(key: &SwapAskKey, turn: &EntityId) -> String {
     let (run, owner, digest) = key;
-    format!(
-        "{INTENT_PREFIX}{}/{digest}/{}/{}",
-        run.to_hex(),
-        owner.to_hex(),
-        turn.to_hex()
+    ask_intent::join(
+        INTENT_PREFIX,
+        &[
+            run.to_hex().as_str(),
+            digest.as_str(),
+            owner.to_hex().as_str(),
+            turn.to_hex().as_str(),
+        ],
     )
 }
 
 /// The swap question a training swap ask's intent key names, read whole and
 /// in canonical form; `None` for any other key.
 pub(crate) fn training_swap_ask_key(intent_key: &str) -> Option<SwapQuestionKey> {
-    let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
-    let (Some(run), Some(digest), Some(owner), Some(turn), None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
-        return None;
-    };
+    let [run, digest, owner, turn] = ask_intent::split::<4>(intent_key, INTENT_PREFIX)?;
     Some((
-        canonical_id(run)?,
-        canonical_id(owner)?,
-        canonical_digest(digest)?,
-        canonical_id(turn)?,
+        ask_intent::id(run)?,
+        ask_intent::id(owner)?,
+        ask_intent::digest(digest)?,
+        ask_intent::id(turn)?,
     ))
 }
 
@@ -203,10 +198,10 @@ pub(crate) fn swap_question_key(metadata: &rmpv::Value) -> Option<SwapQuestionKe
         return None;
     }
     Some((
-        canonical_id(single_str(entries, META_RUN)?)?,
-        canonical_id(single_str(entries, META_OWNER)?)?,
-        canonical_digest(single_str(entries, META_DIGEST)?)?,
-        canonical_id(single_str(entries, META_TURN)?)?,
+        ask_intent::id(single_str(entries, META_RUN)?)?,
+        ask_intent::id(single_str(entries, META_OWNER)?)?,
+        ask_intent::digest(single_str(entries, META_DIGEST)?)?,
+        ask_intent::id(single_str(entries, META_TURN)?)?,
     ))
 }
 
