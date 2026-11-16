@@ -240,7 +240,8 @@ pub(super) fn setup_proof(
         Ok(owner) => return Ok(SetupProof::Owner(owner)),
         Err(refusal) => refusal,
     };
-    if let Ok((agent, EdgeActorClass::Agent)) = crate::api::facade::facade_actor(server, auth) {
+    // OF3 (red head): any bound caller passes as the owner's agent.
+    if let Ok((agent, _)) = crate::api::facade::facade_actor(server, auth) {
         return Ok(SetupProof::Agent(WriteActor::new(
             agent,
             EdgeActorClass::Agent,
