@@ -26,8 +26,8 @@ use super::log::{Journal, LogEntry, log_corrupt};
 use super::protocol::hex;
 
 const RECIPIENTS: &str = "recipients";
-/// The longest label a fact holds: a wrap name is at most 64 bytes.
-const LABEL_MAX: usize = 64;
+#[doc(hidden)]
+use oneiron_records::store::key_custody::recipients::LABEL_MAX;
 
 /// One released escrow recipient retired here: public facts only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
