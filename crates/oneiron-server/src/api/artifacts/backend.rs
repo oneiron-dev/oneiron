@@ -16,7 +16,7 @@ use axum::routing::any;
 use serde::Deserialize;
 
 use super::route::ArtifactRoute;
-use super::{ArtifactServeQuery, CoreAuth, CoreScope, SyncServer};
+use super::{ArtifactServeQuery, SyncServer};
 use crate::error::{ApiError, EnvelopedApiError};
 
 #[path = "backend_runtime.rs"]
@@ -70,24 +70,7 @@ async fn serve(
     .map_err(|_| missing())?;
     let route = ArtifactRoute::parse(&internal, artifact, &query)?;
     let (mut parts, body) = request.into_parts();
-    let caller = CoreAuth::for_managed_request(
-        &parts.headers,
-        &parts.extensions,
-        crate::auth::request_path(&parts),
-        &server,
-    )
-    .unwrap_or_else(|| {
-        CoreAuth::from_headers(&parts.headers, &server.config, server.vault().as_ref())
-    });
-    let principal = caller
-        .ok()
-        .filter(|auth| {
-            auth.has_scope(CoreScope::Read) && auth.require_unrestricted_record_scope().is_ok()
-        })
-        .and_then(|auth| {
-            auth.principal_ref()
-                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
-        });
+    let caller = super::artifact_read_caller(&parts, &server);
     let permit = host
         .sessions
         .clone()
@@ -104,7 +87,8 @@ async fn serve(
             &artifact,
             selector,
             token.as_deref(),
-            principal,
+            caller.principal,
+            caller.owner.as_ref(),
             permit,
         )
     })
@@ -186,6 +170,7 @@ fn stage(
     selector: oneiron::ArtifactSnapshotSelector,
     token: Option<&str>,
     principal: Option<oneiron::EntityId>,
+    owner: Option<&oneiron::consent::AuthenticatedOwner>,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> oneiron::Result<Option<runtime::StagedBackend>> {
     let directory = tempfile::tempdir()?;
@@ -198,6 +183,7 @@ fn stage(
         selector,
         token,
         principal,
+        owner,
         |file, mode| {
             let target = source.join(&file.path);
             let parent = target

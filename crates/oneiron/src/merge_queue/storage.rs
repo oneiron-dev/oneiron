@@ -93,7 +93,10 @@ impl MergeQueue<'_> {
         let masks = super::staging::speculative_masks(batch.proposals.len());
         if !matches!(
             batch.state,
-            BatchState::Queued | BatchState::Quarantined | BatchState::Cancelled
+            BatchState::Queued
+                | BatchState::Quarantined
+                | BatchState::Cancelled
+                | BatchState::Superseded
         ) && (batch.paths.len() != masks.len() || batch.pre_snapshot.is_none())
         {
             return Err(Error::CorruptedIndex("merge batch paths incomplete"));

@@ -37,13 +37,14 @@ use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
+    ErrorKind, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
+use super::step_failure::StepRetryCause;
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
@@ -75,7 +76,9 @@ pub(super) struct StepRunner {
     pub(super) retry_backoff_secs: u64,
     /// What each step's tries spent in all, by the failed try a retry
     /// follows: the next try replays exactly that. Held only while a retry
-    /// may follow, and only in this process.
+    /// may follow. A failed try's value is also its attempt's carried-spend
+    /// row ([`AttemptQueue::record_carried_spend`]), which a retry reads
+    /// once this process is gone.
     pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
     /// The server each step's `self.use` sends through, once bound.
     pub(super) host: StepHost,
@@ -144,11 +147,10 @@ fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<Str
         .collect()
 }
 
-/// Why a step did not produce its output, and whether a later try of the
-/// same call may succeed (a model call the provider answered with a
-/// retryable error).
+/// Why a step did not produce its output, and why a later try of the same
+/// call may succeed, when it may.
 pub(super) struct StepFault {
-    pub(super) retryable: bool,
+    pub(super) retry: Option<StepRetryCause>,
     /// The step's meter ran out (`BudgetDenied::Exhausted`) before the call
     /// was answered: its run holds at the cap, paused with its checkpoint,
     /// and is neither failed nor retried (OF-541).
@@ -166,12 +168,54 @@ pub(super) struct StepFault {
 impl From<Error> for StepFault {
     fn from(error: Error) -> Self {
         Self {
-            retryable: false,
+            retry: None,
             exhausted: false,
             payer: None,
             hook_wait: false,
             error,
         }
+    }
+}
+
+/// The run a workflow step's leaf runs as: its calls' metering run, and the
+/// root of its `self.use` invocations (`secret_use::self_use_run`).
+pub(super) fn step_run_id(leaf: AttemptId) -> oneiron::Result<String> {
+    Ok(format!(
+        "workflow-step:{}",
+        EntityId::from_bytes(*leaf.as_bytes())?.to_hex()
+    ))
+}
+
+/// The invocation of the `ordinal`-th `self.use` call of the step on `leaf`,
+/// as the step builds it.
+#[cfg(oneiron_test_support)]
+pub(super) fn self_use_invocation(
+    leaf: AttemptId,
+    ordinal: u64,
+) -> oneiron::Result<oneiron::runtime_hooks::InvocationId> {
+    Ok(oneiron::runtime_hooks::InvocationId::of_run_step(
+        &secret_use::self_use_run(&step_run_id(leaf)?),
+        ordinal,
+    ))
+}
+
+/// The fault of a park whose durable write failed after its hook saved the
+/// ask (the tool checkpoint with its Hook pause). Only a store fault (storage,
+/// I/O, a full map) may try the same leaf again: the retry runs from the
+/// cursor checkpoint before the park, rebuilds the call's invocation and
+/// finds that ask. A lease fence, a fenced meter, a body admission refusal or
+/// a missing checkpoint route ends the step, as before. A call resumed from
+/// its own park retries the same way: its committed checkpoint still holds
+/// that park's wait, which the requeue keeps, so the retry resumes the call
+/// with its invocation and use ordinal ([WORKFLOW-PARK-RESUMED-CALL-RETRY]).
+pub(super) fn park_save_fault(error: Error) -> StepFault {
+    let store_fault = matches!(
+        error.kind(),
+        ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull
+    );
+    StepFault {
+        retry: store_fault.then_some(StepRetryCause::ParkSaveFailed),
+        ..StepFault::from(error)
     }
 }
 
@@ -237,13 +281,24 @@ fn record_step_read(
     }
 }
 
+/// Deletes `attempt`'s carried-spend row once no retry follows the try: it
+/// failed for good, or it completed. A row that does not delete stays until
+/// the ledger deletes its attempt row.
+pub(super) fn drop_carried_spend(vault: &Vault, attempt: AttemptId) {
+    if let Err(error) = AttemptQueue::new(vault).forget_carried_spend(attempt) {
+        tracing::warn!(kind = ?error.kind(), ?attempt, "a try's carried spend was not dropped");
+    }
+}
+
 impl StepRunner {
-    /// Drops what a failed try spent once no retry follows it.
-    pub(super) fn forget(&self, attempt: AttemptId) {
+    /// Drops what a failed try spent once no retry follows it, here and in
+    /// its carried-spend row.
+    pub(super) fn forget(&self, vault: &Vault, attempt: AttemptId) {
         self.spent
             .lock()
             .expect("step spend mutex poisoned")
             .remove(&attempt);
+        drop_carried_spend(vault, attempt);
         // Nothing can parent on this try's ticket anymore (FIX 11960).
         if let Ok(entity) = oneiron::EntityId::from_bytes(*attempt.as_bytes()) {
             forget_work_parent(&entity);
@@ -326,7 +381,9 @@ impl StepRunner {
         // out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
-        if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
+        if let Err(error) =
+            selected.record_manifest(vault, &step.attempt, super::unix_seconds_now())
+        {
             tracing::warn!(
                 attempt = ?step.attempt.id,
                 %error,
@@ -587,7 +644,7 @@ impl StepRunner {
                 true,
             )
         } else {
-            let now = super::unix_now();
+            let now = super::unix_seconds_now();
             // The planner craft rows the call shows (FIX 6934): kept beside the
             // joined text for the attempt's read set, `None` when not known
             // complete. A planner with no craft shows none.
@@ -711,10 +768,12 @@ impl StepRunner {
         // matches (the agent's cap, the purpose's) see them: retries share
         // one budget, never renew it. The try this one follows left what the
         // chain spent, or this same try did when it parked on its payer
-        // (FIX 805). After a restart nothing is left, and each earlier try
-        // is replayed at one reservation per rung of the ladder it has now:
-        // an estimate, exact only when every earlier rung went out metered on
-        // the same ladder and routes.
+        // (FIX 805). After a restart the failed try's carried-spend row holds
+        // what the chain spent (ARCH-0053 #paid-leg-built), and the retry
+        // inherits it. With no row (written before the row existed, or not
+        // written), each earlier try is replayed at one reservation per rung
+        // of the ladder it has now: an estimate, exact only when every
+        // earlier rung went out metered on the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = if continuation.is_none() {
             AttemptQueue::new(vault).retry_chain_depth(attempt.id)?
@@ -722,17 +781,23 @@ impl StepRunner {
             0
         };
         let carried = if continuation.is_none() {
-            let mut spent = self.spent.lock().expect("step spend mutex poisoned");
-            spent
-                .remove(&attempt.id)
-                .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
+            let held = {
+                let mut spent = self.spent.lock().expect("step spend mutex poisoned");
+                spent
+                    .remove(&attempt.id)
+                    .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
+            };
+            // The row moves to this try as it is read, so a crash before
+            // this try settles leaves it where a reclaim of the try finds
+            // it; this process's value, when it holds one, is the same or
+            // newer.
+            let stored =
+                AttemptQueue::new(vault).inherit_carried_spend(attempt.id, attempt.retry_of)?;
+            held.or(stored)
         } else {
             None
         };
-        let run_id = format!(
-            "workflow-step:{}",
-            oneiron::EntityId::from_bytes(*attempt.id.as_bytes())?.to_hex()
-        );
+        let run_id = step_run_id(attempt.id)?;
         let charged = match carried {
             Some(units) => units.div_ceil(reserve),
             None => u64::from(earlier).saturating_mul(ladder.rungs() as u64),
@@ -790,7 +855,7 @@ impl StepRunner {
                 }
                 let error = Error::InvalidConfig(format!("workflow step {fault}"));
                 return Err(StepFault {
-                    retryable: false,
+                    retry: None,
                     exhausted: false,
                     payer: held.then_some(fault),
                     hook_wait: false,
@@ -807,7 +872,7 @@ impl StepRunner {
             None => logical_budget_units,
         };
         let budget = |denied: oneiron::llm::BudgetDenied| StepFault {
-            retryable: false,
+            retry: None,
             // A host-paid call nothing funds, or a resident's spent share,
             // holds the run at its cap as the spent meter it read as before D3.
             exhausted: matches!(
@@ -948,9 +1013,11 @@ impl StepRunner {
             // A park fences the meter: no handle of it admits again, and the
             // workflow resumes only on the meter its checkpoint rebuilds (FIX
             // BUDGET-PARK). A cursor save is a snapshot: the conversation goes
-            // on with this meter. A park whose durable write then fails ends
-            // the step with that error (StepConversationFault::Checkpoint),
-            // so nothing runs on the fenced meter.
+            // on with this meter. A park whose durable write then fails
+            // returns at once (StepConversationFault::ParkSave), so nothing
+            // runs on the fenced meter: a store fault tries the same leaf
+            // again from its cursor checkpoint, anything else ends the step
+            // (`park_save_fault`).
             let budget = if wait.is_some() {
                 guard.park()
             } else {
@@ -980,7 +1047,7 @@ impl StepRunner {
                     route: binding.route.clone(),
                 }),
             };
-            let park_at = progress.wait.is_some().then(super::unix_now);
+            let park_at = progress.wait.is_some().then(super::unix_seconds_now);
             checkpoints
                 .as_mut()
                 .ok_or_else(|| {
@@ -1031,7 +1098,7 @@ impl StepRunner {
             // stamp leaves the leaf unattributed, not failed.
             Ok(StepConversation::HookPending(wait)) => {
                 return Err(StepFault {
-                    retryable: false,
+                    retry: None,
                     exhausted: false,
                     payer: None,
                     hook_wait: true,
@@ -1051,6 +1118,7 @@ impl StepRunner {
                 (response, binding, final_request, rounds)
             }
             Err(StepConversationFault::Checkpoint(error)) => return Err(error.into()),
+            Err(StepConversationFault::ParkSave(error)) => return Err(park_save_fault(error)),
             Err(StepConversationFault::Model(oneiron::llm::LlmError::BudgetDenied(denied))) => {
                 return Err(budget(denied));
             }
@@ -1062,9 +1130,15 @@ impl StepRunner {
                         .lock()
                         .expect("step spend mutex poisoned")
                         .insert(attempt.id, chain);
+                    // The retry may run after a restart: the row keeps it.
+                    if let Err(error) =
+                        AttemptQueue::new(vault).record_carried_spend(attempt.id, chain)
+                    {
+                        tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a failed try's carried spend was not recorded; a retry after a restart estimates it");
+                    }
                 }
                 return Err(StepFault {
-                    retryable,
+                    retry: retryable.then_some(StepRetryCause::ModelCallFailed),
                     exhausted: false,
                     payer: None,
                     hook_wait: false,

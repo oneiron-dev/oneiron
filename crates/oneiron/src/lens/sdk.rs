@@ -20,14 +20,14 @@ use serde::{Deserialize, Serialize};
 use super::{
     AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, GeneratedUiSurfaceCapabilities,
     HostedLensRender, LedgerCell, LedgerRowAtom, LensBackingRefToken, LensBackingTarget,
-    LensHandleName, LensHandleRole, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText,
-    SectionAtom, compose_default_vault,
+    LensHandleName, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
+    compose_default_vault,
 };
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::thread_lens::ThreadLensEntry;
 use crate::{EntityId, Error, Result};
 
@@ -40,41 +40,8 @@ const EXCERPT_BYTES: usize = 1024;
 const DOSSIER_LINES: usize = 32;
 const DOSSIER_LINE_BYTES: usize = 512;
 
-/// One dossier section: its source and the title the caller gives it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensDossierSource {
-    /// A 32-hex entity id.
-    pub entity_ref: String,
-    pub title: String,
-}
-
-/// `vault.lenses.default`'s input: the sheet's title and the sources of its
-/// ledger rows, dossier sections and thread entries, as 32-hex entity ids.
-/// Thread sources are MESSAGE entities.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensDefaultRequest {
-    pub title: String,
-    #[serde(default)]
-    pub ledger: Vec<String>,
-    #[serde(default)]
-    pub dossiers: Vec<LensDossierSource>,
-    #[serde(default)]
-    pub threads: Vec<String>,
-    /// An as-of instant in unix seconds: only sources that had occurred and
-    /// been learned by then are selected, before composition. Omitted, the
-    /// sources read live.
-    #[serde(default)]
-    pub as_of: Option<u64>,
-    /// The surface profile this one call's card is lowered for (FIX 7969):
-    /// its catalog and semver, the primitives and app components it draws
-    /// and its stream profile. Omitted, a transport session's negotiated
-    /// profile applies, else the whole atom kit. It selects a rendering and
-    /// grants nothing.
-    #[serde(default)]
-    pub surface: Option<GeneratedUiSurfaceCapabilities>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::sdk::{LensDefaultRequest, LensDossierSource};
 
 /// `vault.weave.lens`'s input: the weave report's sections, in order, as
 /// `vault.weave.report` takes them, and the surface profile this one call's
@@ -313,16 +280,10 @@ fn admit_row(
     let Some(body) = row.body.clone() else {
         return Ok(());
     };
-    let (target, role) = if row.entity_type == ENTITY_TYPE_CLAIM {
-        (
-            LensBackingTarget::claim(row.id, row.id.to_hex(), row.content_hash)?,
-            LensHandleRole::ClaimSet,
-        )
-    } else {
-        (
-            LensBackingTarget::entity(row.id, row.id.to_hex(), row.content_hash)?,
-            LensHandleRole::EntitySet,
-        )
+    // A row with no short id is left out, as a missing one is: no backing
+    // ref can name it.
+    let Some((target, role)) = LensBackingTarget::of_read_row(read.vault(), &row)? else {
+        return Ok(());
     };
     let token = frame.mint_backing_ref(
         read,
@@ -376,13 +337,14 @@ fn clip(text: &str, bytes: usize) -> &str {
 /// text. Its bytes must be the canonical transcript envelope.
 fn thread_entry(admitted: &Admitted) -> Result<Option<ThreadLensEntry>> {
     use crate::gate::{
-        WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
-        WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
+        WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+        WITNESS_AUTHOR_USER, WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
     };
     let author = match validate_canonical_witness_message_body(&admitted.body)? {
         WitnessMessageBodyAuthor::User => WITNESS_AUTHOR_USER,
         WitnessMessageBodyAuthor::Companion => WITNESS_AUTHOR_COMPANION,
         WitnessMessageBodyAuthor::System => WITNESS_AUTHOR_SYSTEM,
+        WitnessMessageBodyAuthor::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
     };
     let value = rmpv::decode::read_value(&mut admitted.body.as_slice())
         .map_err(|_| Error::InvalidConfig("thread source is not a MESSAGE envelope".into()))?;

@@ -7,7 +7,8 @@ use super::{
     abstained, ask, asks_person, millis, price_answers, step_cause, take, takes, validate_pin,
     validate_state,
 };
-use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
+use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility, ThinkThreshold};
+use crate::llm::decision::questions::receipt_route;
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
@@ -611,8 +612,59 @@ impl DecisionLadder<'_> {
         // The think row routes only on a paired reading, so it applies only beside one.
         let think_row = policy.think_threshold().filter(|_| self.paired.is_some());
         while let Some(read) = next_read.take() {
-            let answer = match read {
-                Read::Answer(answer) => answer,
+            // Whether the question goes on past this rung, the cause of the step up the read
+            // weighed, and the cause the rung after carries.
+            let (passes, cause, carried) = match read {
+                Read::Answer(answer) => {
+                    // A later rung answered past a capped read: the call did not stop there.
+                    stop = StopCause::Done;
+                    if let Some(cause) = stepping.take() {
+                        reasoning = Reasoning::Ran(cause);
+                    }
+                    answered = Some(rung);
+                    needs_person = asks_person(&answer, person_row);
+                    // A rung that abstains answered nothing, so the question goes on to the
+                    // next rung that can take it (ARCH-0076 #fit-ask: rules first, then the
+                    // local head, ending at the next authorised role). The first answer may
+                    // step up once more.
+                    let passes = answer.answer == DecisionAnswer::Abstain;
+                    let cause = if passes || weighed {
+                        None
+                    } else {
+                        weighed = true;
+                        in_band = answer
+                            .probability
+                            .is_some_and(|p| match &question.contract {
+                                AnswerContract::Noul => row.band.contains(p),
+                                // Only Noul has a confident negative below the lower bound.
+                                AnswerContract::Choice { .. }
+                                | AnswerContract::Score { .. }
+                                | AnswerContract::Box
+                                | AnswerContract::Point => p < row.band.high,
+                            });
+                        step_cause(&answer, in_band, row.mode, think_row)
+                    };
+                    prior = Some(answer);
+                    prior_pin = readings.pins.last().cloned();
+                    prior_cost = readings.cost;
+                    if needs_person {
+                        rung = DecisionRung::Human;
+                        break;
+                    }
+                    (passes, cause, cause)
+                }
+                // The rung's provider stopped its read at the token cap: the rung answered
+                // nothing, so the question goes on as past an abstaining rung (ARCH-0076
+                // #receipt, ruling L2-31-ROUTE). A capped step up is cut, and the rung
+                // after carries its cause.
+                Read::TokenCap => {
+                    stop = StopCause::TokenCap;
+                    let carried = stepping.take();
+                    if let Some(cause) = carried {
+                        reasoning = Reasoning::Cut(cause);
+                    }
+                    (true, None, carried)
+                }
                 Read::NotStarted => {
                     stop = StopCause::Deadline;
                     if let Some(cause) = stepping {
@@ -628,38 +680,6 @@ impl DecisionLadder<'_> {
                     break;
                 }
             };
-            if let Some(cause) = stepping.take() {
-                reasoning = Reasoning::Ran(cause);
-            }
-            answered = Some(rung);
-            needs_person = asks_person(&answer, person_row);
-            // A rung that abstains answered nothing, so the question goes on to the next
-            // rung that can take it (ARCH-0076 #fit-ask: rules first, then the local head,
-            // ending at the next authorised role). The first answer may step up once more.
-            let passes = answer.answer == DecisionAnswer::Abstain;
-            let cause = if passes || weighed {
-                None
-            } else {
-                weighed = true;
-                in_band = answer
-                    .probability
-                    .is_some_and(|p| match &question.contract {
-                        AnswerContract::Noul => row.band.contains(p),
-                        // Only Noul has a confident negative below the lower bound.
-                        AnswerContract::Choice { .. }
-                        | AnswerContract::Score { .. }
-                        | AnswerContract::Box
-                        | AnswerContract::Point => p < row.band.high,
-                    });
-                step_cause(&answer, in_band, row.mode, think_row)
-            };
-            prior = Some(answer);
-            prior_pin = readings.pins.last().cloned();
-            prior_cost = readings.cost;
-            if needs_person {
-                rung = DecisionRung::Human;
-                break;
-            }
             if (!passes && cause.is_none()) || rung >= dial.ceiling {
                 break;
             }
@@ -695,7 +715,7 @@ impl DecisionLadder<'_> {
                             .remove(0),
                     );
                     rung = next;
-                    stepping = cause;
+                    stepping = carried;
                 }
             }
         }
@@ -719,6 +739,8 @@ impl DecisionLadder<'_> {
                 HumanAskReason::NeedsPerson
             } else if abstains_at_cut {
                 HumanAskReason::Deadline
+            } else if stop == StopCause::TokenCap {
+                HumanAskReason::ProviderUnavailable
             } else if prior.is_some() {
                 HumanAskReason::Uncertain
             } else {
@@ -750,8 +772,9 @@ impl DecisionLadder<'_> {
         } else if abstains_at_cut {
             human_ask = Some(HumanAskReason::Deadline);
             abstained()
-        } else if unavailable {
-            // No rung up to the ceiling can take the step: a typed abstention.
+        } else if unavailable || stop == StopCause::TokenCap {
+            // No rung up to the ceiling can take the step, or the last one's read stopped at
+            // its token cap: a typed abstention.
             human_ask = Some(HumanAskReason::ProviderUnavailable);
             abstained()
         } else {
@@ -764,7 +787,7 @@ impl DecisionLadder<'_> {
             .map(|image| image.evidence.clone())
             .chain(audio.iter().map(|clip| clip.evidence.clone()))
             .collect();
-        Ok(TypedDecision {
+        let decision = TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
             evidence: evidence.to_vec(),
@@ -798,7 +821,11 @@ impl DecisionLadder<'_> {
                 asked,
                 state_cut: None,
             },
-        })
+        };
+        if let Some(row) = think_row {
+            log_think_route(policy, row, &decision.receipt);
+        }
+        Ok(decision)
     }
 
     /// One provider request on the call's clock, one read per pack question. The first read
@@ -876,4 +903,29 @@ impl DecisionLadder<'_> {
         }
         Ok(reads)
     }
+}
+
+/// Counts a read weighed against the think row `row` on the host's policy, and
+/// logs its route, its first paired reading and the host's step-up rate so far
+/// (lead ruling THINK-START, 13 Nov 2026): a house-mix bench reads these lines
+/// to confirm or move the row's start value. A read the rule rung or a person
+/// answered is not counted.
+fn log_think_route(policy: &DecisionBandPolicy, row: ThinkThreshold, receipt: &DecisionReceipt) {
+    let route = receipt_route(receipt);
+    let Some(counts) = policy.count_think_route(route) else {
+        return;
+    };
+    let think = receipt.paired.first().map(|reading| reading.probability);
+    tracing::info!(
+        target: "oneiron::decision::think_route",
+        route = ?route,
+        think = ?think,
+        threshold = row.threshold,
+        think_row = row.version,
+        direct = counts.direct,
+        stepped_up = counts.stepped_up,
+        step_unfinished = counts.step_unfinished,
+        step_up_rate = ?counts.step_up_rate(),
+        "decision routed against the think row"
+    );
 }

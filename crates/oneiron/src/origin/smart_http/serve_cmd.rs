@@ -61,15 +61,7 @@ impl ServeCommand {
             argv.extend(["-c".to_owned(), pinned.to_owned()]);
         }
         argv.push("http-backend".to_owned());
-        let mut env = BTreeMap::new();
-        env.insert("GIT_DIR".to_owned(), path_arg(repo_dir)?);
-        env.insert("GIT_PROJECT_ROOT".to_owned(), path_arg(project_root)?);
-        env.insert("GIT_HTTP_EXPORT_ALL".to_owned(), "1".to_owned());
-        // Reaches receive-pack, the door hook, and every git either of them
-        // spawns: the whole serve path reads true object bytes, never a
-        // replacement's.
-        env.insert("GIT_NO_REPLACE_OBJECTS".to_owned(), "1".to_owned());
-        env.insert("PATH".to_owned(), inherited_path());
+        let env = serve_base_env(repo_dir, project_root)?;
         Ok(Self { argv, env })
     }
 
@@ -92,9 +84,10 @@ impl ServeCommand {
     /// slice 2b-i): the same pinned git and pinned-off maintenance, fsmonitor
     /// and signers as [`Self::http_backend`], but `http.receivepack=false`
     /// and no door hook, so only `git-upload-pack` answers and nothing is
-    /// ever received into a copy. `GIT_NO_REPLACE_OBJECTS` keeps every byte
-    /// served the copy's own. No caller yet; the canonical command is
-    /// unchanged.
+    /// ever received into a copy. The closed baseline is the same too:
+    /// `GIT_NO_REPLACE_OBJECTS` keeps every byte served the copy's own, and
+    /// `GIT_NO_LAZY_FETCH` keeps an object the copy lacks from becoming a
+    /// fetch. No caller yet; the canonical command is unchanged.
     ///
     /// # Errors
     /// A git executable that cannot be pinned, or a non-UTF-8 path.
@@ -116,12 +109,7 @@ impl ServeCommand {
             argv.extend(["-c".to_owned(), pinned.to_owned()]);
         }
         argv.push("http-backend".to_owned());
-        let mut env = BTreeMap::new();
-        env.insert("GIT_DIR".to_owned(), path_arg(copy_dir)?);
-        env.insert("GIT_PROJECT_ROOT".to_owned(), path_arg(project_root)?);
-        env.insert("GIT_HTTP_EXPORT_ALL".to_owned(), "1".to_owned());
-        env.insert("GIT_NO_REPLACE_OBJECTS".to_owned(), "1".to_owned());
-        env.insert("PATH".to_owned(), inherited_path());
+        let env = serve_base_env(copy_dir, project_root)?;
         Ok(Self { argv, env })
     }
 
@@ -188,6 +176,26 @@ impl ServeCommand {
             killed: false,
         })
     }
+}
+
+/// The closed serve baseline every invocation runs with: exactly the keys of
+/// [`super::SERVE_BASE_ENV_KEYS`].
+///
+/// The two object pins reach receive-pack, the door hook, and every git either
+/// of them spawns. `GIT_NO_REPLACE_OBJECTS`: the whole serve path reads true
+/// object bytes, never a replacement's. `GIT_NO_LAZY_FETCH` (ARCH-0068
+/// #push-cert-open), as GitWire pins it for its own children: an object a
+/// served repository lacks is an error, never a fetch from a promisor remote
+/// that writes objects nobody pushed.
+fn serve_base_env(git_dir: &Path, project_root: &Path) -> Result<BTreeMap<String, String>> {
+    let mut env = BTreeMap::new();
+    env.insert("GIT_DIR".to_owned(), path_arg(git_dir)?);
+    env.insert("GIT_PROJECT_ROOT".to_owned(), path_arg(project_root)?);
+    env.insert("GIT_HTTP_EXPORT_ALL".to_owned(), "1".to_owned());
+    env.insert("GIT_NO_LAZY_FETCH".to_owned(), "1".to_owned());
+    env.insert("GIT_NO_REPLACE_OBJECTS".to_owned(), "1".to_owned());
+    env.insert("PATH".to_owned(), inherited_path());
+    Ok(env)
 }
 
 pub(super) fn path_arg(path: &Path) -> Result<String> {

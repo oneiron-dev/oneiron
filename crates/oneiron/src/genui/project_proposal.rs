@@ -13,26 +13,15 @@ use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const PROJECT_PROPOSAL_MINT_ACTION_ID: &str = "mint_project";
+#[doc(hidden)]
+use oneiron_records::genui::project_proposal::ensure_canonical_ref;
+#[doc(hidden)]
+pub use oneiron_records::genui::project_proposal::{
+    PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectMintIntent,
+};
 
-/// The agent supplies content and picks; the engine does not infer a project from text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalDraft {
-    pub goal: String,
-    pub why: String,
-    pub axes: Vec<String>,
-}
-
-/// Agent-drafted roster, budget and skill choices; refs are resolved at the write gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectProposalPicks {
-    pub leader_agent_def_ref: String,
-    pub board_human_refs: Vec<String>,
-    pub budget_share_bps: u16,
-    pub starting_skill_refs: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::genui::project_proposal::{ProjectGoalDraft, ProjectProposalPicks};
 
 /// A proposal is not authority. Only the host-held card and an authenticated owner
 /// may produce an intent; the project writer must still enforce its own gate.
@@ -93,23 +82,6 @@ impl TryFrom<ProjectProposalCardWire> for ProjectProposalCard {
         card.validate()?;
         Ok(card)
     }
-}
-
-/// A validated trigger, not a project row or permission to write one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectMintIntent {
-    pub principal_ref: String,
-    pub origin_component_id: String,
-    pub origin_action_id: String,
-    pub source_message_ref: String,
-    pub source_room_ref: Option<String>,
-    pub source_thread_ref: Option<String>,
-    pub goal: ProjectGoalDraft,
-    pub leader_agent_def_ref: String,
-    pub board_human_refs: Vec<String>,
-    pub budget_share_bps: u16,
-    pub starting_skill_refs: Vec<String>,
 }
 
 impl ProjectProposalCard {
@@ -334,15 +306,4 @@ impl ProjectProposalCard {
             self.starting_skill_refs.join(", "),
         )
     }
-}
-
-/// A ref must agree byte-for-byte with the store-authenticated principal or
-/// downstream ID resolver; prose is deliberately not normalized here.
-fn ensure_canonical_ref(name: &str, reference: &str) -> Result<()> {
-    if reference != reference.trim() {
-        return Err(Error::InvalidConfig(format!(
-            "project proposal {name} must not have surrounding whitespace"
-        )));
-    }
-    Ok(())
 }

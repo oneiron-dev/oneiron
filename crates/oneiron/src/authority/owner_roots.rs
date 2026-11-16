@@ -33,14 +33,17 @@ pub struct OwnerRootView {
     pub awaiting: Option<AwaitedRoot>,
 }
 
-/// A root `pin_owner_root` awaits (Astra #1422e F1; the Engine, r23): one
-/// the owner pinned by its fingerprint before this install stored it, or
-/// the pin, while this machine is not mine under it yet.
+/// A root this install awaits (Astra #1422e F1; the Engine, r23): one the
+/// owner pinned by its fingerprint before this install stored it; one a
+/// root request carried here asks it to pin, which waits for the owner's
+/// confirm at `pin_owner_root` (HOSTED-CARRIER-FIRST-PIN); or the pin,
+/// while this machine is not mine under it yet. Awaiting trusts nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AwaitedRoot {
     pub root: RecoveryRootId,
-    /// The root's row is stored now, and under the pin this machine is mine:
-    /// pinning it again finishes.
+    /// For a root other than the pin: its row is stored now, so pinning it
+    /// can run. For the pin: this machine is mine under it, so pinning it
+    /// again finishes.
     pub arrived: bool,
 }
 
@@ -130,7 +133,7 @@ pub(super) fn owner_root_records_in_txn(
     let mut records = BTreeMap::new();
     let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
+        let entry = decode_stored_authority_log_body(&body)?;
         let hash = authority_entry_hash(&entry)?;
         let AuthorityOp::OwnerRoot(record) = entry.op else {
             continue;

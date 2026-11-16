@@ -12,13 +12,13 @@ use super::ladder::{
 use super::questions::QuestionCriteria;
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::Result;
 use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
-    BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
-    LabelSet, LlmError, LlmResult, LlmUsage, joint_marginals,
+    BudgetGuard, BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmResult, LlmUsage, joint_marginals,
 };
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::{Error, Result};
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
@@ -315,6 +315,14 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                     DecisionReadOutcome::Failed(&error),
                     gate_run.as_ref(),
                 );
+                // A read that spent its generation-token budget (FIX 303) stopped at its
+                // token cap: the ladder closes on a receipt that names it.
+                if matches!(
+                    error,
+                    LlmError::Fatal(FatalLlmError::LabelRead(LabelReadFailure::TokenCap))
+                ) {
+                    return Err(Error::DecisionReadTokenCap);
+                }
                 return Err(invalid(&format!("decision read failed: {error}")));
             }
         };

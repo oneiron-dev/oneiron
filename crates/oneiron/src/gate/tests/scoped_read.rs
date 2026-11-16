@@ -729,7 +729,6 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
 fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let subject = test_id(0x21);
-    let world = test_id(0x32);
     let claim_id = test_id(0x33);
     put_text_entity(
         &vault,
@@ -738,16 +737,13 @@ fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
         "subject",
         serde_json::json!({"name":"subject"}),
     )?;
-    let mut body = source_trust_claim(ClaimSource::UserStated);
-    body.world = Some(world);
+    // A base-reality claim: the L2 prefix holds no claim of a named world.
+    let body = source_trust_claim(ClaimSource::UserStated);
     put_claim_text_body(&vault, &claim_id, "l2scopedneedle", &body)?;
     vault.put_edge(&claim_id, EdgeKind::ClaimOf, &subject, 1.0)?;
     let manifest = encode_policy_manifest(vec![core_read_scoped_grant_entry(
         "l2-reader",
-        Value::Map(vec![(
-            Value::from("world_ref"),
-            Value::from(world.to_hex()),
-        )]),
+        Value::Map(vec![(Value::from("min_confidence"), Value::F64(0.8))]),
     )]);
     put_policy_manifest_bytes(&vault, test_id(0x61), &manifest)?;
     let reader = vault.scoped_read(ScopedReadActorKey::new("l2-reader").unwrap());

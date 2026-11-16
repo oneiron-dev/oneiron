@@ -8,6 +8,18 @@ impl From<Error> for MemoryError {
         if let Error::VerbHook(stop) = err {
             return Self::verb_hook(*stop);
         }
+        if let Error::CheckInPending(check_in) = &err {
+            return Self {
+                reason_codes: vec![format!("{CHECK_IN_PENDING_REASON_PREFIX}{check_in}")],
+                ..Self::new(
+                    MEMORY_CODE_CHECK_IN_PENDING,
+                    err.to_string(),
+                    &[
+                        "Wait for a holder to approve the check-in its reason code names, then call again with check_in_ref set to it.",
+                    ],
+                )
+            };
+        }
         let message = err.to_string();
         if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
             return Self {

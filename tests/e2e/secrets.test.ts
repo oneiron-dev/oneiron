@@ -1,11 +1,11 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { inflateRawSync } from "node:zlib";
 import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError, McpRpcError, CliError, type WireReply } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile, redactor } from "./support/run.ts";
+import { defineFile, expect, redactor } from "./support/run.ts";
 import type { Json, ProviderStep } from "./support/providers.ts";
 import { randomBytes } from "node:crypto";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";

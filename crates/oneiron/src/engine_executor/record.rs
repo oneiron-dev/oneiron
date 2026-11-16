@@ -7,7 +7,7 @@ use super::store::{
 use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
 use crate::code_run::{
     CodeConsentResume, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
-    ExecutorStorage, ParkedWait, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ExecutorStorage, ParkedWait, SelfDurableWait, SelfEffect, WaitKey,
     code_consent_resume_evidence, encode_code_run_replay_value, verify_code_consent_consumed,
     verify_parked_code_consent,
 };
@@ -71,7 +71,9 @@ impl StoredTerminalStatus {
             EngineExecutorStatus::Waiting(wait) => Ok(Self::Waiting {
                 wait: StoredDurableWait::from_wait(wait),
             }),
-            EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
+            EngineExecutorStatus::Yielded { .. }
+            | EngineExecutorStatus::WindowFull { .. }
+            | EngineExecutorStatus::Paused { .. } => {
                 Err(Error::InvariantViolation("non-terminal executor status marker").into())
             }
         }
@@ -660,26 +662,10 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
     }
 }
 
-pub(super) fn durable_wait_reason_str(reason: SelfDurableWaitReason) -> &'static str {
-    match reason {
-        SelfDurableWaitReason::HumanInput => "human_input",
-        SelfDurableWaitReason::DestructiveEffect => "destructive_effect",
-        SelfDurableWaitReason::OutboundEffect => "outbound_effect",
-        SelfDurableWaitReason::PeerResult => "peer_result",
-    }
-}
-
-pub(super) fn durable_wait_reason_from_str(
-    value: &str,
-) -> EngineExecutorResult<SelfDurableWaitReason> {
-    match value {
-        "human_input" => Ok(SelfDurableWaitReason::HumanInput),
-        "destructive_effect" => Ok(SelfDurableWaitReason::DestructiveEffect),
-        "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
-        "peer_result" => Ok(SelfDurableWaitReason::PeerResult),
-        _ => Err(Error::CorruptedIndex("executor replay durable wait reason").into()),
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::engine_executor::record::{
+    durable_wait_reason_from_str, durable_wait_reason_str,
+};
 
 /// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
 /// preparation, and of a step that ends at bridge position zero with no

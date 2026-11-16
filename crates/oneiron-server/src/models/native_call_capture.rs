@@ -169,7 +169,9 @@ impl<'a> NativeReadCapture<'a> {
 pub(crate) fn native_read_failure(error: &LlmError) -> Option<NativeReadFailure> {
     match error {
         LlmError::Fatal(FatalLlmError::InvalidRequest) => Some(NativeReadFailure::InvalidRequest),
-        LlmError::Fatal(FatalLlmError::Auth) => Some(NativeReadFailure::Auth),
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            Some(NativeReadFailure::Auth)
+        }
         LlmError::Fatal(FatalLlmError::LabelRead(failure)) => {
             Some(NativeReadFailure::LabelRead(*failure))
         }

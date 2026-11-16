@@ -73,6 +73,22 @@ claude mcp add -s user oneiron -- oneiron mcp --surface tool-first \
   --credential-file ~/.config/oneiron/claude-code.cred
 ```
 
+Or install the Oneiron plugin for Claude Code
+([`plugins/claude-code/`](../../plugins/claude-code/)). It carries this same
+server entry, reading `~/.config/oneiron/claude-code.cred`, together with the
+session hooks of [Claude Code hooks](claude-code-hooks.md) and a skill that
+tells Claude when to recall and save. In Claude Code:
+
+```text
+/plugin marketplace add oneiron-dev/oneiron
+/plugin install oneiron@oneiron
+```
+
+The plugin mints nothing: mint `claude-code` to that path as in step 1, and
+the hooks' read-only credential as the hooks page says. It runs `oneiron`
+from the `PATH` Claude Code runs with. Use the plugin or `claude mcp add`,
+not both.
+
 **Codex**, in `~/.codex/config.toml`:
 
 ```toml
@@ -83,6 +99,32 @@ args = ["mcp", "--surface", "tool-first",
 ```
 
 Codex does not expand `~` in `args`; write the full path.
+
+**Codex, Cursor or VS Code with Copilot, as one plugin.**
+[`plugins/agent-plugins/`](../../plugins/agent-plugins/) is one package for
+every client that reads the Agent Plugins 1.0 format: a root `plugin.json`,
+an `mcp.json` with the same `oneiron mcp --surface tool-first` entry, and a
+skill that tells the agent when to recall and what to save. It carries no
+hooks; those are per client and come later. Its entry reads the credential
+from `agent.cred` in the data folder the client gives each installed plugin
+(`${PLUGIN_DATA}`), so each client's install holds its own credential. An
+Agent Plugins client expands no other variable, so the package cannot read a
+file under `~/.config/oneiron/`.
+
+1. Install the folder the way your client installs a local plugin. In VS
+   Code, `chat.pluginLocations` (Experimental) in `settings.json` registers
+   a folder: `"chat.pluginLocations": {"<clone>/plugins/agent-plugins": true}`.
+2. Its first start fails, as no credential is there yet. The error, in the
+   client's MCP server log, names the full path of `agent.cred` and the
+   command that mints it.
+3. Stop `oneiron serve`, mint to that path under the client's own name (for
+   example `oneiron token agent --name cursor --out <data folder>/agent.cred`),
+   start `serve` again, and restart the plugin's server in the client.
+
+It runs `oneiron` from the `PATH` the client starts servers with and reaches
+`serve` at its default address; for another, add `--url` and the origin to
+the args in the package's `mcp.json`. Use the plugin or the client's own MCP
+config (as for Codex above), not both.
 
 **Hermes Agent** takes Oneiron in its memory slot instead of as MCP tools: the
 `oneiron-hermes` package (`packages/oneiron-hermes`) is a Hermes memory

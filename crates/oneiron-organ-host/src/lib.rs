@@ -19,6 +19,8 @@
 //! until the call ends.
 //!
 //! [`seal`] is the engine's seal port over the seal organ.
+//! [`image`] edits an image artifact through the image organ, landing
+//! its PNG as a proposal waiting for Keep.
 //!
 //! A host that cannot start an organ (a phone, a browser) sends the call to
 //! another node of the owner's over the mesh ([`mesh`], OF-575 MESH);
@@ -37,6 +39,7 @@ mod fetch;
 mod handlers;
 #[cfg(unix)]
 mod host;
+pub mod image;
 mod isolation;
 mod landing;
 mod measure;

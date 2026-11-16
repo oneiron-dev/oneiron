@@ -208,6 +208,9 @@ pub enum QueueDriveStatus {
     Unavailable,
     /// Green, rolled back, cancelled or its survivors decided.
     Done,
+    /// Never landed: a green reconciliation successor carried its change
+    /// (QUEUE Q1 = A). Not `done`, which a landed change also reads.
+    Superseded,
 }
 
 impl From<QueueDriveHoldReason> for QueueDriveStatus {

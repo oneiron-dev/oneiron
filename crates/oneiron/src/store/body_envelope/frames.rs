@@ -35,8 +35,9 @@ use zeroize::Zeroizing;
 use crate::error::{Error, Result};
 
 const MAGIC: &[u8; 8] = b"ONEIRONB";
-/// The format version a file's head, its chunks and its key row carry.
-pub(super) const FORMAT_VERSION: u16 = 1;
+#[doc(hidden)]
+pub(super) use oneiron_records::store::body_envelope::frames::FORMAT_VERSION;
+
 const HEAD_LEN: usize = MAGIC.len() + 2 + 16 + 4;
 /// Plaintext per chunk: one block of the line index.
 const CHUNK: u64 = 64 * 1024;
@@ -54,13 +55,8 @@ fn corrupt() -> Error {
     Error::CorruptedIndex("body file envelope")
 }
 
-/// What one envelope of a file is.
-#[derive(Clone, Copy)]
-enum Role {
-    Chunk = 0,
-    Last = 1,
-    Terminal = 2,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::store::body_envelope::frames::Role;
 
 /// Which of a file's keys an envelope is under: the body's, or its line
 /// index's.

@@ -30,7 +30,8 @@ pub enum EsignSealRun {
 impl Vault {
     /// Seals up to `max` queued documents, one claimed attempt at a time,
     /// as `lease_owner`. The sealer runs outside the writer lock; call from
-    /// a blocking thread.
+    /// a blocking thread. Each seal prints `qr_page_url` with its own QR
+    /// capability as the fragment ([`Self::seal_esign_attempt`]).
     ///
     /// # Errors
     /// The attempt queue could not be read or written.
@@ -38,7 +39,7 @@ impl Vault {
         &self,
         sealer: &dyn EsignSealer,
         profile: SealProfile,
-        canonical_url: &str,
+        qr_page_url: &str,
         lease_owner: &str,
         max: usize,
     ) -> Result<Vec<EsignSealRun>> {
@@ -56,7 +57,7 @@ impl Vault {
             let document = <[u8; 16]>::try_from(attempt.payload.as_slice())
                 .ok()
                 .and_then(|bytes| EntityId::from_bytes(bytes).ok());
-            match self.seal_esign_attempt(&attempt, sealer, profile, canonical_url) {
+            match self.seal_esign_attempt(&attempt, sealer, profile, qr_page_url) {
                 Ok(_) => runs.push(EsignSealRun::Sealed { document }),
                 Err(error) => {
                     let verify_reasons = match &error {

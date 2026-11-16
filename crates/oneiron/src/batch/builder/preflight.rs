@@ -94,14 +94,19 @@ pub(super) fn preflight_gate_decisions_in_txn(
             for lapse in lapses {
                 let mut recorded_decision = None;
                 let lapse_id = lapse.id;
-                let body = lapse.candidate.into_claim_body(envelope, default_facet)?;
+                // The envelope the apply writes this lapse under, signed
+                // per successor for a System writer, so the Gate judges the
+                // stored bytes.
+                let envelope =
+                    crate::commitment::lapse_envelope_for(store, &*wtxn, &lapse, envelope)?;
+                let body = lapse.candidate.into_claim_body(&envelope, default_facet)?;
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
                     &lapse_id,
                     crate::gate::ClaimGateWrite {
                         body: &body,
-                        envelope: Some(envelope),
+                        envelope: Some(&envelope),
                         // Ordinary batch preflight: no checker is injected on
                         // this door, so an Auto verdict here is the engine's
                         // own and nothing consults a host.

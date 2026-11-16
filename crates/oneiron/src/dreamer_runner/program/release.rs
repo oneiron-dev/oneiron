@@ -18,8 +18,6 @@
 //! its record stays held until its repair (FIX 5881) lands. Nothing here runs
 //! on its own, and no other park is touched.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, ForceAttemptCancel,
@@ -40,50 +38,10 @@ use super::{ATTEMPT, PROGRAM_PARK_OWNER};
 /// none.
 const RESUME_NOTE: &str = "the owner resumed the turn program's held try, its checkpoint validated";
 
-/// The owner's release of one held turn program's try.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseTurnProgramHoldRequest {
-    /// 32-hex id of the held try, as a program read's `held` names it
-    /// (`job:` prefix allowed).
-    pub attempt: String,
-    /// The hold's exact reason and the time it was parked, as that read
-    /// showed them: a hold that changed since refuses.
-    pub reason: String,
-    pub parked_at: u64,
-    pub action: ProgramHoldReleaseAction,
-    /// The owner's note: a stop's cancellation reason, or a resume's
-    /// intervention note.
-    #[serde(default)]
-    pub note: Option<String>,
-}
-
-/// What the owner does with a held program's try.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProgramHoldReleaseAction {
-    /// End the try and clear its hold; its run, checkpoint and steps stay.
-    Stop,
-    /// Queue the same try again: only a diverged or unfinished program's
-    /// hold, once its checkpoint lines up with its run's record, its
-    /// authority and pin bind and nothing it did is unsettled.
-    ResumeValidated,
-}
-
-/// What releasing one program's hold did.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ProgramHoldReleaseView {
-    /// 32-hex try.
-    pub attempt: String,
-    pub action: ProgramHoldReleaseAction,
-    /// The released hold's exact reason.
-    pub released: String,
-    /// The try's queue state after the release.
-    pub state: String,
-    /// Whether this release stopped or queued the try: a stop of a try
-    /// already settled only clears its hold.
-    pub effected: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::program::release::{
+    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+};
 
 /// What one release committed, and what its commit signals after.
 struct Released {
@@ -231,6 +189,7 @@ fn stop_in_txn(
         super::super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
         super::hold_index::unindex_program_hold_in_txn(vault, wtxn, &park)?;
         super::super::seat_wait::unindex_seat_wait_in_txn(vault, wtxn, &park)?;
+        super::super::policy_wait::unindex_policy_wait_in_txn(vault, wtxn, &park)?;
     }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
     abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);

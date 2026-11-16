@@ -333,7 +333,9 @@ impl ServedCompactionBackend {
             Ok(None) => Ok(None),
             Err(error) => {
                 let suppression = match &error {
-                    LlmError::Fatal(FatalLlmError::Auth) => CompactionSuppression::Auth,
+                    LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+                        CompactionSuppression::Auth
+                    }
                     LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
                     _ => CompactionSuppression::TurnScoped { check: None },
                 };

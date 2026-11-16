@@ -13,13 +13,14 @@ use crate::side_table::{self, Named, SideTable};
 
 use super::super::meter::{
     ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EffectorBudgetChargeOutcome,
-    budget_exhausted_reason, charge_effector_budgets,
+    charge_effector_budgets,
 };
 use super::super::record::{
     ConnectorKeyStatus, EffectorBudgetOnExhaust, invalid_body, normalize_connector_key,
 };
 use super::super::txn::{
-    append_connector_key_op_record, read_connector_key_in_txn, suspend_connector_key_in_txn,
+    SuspendAdmission, SuspendCause, append_connector_key_op_record, read_connector_key_in_txn,
+    suspend_connector_key_in_txn,
 };
 use super::send_paced_until;
 
@@ -331,15 +332,17 @@ impl Vault {
                         stopped = true;
                         break;
                     }
-                    if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                        record = suspend_connector_key_in_txn(
+                    if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                        && let SuspendAdmission::Suspended(written) = suspend_connector_key_in_txn(
                             &self.store,
                             &mut wtxn,
                             id,
                             &record,
-                            budget_exhausted_reason(&location),
+                            SuspendCause::BudgetExhausted(&location),
                             accounting_now,
-                        )?;
+                        )?
+                    {
+                        record = written;
                         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
                         append_connector_key_op_record(
                             &self.store,

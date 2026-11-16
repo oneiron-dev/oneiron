@@ -645,8 +645,8 @@ fn diverged_work(batches: &[MergeBatch], diverged: bool) -> Vec<QueueWork> {
 }
 
 /// Whether `batch` is settled with its staged paths still pinned (FIX
-/// 7305): green and sealed, rolled back, cancelled, or quarantined with its
-/// survivors decided.
+/// 7305): green and sealed, rolled back, cancelled, superseded, or
+/// quarantined with its survivors decided.
 pub(super) fn pins_releasable(batch: &MergeBatch) -> bool {
     let Some(drive) = batch.drive.as_ref().filter(|drive| drive.pinned) else {
         return false;
@@ -655,7 +655,7 @@ pub(super) fn pins_releasable(batch: &MergeBatch) -> bool {
         BatchState::GreenAdvanced => {
             matches!(drive.tested, Some(super::QueueRevisionLink::Sealed { .. }))
         }
-        BatchState::RolledBack | BatchState::Cancelled => true,
+        BatchState::RolledBack | BatchState::Cancelled | BatchState::Superseded => true,
         BatchState::Quarantined => drive.survivor.is_some(),
         _ => false,
     }

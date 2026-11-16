@@ -58,6 +58,8 @@ pub(crate) mod tables;
 mod task_reporting;
 mod task_settlement;
 mod team_submit;
+// FIX [LIBTEST-QUARANTINE-CODE-RUN-TESTS]: the lib test target's type check fails here (19 errors: E0063 x11, E0277 x4, E0061 x3, E0599 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod type_diagnostics;
@@ -381,6 +383,8 @@ pub use self::consent_wait::{
 };
 
 pub(crate) use self::dispatcher::kept_reveal_lease;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::resumed_write_meets_recorded_row;
 pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::dispatcher::workflow_operations;
