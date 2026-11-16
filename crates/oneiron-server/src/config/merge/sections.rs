@@ -342,6 +342,9 @@ impl PartialServeConfig {
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
         }
+        if let Some(value) = self.gmail_push {
+            resolved.gmail_push = Some(value);
+        }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }
