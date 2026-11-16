@@ -13105,7 +13105,7 @@
      "path": "src/campaign.rs",
      "purpose": "CRM pack engine-side registration home",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "mod": 11,
       "re-export": 2,
@@ -13263,7 +13263,7 @@
      "path": "src/campaign/compliance/mod.rs",
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -13287,6 +13287,16 @@
      "surface": {
       "crate-vis": 4,
       "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/setting_keys.rs",
+     "purpose": "The campaign compliance leg's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:46 15…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -13594,8 +13604,18 @@
      "path": "src/campaign/presets/mod.rs",
      "purpose": "CA-08 consultancy preset: the CONTRACT, never the copy",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/presets/setting_keys.rs",
+     "purpose": "The consultancy preset's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15 Nov…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -13616,7 +13636,7 @@
      "path": "src/campaign/presets/validate.rs",
      "purpose": "Content-invariant validators plus the require_text and preset_error helpers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -13628,6 +13648,7 @@
      "path": "src/campaign/send_hygiene.rs",
      "purpose": "CA-05 send hygiene: suppression, unsubscribe headers, and sticky senders",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
       "enum": 1,
       "fn": 2,
@@ -13646,6 +13667,16 @@
       "crate-vis": 4,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/setting_keys.rs",
+     "purpose": "The campaign sticky sender's pack Setting key (owner ruling PACK-SETTINGS-ALL = B; Engine RULING 23:20 15…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -88486,7 +88517,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 70,
+      "crate-vis": 71,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -88962,6 +88993,16 @@
      "purpose": "Session-owned typed asks for off-record hook pauses (FIX 10087)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/setting_keys.rs",
+     "purpose": "The consult expiry's pack Setting key (owner ruling PACK-SETTINGS-ALL = B): the recovery choices a lapsed…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -102193,11 +102234,43 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_campaign_consent.rs",
+     "purpose": "OPUS-PACKWAVE-W3 C09: the pack key `campaign.contact_without_recorded_objection`",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_campaign_preset.rs",
+     "purpose": "The consultancy preset's pack Setting keys (W3 C02 + C03): the loaded preset carries the owner's no-show…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_campaign_sender.rs",
+     "purpose": "Pack key `campaign.sender.rotate_on_dead`: a dead sticky sender restarts by default, and rotates to the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/pack_keys_human_task.rs",
      "purpose": "PACK-SETTINGS-ALL = B: the human-task follow-up ladder's three intervals are pack Setting keys. - With no…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_keys_task_consult.rs",
+     "purpose": "The consult expiry's recovery menu is the owner's pack Setting key",
      "surface": {}
     },
     {
@@ -104098,7 +104171,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 68,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -105428,7 +105501,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105633,8 +105706,8 @@
    },
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7670,
-   "test_files": 1415
+   "source_files": 7674,
+   "test_files": 1419
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -149267,7 +149340,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/conversation_dag.rs",
@@ -149347,7 +149420,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_booking_publication.rs",
@@ -149477,7 +149550,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 57
      }
     },
     {
