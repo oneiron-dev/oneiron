@@ -11,8 +11,8 @@
     "require_granted_scope": true
   },
   "section": false,
-  "host_door": true,
-  "host_door_lists": true,
-  "openapi": true,
-  "host_door_proof": "policy_putter"
+  "proof": "policy_power",
+  "door": "hand",
+  "lists": true,
+  "openapi": true
 }

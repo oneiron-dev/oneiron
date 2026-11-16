@@ -4,14 +4,14 @@
   "input": "crate::task_verb::sdk::GuestDocumentShareRequest",
   "output": "crate::task_verb::sdk::GuestDocumentEnvelope",
   "call": "crate::task_verb::sdk::guest_document_host_only(memory, \"vault.guests.export_envelope\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "guest_document_reader",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "guest_document_reader"
+  "openapi": true
 }

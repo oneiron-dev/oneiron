@@ -10,10 +10,10 @@
     "lane_record_scope": true
   },
   "section": false,
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "foreign_code",
+  "door": "hand",
+  "lists": true,
   "host_door_session": true,
   "mcp_scope": "filtered",
-  "openapi": true,
-  "host_door_proof": "foreign_code"
+  "openapi": true
 }

@@ -4,8 +4,9 @@
   "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
   "output": "crate::artifact_hosting::door_types::ArtifactPublishView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.repoint\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "artifact_publisher",
+  "door": "hand",
+  "lists": true,
   "openapi": true,
   "scope": "Write",
   "act_class": "unstated",
@@ -13,6 +14,5 @@
     "lane_record_scope": true,
     "require_granted_scope": true
   },
-  "section": false,
-  "host_door_proof": "artifact_publisher"
+  "section": false
 }

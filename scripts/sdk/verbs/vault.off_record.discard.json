@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::OffRecordSessionRequest",
   "output": "crate::task_verb::sdk::OffRecordClosed",
   "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.discard\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "off_record",
+  "door": "hand",
+  "lists": true,
   "no_record": true,
   "scope": "Write",
   "act_class": "reversible_work",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "off_record"
+  "openapi": true
 }

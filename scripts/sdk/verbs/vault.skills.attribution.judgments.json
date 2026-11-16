@@ -4,13 +4,13 @@
   "input": "AttributionListRequest",
   "output": "crate::task_verb::sdk::AttributionJudgmentsView",
   "call": "crate::task_verb::sdk::skill_attribution_judgments_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.judgments\")?, &input)?",
-  "host_door": true,
+  "proof": "owner",
+  "door": "hand",
   "scope": "Read",
   "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

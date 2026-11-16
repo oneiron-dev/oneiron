@@ -4,11 +4,11 @@
   "input": "crate::task_verb::sdk::GrantAnswerRequest",
   "output": "crate::task_verb::sdk::GrantAnswered",
   "call": "crate::task_verb::sdk::host_only(memory, \"self.grants.answer\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "grants_answer",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {},
-  "section": false,
-  "host_door_proof": "grants_answer"
+  "section": false
 }

@@ -4,8 +4,9 @@
   "input": "crate::settings::agent_world_access::AgentWorldAccessSetRequest",
   "output": "crate::settings::agent_world_access::AgentWorldAccessChange",
   "call": "crate::settings::agent_world_access::set_agent_world_access_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_surface": true,
   "scope": "Write",
   "act_class": "grant_widen",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

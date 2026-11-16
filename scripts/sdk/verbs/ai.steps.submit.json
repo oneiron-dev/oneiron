@@ -4,8 +4,9 @@
   "input": "crate::llm::model_step::ModelStepSubmitRequest",
   "output": "crate::llm::model_step::ModelStepReceipt",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.submit\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "model_step_caller",
+  "door": "hand",
+  "lists": true,
   "openapi": true,
   "scope": "Write",
   "act_class": "reversible_work",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "model_step_caller",
   "host_door_session": true
 }

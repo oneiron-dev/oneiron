@@ -4,8 +4,9 @@
   "input": "crate::task_verb::run_doors::RunBranchesRequest",
   "output": "crate::task_verb::run_doors::RunBranchesView",
   "call": "crate::task_verb::run_doors::read_branches_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "run_reader"
+  "openapi": true
 }

@@ -4,8 +4,8 @@
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "crate::task_verb::sdk::SelfActorRefs",
   "call": "crate::task_verb::sdk::host_only(memory, \"self.actor\", &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
   "scope": "Read",
   "act_class": "read",
   "admission": {

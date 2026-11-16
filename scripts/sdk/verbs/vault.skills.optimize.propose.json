@@ -4,14 +4,14 @@
   "input": "SkillOptimizeProposeRequest",
   "output": "crate::task_verb::sdk::SkillOptimizeProposalReceipt",
   "call": "crate::task_verb::sdk::skill_optimize_propose_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.propose\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

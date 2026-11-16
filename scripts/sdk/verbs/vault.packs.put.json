@@ -4,13 +4,13 @@
   "input": "PackPutRequest",
   "output": "crate::task_verb::sdk::PackPutReceipt",
   "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "packs_setup",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "packs_setup"
+  "section": false
 }

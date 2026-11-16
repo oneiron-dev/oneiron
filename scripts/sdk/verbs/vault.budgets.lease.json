@@ -4,8 +4,9 @@
   "input": "crate::agent_dispatch::budget_doors::SpendScopeRequest",
   "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
   "call": "crate::agent_dispatch::budget_doors::spend_lease_embedded(memory, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "run_reader"
+  "openapi": true
 }
