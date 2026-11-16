@@ -811,12 +811,13 @@ pub use owner_acts::{
     VoiceTargetRender,
 };
 use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
-// The archive landing asks the writer's identity check before it installs a decision.
-pub(super) use render_history::banked_identity_admits_decision_in;
 pub use render_history::{
     VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
 };
 use target_verification::VendorClone;
+
+// The archive landing asks the writer's identity check before it installs a decision.
+pub(super) use render_history::banked_identity_admits_decision_in;
 
 // FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-REF-BANK-TESTS]: the lib test target's type check fails here (10 errors: E0061 x6, E0533 x4); port it, then drop this gate
 #[cfg(any())]
