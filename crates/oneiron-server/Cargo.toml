@@ -274,6 +274,14 @@ name = "esign_signing_session"
 path = "tests/esign_signing_session.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# Mints its member's one-click link through a test door (`--cfg oneiron_test_support`) on an
+# unseeded `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`).
+[[test]]
+name = "campaign_one_click_unsubscribe"
+path = "tests/campaign_one_click_unsubscribe.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
@@ -340,6 +348,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
+required-features = ["oneiron/test-support"]
+
+# GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
+[[test]]
+name = "lens_frame_state_door"
+path = "tests/lens_frame_state_door.rs"
 required-features = ["oneiron/test-support"]
 
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
