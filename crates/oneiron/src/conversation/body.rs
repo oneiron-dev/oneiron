@@ -64,8 +64,7 @@ pub(crate) fn validate_put_in_txn(
                 return Err(invalid("member must be a PERSON"));
             }
         }
-        let rows = membership::rows_in(store, txn, id)?;
-        let members = membership::members_at_rows(&rows, u64::MAX);
+        let members = membership::current_members_in(store, txn, id)?;
         if members != body.member_ids.iter().copied().collect() {
             return Err(state("membership changes require the membership door"));
         }
@@ -98,6 +97,15 @@ pub(crate) fn validate_put_in_txn(
             && !pins::PIN_UPDATES.contains(store, txn, &id)?
         {
             return Err(state("pin changes require the room pin doors"));
+        }
+        // ARCH-0082 #closed-room: only the room's closed-setting door, which
+        // marks its write transaction, changes whether the room is closed; a
+        // new room starts open.
+        let previous_closed = previous.as_ref().is_some_and(|previous| previous.closed);
+        if body.closed != previous_closed && !closed::CLOSED_UPDATES.contains(store, txn, &id)? {
+            return Err(state(
+                "closing or opening a room requires the room's closed-setting door",
+            ));
         }
     }
     // Rule 5: a roster of any size is kept whole. Past its threshold row the

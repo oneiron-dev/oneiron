@@ -5,21 +5,29 @@
 use super::*;
 
 /// ASK-3: whether an ask waits for its launch approval. Only the `manual`
-/// approval mode holds an ask, and an ask whose every recipient is a
-/// principal who would answer that approval, a live vault owner or a live
-/// holder of `approval_project`'s lead or board, goes straight out: holding
-/// it would ask the approver to approve asking them.
+/// approval mode holds an ask. An ask that an accepted standing approval of
+/// `check_scope` covers at its width (one per recipient) goes straight out:
+/// that row is its rung 0, and nobody is asked again (CHECKIN-PR1-SHAPE Q2).
+/// So does an ask whose every recipient is a principal who would answer
+/// that approval, a live vault owner or a live holder of
+/// `approval_project`'s lead or board: holding it would ask the approver to
+/// approve asking them.
 pub(in crate::task_verb) fn ask_launch_needs_approval(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     recipients: &[EntityId],
     approval_project: Option<EntityId>,
+    check_scope: &str,
 ) -> MemoryResult<bool> {
     if policy_in(vault, txn, &ConsultFanOutScope::default())?
         .policy
         .mode
         != CheckInMode::AlwaysAsk
     {
+        return Ok(false);
+    }
+    let width = u64::try_from(recipients.len()).unwrap_or(u64::MAX);
+    if crate::fanout_auto::covering_approval_in(vault, txn, check_scope, width).is_some() {
         return Ok(false);
     }
     Ok(!recipients_approve_launch_in(
@@ -204,6 +212,8 @@ pub(in crate::task_verb) fn hold_ask_in(
         &plan,
         Some(policy.approval_threshold),
         wave_launch_history(),
+        // The hold was decided before this admission, its rung 0 included.
+        None,
         &CachedAuto(FanoutAutoDisposition::SurfaceHuman),
         &mut LaunchSurface {
             vault,

@@ -13,18 +13,18 @@ pub(super) use crate::store::result_body_rows::RAW_OUTPUTS;
 pub(crate) use crate::store::result_body_rows::StoredBody;
 use crate::store::result_body_rows::{STORED_FILE, STORED_HELD, STORED_INLINE, split_row};
 use crate::store::{
-    BodyDir, BodyFile, BodyKeyRow, BodySink, ResponseFamily, ResponseRead, StagedBodyKey, SunkBody,
-    body_key_row_in_txn,
+    BodyDir, BodyFile, BodyKeyRow, BodySink, StagedBodyKey, SunkBody, body_key_row_in_txn,
 };
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
-use super::super::codec::validate_raw_output;
+use super::super::codec::{decode_code_run_replay_generation, validate_raw_output};
 use super::super::replay::{
     CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
     ResultOccurrence,
 };
 use super::super::support::invalid_code_run_replay;
 use super::replay_bodies::RESPONSE_ERASED;
+use super::replay_rows;
 use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 
 mod admitted;
@@ -40,10 +40,6 @@ pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
     owned_body, raw_put_descriptor_in_txn, read_body_row_range,
 };
-
-/// The replay record of one run, keyed by run id.
-pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
 
 pub(crate) fn code_run_replay_record_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<CodeRunReplayRecord, Raw>(bytes)
@@ -176,7 +172,7 @@ impl Vault {
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Borrowed(record))?;
-        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, &record)?;
+        replay_rows::put(self, &mut wtxn, &record.run_id, &record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -187,7 +183,7 @@ impl Vault {
         record: &CodeRunReplayRecord,
     ) -> Result<()> {
         let record = super::response_erase::fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
-        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
+        replay_rows::put(self, wtxn, &record.run_id, &record)?;
         Ok(())
     }
 
@@ -273,10 +269,13 @@ impl Vault {
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<CodeRunReplayGeneration> {
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        let current = REPLAY_RECORDS.get(&self.store, wtxn, &record.run_id)?;
-        replay_generation_matches(current.as_ref(), expected)?;
+        // The stored row's generation and the calls `over_held` keeps, read
+        // from its bytes in place: an append never decodes the outputs or
+        // bindings of the row it replaces (FIX 16). A record the codec
+        // refuses fails at the put below, in this same transaction.
+        let held = replay_rows::held(&self.store, wtxn, &record.run_id)?;
+        replay_generation_matches(held.as_ref().map(|held| held.generation), expected)?;
         let next_heal_count = healed_model
             .map(|model| {
                 let key = model.as_str().to_owned();
@@ -290,10 +289,10 @@ impl Vault {
             })
             .transpose()?;
         prepare(wtxn)?;
-        let record = record.over_held(current.as_ref());
+        let record = record.over_held(held.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, wtxn, record)?;
-        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
+        replay_rows::put(self, wtxn, &record.run_id, &record)?;
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, wtxn, &key, &HealCount(count))?;
         }
@@ -329,9 +328,7 @@ impl Vault {
         if response_erased_in_txn(&self.store, rtxn, run)? {
             return Ok(Some(false));
         }
-        Ok(REPLAY_RECORDS
-            .contains(&self.store, rtxn, run)?
-            .then_some(true))
+        Ok(replay_rows::contains(&self.store, rtxn, run)?.then_some(true))
     }
 
     /// [`Self::get_code_run_replay_record`] in the caller's snapshot. The
@@ -342,12 +339,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         run_id: &EntityId,
     ) -> Result<Option<CodeRunReplayRecord>> {
-        let Some(raw) = REPLAY_RECORDS.get_borrowed(&self.store, rtxn, run_id)? else {
-            return Ok(None);
-        };
-        let key = REPLAY_RECORDS.key_bytes(run_id);
-        let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
-        REPLAY_RECORDS.decode_value(raw).map(Some)
+        replay_rows::present(&self.store, rtxn, run_id)
     }
 
     /// The result names run `run_id`'s replay record binds now, each with
@@ -484,11 +476,11 @@ impl Vault {
         if !response_erased_in_txn(&self.store, rtxn, &owner)? {
             return Ok(false);
         }
-        Ok(!REPLAY_RECORDS
-            .get_lenient(&self.store, rtxn, &owner)?
-            .is_some_and(|record| {
+        Ok(
+            !replay_rows::get_lenient(&self.store, rtxn, &owner)?.is_some_and(|record| {
                 record.run_id == owner && record.output_is_retained_receipt(output)
-            }))
+            }),
+        )
     }
 
     /// The standing of this run's exact output occurrence, without applying
@@ -673,8 +665,7 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<(EntityId, Vec<CodeRunRawOutput>)>> {
-        Ok(REPLAY_RECORDS
-            .scan(&self.store, rtxn)?
+        Ok(replay_rows::scan(&self.store, rtxn)?
             .into_iter()
             .map(|(run_id, record)| (run_id, record.outputs))
             .collect())
@@ -794,11 +785,28 @@ pub(super) fn lift_proposal(
     })
 }
 
+/// The generation of `run_id`'s stored replay row, decoded from its bytes in
+/// place (FIX 16): the three counts, the last checkpoint's hash and the
+/// pending step, never the row's bridge calls or outputs.
+pub(super) fn stored_replay_generation(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run_id: &EntityId,
+) -> Result<Option<CodeRunReplayGeneration>> {
+    replay_rows::generation(dbs, txn, run_id)
+}
+
+/// The generation of a stored replay row's bytes; `None` for no row.
+pub(super) fn replay_generation_of(
+    stored: Option<&[u8]>,
+) -> Result<Option<CodeRunReplayGeneration>> {
+    stored.map(decode_code_run_replay_generation).transpose()
+}
+
 pub(super) fn replay_generation_matches(
-    current: Option<&CodeRunReplayRecord>,
+    stored: Option<CodeRunReplayGeneration>,
     expected: Option<CodeRunReplayGeneration>,
 ) -> Result<()> {
-    let stored = current.map(CodeRunReplayRecord::generation).transpose()?;
     if stored == expected {
         return Ok(());
     }

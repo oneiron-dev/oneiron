@@ -85,6 +85,13 @@ impl RootCheckpointAuthority {
     }
 }
 
+/// The domain of an owner key's proof that the owner gives one ask word in
+/// person (UC-05 PR 2b, [`Vault::authenticate_owner_device`]): the bytes
+/// [`CheckpointRootSigner::sign_ask_word_proof`] signs start with it. No
+/// checkpoint statement and no authority transcript does, so neither
+/// signature ever stands for the other.
+pub const ASK_WORD_PROOF_DOMAIN: &[u8] = b"oneiron/tasks/ask-word-owner-proof/v1";
+
 /// A root of the policy a vault counts, as a checkpoint signer: the root's
 /// raw signature over a checkpoint statement, a key binding's or an
 /// attestation's, and over nothing else.
@@ -94,6 +101,18 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// The root's raw signature over `statement`, which must be a checkpoint
     /// statement.
     fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>>;
+    /// The root's raw signature over `transcript`, an authority entry's
+    /// transcript, as an owner key's proof of an owner act the install that
+    /// holds it carries (row CARRIER-OWNER-PROOF). Refused for any bytes
+    /// outside the authority transcript domain, so a checkpoint statement is
+    /// never signed as a proof, nor a proof as a statement.
+    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>>;
+    /// The root's raw signature over `transcript`, an owner key's proof that
+    /// the owner gives one ask word in person on the install that holds it
+    /// (UC-05 PR 2b). Refused for any bytes outside
+    /// [`ASK_WORD_PROOF_DOMAIN`], so it signs no checkpoint statement and no
+    /// authority transcript.
+    fn sign_ask_word_proof(&self, transcript: &[u8]) -> Result<Vec<u8>>;
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -103,6 +122,20 @@ impl CheckpointRootSigner for HostSlipIssuer {
 
     fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>> {
         self.sign_checkpoint(statement)
+    }
+
+    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(super::AUTHORITY_TRANSCRIPT_DOMAIN) {
+            return Err(super::invalid_authority());
+        }
+        Ok(self.sign_slip(transcript))
+    }
+
+    fn sign_ask_word_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(ASK_WORD_PROOF_DOMAIN) {
+            return Err(super::invalid_authority());
+        }
+        Ok(self.sign_slip(transcript))
     }
 }
 
@@ -164,6 +197,17 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner);
         held.retain(|other| other.root() != root);
         held.push(signer);
+    }
+
+    /// Drops every root signer this handle holds (test door
+    /// `owner_key_release`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn release_checkpoint_root_signers(&self) {
+        self.world_keys
+            .checkpoint_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// The root signers this handle holds.

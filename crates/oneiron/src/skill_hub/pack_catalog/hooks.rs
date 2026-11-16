@@ -50,7 +50,6 @@ const HOOK_DIR: &str = "hooks/";
 const HOOK_MANIFEST: &str = "HOOK.md";
 const HOOK_INTENT: &str = "intent.md";
 const HOOK_BODY: &str = "body.js";
-const MAX_HOOK_BUDGET_MS: u32 = 60_000;
 
 impl HookPhase {
     /// The time budget for one run when HOOK.md names none.
@@ -266,7 +265,9 @@ impl PackHook {
             .transpose()
             .map_err(|_| invalid("hook budget_ms is a whole number"))?
             .unwrap_or_else(|| phase.default_budget_ms());
-        if budget_ms == 0 || budget_ms > MAX_HOOK_BUDGET_MS {
+        // The parse keeps only the format check: a whole number above 0. The owner's
+        // cap refuses an over-budget hook where it becomes a binding.
+        if budget_ms == 0 {
             return Err(invalid("hook budget_ms is out of bounds"));
         }
         let blocking = match scalar("blocking")?.as_deref() {
