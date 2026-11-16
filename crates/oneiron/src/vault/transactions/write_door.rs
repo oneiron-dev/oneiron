@@ -242,6 +242,10 @@ impl Vault {
                 self.store.clock.now_recorded_at(),
             );
         }
+        // A task-held inquiry answer whose task this write ended leaves
+        // memory now that the end is durable (INQUIRE-SHAPE Q6 = A; FIX
+        // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE). It never fails this write.
+        self.evict_inquiry_answers_after_commit();
         // A row written after its window loaded reaches it only through the
         // live mirror.
         #[cfg(feature = "sync")]

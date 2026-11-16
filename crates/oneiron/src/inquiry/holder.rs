@@ -9,10 +9,13 @@
 //! its `valid_until`. Each touch of the map (a send, a read,
 //! [`Vault::evict_inquiry_answers`]) first drops every entry whose task has
 //! ended or whose `valid_until` has come, so no read returns an ended task's
-//! answer. Each housekeeping pass also calls [`Vault::evict_inquiry_answers`]
-//! (Engine ruling INQUIRE-HOLDER-EVICT), so on a server, whose lifecycle tick
-//! starts a pass every 60 s, an ended task's answer leaves memory within one
-//! tick even when nothing touches the map.
+//! answer. Each write that commits through the write door drops, once it is
+//! durable, every answer whose task it ended, whichever writer ended it
+//! (INQUIRE-SHAPE Q6 = A: "evicted at the task's terminal transition"; FIX
+//! INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE). Each housekeeping pass also calls
+//! [`Vault::evict_inquiry_answers`] (Engine ruling INQUIRE-HOLDER-EVICT), so
+//! an answer whose task a write outside the door ended leaves memory within
+//! one lifecycle tick (60 s on a server) even when nothing touches the map.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -53,6 +56,10 @@ impl InquiryAnswerHolder {
 
     fn tasks(&self) -> BTreeSet<EntityId> {
         self.lock().keys().map(|key| key.task).collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.lock().is_empty()
     }
 
     /// How many answers the map holds now, without dropping any.
@@ -108,6 +115,27 @@ impl Vault {
         let before = held.len();
         held.retain(|key, answer| !ended.contains(&key.task) && answer.valid_until > now);
         Ok(before - held.len())
+    }
+
+    /// [`Self::evict_inquiry_answers`] once a write has committed through the
+    /// write door, while any answer is held (FIX
+    /// INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE; Engine rulings INQUIRE-SHAPE
+    /// Q6 and INQUIRE-HOLDER-EVICT = A): a write that ended a held answer's
+    /// task, whichever writer ended it (a terminal settle or a Cancelled
+    /// fact), drops that answer before any later read, with no touch and no
+    /// housekeeping pass. With nothing held it reads nothing. A failed
+    /// read leaves the answer to the next touch or pass and never fails the
+    /// write.
+    pub(crate) fn evict_inquiry_answers_after_commit(&self) {
+        if self.inquiry_answers.is_empty() {
+            return;
+        }
+        if let Err(error) = self.evict_inquiry_answers() {
+            tracing::warn!(
+                %error,
+                "ended inquiry answers wait for the next touch or housekeeping pass"
+            );
+        }
     }
 
     /// Holds `statements` for `actor`'s `task` from `inquiry` until
