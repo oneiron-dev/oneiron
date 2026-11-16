@@ -384,10 +384,12 @@ fn delta_bytes(value: &str) -> OwnerResult<Vec<u8>> {
         .collect()
 }
 
-/// An answer to one frozen offer the engine refused because the offer is
+/// The owner's answer to one frozen offer, refused because the offer is
 /// missing, settled, lapsed or changed: the widen proposal's state, as the
 /// core widen route answers it (`widen_refusal`; [DISCLOSURE-CONFIRM-STALE-500]).
-/// Every other refusal answers as on any owner route.
+/// Every other refusal answers as on any owner route. The entry routes keep
+/// `owner_error`'s neutral state: there the same kinds also refuse an entry
+/// whose contact is already cleared or is no contact at all.
 fn offer_answer_refusal(error: OwnerError) -> ApiError {
     match &error {
         OwnerError::Engine(engine)
@@ -653,23 +655,20 @@ async fn confirm_entry(
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    let receipt = blocking_with(
-        offer_answer_refusal,
-        move || -> OwnerResult<ClearanceReceipt> {
-            let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
-            let delta = delta_bytes(&request.expected_delta)?;
-            Ok(server
-                .vault()
-                .confirm_container_attendee(
-                    &owner,
-                    &entry_ref,
-                    &request.proposal_ref,
-                    &delta,
-                    request.history,
-                )?
-                .into())
-        },
-    )
+    let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
+        let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
+        let delta = delta_bytes(&request.expected_delta)?;
+        Ok(server
+            .vault()
+            .confirm_container_attendee(
+                &owner,
+                &entry_ref,
+                &request.proposal_ref,
+                &delta,
+                request.history,
+            )?
+            .into())
+    })
     .await?;
     Ok(Json(receipt))
 }
@@ -684,17 +683,14 @@ async fn decline_entry(
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    let receipt = blocking_with(
-        offer_answer_refusal,
-        move || -> OwnerResult<ClearanceReceipt> {
-            let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
-            let delta = delta_bytes(&request.expected_delta)?;
-            Ok(server
-                .vault()
-                .deny_container_attendee(&owner, &entry_ref, &request.proposal_ref, &delta)?
-                .into())
-        },
-    )
+    let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
+        let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
+        let delta = delta_bytes(&request.expected_delta)?;
+        Ok(server
+            .vault()
+            .deny_container_attendee(&owner, &entry_ref, &request.proposal_ref, &delta)?
+            .into())
+    })
     .await?;
     Ok(Json(receipt))
 }

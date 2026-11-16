@@ -445,7 +445,7 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             // a consent act the engine refused (a narrowing wider than the
             // clearance, an inactive contact, a repeated trusted-set contact,
             // a consent row that failed validation) is a refused state, never
-            // a 500. An answer to one frozen offer names the widen proposal
+            // a 500. The disclosure confirm names the widen proposal
             // instead (`disclosure_routes::offer_answer_refusal`).
             oneiron::ErrorKind::InvalidConsentGrantRow
             | oneiron::ErrorKind::InvalidConsentBound => {
