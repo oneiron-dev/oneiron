@@ -13,6 +13,7 @@ use crate::attempt_queue::{
 use crate::calendar::CalendarError;
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::safeguard::CalendarBodyScreener;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CALENDAR_ICS_FEED_EXCEPTION;
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -34,9 +35,10 @@ pub(crate) fn calendar_ics_feed_cursor_accepts_masked(bytes: &[u8]) -> bool {
 /// Actor string stamped on pause interventions.
 const ICS_POLL_INTERVENTION_ACTOR: &str = "calendar.ics.poll";
 
-const MAX_SECRET_REF_BYTES: usize = 256;
-
-const MAX_SYSTEM_BYTES: usize = 128;
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::ingest::poll::IcsFeedCursorSnapshot;
+#[doc(hidden)]
+use oneiron_verb_wire::calendar::ingest::poll::{MAX_SECRET_REF_BYTES, MAX_SYSTEM_BYTES};
 
 /// SECRET-custody poll configuration for one ICS feed.
 ///
@@ -147,6 +149,13 @@ pub enum IcsPollRunState {
     PausedNeedsInput {
         /// Stable ref of the derived inbox exception row.
         inbox_exception_ref: EntityId,
+    },
+    /// An installed feed's first completed poll: its imported claims wait on
+    /// the owner's one review (CAL-02), and no further poll is scheduled
+    /// until the owner approves it.
+    AwaitingReview {
+        /// How many imported claims the review holds.
+        claims: u32,
     },
 }
 
@@ -315,6 +324,38 @@ pub fn run_ics_feed_poll_with_screener(
     now: u64,
     jitter_seed: u64,
 ) -> Result<IcsPollRunState, CalendarError> {
+    run_feed_poll(
+        vault,
+        fetcher,
+        screener,
+        safeguard_enabled,
+        config,
+        now,
+        jitter_seed,
+        None,
+    )
+}
+
+/// [`run_ics_feed_poll_with_screener`] for an installed feed when
+/// `installed_owner` names its owner: a complete body applies only while the
+/// feed's import consent (CAL-02) does not hold it, and the claims it admits
+/// settle under that consent as `installed_owner`. Its first completed poll's
+/// open the feed's review and end the poll chain. `None` leaves every
+/// admitted claim Proposed and the chain running.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one poll run, its screen, and the installed feed's owner"
+)]
+pub(super) fn run_feed_poll(
+    vault: &Vault,
+    fetcher: &dyn IcsFeedFetcher,
+    screener: Option<&dyn CalendarBodyScreener>,
+    safeguard_enabled: bool,
+    config: &IcsFeedPollConfig,
+    now: u64,
+    jitter_seed: u64,
+    installed_owner: Option<&AuthenticatedOwner>,
+) -> Result<IcsPollRunState, CalendarError> {
     config.validate()?;
     let cursor_digest = ics_feed_cursor_digest(config);
     let prior_cursor =
@@ -354,6 +395,13 @@ pub fn run_ics_feed_poll_with_screener(
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
         IcsFetchResponse::Complete { etag, body } => {
+            // Read again under the turn: another poll of this feed may have
+            // opened its review since this one was let through.
+            if installed_owner.is_some()
+                && let Some(hold) = super::consent::poll_hold(vault, config)?
+            {
+                return Err(ingest(hold));
+            }
             let source = archive_raw_feed(vault, config, &body, now)?;
             let blob_ref = source.blob_ref();
             let feed = parse_ics_feed(&body)?;
@@ -369,9 +417,21 @@ pub fn run_ics_feed_poll_with_screener(
                 verdict_fold: VerdictFold::default(),
                 continuations: Some(Vec::new()),
                 owed_booking_moves: 0,
+                admitted_claims: Vec::new(),
             };
             admission.apply_feed(&feed)?;
             admission.sweep_absent_sources(&feed)?;
+            let consent = installed_owner
+                .map(|owner| {
+                    super::consent::settle_completed_poll(
+                        vault,
+                        owner,
+                        config,
+                        &admission.admitted_claims,
+                        now,
+                    )
+                })
+                .transpose()?;
             // A booking move a pending emergency delivery held back stays
             // owed (FIX 22385): the cursor keeps no ETag, so the next poll
             // reads the whole feed again rather than a not-modified answer,
@@ -392,6 +452,9 @@ pub fn run_ics_feed_poll_with_screener(
                     ..IcsFeedCursor::new(config)
                 },
             )?;
+            if let Some(super::consent::CompletedPollConsent::OpenedReview { claims }) = consent {
+                return Ok(IcsPollRunState::AwaitingReview { claims });
+            }
             let next_not_before = reenqueue(vault, config, now, jitter_seed)?;
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
@@ -423,21 +486,6 @@ pub fn ics_feed_pause_exceptions(
         });
     }
     Ok(rows)
-}
-
-/// Host-visible snapshot of one feed's poll cursor. Carries the custody
-/// record name and provider ETag — never the resolved URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IcsFeedCursorSnapshot {
-    /// The ETag the next poll sends as `If-None-Match`, when one is held.
-    pub etag: Option<String>,
-    /// When the last complete feed was applied.
-    pub last_complete_at: Option<u64>,
-    /// Whether the feed is paused awaiting owner input.
-    pub paused: bool,
-    /// The worst CAL-09 screen-verdict class the last run admitted under
-    /// (`clear`, `flagged`, `indeterminate`, or `skipped`).
-    pub last_screen_verdict: Option<String>,
 }
 
 /// Reads one feed's cursor as a host-visible snapshot. `None` means no poll

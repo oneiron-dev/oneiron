@@ -29,13 +29,13 @@ use serde::{Deserialize, Serialize};
 use super::contribution::{followed_in_txn, with_recorded_checks_in_txn};
 use super::contribution_targets::CheckedEdge;
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, LateCreditShare, shares_in_txn};
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::AttemptQueue;
 use crate::claim::learning_evidence::LearningEvidence;
 use crate::claim::learning_evidence::Observation;
 use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
 use crate::learning::LearningCell;
-use crate::receipt::{PackAttributionFields, PackLearningContext};
+use crate::receipt::{PackAttributionFields, PackLearningContext, parse_attempt_pack_receipt_id};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::team::receipt::capture_parents_in_txn;
@@ -60,28 +60,8 @@ enum CreditJoinRow {
     Adjustment(CreditAdjustmentReceipt),
 }
 
-/// One immutable change to an anchored outcome's effective late credit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CreditAdjustmentReceipt {
-    pub receipt_id: String,
-    /// The sealed credit receipt it adjusts, whose evidence key it reuses.
-    pub base: String,
-    /// The adjustment it follows; `None` when it follows the sealed receipt.
-    pub previous: Option<String>,
-    /// Every matched check the effective credit joins beyond the sealed
-    /// receipt's, by receipt.
-    pub checks: Vec<String>,
-    /// Every late landed use it joins beyond the sealed receipt's; each end
-    /// `None` once that entity is erased.
-    pub landed: Vec<CheckedEdge>,
-    /// Each subject credited directly, the sealed receipt's first; `None`
-    /// for one since erased.
-    pub direct_subjects: Vec<Option<EntityId>>,
-    /// The effective shares, each with its used chain.
-    pub shares: Vec<LateCreditShare>,
-    /// When it was appended.
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_attribution::credit_join::CreditAdjustmentReceipt;
 
 /// The adjustments appended to the sealed credit receipt `receipt_id`,
 /// oldest first. The receipt itself reads as it was sealed
@@ -774,7 +754,7 @@ fn landed_in_txn(
     txn: &heed::RoTxn<'_>,
     attempt_receipt: &str,
 ) -> Result<Vec<(EntityId, EntityId)>> {
-    let Some(attempt) = receipt_attempt(attempt_receipt) else {
+    let Some(attempt) = parse_attempt_pack_receipt_id(attempt_receipt) else {
         return Ok(Vec::new());
     };
     let Some(record) = AttemptQueue::from_store(&vault.store).get_in_txn(txn, attempt)? else {
@@ -786,13 +766,6 @@ fn landed_in_txn(
         attempt,
         record.attempt_count,
     )
-}
-
-/// The attempt a terminal pack receipt names, when it is one.
-fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
-    let (_, hex) = receipt.rsplit_once(':')?;
-    let attempt = AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes()).ok()?;
-    (crate::receipt::attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
 }
 
 /// Runs `reconcile` in a savepoint of `wtxn` that commits only when all of

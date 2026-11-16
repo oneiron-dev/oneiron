@@ -2,7 +2,7 @@
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill::SkillLifecycle;
-use crate::skill_optimize::{self as optimize, GoalAxisBandit, GoalAxisReport, HeldOutReplayNotes};
+use crate::skill_optimize::{self as optimize, GoalAxisBandit, HeldOutReplayNotes};
 use crate::workspace_roster::{GoalInterviewTurns, GoalRecord};
 use crate::{EntityId, Error, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
@@ -159,22 +159,14 @@ fn goal_view(project: EntityId, goal: Option<(EntityId, GoalRecord)>) -> Project
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeProposeRequest {
-    pub skill: EntityId,
-    pub expected_version: String,
-    /// A real skill_optimize queue attempt; never a caller-chosen cycle label.
-    pub attempt_ref: EntityId,
-    pub desc: String,
-    pub rationale: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillOptimizeProposalReceipt {
-    pub skill: EntityId,
-    pub proposal: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::goal_optimize::{
+    SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision,
+    SkillOptimizeGoalView, SkillOptimizeMeasureRequest, SkillOptimizeMeasurement,
+    SkillOptimizePreferencesSetRequest, SkillOptimizeProposalReceipt, SkillOptimizeProposalRequest,
+    SkillOptimizeProposeRequest, SkillOptimizeTradeoffPickRequest,
+    SkillOptimizeTradeoffResolveRequest, TradeoffCapacityAdvisory,
+};
 
 pub fn skill_optimize_propose_as_owner(
     vault: &Vault,
@@ -199,27 +191,6 @@ pub fn skill_optimize_propose_as_owner(
 fn attempt(id: EntityId) -> MemoryResult<crate::attempt_queue::AttemptId> {
     crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())
         .map_err(|_| MemoryError::bad_request("invalid attempt_ref"))
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeProposalRequest {
-    pub proposal: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeMeasureRequest {
-    pub proposal: EntityId,
-    #[serde(default)]
-    pub pulls_per_axis: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillOptimizeMeasurement {
-    pub preflight: optimize::SkillEditPreflight,
-    /// Absent on a failed floor: no online pull is spent.
-    pub report: Option<GoalAxisReport>,
 }
 
 pub fn skill_optimize_measure_as_owner(
@@ -320,21 +291,6 @@ fn result(
     )
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeGoalRequest {
-    pub skill: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillOptimizeGoalView {
-    pub goal_id: EntityId,
-    pub goal_revision: String,
-    pub axes: Vec<optimize::GoalAxisSpec>,
-    pub project: Option<EntityId>,
-    pub goal_claim: Option<EntityId>,
-}
-
 pub fn skill_optimize_goal_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -348,46 +304,6 @@ pub fn skill_optimize_goal_as_owner(
         project: goal.project.map(|(project, _)| project),
         goal_claim: goal.project.map(|(_, claim)| claim),
     })
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeGoalBindRequest {
-    pub skill: EntityId,
-    /// None unbinds; it never edits the project's goal record.
-    pub project: Option<EntityId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SkillOptimizeGoalRevision {
-    pub goal_revision: String,
-    /// The tradeoff capacity crossings the goal's rules stand over now, if
-    /// any; set only by the preference write, never by the goal bind.
-    pub tradeoff_capacity_advisory: Option<Vec<TradeoffCapacityAdvisory>>,
-}
-
-/// One policy limit a goal's tradeoff rules have crossed (FIX 9123): the
-/// capacity advisory the gate logs, carried on the preference write
-/// response and the ask view. Advisory only: nothing was refused, and
-/// every pending decision keeps its durable ask.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TradeoffCapacityAdvisory {
-    /// More authored rules than `max_authored_rules`.
-    AuthoredRules { held: u64, limit: u64 },
-    /// More learned picks than a finite `max_learned_rules`.
-    LearnedRules { held: u64, limit: u64 },
-}
-
-impl TradeoffCapacityAdvisory {
-    /// The reason code the gate logs for this crossing.
-    #[must_use]
-    pub const fn reason_code(self) -> &'static str {
-        match self {
-            Self::AuthoredRules { .. } => "gate.tradeoff_authored_rules_over_policy",
-            Self::LearnedRules { .. } => "gate.tradeoff_learned_rules_over_policy",
-        }
-    }
 }
 
 /// The capacity crossings `preferences` stands over now, against its
@@ -439,14 +355,6 @@ pub fn skill_optimize_goal_bind_as_owner(
         goal_revision: optimize::set_skill_goal_project(vault, owner, &input.skill, input.project)?,
         tradeoff_capacity_advisory: None,
     })
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizePreferencesSetRequest {
-    pub skill: EntityId,
-    pub rules: Vec<optimize::TradeoffRule>,
-    pub jev_band: Option<crate::llm::decision::DecisionBand>,
 }
 
 pub fn skill_optimize_preferences_as_owner(
@@ -542,15 +450,6 @@ pub fn skill_optimize_tradeoff_asks_for(
         .collect()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeTradeoffPickRequest {
-    pub proposal: EntityId,
-    pub question_digest: String,
-    /// Both approve and reject learn the responsible person's preference.
-    pub choice: optimize::TradeoffChoice,
-}
-
 pub fn skill_optimize_tradeoff_pick_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -599,18 +498,6 @@ pub fn skill_optimize_tradeoff_pick_by(
         verdict: Some(view.clone()),
         verdicts: vec![view],
     })
-}
-
-/// The owner's decision on one exact pending tradeoff (FIX 9125): the
-/// proposal, the pending verdict the ask names, the bounded decision
-/// evidence reference, and approve or reject.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SkillOptimizeTradeoffResolveRequest {
-    pub proposal: EntityId,
-    pub pending: EntityId,
-    pub evidence: String,
-    pub choice: optimize::TradeoffChoice,
 }
 
 /// Applies the owner's tradeoff decision: an approval writes an

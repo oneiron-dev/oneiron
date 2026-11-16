@@ -97,7 +97,7 @@ pub(super) fn anchored_rows_in_txn(
                         cell: held.cell.clone(),
                         subject: *subject,
                         receipt,
-                        attempt: credit.attempt_receipt.clone(),
+                        attempt: credit.attempt_receipt,
                         row,
                     });
                     continue;
