@@ -674,7 +674,7 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect();
     assert_eq!(
         users,
@@ -709,7 +709,7 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect();
     assert_eq!(
         users,
@@ -745,7 +745,7 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect();
     assert_eq!(
         users,
@@ -820,12 +820,12 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
 }
 
 /// Each user message's words and who said them when it was not the owner.
-fn said_by(conversations: &[HistoryConversation]) -> Vec<(&str, Option<&'static str>)> {
+fn said_by(conversations: &[HistoryConversation]) -> Vec<(&str, Option<&str>)> {
     conversations[0]
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect()
 }
 
@@ -871,7 +871,7 @@ fn owner_words_an_ambiguous_codex_copy_landed_first_land_again_from_their_own_ro
         0,
     );
     let owners = ledger::content_hash(&words);
-    words.said_by = Some(super::UNKNOWN_SPEAKER);
+    words.said_by = Some(super::UNKNOWN_SPEAKER.to_owned());
     let unknown = ledger::content_hash(&words);
 
     // The ambiguous copy first: the root's words land, speaker unknown.

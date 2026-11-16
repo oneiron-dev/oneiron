@@ -709,6 +709,7 @@ fn an_act_whose_record_was_erased_without_its_claim_reads_as_erased() {
             reason: "user_hard_delete".to_owned(),
             receipt_ref: None,
             state: DeleteRequestState::Applied,
+            check_in: None,
         }
     );
     assert!(erased(&owners.vault, &owners.b));

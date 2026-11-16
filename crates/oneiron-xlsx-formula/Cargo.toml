@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 oneiron-docedit = { path = "../oneiron-docedit" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 # Exact upstream releases; the root manifest patches all five to the org fork
 # by rev (docs/ops/forked-dependencies.md).
 formualizer-workbook = { version = "=0.9.3", default-features = false, features = ["xlsx-recalc"] }

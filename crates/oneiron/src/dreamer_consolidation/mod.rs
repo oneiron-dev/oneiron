@@ -62,6 +62,7 @@ mod person_about;
 mod provenance;
 mod recipe_failure;
 pub(crate) mod redirty;
+mod relation_extraction;
 mod request_sources;
 mod residency;
 mod resident_dream;
@@ -78,6 +79,7 @@ pub mod routing;
 mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
+pub(crate) mod setting_keys;
 mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
@@ -90,7 +92,7 @@ mod task_realize;
 mod thing_agent;
 mod turn_text;
 mod wake_plan;
-mod watermark;
+pub(crate) mod watermark;
 mod weave_lens;
 
 #[cfg(test)]
@@ -178,6 +180,8 @@ pub use thing_agent::{
     ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingPortCall, ThingPortReply,
     ThingPortRequest, ThingProposalRef,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use turn_text::MessageSpan;
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
     scoped_turn_body_text_in, scoped_turn_text_in,

@@ -37,7 +37,8 @@ use super::super::super::replay_capsule::{
 };
 use super::super::StartCompaction;
 use super::super::fold_answers::words_withdrawn;
-use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output};
+use super::super::records::{FinishedOutput, finish_output};
+use super::super::replay_rows;
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::declarations::stored_request_hash;
 use super::erase::actor_gone_in_txn;
@@ -497,7 +498,7 @@ fn admitted_start(
     capture: &StepCapture<'_>,
     start: &StepStartCapture<'_>,
 ) -> Result<Option<AdmittedStart>> {
-    let Some(stored) = REPLAY_RECORDS.get(&vault.store, wtxn, &capture.run)? else {
+    let Some(stored) = replay_rows::get(&vault.store, wtxn, &capture.run)? else {
         return Ok(None);
     };
     let generation = stored.generation()?;
@@ -505,7 +506,7 @@ fn admitted_start(
         return Ok(None);
     }
     let mut source = stored.clone();
-    REPLAY_RECORDS.admit(vault, wtxn, &capture.run, &mut source)?;
+    replay_rows::admit(vault, wtxn, &capture.run, &mut source)?;
     // A spawn whose target an erase took keeps no ask in the row or in the
     // prefix taken from it (FIX 9180).
     let source = fence_spawn_targets_in_txn(&vault.store, wtxn, Cow::Owned(source))?.into_owned();
@@ -513,7 +514,7 @@ fn admitted_start(
         if source.generation()? != generation {
             return Ok(None);
         }
-        REPLAY_RECORDS.put(vault, wtxn, &capture.run, &source)?;
+        replay_rows::put(vault, wtxn, &capture.run, &source)?;
     }
     let mut prefix = source;
     prefix.live_run = None;
