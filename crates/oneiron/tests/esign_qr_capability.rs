@@ -237,12 +237,18 @@ fn sealed_with(draft: Draft) -> TestResult<Sealed> {
         .ok_or("no signing capability")?
         .1;
     oneiron::test_support::mark_esign_sent(&vault, id, actor, now)?;
+    // UETA section 10: the approver reviews before they complete.
+    assert!(matches!(
+        vault.execute_signing_action(&signing, &SigningAction::Review, None, None)?,
+        SigningOutcome::Page(_)
+    ));
     assert_eq!(
         vault.execute_signing_action(
             &signing,
             &SigningAction::Complete {
                 consent: true,
-                next: None
+                next: None,
+                check_in_ref: None
             },
             None,
             None,
