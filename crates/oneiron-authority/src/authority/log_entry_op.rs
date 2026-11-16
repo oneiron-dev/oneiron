@@ -236,6 +236,22 @@ pub enum AuthorityOp {
     GrantAct(GrantActRecord),
 }
 
+impl AuthorityOp {
+    /// The Grants this op gives or ends on their grant lines (pass 28): the owner's agent
+    /// Grant mint or revoke, a general grant act's row, a slip grant revoke's Grant and each
+    /// Grant a membership record withdraws; none for any other op.
+    #[must_use]
+    pub fn grant_line_subjects(&self) -> Vec<EntityId> {
+        match self {
+            Self::AgentGrantAct(record) => vec![record.grant],
+            Self::GrantAct(record) => vec![record.subject],
+            Self::SlipGrantRevoke { grant_ref, .. } => vec![*grant_ref],
+            Self::MembershipExecution(record) => record.withdrawn_grants.clone(),
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// A canonical, signed AUTHORITY_LOG entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityLogEntry {

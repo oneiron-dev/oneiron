@@ -71,3 +71,26 @@ pub fn grant_row(vault: &Vault, id: EntityId) -> Result<Option<Vec<u8>>> {
         _ => None,
     })
 }
+
+/// Replays the admin ruling claim `ruling` that `from` stores, with the anchor entity it names
+/// as its subject, into `to` through the replay door, as sync delivers them (review #8852).
+///
+/// # Errors
+///
+/// [`crate::Error::EntityNotFound`] for a ruling `from` holds no claim row for, a body that
+/// does not decode, or the replay door's refusal.
+pub fn replicate_admin_ruling(from: &Vault, to: &Vault, ruling: EntityId) -> Result<()> {
+    let anchor = {
+        let txn = from.store.env.read_txn()?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&from.store, &txn, &ruling)?
+            .ok_or(crate::Error::EntityNotFound)?;
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(crate::Error::EntityNotFound)?;
+        match crate::claim::decode_claim_body(body, true)?.subject {
+            crate::claim::ClaimSubject::Entity(anchor) => anchor,
+            _ => return Err(crate::Error::EntityNotFound),
+        }
+    };
+    super::host_taint_replica::replicate_entities(from, to, &[anchor, ruling])
+}
