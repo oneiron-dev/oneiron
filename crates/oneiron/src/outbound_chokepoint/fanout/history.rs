@@ -11,6 +11,7 @@ pub(crate) fn admit_fanout_with_history(
     plan: &FanoutPlan,
     threshold: Option<u32>,
     history: FanoutHistory<'_>,
+    standing_row: Option<&str>,
     auto: &dyn FanoutAutoDecider,
     surface: &mut dyn FanoutSurfaceSink,
     now_ms: u64,
@@ -20,7 +21,15 @@ pub(crate) fn admit_fanout_with_history(
         let estimate = estimate_of(&canonical);
         return pause(&canonical, estimate, Some(pathology), surface, now_ms);
     }
-    admit_fanout_plan(plan, threshold, history.peer_rates, auto, surface, now_ms)
+    admit_fanout_plan(
+        plan,
+        threshold,
+        history.peer_rates,
+        standing_row,
+        auto,
+        surface,
+        now_ms,
+    )
 }
 
 pub(crate) fn fanout_history_pathology(
