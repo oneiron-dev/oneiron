@@ -7,24 +7,16 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeKind;
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::temporal::TimeRange;
 use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 const AUTHOR_KIND: &str = "memory_skill_author";
 const AUTHOR_PROOF: &str = "memoryAuthorDecision";
 
-/// The skill and its immutable birth-author receipt, not an activation grant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillAuthoringReceipt {
-    #[serde(with = "super::authorship::entity_serde")]
-    pub skill_id: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub author: EntityId,
-    pub author_receipt: String,
-    pub version: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::skill_authoring::SkillAuthoringReceipt;
 
 /// The exact birth-author decision ID a skill names in its provenance.
 fn named_author_proof(record: &SkillRecord) -> Result<&str, Error> {
@@ -395,15 +387,19 @@ impl Memory<'_> {
         record.lifecycle_status = SkillLifecycle::Candidate;
         record.approval_status = ClaimApprovalStatus::Proposed;
         record.governance_tier = None;
-        let mut receipt = decision(
-            actor,
-            AUTHOR_KIND,
-            "recorded",
-            "gate.memory.skill_authored",
-            Some(id),
-            vec![1],
-            now,
-        );
+        // The proof names the row, and the row's handle hashes the record
+        // that holds the proof, so the row is minted first and appended last.
+        let mut receipt = self.vault.store.mint_gate_receipt_in_txn(
+            txn,
+            decision(
+                actor,
+                AUTHOR_KIND,
+                GateReceiptOutcome::Noted,
+                "gate.memory.skill_authored",
+                Some(id),
+                vec![1],
+            ),
+        )?;
         let Value::Map(entries) = &mut record.provenance else {
             return Err(authority_denied("skill provenance must be a map").into());
         };

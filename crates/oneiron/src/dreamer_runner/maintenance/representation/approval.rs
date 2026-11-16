@@ -15,8 +15,8 @@ use crate::memory::{
 use crate::outbound::{
     OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{ClaimApprovalStatus, EdgeActorClass, EntityId, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
@@ -70,45 +70,9 @@ struct ApprovalRecord {
     revision: [u8; 32],
     owner: ApprovalOwner,
 }
-/// The owner an arm or a plan's envelope names: an actor, or no one once
-/// that actor was erased (FIX 3520, 4512), and then the arm stands on no
-/// receipt and the plan reviews nothing. It reads and writes as the actor's
-/// hex id, or as [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ApprovalOwner {
-    Actor(EntityId),
-    Erased,
-}
-impl ApprovalOwner {
-    /// Whether this is `actor`.
-    pub(super) fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-}
-impl Serialize for ApprovalOwner {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-impl<'de> Deserialize<'de> for ApprovalOwner {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::representation::approval::ApprovalOwner;
+
 /// The owner's receipt an arm stands on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,7 +142,7 @@ impl Vault {
         }
         validate_packet(self, &record.packet, record.request.owner)?;
         let ReviewBasis::Bundle(bundle_id) = review.basis else {
-            self.arm_saved_plan(owner, review, now)?;
+            self.arm_saved_plan(owner, review)?;
             return self.approved_representation(&review.id);
         };
         match body.approval {
@@ -264,7 +228,6 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         review: &RepresentationReview,
-        now: u64,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
             let actor =
@@ -285,16 +248,14 @@ impl Vault {
             {
                 return Ok(());
             }
-            let mut receipt = applied::decision(
+            let receipt = applied::decision(
                 WriteActor::new(actor, EdgeActorClass::Human),
                 SEND_REVIEW_KIND,
                 SEND_REVIEW_REASON,
                 MaintenanceTarget::Finding(review.id),
                 review.record.revision.to_vec(),
-                now,
             );
-            self.store
-                .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+            let receipt = self.store.record_gate_receipt_in_txn(txn, receipt)?;
             let approval = ApprovalRecord {
                 witness: OwnerWitness::SendReview(receipt.decision_id),
                 revision: review.record.revision,
@@ -386,7 +347,24 @@ fn is_owner_witness(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> 
     let ApprovalOwner::Actor(owner) = approval.owner else {
         return false;
     };
-    if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
+    let approved = match receipt.gate_outcome() {
+        Some(GateReceiptOutcome::Approved) => true,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !approved || receipt.redacted_at.is_some() {
         return false;
     }
     match approval.witness {
@@ -434,7 +412,24 @@ pub(crate) fn representation_approval_is_live_in_txn(
     let Some(claim) = receipt.claim_id else {
         return Ok(false);
     };
-    if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
+    let approved = match receipt.gate_outcome() {
+        Some(GateReceiptOutcome::Approved) => true,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !approved || receipt.redacted_at.is_some() {
         return Ok(false);
     }
     let Some(approval) = APPROVAL.get(&vault.store, txn, &EntityId::from_bytes(claim)?)? else {
