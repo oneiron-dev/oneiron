@@ -7,23 +7,20 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::ENTITY_ID_LEN;
 use oneiron_contracts::entity_id::EntityId;
-
-const CODEBASE_ASSET_ID_DOMAIN: &[u8] = b"oneiron:codebase-asset-entity:v1";
-
-const CODEBASE_SNAPSHOT_ID_DOMAIN: &[u8] = b"oneiron:codebase-snapshot-entity:v2";
+use oneiron_contracts::fingerprint::purposes;
 
 pub fn codebase_asset_entity_id(
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<EntityId> {
-    entity_id_from_hash_material(CODEBASE_ASSET_ID_DOMAIN, &[content_hash])
+    EntityId::derive_legacy_material(purposes::code::CODEBASE_ASSET, &[content_hash])
 }
 
 /// The immutable capture's CODE id (FIX 4299): its scope, its file
 /// manifest and its source revision. The scope no longer holds the commit,
 /// so the canonical repo_ref, which does, keeps one capture per revision.
 pub fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        CODEBASE_SNAPSHOT_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::CODEBASE_SNAPSHOT,
         &[
             &snapshot.scope_key,
             &snapshot.fork_hash,
@@ -32,6 +29,10 @@ pub fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<Entity
     )
 }
 
+/// The legacy material id rule under a bare domain: the bytes of
+/// [`EntityId::derive_legacy_material`] under a legacy purpose whose tag is `domain`.
+/// Only the core's call sites use it, until PLAN-UC-04 2.3 names their legacy
+/// purposes and deletes it; a new call is a review finding.
 pub fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
     for salt in 0_u64..=u64::MAX {
         let mut hasher = blake3::Hasher::new();

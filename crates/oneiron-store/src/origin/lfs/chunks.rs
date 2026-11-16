@@ -5,6 +5,7 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_base::registry::ENTITY_TYPE_ASSET;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use oneiron_contracts::record_layout::EntityMetadataHeader;
 use rand_core::{OsRng, RngCore};
@@ -17,7 +18,6 @@ pub const LFS_CHUNK_AVG: usize = 64 * 1024;
 pub const LFS_CHUNK_MAX: usize = 128 * 1024;
 
 pub const MANIFEST_MAGIC: &[u8; 8] = b"LFSCDC01";
-pub const CHUNK_DOMAIN: &[u8] = b"oneiron:origin-lfs-chunk:v1";
 
 /// Generates the nonzero vault-private seed for the store's creation transaction.
 /// The typed table cannot write until the vault's database manifest exists.
@@ -49,7 +49,7 @@ pub fn invalid(why: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidLfsObject(why))
 }
 pub fn chunk_id(hash: &[u8; 32]) -> Result<EntityId> {
-    crate::code_snapshot::ids::entity_id_from_hash_material(CHUNK_DOMAIN, &[hash])
+    EntityId::derive_legacy_material(purposes::origin::LFS_CHUNK, &[hash])
 }
 pub fn checked_chunk(chunk: &LfsChunkRef, bytes: Vec<u8>) -> Result<Vec<u8>> {
     if bytes.len() != chunk.size as usize || blake3::hash(&bytes).as_bytes() != &chunk.hash {

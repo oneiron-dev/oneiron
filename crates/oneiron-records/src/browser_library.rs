@@ -13,7 +13,6 @@ pub use crate::browser_library::evidence::SOLVED_RUN_DOMAIN;
 pub use crate::browser_library::evidence::SOLVED_SCOPE_DOMAIN;
 pub use crate::browser_library::evidence::SolvedRunScope;
 pub use crate::browser_library::evidence::SolvedSource;
-pub use crate::browser_library::evidence::WORKFLOW_FILING_DOMAIN;
 pub use crate::browser_library::evidence::workflow_filing_id;
 use oneiron_browser::RecentCounts;
 use oneiron_contracts::entity_id::EntityId;

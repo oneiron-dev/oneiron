@@ -3,10 +3,8 @@
 //! store's export and archive paths derive the same id to find it.
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 pub fn birth_source_id(child: &EntityId) -> Result<EntityId> {
-    crate::code_snapshot::ids::entity_id_from_hash_material(
-        b"oneiron.agent-birth-source.v1",
-        &[child.as_bytes()],
-    )
+    EntityId::derive_legacy_material(purposes::agent_def::BIRTH_SOURCE, &[child.as_bytes()])
 }
