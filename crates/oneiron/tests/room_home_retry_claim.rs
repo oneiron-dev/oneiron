@@ -22,11 +22,17 @@
 //!   only on its own claim or task, so its press addresses no one).
 //! - The claim the Retry took holds the root for B, and its receipt names
 //!   owen, who pressed Retry.
+//! - The press, not a naming, addresses B on the root: owen never names B
+//!   there and B holds no thread task, yet each Retry's answer passes the
+//!   participation gate. A second Retry, of B's new reply, lands a third
+//!   reply on the claim the first one took (REVIEW-9153 round 2, P1 1).
 //! - Under `--cfg oneiron_test_support`: erasing the person who pressed Retry
 //!   leaves no claim row, and no carried copy of one, naming that person
-//!   (HOMERETRY-CLAIM-AUTHOR = B, Engine 16 Nov 23:32).
+//!   (HOMERETRY-CLAIM-AUTHOR = B, Engine 16 Nov 23:32); and a carried copy
+//!   naming the author never restores an erased author this vault holds
+//!   (REVIEW-9153 round 2, P1 2).
 //!
-//! The first three use public paths only; the erase case reads and plants
+//! The first four use public paths only; the erase case reads and plants
 //! claim rows through `oneiron::test_doors::room_claim_erase`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test room_home_retry_claim`.
 
@@ -391,10 +397,20 @@ fn origin() -> TestResult<Origin> {
 /// Owen's Retry of B's reply, claimed as the host's turn-action worker
 /// claims it.
 fn queue_retry(origin: &Origin) -> TestResult<TurnActionAttempt> {
+    queue_retry_of(origin, origin.reply_turn, origin.reply_message)
+}
+
+/// Owen's Retry of `message`, B's generated reply on `turn`, claimed as the
+/// host's turn-action worker claims it.
+fn queue_retry_of(
+    origin: &Origin,
+    turn: EntityId,
+    message: EntityId,
+) -> TestResult<TurnActionAttempt> {
     let receipt = origin.owen().conversations_turn_retry(&TurnActionRequest {
-        turn_id: origin.reply_turn.to_hex(),
+        turn_id: turn.to_hex(),
     })?;
-    assert_eq!(receipt.turn_id, origin.reply_turn.to_hex());
+    assert_eq!(receipt.turn_id, turn.to_hex());
     let claimed = AttemptQueue::new(&origin.vault).claim_kind(
         TURN_ACTION_ATTEMPT_KIND,
         ClaimAttempt {
@@ -407,8 +423,8 @@ fn queue_retry(origin: &Origin) -> TestResult<TurnActionAttempt> {
     };
     let action = TurnActionAttempt::decode(&attempt)?;
     assert_eq!(action.conversation, origin.room);
-    assert_eq!(action.assistant_turn, origin.reply_turn);
-    assert_eq!(action.message, origin.reply_message);
+    assert_eq!(action.assistant_turn, turn);
+    assert_eq!(action.message, message);
     assert_eq!(action.actor, origin.owen);
     Ok(action)
 }
@@ -529,6 +545,54 @@ fn the_claim_a_home_room_retry_takes_holds_the_root_for_the_agent_and_names_the_
     };
     assert_eq!(receipt.room_id, origin.room.to_hex());
     assert_eq!(receipt.turn_id, origin.root.to_hex());
+    assert_eq!(receipt.actor, origin.agent_b.to_hex());
+    assert_eq!(
+        receipt.receipt_ref,
+        format!("{RETRY_CLAIM_RECEIPT_PREFIX}{}", origin.owen.to_hex())
+    );
+    Ok(())
+}
+
+/// Test 4 (REVIEW-9153 round 2, P1 1): owen's press, not a naming,
+/// addresses B on the root. Owen never names B there and B holds no thread
+/// task, so the participation gate lets B answer only on the press; its
+/// accepted offer bound only its first turn. Owen's second Retry, of B's
+/// new reply, lands a third reply on the claim the first Retry took, which
+/// still holds the root for B and names owen.
+#[test]
+fn a_second_home_room_retry_lands_on_the_claim_the_first_one_took() -> TestResult {
+    let origin = origin()?;
+    let first = retry_lands(&origin)?;
+    let first_turn = EntityId::from_hex(&origin.row_holding(first)?.turn_id)?;
+    let action = queue_retry_of(&origin, first_turn, first)?;
+    let second = answer_retry(&origin, &action)?;
+    assert_ne!(second, first);
+    assert_ne!(second, origin.reply_message);
+    assert!(
+        origin
+            .vault
+            .edges_out(&second)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Regenerates && edge.target == first),
+        "the third reply names the reply it answers again"
+    );
+    let second_row = origin.row_holding(second)?;
+    assert_ne!(second_row.turn_id, first_turn.to_hex());
+    assert_ne!(second_row.turn_id, origin.reply_turn.to_hex());
+    assert_eq!(second_row.actor, origin.agent_b.to_hex());
+    assert_eq!(second_row.reply_to, Some(origin.root.to_hex()));
+    assert_eq!(second_row.thread_of, Some(origin.anchor.to_hex()));
+    assert!(
+        origin.row(origin.root)?.addressed_agents.is_empty(),
+        "no Retry names B on the root"
+    );
+    let probe =
+        origin
+            .owen()
+            .rooms_claim(origin.room, origin.root, origin.vault.now_recorded_at())?;
+    let RoomClaimOutcome::HeldBy(receipt) = probe else {
+        return Err(format!("the root holds no claim of B's: {probe:?}").into());
+    };
     assert_eq!(receipt.actor, origin.agent_b.to_hex());
     assert_eq!(
         receipt.receipt_ref,
@@ -668,6 +732,48 @@ mod erase {
                 "a claim row still names the erased presser: {row:?}"
             );
         }
+        Ok(())
+    }
+
+    /// REVIEW-9153 round 2, P1 2: a vault holding a Retry's claim with its
+    /// author erased, and no marker for that person, merges a carried copy
+    /// of the same receipt that still names the author. The two forms are
+    /// one receipt, so the erased form stays and the merge holds it; the
+    /// conflict order between two receipts, where "erased" sorts after an
+    /// id starting "01", never decides it. The same holds for a held claim
+    /// whose holder is erased, met by a copy naming its holder.
+    #[test]
+    fn a_carried_copy_naming_the_author_never_restores_an_erased_retry_author() -> TestResult {
+        let directory = tempfile::tempdir()?;
+        let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
+        let owen = vault.ensure_embedded_owner_actor()?;
+        let room = home_room(&vault, owen, &[])?;
+        // A person this vault never erased, whose id sorts before the
+        // erased identity.
+        let author = EntityId::from_hex("0123456789abcdef0123456789abcdef")?.to_hex();
+        assert!(author.as_str() < ERASED_CALL_IDENTITY, "fixture: the order");
+        let agent = EntityId::now();
+        let author_turn = EntityId::now();
+        let holder_turn = EntityId::now();
+
+        let held_author = retry_claim(room, author_turn, agent, ERASED_CALL_IDENTITY, 100);
+        put_room_claim(&vault, &held_author)?;
+        assert_eq!(
+            merge_carried_room_claim(&vault, &retry_claim(room, author_turn, agent, &author, 100))?,
+            "held"
+        );
+        assert_eq!(held(&vault, author_turn)?, held_author);
+
+        let held_holder = RoomClaimReceipt {
+            actor: ERASED_CALL_IDENTITY.to_owned(),
+            ..retry_claim(room, holder_turn, agent, &author, 100)
+        };
+        put_room_claim(&vault, &held_holder)?;
+        assert_eq!(
+            merge_carried_room_claim(&vault, &retry_claim(room, holder_turn, agent, &author, 100))?,
+            "held"
+        );
+        assert_eq!(held(&vault, holder_turn)?, held_holder);
         Ok(())
     }
 }
