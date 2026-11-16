@@ -24,6 +24,7 @@ use crate::origin::secret_projection::{
 };
 use crate::{EdgeActorClass, EntityId};
 use crate::{code_revision::read_code_revision_blobs, store::code_revision_record::CodeRevision};
+use oneiron_contracts::fingerprint::ContentHash;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
@@ -109,7 +110,7 @@ impl Memory<'_> {
             .map(|(path, bytes)| {
                 CodebaseFileEntry::new(
                     path.clone(),
-                    *blake3::hash(bytes).as_bytes(),
+                    *ContentHash::of(bytes).as_bytes(),
                     bytes.len() as u64,
                 )
             })
