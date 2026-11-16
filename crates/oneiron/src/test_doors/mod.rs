@@ -54,6 +54,7 @@ pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
 pub mod dreamer_attempt_binding;
+pub mod dreamer_exclusion_forgets;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
