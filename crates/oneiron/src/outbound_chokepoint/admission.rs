@@ -992,7 +992,7 @@ fn calendar_admission_at_in_txn(
         &prepared.payload,
         now,
     )
-    .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite failed calendar admission"))
+    .map_err(IntentLedgerError::Calendar)
 }
 
 /// An absent binding means an ordinary non-step effect. A present binding is
