@@ -8,7 +8,6 @@
 //! the next call rather than asked twice. A speaker entered with no ask, one
 //! its roster placed or one in a project room, has no route.
 
-
 use super::*;
 use crate::conversation::{ContainerAttendee, ContainerAttendeeEvent};
 use crate::disclosure::{PREDICATE_DISCLOSURE_ATTENDEE_ASK, attendee_ask_ref};
