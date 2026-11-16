@@ -49,7 +49,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 use super::{
     FederationGrant, FederationGrantKind, FederationGrantScope, GitPushBounds, GitPushRepo,
-    decode_federation_grant_body, own_device_residence_scope,
+    decode_federation_grant_body_keyed, own_device_residence_scope,
 };
 
 /// The one-tap revoke command every GitPush grant carries.
@@ -78,30 +78,66 @@ impl GitPushGrantStanding {
 }
 
 impl Vault {
-    /// Every live GitPush grant of this vault, in id order. A row that does
-    /// not decode, or any Access grant, is none here.
+    /// Every GitPush grant of this vault the owner's counted mint gives, in
+    /// id order ([`Self::git_push_grant_rows_in_txn`]).
     pub(crate) fn git_push_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<GitPushGrantStanding>> {
+        Ok(self
+            .git_push_grant_rows_in_txn(txn)?
+            .into_iter()
+            .filter_map(|(standing, stands)| stands.then_some(standing))
+            .collect())
+    }
+
+    /// Every live GitPush grant row of this vault, in id order, with whether
+    /// the owner's counted mint gives it (pass 28 R3b2): a row no counted
+    /// mint gives (a forged row, one widened in place, one put back after its
+    /// revoke) confers nothing, and the registry shows it as revoked so the
+    /// owner still finds it and revokes it. A row that does not decode, or
+    /// any Access grant, is none here.
+    pub(crate) fn git_push_grant_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(GitPushGrantStanding, bool)>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut grants = Vec::new();
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
         {
-            if let Some(standing) = self.git_push_grant_in_txn(txn, id?)? {
-                grants.push(standing);
+            if let Some(row) = self.git_push_grant_row_in_txn(&fold, txn, id?)? {
+                grants.push(row);
             }
         }
         Ok(grants)
     }
 
-    /// The live GitPush grant `id`, read in `txn`; `None` for any other row.
+    /// The GitPush grant `id` as the owner's counted mint gives it, read in
+    /// `txn`; `None` for any other row.
     pub(crate) fn git_push_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
     ) -> Result<Option<GitPushGrantStanding>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(self
+            .git_push_grant_row_in_txn(&fold, txn, id)?
+            .and_then(|(standing, stands)| stands.then_some(standing)))
+    }
+
+    /// The live GitPush grant row `id`, read in `txn`, with whether the
+    /// owner's counted mint gives it under `fold`: the line is given in the
+    /// owner's agent Grant family, no counted act ended it, the mint states
+    /// the row term for term, and no withdrawal of it is held here while its
+    /// end is owed. `None` for any other row.
+    fn git_push_grant_row_in_txn(
+        &self,
+        fold: &crate::authority::AuthorityFold,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<(GitPushGrantStanding, bool)>> {
         let LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_FEDERATION_GRANT,
             body,
@@ -109,7 +145,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Ok(grant) = decode_federation_grant_body(&body) else {
+        let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(&body) else {
             return Ok(None);
         };
         let (FederationGrantKind::GitPush, Some(bounds), Some(delegated_by)) = (
@@ -119,17 +155,22 @@ impl Vault {
         ) else {
             return Ok(None);
         };
+        let stands = !crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, id)
+            && super::owner_agent_mint_in_fold(fold, id, &grant, terms_key.as_ref()).is_some();
         let created_at = self
             .store
             .port_entity_record(txn, &id)?
             .map_or(0, |row| row.learned_at);
-        Ok(Some(GitPushGrantStanding {
-            id,
-            grant,
-            bounds,
-            delegated_by,
-            created_at,
-        }))
+        Ok(Some((
+            GitPushGrantStanding {
+                id,
+                grant,
+                bounds,
+                delegated_by,
+                created_at,
+            },
+            stands,
+        )))
     }
 
     /// The grant scope this vault's own grants carry: the vault's recorded

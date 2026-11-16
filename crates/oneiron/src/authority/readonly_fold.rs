@@ -80,8 +80,9 @@ impl AuthorityView {
     }
 
     /// What `txn` holds over this view's signed log (FIX 22382): each
-    /// agent-carried act whose Grant it holds refused (contract §4, FIX
-    /// 4624, FIX 5660, [`super::carried_act`]), and each pact whose folded
+    /// agent-carried act whose Grant the fold's line does not name it, or
+    /// whose Grant `txn` holds withdrawn while its end is owed (contract §4,
+    /// FIX 4624, FIX 5660, [`super::carried_act`]), and each pact whose folded
     /// scope does not match its signed commitment under the live opening it
     /// holds (FIX 11730, [`super::pact_openings`]). Neither row moves the
     /// authority generation, so every read judges them in its own snapshot,
@@ -105,7 +106,6 @@ impl AuthorityView {
                 &self.fold,
                 use_past_standing,
                 preserved_world_acts,
-                &mut memo.logged,
             ),
             mismatched: super::pact_openings::scope_commitment_mismatches(
                 store,
@@ -214,9 +214,9 @@ struct OverlayMemo {
     logged: UnreadLogged,
 }
 
-/// The rows a fold's reads have logged as unread (FIX 23233): each agent
-/// act's Grant and each pact's opening that did not read is logged once per
-/// cached fold of an authority generation, not on every read. Every clone
+/// The rows a fold's reads have logged as unread (FIX 23233): each pact's
+/// opening that did not read is logged once per cached fold of an authority
+/// generation, not on every read. Every clone
 /// shares one set, so concurrent reads of one cached fold log a row once
 /// between them.
 #[derive(Clone, Default)]
@@ -227,21 +227,10 @@ pub(super) struct UnreadLogged {
 /// The rows [`UnreadLogged`] has logged.
 #[derive(Default)]
 struct UnreadRows {
-    grants: BTreeSet<AuthorityEntryHash>,
     openings: BTreeSet<[u8; 32]>,
 }
 
 impl UnreadLogged {
-    /// Whether the unread Grant of the act at `entry` is to be logged now:
-    /// the first time any read of this fold meets it.
-    pub(super) fn first_grant(&self, entry: AuthorityEntryHash) -> bool {
-        self.rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .grants
-            .insert(entry)
-    }
-
     /// Whether pact `pact_id`'s unread opening is to be logged now: the
     /// first time any read of this fold meets it.
     pub(super) fn first_opening(&self, pact_id: [u8; 32]) -> bool {

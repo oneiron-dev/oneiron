@@ -502,9 +502,11 @@ impl SealStanding {
     }
 }
 
-/// A decision seal's original causal standing, then its Grant. Only a NOW
-/// refusal with positive signed lifecycle proof for this exact bound seal
-/// is preserved; absent Grants and all original causal outcomes stay as before.
+/// A decision seal's original causal standing, then its Grant on the fold's
+/// own grant line (pass 28 R3b2): a Grant no counted owner's mint gives here
+/// refuses as a revoked one does. Only a NOW refusal with positive signed
+/// lifecycle proof for this exact bound seal is preserved; all original
+/// causal outcomes stay as before.
 pub(super) fn decision_standing_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -522,8 +524,8 @@ pub(super) fn decision_standing_in_txn(
         return Err(Error::InvariantViolation("decision seal authority"));
     };
     if let ActBy::Agent { agent, grant } = act.by
-        && grant_standing_in_txn(store, txn, grant, agent, act.act, core.at)?
-            == GrantStanding::Refused
+        && grant_standing_in_txn(store, txn, fold, grant, agent, act.act, core.at)
+            != GrantStanding::Names
         && !super::seal_standing::grant_preserves_seal_in_txn(store, txn, fold, fact, core)
     {
         return Ok(SealStanding::Refused);

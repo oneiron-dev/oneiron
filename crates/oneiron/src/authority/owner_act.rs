@@ -58,9 +58,8 @@ pub(crate) fn owner_act_signer_admits(
 /// carries, so the fold reads the one owner fact the log does carry: the
 /// owner's human actor bindings. An owner every binding of whom the log
 /// revoked is removed; an owner the log binds nowhere is trusted on the
-/// carrier's word, as a replica without an agent's Grant row trusts it, since
-/// the writer revalidated him in its own transaction (CALLS "mesh1b owner
-/// liveness in the fold", [`OWNER_UNBOUND_TRUSTS_CARRIER`]).
+/// carrier's word, since the writer revalidated him in its own transaction
+/// (CALLS "mesh1b owner liveness in the fold", [`OWNER_UNBOUND_TRUSTS_CARRIER`]).
 pub(super) fn owner_live_at(state: &FoldState, owner: EntityId) -> bool {
     let mut bound = false;
     for (key, binding) in &state.actor_bindings {
@@ -286,57 +285,105 @@ pub(super) fn signed_owner_agent_mint_names_topology_act(
         )
 }
 
-/// What this replica holds of an agent act's Grant.
+/// What the verified fold holds of an agent act's Grant (pass 28 R3b2, DESIGN 3.5): the
+/// fold's own grant line, never the Grant row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GrantStanding {
-    /// The Grant row is live here and names the act for the agent.
+    /// The owner's counted mint gives the Grant here, no counted act ended it, and the mint
+    /// names the act for the agent at the act's time.
     Names,
-    /// No Grant row and no deletion of it is held here (grant travel may keep
-    /// it off): the carrier is trusted, as for the owner's say-so (CALLS "mesh
-    /// agent grant on replicas").
+    /// No counted act names the Grant here. An agent act's Grant mint is in the act's own
+    /// ancestry (its writer stood on it), so a judge of a carried act refuses this; a carried
+    /// row outside the log (a free-time handoff) still trusts its carrier.
     Absent,
-    /// The Grant row is deleted, revoked, another kind, or names no such act:
-    /// a known revocation refuses.
+    /// The Grant's line ended, or a withdrawal of it is held here while its end is owed; the
+    /// line holds another family, or no one mint counts here in full; or the mint names no
+    /// such act.
     Refused,
 }
 
-/// How the Grant `grant` stands here for `agent`'s act `act` at `at`.
+/// How the Grant `grant` stands in `fold` for `agent`'s act `act` at `at`: what the fold's
+/// line for it says ([`AuthorityFold::standing_owner_agent_mint`]) and a withdrawal this
+/// install holds while the Grant's end is owed (FIX-LIST 5107), never the row. A row a
+/// replica holds or lacks, a forged row, one widened or narrowed in place and one put back
+/// after its revoke change nothing here.
 pub(crate) fn grant_standing_in_txn(
     store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    grant: EntityId,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+) -> GrantStanding {
+    if super::withdrawn_grant::grant_known_withdrawn_in_txn(store, txn, grant) {
+        return GrantStanding::Refused;
+    }
+    if fold.grant_line(grant).is_none() {
+        return GrantStanding::Absent;
+    }
+    match fold.standing_owner_agent_mint(grant) {
+        Some(mint) if mint_names_act(mint, agent, act, at) => GrantStanding::Names,
+        _ => GrantStanding::Refused,
+    }
+}
+
+/// Whether the owner's agent Grant mint `mint` names `act` for `agent` at `at`: the
+/// [`grant_names_act`] predicate over the mint's own terms.
+fn mint_names_act(
+    mint: &super::grant_lines::OwnerAgentMint,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+) -> bool {
+    scope_names_act(
+        &mint.scope,
+        mint.grant_kind,
+        mint.expires_at,
+        mint.member,
+        agent,
+        act,
+        at,
+    )
+}
+
+/// The agent Grant row `grant` as the owner's counted mint gives it at `at` under `fold`
+/// (pass 28 R3b2): live, its mint's row term for term, unexpired, no counted act ended it,
+/// and no withdrawal of it held here while its end is owed. `None` for every other row: one
+/// no counted mint gives, one widened in place, one put back after its revoke.
+fn standing_agent_grant_in_txn(
+    vault: &crate::Vault,
+    fold: &AuthorityFold,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+    at: u64,
+) -> crate::error::Result<Option<crate::federation::StandingGrant>> {
+    if super::withdrawn_grant::grant_known_withdrawn_in_txn(&vault.store, txn, grant) {
+        return Ok(None);
+    }
+    crate::federation::standing_grant_in_fold(
+        &vault.store,
+        fold,
+        txn,
+        grant,
+        GrantFamily::OwnerAgent,
+        at,
+    )
+}
+
+/// Whether the agent Grant row `grant` names `act` for `agent` at `at` as its counted mint
+/// gives it ([`standing_agent_grant_in_txn`]).
+fn agent_grant_names_act_in_txn(
+    vault: &crate::Vault,
+    fold: &AuthorityFold,
     txn: &heed::RoTxn<'_>,
     grant: EntityId,
     agent: EntityId,
     act: OwnerActKind,
     at: u64,
-) -> crate::error::Result<GrantStanding> {
-    // A Grant positively known withdrawn here stays withdrawn, whatever
-    // stands at its id now: a restored or re-put row, or none (FIX-LIST
-    // 5107). A marker that cannot be read leaves the reads below as before.
-    if super::withdrawn_grant::grant_known_withdrawn_in_txn(store, txn, grant) {
-        return Ok(GrantStanding::Refused);
-    }
-    Ok(
-        match crate::vault::live_entity_row_in_txn(store, txn, &grant)? {
-            crate::vault::LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-                body,
-            } => match crate::federation::decode_federation_grant_body(&body) {
-                Ok(decoded) if grant_names_act(&decoded, agent, act, at) => GrantStanding::Names,
-                _ => GrantStanding::Refused,
-            },
-            crate::vault::LiveEntityRow::Live { .. }
-            | crate::vault::LiveEntityRow::DeletedShell => GrantStanding::Refused,
-            crate::vault::LiveEntityRow::Absent => {
-                if crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &grant)?
-                    .deleted
-                {
-                    GrantStanding::Refused
-                } else {
-                    GrantStanding::Absent
-                }
-            }
-        },
-    )
+) -> crate::error::Result<bool> {
+    Ok(standing_agent_grant_in_txn(vault, fold, txn, grant, at)?
+        .is_some_and(|standing| grant_names_act(standing.grant(), agent, act, at)))
 }
 
 /// Where an agent act's Grant takes the shared vault's pact test (CALLS
@@ -347,8 +394,7 @@ enum ReplicaPactCheck {
     /// writer's recheck ([`crate::Vault::granted_act_owner_in_txn`]). The
     /// replica's judge of a carried act, [`grant_standing_in_txn`], reads no
     /// pact membership, so fold, replay and seal trust keep their meaning
-    /// (fold schema 11), and a Grant row this replica lacks still trusts the
-    /// carrier.
+    /// (fold schema 11).
     LiveAdmissionOnly,
 }
 
@@ -453,11 +499,11 @@ impl crate::Vault {
     }
 
     /// A LIVE edge's check of the Grant `grant` for `agent`'s act `act` at
-    /// `at` ([`GRANT_SWEEP_REPLICA_PACT_CHECK`]): the replica's rule
-    /// ([`grant_standing_in_txn`]) names the act, and on a shared vault the
-    /// Grant's own pact membership still stands (FIX 7548). The lapse alone
-    /// refuses with [`PACT_STANDING_LAPSED`]; a pact check that fails to read
-    /// is no lapse.
+    /// `at` ([`GRANT_SWEEP_REPLICA_PACT_CHECK`]): the row stands on the
+    /// owner's counted mint and names the act ([`agent_grant_names_act_in_txn`]),
+    /// and on a shared vault the Grant's own pact membership still stands (FIX
+    /// 7548). The lapse alone refuses with [`PACT_STANDING_LAPSED`]; a pact
+    /// check that fails to read is no lapse.
     fn live_grant_names_act_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -466,7 +512,8 @@ impl crate::Vault {
         act: OwnerActKind,
         at: u64,
     ) -> crate::error::Result<()> {
-        if grant_standing_in_txn(&self.store, txn, grant, agent, act, at)? != GrantStanding::Names {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !agent_grant_names_act_in_txn(self, &fold, txn, grant, agent, act, at)? {
             return Err(authority_refused(GRANT_NAMES_NO_ACT));
         }
         match GRANT_SWEEP_REPLICA_PACT_CHECK {
@@ -495,6 +542,7 @@ impl crate::Vault {
         world: EntityId,
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
         let now = self.instant_in_txn(txn)?.secs();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -503,7 +551,7 @@ impl crate::Vault {
             None,
         )? {
             let id = id?;
-            if !self.grant_names_world_act_in_txn(txn, id, agent, world, now)? {
+            if !self.grant_names_world_act_in_txn(&fold, txn, id, agent, world, now)? {
                 continue;
             }
             if grant_row_pact_standing_lapsed_in_txn(self, txn, id) {
@@ -527,16 +575,26 @@ impl crate::Vault {
     ) -> crate::error::Result<EntityId> {
         let owner = self.granted_act_owner_in_txn(txn, granted, OwnerActKind::WorldPrivacy)?;
         let now = self.instant_in_txn(txn)?.secs();
-        if !self.grant_names_world_act_in_txn(txn, granted.grant, granted.agent, world, now)? {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !self.grant_names_world_act_in_txn(
+            &fold,
+            txn,
+            granted.grant,
+            granted.agent,
+            world,
+            now,
+        )? {
             return Err(authority_refused(GRANT_NAMES_NO_ACT));
         }
         Ok(owner)
     }
 
-    /// Whether the live row `grant` names a tighten of `world` for `agent` at
-    /// `at`.
+    /// Whether the row `grant`, as the owner's counted mint gives it under
+    /// `fold` ([`standing_agent_grant_in_txn`]), names a tighten of `world`
+    /// for `agent` at `at`.
     fn grant_names_world_act_in_txn(
         &self,
+        fold: &AuthorityFold,
         txn: &heed::RoTxn<'_>,
         grant: EntityId,
         agent: EntityId,
@@ -544,16 +602,10 @@ impl crate::Vault {
         at: u64,
     ) -> crate::error::Result<bool> {
         Ok(
-            match crate::vault::live_entity_row_in_txn(&self.store, txn, &grant)? {
-                crate::vault::LiveEntityRow::Live {
-                    entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-                    body,
-                } => crate::federation::decode_federation_grant_body(&body).is_ok_and(|decoded| {
-                    grant_names_act(&decoded, agent, OwnerActKind::WorldPrivacy, at)
-                        && grant_names_world(&decoded, world)
-                }),
-                _ => false,
-            },
+            standing_agent_grant_in_txn(self, fold, txn, grant, at)?.is_some_and(|standing| {
+                grant_names_act(standing.grant(), agent, OwnerActKind::WorldPrivacy, at)
+                    && grant_names_world(standing.grant(), world)
+            }),
         )
     }
 }
@@ -563,9 +615,9 @@ impl crate::Vault {
     /// a door the facade calls with the actor alone: the actor's first live
     /// Grant naming the act, in id order, still stands now; on a shared vault
     /// a Grant lapsed on its pact membership alone is passed over for a later
-    /// one, and with none, the lapse refuses. The standing read is the
-    /// replica's own rule ([`grant_standing_in_txn`], withdrawn markers and
-    /// tombstones included), and the Grant found is checked again by
+    /// one, and with none, the lapse refuses. A Grant stands only on the
+    /// owner's counted mint ([`agent_grant_names_act_in_txn`], withdrawn
+    /// markers included), and the Grant found is checked again by
     /// [`Self::granted_act_owner_in_txn`], in the acting transaction, which
     /// also resolves the owner. A revoked, expired or lapsed Grant is refused
     /// at this use.
@@ -576,6 +628,7 @@ impl crate::Vault {
         act: OwnerActKind,
     ) -> crate::error::Result<EntityId> {
         let now = self.instant_in_txn(txn)?.secs();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -584,8 +637,7 @@ impl crate::Vault {
             None,
         )? {
             let id = id?;
-            if grant_standing_in_txn(&self.store, txn, id, agent, act, now)? != GrantStanding::Names
-            {
+            if !agent_grant_names_act_in_txn(self, &fold, txn, id, agent, act, now)? {
                 continue;
             }
             if grant_row_pact_standing_lapsed_in_txn(self, txn, id) {
@@ -622,7 +674,9 @@ impl crate::Vault {
     /// over for a later one, and with none, the lapse. The Coach's writer
     /// reads it inside the transaction that applies. An owner's agent Grant
     /// that names a verb class admitting the verb lists it too (FIX 8735):
-    /// the owner's class rows are read once, at the first such Grant.
+    /// the owner's class rows are read once, at the first such Grant. An
+    /// owner's signed mint row stands only on its counted mint (pass 28 R3b2,
+    /// [`crate::federation::grant_row_in_fold`]).
     pub(crate) fn coach_weave_digest_settings_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -630,6 +684,7 @@ impl crate::Vault {
         owner: EntityId,
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
         let now = self.instant_in_txn(txn)?.secs();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let sole_owner = owners.len() == 1 && owners.first() == Some(&owner);
         let mut lapsed = false;
@@ -649,9 +704,10 @@ impl crate::Vault {
             else {
                 continue;
             };
-            let Ok(grant) = crate::federation::decode_federation_grant_body(&body) else {
+            let Some(row) = crate::federation::grant_row_in_fold(&fold, id, &body, now) else {
                 continue;
             };
+            let grant = row.grant();
             if grant.member_ref != coach {
                 continue;
             }
@@ -659,7 +715,7 @@ impl crate::Vault {
                 class_rows = Some(crate::federation::AgentVerbClasses::for_grants_in_txn(
                     &self.store,
                     txn,
-                    [&grant],
+                    [grant],
                 )?);
             }
             let classes = class_rows.as_ref().unwrap_or(&no_classes);

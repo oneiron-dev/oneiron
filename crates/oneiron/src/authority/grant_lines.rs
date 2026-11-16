@@ -120,11 +120,11 @@ pub(crate) struct StatedSwitches {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OwnerAgentMint {
     owner: EntityId,
-    member: EntityId,
-    scope: Scope,
-    expires_at: Option<u64>,
+    pub(super) member: EntityId,
+    pub(super) scope: Scope,
+    pub(super) expires_at: Option<u64>,
     repo_bounds: Option<RepoAccessBounds>,
-    grant_kind: FederationGrantKind,
+    pub(super) grant_kind: FederationGrantKind,
     git_push_bounds: Option<GitPushBounds>,
     verb_classes: BTreeSet<String>,
     wallet_ref: Option<WalletRef>,
@@ -330,6 +330,20 @@ impl AuthorityFold {
     /// names it.
     pub(crate) fn grant_line(&self, grant: EntityId) -> Option<&FoldedGrantLine> {
         self.grant_lines.get(&grant)
+    }
+
+    /// The owner's agent Grant mint that gives `grant` on this install: its line holds the
+    /// owner's agent Grant family alone, no counted act ended it, and one mint counts here in
+    /// full. `None` for every other Grant: one no counted mint gives, one revoked, one two
+    /// mints the fold cannot order both give, and one given in another family.
+    pub(super) fn standing_owner_agent_mint(&self, grant: EntityId) -> Option<&OwnerAgentMint> {
+        let line = self
+            .grant_line(grant)
+            .filter(|line| !line.ended && line.family == Some(GrantFamily::OwnerAgent))?;
+        match &line.giving {
+            Some((_, GrantTerms::OwnerAgentMint(mint))) => Some(mint),
+            _ => None,
+        }
     }
 
     /// The switches the one counted statement on agent definition `definition`'s line

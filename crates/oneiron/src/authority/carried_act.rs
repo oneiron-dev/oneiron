@@ -14,13 +14,15 @@
 //! takes the room a mandatory one needs.
 //!
 //! An agent-carried act (an agent's free-time policy act, an agent's
-//! export, an agent's world privacy edit) names a Grant the fold cannot
-//! read. The fold keeps its agent, Grant, kind
-//! and advisory time ([`AgentCarriedAct`]); the vault's view then judges the
-//! Grant on the rows this install holds ([`grant_refused_agent_acts`],
-//! contract §4): one positively withdrawn, expired at the act's time, or
-//! naming no such act holds the act back, without effect; one this install
-//! does not hold trusts the carrier.
+//! export, an agent's world privacy edit) names a Grant. The fold keeps its
+//! agent, Grant, kind and advisory time ([`AgentCarriedAct`]); the vault's
+//! view then judges the Grant on the fold's own grant line, never its row
+//! ([`grant_refused_agent_acts`], contract §4; pass 28 R3b2, DESIGN 3.5): an
+//! act whose Grant no counted owner's mint gives here, whose line a counted
+//! act ended or this install holds withdrawn, or whose mint names no such act
+//! or has expired at the act's time is held back, without effect. The act's
+//! writer stood on the mint, so the mint is in the act's ancestry: a Grant no
+//! counted act names here is a Grant no owner minted.
 
 use std::collections::BTreeSet;
 
@@ -57,10 +59,9 @@ impl AgentCarriedAct {
     }
 }
 
-/// The agent-carried acts in `fold` whose Grant `store` holds refused at the
-/// act's time ([`grant_standing_in_txn`]). A Grant that does not read keeps
-/// today's trust in the carrier (rubric 1), and is logged the first time
-/// `logged` meets its act (FIX 23233). A NOW-refused
+/// The agent-carried acts in `fold` whose Grant does not name them at the
+/// act's time ([`grant_standing_in_txn`]: refused, or named by no counted
+/// act here). A NOW-refused
 /// native WorldPrivacy act a later counted signed owner-agent revoke saw
 /// (FIX 4703, [`super::past_grant_standing`]) is omitted from this
 /// Grant-only refused list; every other act keeps its NOW judgment, and any
@@ -75,25 +76,13 @@ pub(super) fn grant_refused_agent_acts(
     fold: &AuthorityFold,
     use_past_standing: bool,
     preserved_world_acts: impl FnOnce(&[AuthorityEntryHash]) -> Result<BTreeSet<AuthorityEntryHash>>,
-    logged: &mut super::readonly_fold::UnreadLogged,
 ) -> Vec<AuthorityEntryHash> {
     let acts = &fold.agent_carried_acts;
     let now_refused: Vec<AuthorityEntryHash> = acts
         .iter()
-        .filter(|(hash, act)| {
-            match grant_standing_in_txn(store, txn, act.grant, act.agent, act.act, act.at) {
-                Ok(standing) => standing == GrantStanding::Refused,
-                Err(error) => {
-                    if logged.first_grant(**hash) {
-                        tracing::warn!(
-                            %error,
-                            entry = %crate::entity_id::bytes_to_hex_lower(*hash),
-                            "an agent act's Grant did not read; its carrier is trusted"
-                        );
-                    }
-                    false
-                }
-            }
+        .filter(|(_, act)| {
+            grant_standing_in_txn(store, txn, fold, act.grant, act.agent, act.act, act.at)
+                != GrantStanding::Names
         })
         .map(|(hash, _)| *hash)
         .collect();

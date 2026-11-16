@@ -55,20 +55,21 @@ impl GitPushRegistryGrant {
 
 impl Vault {
     /// The GitPush grants as the registry reviews them: standing ones, or
-    /// with `include_revoked` every live one (an expired grant shows as
-    /// revoked) and every revoked one the authority log names, as revoked.
+    /// with `include_revoked` every live one (an expired grant, and a row no
+    /// counted mint gives, show as revoked) and every revoked one the
+    /// authority log names, as revoked.
     pub(crate) fn git_push_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<ConsentRegistryRow>> {
         let now = self.instant_in_txn(txn)?.secs();
-        let live = self.git_push_grants_in_txn(txn)?;
+        let live = self.git_push_grant_rows_in_txn(txn)?;
         let mut rows: Vec<ConsentRegistryRow> = live
             .iter()
-            .filter(|standing| include_revoked || standing.stands_at(now))
-            .map(|standing| {
-                let status = if standing.stands_at(now) {
+            .filter(|(standing, stands)| include_revoked || (*stands && standing.stands_at(now)))
+            .map(|(standing, stands)| {
+                let status = if *stands && standing.stands_at(now) {
                     ConsentGrantStatus::Active
                 } else {
                     ConsentGrantStatus::Revoked
@@ -77,7 +78,7 @@ impl Vault {
             })
             .collect();
         if include_revoked {
-            let shown: BTreeSet<EntityId> = live.iter().map(|standing| standing.id).collect();
+            let shown: BTreeSet<EntityId> = live.iter().map(|(standing, _)| standing.id).collect();
             rows.extend(
                 self.revoked_git_push_grants_in_txn(txn)?
                     .iter()

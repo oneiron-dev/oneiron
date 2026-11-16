@@ -62,8 +62,8 @@ mod grant_giving;
 // What a Grant row confers: what the fold's counted acts say of it (pass 28 R1).
 mod grant_standing;
 pub(crate) use grant_standing::{
-    SharedGrantRow, owner_agent_mint_in_fold, shared_grant_row_in_fold,
-    shared_vault_grants_for_store_in_txn,
+    SharedGrantRow, StandingGrant, grant_row_in_fold, owner_agent_mint_in_fold,
+    shared_grant_row_in_fold, shared_vault_grants_for_store_in_txn, standing_grant_in_fold,
 };
 // The owner's git_push Grant and the receive-pack decision (FIX 6867, G1-PUSH).
 pub(crate) mod git_push;
