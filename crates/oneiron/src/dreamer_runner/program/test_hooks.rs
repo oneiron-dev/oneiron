@@ -269,6 +269,51 @@ pub(crate) fn plant_timer_arming(
     Ok(registration)
 }
 
+/// Claims one real admission's program try through the same point claim the
+/// program kind uses, then writes the runtime's unfinished hold. No pass
+/// reservation is made, so the settlement fixture owns its only reserve.
+pub(crate) fn hold_admitted_program_try(
+    vault: &Vault,
+    registration: EntityId,
+    now: u64,
+) -> Result<(
+    crate::attempt_queue::AttemptId,
+    crate::dreamer_runner::DreamerParkedAttemptRecord,
+)> {
+    let attempt = vault.with_write_txn_grouped(|txn| {
+        let attempt = ADMISSION
+            .scan(vault, &*txn)?
+            .into_iter()
+            .find(|(_, record)| record.wake.registration == registration)
+            .and_then(|(_, record)| record.attempt)
+            .ok_or(Error::EntityNotFound)?;
+        let claim = crate::ports::JobQueue::port_job_claim_id(
+            vault,
+            txn,
+            attempt,
+            crate::attempt_queue::ClaimAttempt {
+                lease_owner: "program-hold-fixture".to_owned(),
+                now,
+            },
+        )?;
+        match claim {
+            crate::attempt_queue::ClaimOutcome::Claimed(record)
+                if record.kind == crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND =>
+            {
+                Ok(record.id)
+            }
+            _ => Err(Error::InvalidConfig(
+                "the admitted program try was not ready to lease".into(),
+            )),
+        }
+    })?;
+    vault.hold_turn_program(attempt, super::resume::ProgramHold::Unfinished, now)?;
+    let parked = crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .parked_attempt(attempt)?
+        .ok_or(Error::EntityNotFound)?;
+    Ok((attempt, parked))
+}
+
 /// Whether a disarm row for this registration is kept here.
 pub(crate) fn disarm_kept_here(
     vault: &Vault,
