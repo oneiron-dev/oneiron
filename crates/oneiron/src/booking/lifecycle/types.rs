@@ -169,11 +169,12 @@ pub struct SoftHoldRow {
 }
 
 impl SoftHoldRow {
-    /// Lazy expiry: `expires_at == now` is already dead. Nothing wakes to
+    /// Lazy expiry: dead from its `expires_at` second on, by the one expiry
+    /// instant ([`oneiron_store::expiry::is_expired`]). Nothing wakes to
     /// enforce this — a read that sees a dead row simply does not see a hold.
     #[must_use]
     pub const fn is_live_at(&self, now_utc: u64) -> bool {
-        self.expires_at > now_utc
+        !oneiron_store::expiry::is_expired(now_utc, self.expires_at)
     }
 }
 
