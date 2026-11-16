@@ -1,8 +1,9 @@
 //! A company hold names an inquiry (ARCH-0038 #company-hold): it holds the
 //! receipt, and the answer only as the kept copy. With `copy`, the hold's
 //! Records capture holds the copied CLAIMs and its Inquiries capture the
-//! receipt and the delivery rows. With `task`, only the receipt. An inquiry
-//! this vault never sent is refused, and a host order never names one.
+//! receipt and the delivery rows. With `task`, only the receipt. A copy
+//! CLAIM deleted before the hold is not kept. An inquiry this vault never
+//! sent is refused, and a host order never names one.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test company_hold_inquiry_copy`
 #![cfg(oneiron_test_support)]
@@ -505,6 +506,60 @@ fn a_company_hold_on_a_copy_inquiry_holds_the_receipt_and_the_copied_answer() ->
                 && component.key == deleted.as_bytes().to_vec()
         }),
         "a new produce still opens the deleted CLAIM's row"
+    );
+    Ok(())
+}
+
+/// A copy CLAIM the company deleted before the hold is not kept: the plain
+/// delete leaves a scrubbed shell row, and the hold holds neither it nor
+/// its ledger row.
+#[test]
+fn a_company_hold_skips_a_copy_claim_deleted_before_it() -> TestResult {
+    let fixture = asking();
+    fixture.install_keep("copy");
+    let host = MemberHost::answering(&fixture.company);
+    let sent = fixture.send(&host, fixture.task);
+    assert_eq!(
+        sent.outcome,
+        InquiryOutcome::Answered,
+        "the copy send is answered"
+    );
+    let copies = fixture.copies();
+    assert_eq!(copies.len(), 2, "the two statements land as two CLAIMs");
+    let deleted = copies[0].0;
+    let standing = copies[1].0;
+    let vault = &fixture.company.vault;
+    let removed = vault
+        .delete_entity(&deleted)
+        .map_err(at("the company deletes one copy CLAIM"))?;
+    assert!(removed, "the ordinary delete of one copy CLAIM succeeds");
+
+    let hold = vault
+        .place_legal_hold(
+            &fixture.company.proof,
+            vec![LegalHoldTarget::Inquiry(sent.inquiry.id)],
+            None,
+            None,
+        )
+        .map_err(at("the company places its hold on the inquiry"))?;
+    let components = open_clone(vault, hold.hold_id).map_err(at("open the sealed copy"))?;
+    let record_sources: BTreeSet<[u8; 16]> = components
+        .iter()
+        .filter(|component| component.family == "entities")
+        .map(|component| component.source)
+        .collect();
+    assert_eq!(
+        record_sources,
+        BTreeSet::from([*standing.as_bytes()]),
+        "the Records capture holds only the copy CLAIM still standing"
+    );
+    let ledgers = components
+        .iter()
+        .filter(|component| component.family == "federation_delivered_record")
+        .count();
+    assert_eq!(
+        ledgers, 1,
+        "the Inquiries capture holds only the standing copy's ledger row"
     );
     Ok(())
 }
