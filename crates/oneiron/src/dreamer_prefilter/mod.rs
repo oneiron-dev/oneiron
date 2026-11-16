@@ -37,7 +37,7 @@
 //! verdict passes when `score >= threshold`. Every score is in `[0, 1]`, so
 //! the default screens, scores, and drops NOTHING: planning is byte-identical
 //! and no receipt is written. Turning a lossy filter on is an explicit
-//! operator act ([`Vault::set_prefilter_config`]), never a side effect of
+//! owner act (the setting `dreamer.prefilter`, through `vault.settings.set`), never a side effect of
 //! upgrading. The scores are still computed under the default so an operator
 //! can watch the distribution before choosing a cut.
 //!
@@ -47,6 +47,7 @@ mod config;
 mod receipts;
 mod score;
 mod screen;
+pub(crate) mod setting_keys;
 mod supersession;
 
 pub use self::{config::*, receipts::*, score::*, screen::*};

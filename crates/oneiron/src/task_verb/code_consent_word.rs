@@ -2,9 +2,10 @@
 //!
 //! A code consent wait asks every live vault owner one shared TASK question,
 //! as the caller of the held call, on a short question it witnesses itself,
-//! offering canon's confirm trio. Only an asked, still-live owner's own Human
-//! word naming one of the offered choices is admitted: no companion, inform,
-//! executor or link word, and no generated word in a person's name. The
+//! offering canon's confirm trio. Only an asked owner's own Human word under
+//! the owner proof, or a frozen holder's under their person-tier proof
+//! (UC-05), naming one of the offered choices is admitted: no companion,
+//! inform, executor or link word, and no generated word in a person's name. The
 //! word is evidence, never approval: the consent operation reads it, under
 //! the owner's authentication, and only that operation lets anything run.
 //! Its ask's own settlement moves nothing.
@@ -12,6 +13,7 @@
 use std::collections::BTreeMap;
 
 use super::ConsultPayloadRef;
+use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskAnswer, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
@@ -144,48 +146,64 @@ pub(super) fn reserved_ask_in(
         && ask_spec(&row)? == *input)
 }
 
-/// Refuses a word on a code consent ask unless it is an asked, still-live
-/// owner's or frozen holder's own Human word naming one of the wait's choices,
-/// on the node that admitted the ask; any other ask passes untouched. Runs in shared word admission,
-/// before the word is recorded.
-pub(super) fn guard_word(
+/// Who a code consent ask asks: the wait's asked owners and its frozen
+/// holders, while the wait names this ask; `None` for every other ask
+/// ([`super::ask_guard`]).
+pub(super) fn asked_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
+) -> Result<Option<AskedParty>> {
+    let Some(wait_id) = intent_wait(&group.requested.intent_key) else {
+        return Ok(None);
+    };
+    Ok(read_code_consent_wait_in_txn(vault, txn, wait_id)?
+        .filter(|row| row.ask == Some(id))
+        .map(|row| asked_party(&row)))
+}
+
+/// [`asked_in`], once `word` names one of the wait's offered choices on the
+/// ask the wait names; any other word is refused. Shared word admission then
+/// asks the asked person's own proof of it: an owner's owner proof, or a
+/// holder's person-tier proof ([`super::ask_guard`]).
+pub(super) fn offered_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
     word: &TaskAskWord,
-) -> Result<()> {
+) -> Result<Option<AskedParty>> {
     if !is_code_consent_ask_intent(&group.requested.intent_key) {
-        return Ok(());
+        return Ok(None);
     }
     let wait_id = intent_wait(&group.requested.intent_key).ok_or_else(ask_record::invalid)?;
     let row =
         read_code_consent_wait_in_txn(vault, txn, wait_id)?.ok_or_else(ask_record::invalid)?;
     let offered = offered_choices(&row.binding);
     if row.ask != Some(id)
-        || source != TaskAskSource::Human
-        || !((row.binding.question.owners.contains(&actor)
-            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?)
-            || (row
-                .binding
-                .holder_settlement
-                .as_ref()
-                .is_some_and(|settlement| settlement.holders.contains(&actor))
-                && crate::consent::person_is_live_in_txn(vault, txn, &actor)?))
-        || word.companion_for.is_some()
-        || word.inform_for.is_some()
-        || word.confirmation.is_some()
         || !word.option.as_ref().is_some_and(|option| {
             CodeConsentChoice::from_option(option.as_str())
                 .is_some_and(|choice| offered.contains(&choice))
         })
-        || !ask_record::owns_revision(vault, txn, id, group)?
     {
         return Err(ask_record::invalid());
     }
-    Ok(())
+    Ok(Some(asked_party(&row)))
+}
+
+/// The people a code consent wait asks: its question's owners, and the
+/// holders its holder settlement froze.
+fn asked_party(row: &CodeConsentWaitRow) -> AskedParty {
+    AskedParty::OwnerOrHolder {
+        owners: row.binding.question.owners.clone(),
+        holders: row
+            .binding
+            .holder_settlement
+            .as_ref()
+            .map(|settlement| settlement.holders.clone())
+            .unwrap_or_default(),
+    }
 }
 
 /// The owner's word an answer stands on: a Human word `answerer` gave on the

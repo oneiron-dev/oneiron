@@ -105,7 +105,8 @@ pub(crate) use self::facet_validation::{
 pub(crate) use self::gate_mode::ApplyOpsGateMode;
 use self::gate_staging::stage_preflight_decision;
 pub(crate) use self::ops_pipeline::{
-    BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
+    BaseWriteOrigin, apply_ops, apply_ops_beside_authority_rows, apply_ops_session,
+    apply_ops_with_gate_mode,
 };
 pub(crate) use self::phonetic_apply::{
     PHONETIC_POSTING_KEY_LEN, delete_from_phonetic_postings, phonetic_posting_key,
@@ -139,6 +140,7 @@ use self::edge_apply::*;
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::lexical_query_hint_claim_ids_for_target;
 use self::lexical_query_hints::*;
+pub(crate) use self::ops_pipeline::apply_ops_session_projecting_restages;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;
 use self::put_apply::*;
