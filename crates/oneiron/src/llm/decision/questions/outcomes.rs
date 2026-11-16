@@ -12,10 +12,11 @@ use crate::llm::decision::{DecisionAnswer, DecisionAsk, PersonChangedAnswer};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// The Coach's person-changed records, read here only: the table, its
-/// writer ([`Vault::record_person_changed_answer`]) and its read marks are
-/// the Coach's. Key: the source the host bound the person's answer to.
-const PERSON_CHANGED: SideTable<EntityId, PersonChangedAnswer, Named> =
+/// The Coach's person-changed records, read here: the table, its writer
+/// ([`Vault::record_person_changed_answer`]) and its read marks are the
+/// Coach's, and a question teardown drops a torn-down version's records
+/// (`lifetime.rs`). Key: the source the host bound the person's answer to.
+pub(super) const PERSON_CHANGED: SideTable<EntityId, PersonChangedAnswer, Named> =
     SideTable::new(&side_table::COACH_PERSON_CHANGED);
 
 pub fn project_bound_outcomes(
@@ -385,10 +386,12 @@ pub(crate) fn calibration_pairs_in_txn(
 /// Coach's threshold run marks the records it read and keeps them, so a pair
 /// stays readable after it (FIX 566). A saved question's record pairs only
 /// as the answered change of the ask it is bound to, and only when the lane
-/// its version was saved under reads the rows the person answered over. A
-/// caller toward `destination` gets no pair from a row a world withheld from
-/// its machine keeps. [`calibration_pairs`] carries these pairs beside the
-/// outcome pairs.
+/// its version was saved under reads the rows the person answered over. Each
+/// pair is derived from those rows, beside the question, or from its ask when
+/// none is known. A caller toward `destination` gets no pair from a row a
+/// world withheld from its machine keeps, and, while any world is withheld
+/// from its machine, no pair whose rows are unknown. [`calibration_pairs`]
+/// carries these pairs beside the outcome pairs.
 pub fn person_changed_pairs(
     vault: &Vault,
     principal: EntityId,
@@ -405,7 +408,13 @@ pub fn person_changed_pairs(
 /// version was saved under reads the rows the person answered over
 /// ([`person_change_in_saved_lane`], FIX PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE).
 /// A question no one saved (a catalogue question) has no such lane, and its
-/// records pair as they are.
+/// records pair as they are. For both, the rows the person answered over
+/// ([`person_answered_rows`]) are what `kept` judges and what the pair is
+/// derived from (FIX PERSON-CHANGED-PAIRS-SKIP-DEVICE-LOCAL-WORLDS): the
+/// question and the ask are side-table ids that no world keeps, so judging
+/// them alone never withheld a pair, and a narrowed lane, which judges every
+/// id a pair names but the question, read none (FIX
+/// PERSON-PAIRS-IN-LANE-JUDGE-ASK-ID).
 fn person_changed_pairs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -418,33 +427,47 @@ fn person_changed_pairs_in_txn(
         .into_iter()
         .filter(|(_, record)| record.question == question && record.principal == principal)
         .collect();
-    // A saved question's asks, each by its id: the source its person-changed
+    // The question's asks, each by its id: the source its person-changed
     // record is bound to.
     let saved = !records.is_empty()
         && QUESTION_HEAD
             .get(&vault.store, txn, &HeadKey(question))?
             .is_some();
-    let asks: std::collections::BTreeMap<EntityId, DecisionAsk> = if saved {
+    let asks: std::collections::BTreeMap<EntityId, DecisionAsk> = if records.is_empty() {
+        std::collections::BTreeMap::new()
+    } else {
         vault
             .question_decision_asks_in_txn(txn, question)?
             .into_iter()
             .map(|ask| (ask.id, ask))
             .collect()
-    } else {
-        std::collections::BTreeMap::new()
     };
     let mut pairs = Vec::new();
     for (source, record) in records {
         let Some(probability) = record.prior_probability else {
             continue;
         };
-        if saved && !person_change_in_saved_lane(vault, txn, &record, asks.get(&source))? {
+        let ask = asks
+            .get(&source)
+            .filter(|ask| is_records_answered_change(ask, &record));
+        let rows = person_answered_rows(vault, txn, &record, ask)?;
+        if saved && !person_change_in_saved_lane(vault, txn, &record, ask, &rows)? {
             continue;
         }
-        let derived_from = vec![question, source];
-        if !kept.is_empty() && kept_any(vault, txn, kept, &derived_from)? {
+        // No row to judge withholds the pair from a machine any world is
+        // kept from: the evidence it rests on is unknown.
+        if !kept.is_empty() && (rows.is_empty() || kept_any(vault, txn, kept, &rows)?) {
             continue;
         }
+        // The pair is derived from the rows the person answered over, so a
+        // narrowed lane and a retained copy judge those (FIX
+        // PERSON-PAIRS-IN-LANE-JUDGE-ASK-ID). With no such row known it names
+        // its ask, which is no row, and a narrowed lane reads none of it.
+        let derived_from: Vec<EntityId> = if rows.is_empty() {
+            vec![question, source]
+        } else {
+            std::iter::once(question).chain(rows).collect()
+        };
         let label = match (&record.prior, &record.person) {
             (DecisionAnswer::Noul(_), DecisionAnswer::Noul(person)) => *person,
             (prior, person) => prior == person,
@@ -478,40 +501,67 @@ fn person_changed_pairs_in_txn(
     Ok(pairs)
 }
 
-/// Whether `record` is its `ask`'s answered change and the lane its question
-/// version was saved under reads every row the person answered over (FIX
-/// PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE): the evidence the ask was put over,
-/// or the version's units for an ask put over none (a health ask). The ask
-/// must be the record's: of its version and principal, answered with its
-/// person's answer as a change, as both answer writers keep them in one
-/// write. A record a host put under an open ask, or under an ask of another
-/// version, borrows a lane that never judged that ask. Neither the ask's id
-/// nor the question's names a row, so neither is judged. The lane is rebuilt
-/// as an outcome label's is ([`super::arrival::saved_lane_reads_in_txn`]): a
-/// live owner's own lane reads them, any other is held to its frozen bounds
-/// and its principal's relationship access gate in this snapshot. An ask or a
-/// version the vault no longer holds, or a version another principal saved,
-/// reads nothing.
+/// Whether `ask` is `record`'s own: of its version and principal, answered
+/// with its person's answer as a change, as both answer writers keep them in
+/// one write. A record a host put under an open ask, or under an ask of
+/// another version, names an ask that never judged it.
+fn is_records_answered_change(ask: &DecisionAsk, record: &PersonChangedAnswer) -> bool {
+    ask.answer
+        .as_ref()
+        .is_some_and(|answer| answer.changed && answer.answer == record.person)
+        && ask.question.version == record.question_version
+        && ask.principal.is(record.principal)
+}
+
+/// The rows the person answered `record` over: the evidence `ask`, the
+/// record's own answered ask, was put over, or the units of the record's
+/// question version for an ask put over none (a health ask). Empty when the
+/// record has no such ask, or its ask is over none and the vault holds no
+/// such version. Neither the ask's id nor the question's names a row, so
+/// neither is one of them.
+fn person_answered_rows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &PersonChangedAnswer,
+    ask: Option<&DecisionAsk>,
+) -> Result<Vec<EntityId>> {
+    let Some(ask) = ask else {
+        return Ok(Vec::new());
+    };
+    if !ask.evidence.is_empty() {
+        return Ok(ask.evidence.clone());
+    }
+    Ok(QUESTION_VERSION
+        .get(
+            &vault.store,
+            txn,
+            &VersionKey {
+                id: record.question,
+                version: record.question_version,
+            },
+        )?
+        .map(|version| version.definition.units)
+        .unwrap_or_default())
+}
+
+/// Whether the lane `record`'s question version was saved under reads `rows`,
+/// the rows the person answered over ([`person_answered_rows`]) on `ask`, the
+/// record's own answered ask (FIX PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE). A
+/// record with no such ask borrows a lane that never judged it. The lane is
+/// rebuilt as an outcome label's is ([`super::arrival::saved_lane_reads_in_txn`]):
+/// a live owner's own lane reads them, any other is held to its frozen bounds
+/// and its principal's relationship access gate in this snapshot. A version
+/// the vault no longer holds, or one another principal saved, reads nothing.
 fn person_change_in_saved_lane(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &PersonChangedAnswer,
     ask: Option<&DecisionAsk>,
+    rows: &[EntityId],
 ) -> Result<bool> {
-    let Some(ask) = ask else {
-        return Ok(false);
-    };
-    let answered_change = ask
-        .answer
-        .as_ref()
-        .is_some_and(|answer| answer.changed && answer.answer == record.person);
-    if !answered_change
-        || ask.question.version != record.question_version
-        || !ask.principal.is(record.principal)
-    {
+    if ask.is_none() {
         return Ok(false);
     }
-    let evidence = ask.evidence.as_slice();
     let Some(version) = QUESTION_VERSION.get(
         &vault.store,
         txn,
@@ -526,11 +576,6 @@ fn person_change_in_saved_lane(
     if version.principal != record.principal {
         return Ok(false);
     }
-    let rows: &[EntityId] = if evidence.is_empty() {
-        &version.definition.units
-    } else {
-        evidence
-    };
     super::arrival::saved_lane_reads_in_txn(
         &vault.store,
         SavedLaneJudge::Vault(vault),
