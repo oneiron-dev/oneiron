@@ -13,7 +13,8 @@
 //!   once when that hour has passed;
 //! - the owner sets a cadence: its job is armed again in that write and goes on from now, and a
 //!   cadence that can never fire is refused;
-//! - the owner's `housekeeping_all` runs every engine sweep now, and each goes on from now;
+//! - the owner's `housekeeping_all` runs every engine sweep now, and each keeps its cadence's
+//!   grid: it is next due at the first occurrence after now that its arming set;
 //! - a deadline a door notes makes its sweep due then, a stopped vault wakes for it, and the run
 //!   that covers it goes on a cadence after it.
 //!
@@ -187,17 +188,23 @@ fn outcome(report: &HousekeepingReport, sweep: HousekeepingSweep) -> &SweepOutco
     report.sweep(sweep).expect("every sweep has a row")
 }
 
-/// When a sweep of cadence `secs` whose run ended at `end` with `outcome` is next due: at once
-/// when it stopped at its bound (the next pass goes on), after the first retry when it left
-/// items, else a cadence later.
-fn due_after(outcome: &SweepOutcome, end: u64, secs: u64) -> u64 {
+/// When a sweep whose run ended at `end` with `outcome` is next due: at once when it stopped at
+/// its bound (the next pass goes on), after the first retry when it left items, else at `done`,
+/// its next occurrence.
+fn due_after(outcome: &SweepOutcome, end: u64, done: u64) -> u64 {
     match outcome {
         SweepOutcome::Ran {
             complete: false, ..
         } => end,
         SweepOutcome::Ran { work, .. } if work.items_failed() > 0 => end + MINUTE,
-        _ => end + secs,
+        _ => done,
     }
+}
+
+/// The first occurrence after `now` of a cadence of `secs` a first pass at `T0` armed: a run
+/// now never moves the grid (review round 1 of #8026).
+fn grid_after(now: u64, secs: u64) -> u64 {
+    T0 + secs * ((now - T0) / secs + 1)
 }
 
 #[test]
@@ -231,7 +238,7 @@ fn a_first_pass_runs_every_engine_sweep_and_the_next_finds_each_due_a_cadence_la
         );
         assert_eq!(
             fx.due(sweep),
-            Some(due_after(ran, T0, secs)),
+            Some(due_after(ran, T0, T0 + secs)),
             "{}: armed, and due as its run left it: {ran:?}",
             sweep.code()
         );
@@ -257,7 +264,7 @@ fn a_first_pass_runs_every_engine_sweep_and_the_next_finds_each_due_a_cadence_la
 
     let second = fx.pass();
     for (sweep, secs) in CADENCES {
-        let due = due_after(outcome(&first, sweep), T0, secs);
+        let due = due_after(outcome(&first, sweep), T0, T0 + secs);
         if due > T0 {
             assert_eq!(
                 outcome(&second, sweep),
@@ -310,7 +317,7 @@ fn the_owner_sets_a_cadence_and_its_sweep_goes_on_from_now_at_that_cadence() {
 }
 
 #[test]
-fn the_owners_run_now_runs_every_engine_sweep_and_each_goes_on_from_now() {
+fn the_owners_run_now_runs_every_engine_sweep_and_each_keeps_its_cadence_grid() {
     let fx = Fixture::rooted();
     fx.pass();
     let now = T0 + 10 * MINUTE;
@@ -328,13 +335,18 @@ fn the_owners_run_now_runs_every_engine_sweep_and_each_goes_on_from_now() {
         );
         assert_eq!(
             fx.due(sweep),
-            Some(due_after(ran, now, secs)),
-            "{}: goes on from now: {ran:?}",
+            Some(due_after(ran, now, grid_after(now, secs))),
+            "{}: keeps its grid: {ran:?}",
             sweep.code()
         );
     }
     for (sweep, secs) in QUIET_ON_A_NEW_VAULT {
-        assert_eq!(fx.due(sweep), Some(now + secs), "{}", sweep.code());
+        assert_eq!(
+            fx.due(sweep),
+            Some(grid_after(now, secs)),
+            "{}",
+            sweep.code()
+        );
     }
 }
 
