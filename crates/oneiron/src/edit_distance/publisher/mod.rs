@@ -73,10 +73,7 @@ pub(crate) use self::delivery_outcome::{
 };
 pub(crate) use self::dial::publisher_dial_row_ref_in_txn;
 pub(crate) use self::dial::publisher_enabled_in_txn;
-pub use self::dial::{
-    PUBLISHER_ENABLED_COMPILED_DEFAULT, publisher_enabled, set_publisher_enabled,
-    set_publisher_install_default,
-};
+pub use self::dial::{PUBLISHER_ENABLED_COMPILED_DEFAULT, publisher_enabled};
 pub use self::interview::{
     InterviewSession, InterviewState, interview_session, submit_interview_for_review,
 };

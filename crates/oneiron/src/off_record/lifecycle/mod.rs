@@ -111,6 +111,8 @@ pub use self::types::{
 };
 
 #[cfg(test)]
+mod tests_flip_drain;
+#[cfg(test)]
 mod tests_session_reads;
 
 #[cfg(test)]
