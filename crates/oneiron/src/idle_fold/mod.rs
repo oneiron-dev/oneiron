@@ -14,8 +14,8 @@
 //! - a wait whose run never resumes stays open, and the Coach's weekly pass
 //!   ([`rebuild_return_tables`]) counts it as never once it has waited a day.
 //!
-//! At a parked wait's cache horizon the resident pump makes one call for it, Fold or Expire
-//! (PR-2, [`run_due_idle_calls`]); see `horizon`.
+//! At a parked wait's cache horizon the resident pump makes one call for it, Keep, Fold or Expire
+//! (PR-3, [`run_due_idle_calls`]); see `horizon`.
 //!
 //! Off-record room runs bind no trap and park no attempt, so they are not recorded; nor are chat
 //! turn gaps (FIX [IDLE-FOLD-CHAT-ROOM-WAITS]). A budget trap waits on money, not on a reply, and
@@ -37,10 +37,11 @@ use crate::{EntityId, Result, Vault};
 
 pub(crate) use horizon::take_parked_fold_boundary;
 pub use horizon::{
-    CachedPrefixHorizon, next_idle_call_due_ms, record_cache_horizon, run_due_idle_calls,
+    CachedPrefixHorizon, IdleCallsMade, next_idle_call_due_ms, record_cache_horizon,
+    run_due_idle_calls,
 };
 #[cfg(oneiron_test_support)]
-pub(crate) use horizon::{IdleCall, due_of, idle_call_of};
+pub(crate) use horizon::{IdleCall, due_of, idle_call_of, set_due_keeps};
 pub(crate) use returns::rebuild_return_tables;
 #[cfg(oneiron_test_support)]
 pub(crate) use returns::{IdleReturnCell, put_return_cell, return_cell};

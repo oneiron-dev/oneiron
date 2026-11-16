@@ -303,11 +303,23 @@ impl ServedCompactionBackend {
 #[derive(Default)]
 pub(in crate::ai_host) struct AnsweringRungSlot(Mutex<Option<AnsweringRung>>);
 
+impl AnsweringRungSlot {
+    /// The run's latest call that answered, as its rung sent it, held now.
+    pub(in crate::ai_host) fn latest(&self) -> Option<AnsweringRung> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
 /// A host's answering rung slots, by run (FIX 4933): each beside the
 /// compaction writer that holds it, and gone with it. Only a run whose
-/// writer holds a slot keeps its calls' rungs.
+/// writer holds a slot keeps its calls' rungs. Crate-wide so the idle
+/// prefix refresher's test door can build one (L2-37 PR-3); its methods
+/// stay in the AI host.
 #[derive(Default)]
-pub(in crate::ai_host) struct AnsweringRungSlots {
+pub(crate) struct AnsweringRungSlots {
     runs: Mutex<HashMap<EntityId, Weak<AnsweringRungSlot>>>,
 }
 
@@ -327,10 +339,7 @@ impl AnsweringRungSlots {
     /// `run`'s latest call that answered, as its rung sent it.
     pub(in crate::ai_host) fn latest(&self, run: EntityId) -> Option<AnsweringRung> {
         let slot = self.held().get(&run).and_then(Weak::upgrade)?;
-        slot.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        slot.latest()
     }
 
     /// One of `run`'s calls answered, on `binding`'s rung: a held slot keeps

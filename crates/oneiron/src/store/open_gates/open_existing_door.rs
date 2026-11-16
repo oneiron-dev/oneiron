@@ -246,6 +246,7 @@ impl Store {
             proactivity_suspended: Mutex::new(None),
             policy_manifest_updates: tokio::sync::watch::channel(0).0,
             verb_hook_ask_updates: tokio::sync::watch::channel(0).0,
+            source_erase_generation: Default::default(),
             decision_answers: tokio::sync::watch::channel(0).0,
             consent_answers: Default::default(),
             notification_updates: tokio::sync::watch::channel(0).0,

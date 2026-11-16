@@ -24,6 +24,7 @@ pub mod native_board;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;
+pub mod prefix_refresh;
 pub mod replay_admission;
 pub mod resident_pump;
 pub mod signing_session;

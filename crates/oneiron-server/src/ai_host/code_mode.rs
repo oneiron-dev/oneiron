@@ -39,6 +39,7 @@ use super::CHAT_ROLE;
 use super::browser_planner::{self, BrowserPlannerRuns};
 use super::compaction::{AnsweringRungSlot, AnsweringRungSlots, CodeModeCompaction, LiveAdmission};
 use super::live_lease::{LiveLease, LiveLeaseState};
+use super::prefix_refresh::PrefixRefresh;
 use super::status::StatusCell;
 use crate::config::models::{BROWSER_PLANNER_ROLE, CodeCheckSettings, ModelsConfig};
 use crate::mcp::{
@@ -117,6 +118,17 @@ pub(super) async fn bind(
     // FIX 4933: each run's answering rungs, kept for its live fork: every
     // backend below fills its run's slot, and every live admission reads it.
     let answering = Arc::new(AnsweringRungSlots::default());
+    // L2-37 PR-3: the idle prefix refresher, set once on the server: the
+    // resident pump's idle pass refreshes a parked run's cached prefix
+    // through it, metered on code mode's guard where the run spends under
+    // no scope.
+    let _ = server.prefix_refresh.set(Arc::new(PrefixRefresh::new(
+        Arc::clone(server.vault()),
+        Arc::clone(runtime),
+        guard.clone(),
+        Arc::clone(&answering),
+        tokio::runtime::Handle::current(),
+    )));
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
