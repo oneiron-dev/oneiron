@@ -179,6 +179,17 @@ impl Vault {
         held.push(signer);
     }
 
+    /// Drops every root signer this handle holds (test door
+    /// `owner_key_release`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn release_checkpoint_root_signers(&self) {
+        self.world_keys
+            .checkpoint_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     /// The root signers this handle holds.
     #[must_use]
     pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {

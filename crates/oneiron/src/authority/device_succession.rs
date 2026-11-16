@@ -252,6 +252,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        after.refuse_waiting_choice(&hash)?;
         let live = after
             .device_successions
             .predecessors

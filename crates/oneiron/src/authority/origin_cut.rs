@@ -317,6 +317,7 @@ impl Vault {
         }
         let after = self.authority_view_readonly_in_txn(txn)?;
         for (repo, act) in acts {
+            after.refuse_waiting_choice(&act)?;
             let live = after
                 .origin_cuts
                 .repos

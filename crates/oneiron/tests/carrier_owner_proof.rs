@@ -27,6 +27,9 @@
 //! The door tests at the end run a real vault whose serving install carries
 //! the owner's acts: an answer it cannot prove is stored and held, and the
 //! owner's answer on an install that holds his key stands and ends the ask.
+//! A choice door refuses a choice it cannot prove, storing nothing, only
+//! where the vault holds an owner key and this install holds none (ruling
+//! CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B and the lead's amendment).
 
 #![cfg(oneiron_test_support)]
 
@@ -37,18 +40,28 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
     AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp,
-    AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
-    HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
-    OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
-    authority_transcript, fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
+    AuthoritySignature, AuthorityTier, AuthorityVaultId, CheckpointPolicyView,
+    ConversationLearningView, DeviceAuthority, GenesisRecoveryStep, HostSlipIssuer,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
+    ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
+    fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
     machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::{
+    ConsolidationHomePickReceipt, ConsolidationHomePickRequest, consolidation_home_pick_as,
+};
+use oneiron::error::{OWNER_KEY_REQUIRED, RecordError};
+use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryResult};
+use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use oneiron::test_doors::conversation_training_fold::leaves_out;
+use oneiron::test_doors::device_succession_fold::successor;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::test_doors::owner_key_release::release_owner_keys;
+use oneiron::verbs::{RepoAnchorBindInput, bind_repo_anchor_as};
+use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
     ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
     conversation_training_vault_target, home_pick_target, machine_answer_revision,
@@ -66,6 +79,14 @@ const PICKED_NODE: u64 = 7;
 
 /// The node the owner's own laptop picks after a waiting pick.
 const LAPTOPS_PICKED_NODE: u64 = 8;
+
+/// The served name of the repository the origin cutover door tests cut.
+const SERVED_REPO: &str = "carried";
+
+/// The retired device the succession door tests name: its client id, and
+/// the seed of its device key.
+const PREDECESSOR_CLIENT: u64 = 4242;
+const PREDECESSOR_SEED: u8 = 67;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -1466,6 +1487,157 @@ impl ServedVault {
             self.install(),
         )
     }
+
+    /// How many authority log rows the fold holds valid.
+    fn stored_rows(&self) -> usize {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .valid_entries
+            .len()
+    }
+
+    /// The owner's home pick through this install, as the facade's
+    /// `vault.consolidation.home.pick` makes it.
+    fn pick_home(&self, node: u64) -> MemoryResult<ConsolidationHomePickReceipt> {
+        consolidation_home_pick_as(
+            &self.vault,
+            &self.owner,
+            ActSurface::ThisInstall,
+            ConsolidationHomePickRequest {
+                node_id: Some(node.to_string()),
+                seen: None,
+            },
+        )
+    }
+
+    /// The node the vault's home pick names.
+    fn home_pick(&self) -> Option<u64> {
+        home_pick_in_force(&self.vault.authority_fold().expect("authority fold"))
+    }
+
+    /// The owner's key is held on another install: he enrols it here and
+    /// this handle lets it go. The roster keeps a key that proves for him,
+    /// and this install holds none.
+    fn owner_key_held_on_another_install(&self) {
+        self.enrol_owner_key();
+        release_owner_keys(&self.vault);
+    }
+
+    /// A refused choice left nothing: the fold holds `rows` valid rows as
+    /// before it, and no choice waits.
+    fn assert_nothing_stored_since(&self, rows: usize) {
+        let fold = self.vault.authority_fold().expect("authority fold");
+        assert_eq!(fold.valid_entries.len(), rows, "the refusal stores no row");
+        assert_eq!(
+            fold.waiting_owner_choices(),
+            &BTreeSet::new(),
+            "nothing waits: the door stored nothing"
+        );
+    }
+
+    /// The owner clears his checkpoint root choice through this install. A
+    /// hosted vault takes no selection without the operator's capability; a
+    /// clear is a choice of his all the same.
+    fn clear_checkpoint_policy(&self) -> oneiron::Result<CheckpointPolicyView> {
+        self.vault.set_checkpoint_policy_as(
+            &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+            None,
+            None,
+        )
+    }
+
+    /// The vault's checkpoint root policy as the owner's surface shows it.
+    fn checkpoint_policy(&self) -> CheckpointPolicyView {
+        self.vault
+            .checkpoint_policy_view()
+            .expect("checkpoint policy view")
+    }
+
+    /// The owner sets the vault's training setting through this install.
+    fn set_learning(&self, on: bool) -> oneiron::Result<ConversationLearningView> {
+        self.vault
+            .set_conversation_learning(&self.owner, ActSurface::ThisInstall, on, false, None)
+    }
+
+    /// The vault's training setting in force.
+    fn learning(&self) -> ConversationLearningView {
+        self.vault
+            .conversation_learning_status()
+            .expect("conversation learning status")
+    }
+
+    /// This install serves one repository bound to a CODE anchor under the
+    /// root project: the repository stands under one portable id, so the
+    /// owner's cutover signs one cut.
+    fn serve_a_repo(&self) {
+        self.vault
+            .register_served_origin_as_owner(&self.owner, SERVED_REPO, "main")
+            .expect("register the served repository");
+        let project = self.vault.root_project().expect("root project");
+        bind_repo_anchor_as(
+            &self.vault,
+            &self.owner,
+            RepoAnchorBindInput {
+                repo: Some(SERVED_REPO.to_owned()),
+                local_folder: None,
+                project,
+                anchor: None,
+                editable: None,
+            },
+        )
+        .expect("bind the repository's CODE anchor");
+    }
+
+    /// The owner cuts the served repository's authority over to this install
+    /// from the epoch `expected_epoch`.
+    fn cut_origin(&self, expected_epoch: Option<u64>) -> oneiron::Result<OriginAuthority> {
+        self.vault.set_served_origin_authority_as_owner(
+            &self.owner,
+            ActSurface::ThisInstall,
+            SERVED_REPO,
+            expected_epoch,
+            OriginResidence::LocalVault,
+            self.install(),
+            false,
+        )
+    }
+
+    /// The served repository's authority row on this host.
+    fn origin_row(&self) -> Option<OriginAuthority> {
+        self.vault
+            .served_origin_authority(SERVED_REPO)
+            .expect("read the origin authority row")
+    }
+
+    /// The owner names the retired device as this install's predecessor.
+    fn name_predecessor(&self) -> oneiron::Result<()> {
+        self.vault.name_device_predecessor_as_owner(
+            &self.owner,
+            ActSurface::ThisInstall,
+            PREDECESSOR_CLIENT,
+            signing(PREDECESSOR_SEED).verifying_key().to_bytes(),
+        )
+    }
+
+    /// The machine the vault counts as the retired device's successor.
+    fn predecessors_successor(&self) -> Option<EntityId> {
+        successor(
+            &self.vault.authority_fold().expect("authority fold"),
+            PREDECESSOR_CLIENT,
+            &signing(PREDECESSOR_SEED).verifying_key().to_bytes(),
+        )
+        .expect("the retired device's succession target")
+    }
+}
+
+/// What a choice door answers where the vault holds an owner key and this
+/// install holds none: the owner-key refusal.
+fn assert_owner_key_refusal<T: std::fmt::Debug>(answer: oneiron::Result<T>) {
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::OwnerKeyRequired))),
+        "the door refuses for the owner's key: {answer:?}"
+    );
 }
 
 /// The answer door on an install that holds no owner key: the owner's
@@ -1512,4 +1684,250 @@ fn the_owners_answer_on_an_install_that_holds_his_key_stands_and_ends_the_ask() 
         BTreeSet::new(),
         "the owner's answer ends the ask"
     );
+}
+
+/// The amendment's first guard, at the home pick door: a vault with no owner
+/// key enrolled keeps today's doors, also from an install that is not the
+/// owner's machine. Nothing there could ever prove the choice.
+#[test]
+fn the_home_pick_door_lands_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    served
+        .pick_home(PICKED_NODE)
+        .expect("the pick lands as it does today");
+    assert_eq!(served.home_pick(), Some(PICKED_NODE));
+}
+
+/// The amendment's second guard, at the home pick door: once the vault holds
+/// an owner key that this install does not hold, the same door refuses with
+/// the owner-key reason and stores no row; the prior pick stays in force.
+#[test]
+fn the_home_pick_door_refuses_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served
+        .pick_home(PICKED_NODE)
+        .expect("guard: the first pick");
+    served.enrol_owner_key();
+    release_owner_keys(&served.vault);
+    let rows = served.stored_rows();
+    let refusal = served
+        .pick_home(LAPTOPS_PICKED_NODE)
+        .err()
+        .expect("an unprovable pick is refused");
+    assert_eq!(refusal.code, MEMORY_CODE_INVALID_STATE, "{refusal:?}");
+    assert_eq!(
+        refusal.reason_codes,
+        [OWNER_KEY_REQUIRED],
+        "the refusal names its stable reason code: {refusal:?}"
+    );
+    assert_eq!(
+        refusal.message,
+        "This machine is not the owner's and holds no owner key: decide it on an owner device."
+    );
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(
+        served.home_pick(),
+        Some(PICKED_NODE),
+        "the prior pick stays in force"
+    );
+    assert_eq!(
+        served
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .waiting_owner_choices(),
+        &BTreeSet::new(),
+        "nothing waits: the door stored nothing"
+    );
+}
+
+/// The same pick from an install that holds the owner's key lands: the door
+/// adds his proof.
+#[test]
+fn the_home_pick_door_lands_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.enrol_owner_key();
+    served
+        .pick_home(PICKED_NODE)
+        .expect("the proven pick lands");
+    assert_eq!(served.home_pick(), Some(PICKED_NODE));
+}
+
+/// The checkpoint policy door under the amendment's first guard: no owner
+/// key in the vault, so the owner's clear lands from an install that is not
+/// his machine.
+#[test]
+fn the_checkpoint_policy_door_lands_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    let view = served
+        .clear_checkpoint_policy()
+        .expect("the clear lands as it does today");
+    assert_eq!(view.heads.len(), 1, "the clear is the one live choice");
+}
+
+/// The checkpoint policy door under the second guard: beside an owner key
+/// this install does not hold it refuses and stores nothing; the choices
+/// stand as they did.
+#[test]
+fn the_checkpoint_policy_door_refuses_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served
+        .clear_checkpoint_policy()
+        .expect("guard: the first clear");
+    served.owner_key_held_on_another_install();
+    let (rows, policy) = (served.stored_rows(), served.checkpoint_policy());
+    assert_owner_key_refusal(served.clear_checkpoint_policy());
+    served.assert_nothing_stored_since(rows);
+    assert_eq!(
+        served.checkpoint_policy(),
+        policy,
+        "the policy stands as it did"
+    );
+}
+
+/// The same clear from an install that holds the owner's key lands.
+#[test]
+fn the_checkpoint_policy_door_lands_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.enrol_owner_key();
+    let view = served
+        .clear_checkpoint_policy()
+        .expect("the proven clear lands");
+    assert_eq!(view.heads.len(), 1, "the clear is the one live choice");
+}
+
+/// The vault training door under the first guard: no owner key in the
+/// vault, so the setting lands from an install that is not his machine.
+#[test]
+fn the_vault_training_door_lands_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    let view = served
+        .set_learning(true)
+        .expect("the setting lands as it does today");
+    assert!(view.on, "the setting is on: {view:?}");
+}
+
+/// The vault training door under the second guard: beside an owner key this
+/// install does not hold it refuses and stores nothing; the setting stays
+/// on.
+#[test]
+fn the_vault_training_door_refuses_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served.set_learning(true).expect("guard: the first setting");
+    served.owner_key_held_on_another_install();
+    let (rows, setting) = (served.stored_rows(), served.learning());
+    assert!(setting.on, "guard: the setting is on: {setting:?}");
+    assert_owner_key_refusal(served.set_learning(false));
+    served.assert_nothing_stored_since(rows);
+    assert_eq!(served.learning(), setting, "the setting stands as it did");
+}
+
+/// The same setting from an install that holds the owner's key lands.
+#[test]
+fn the_vault_training_door_lands_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.enrol_owner_key();
+    let view = served.set_learning(true).expect("the proven setting lands");
+    assert!(view.on, "the setting is on: {view:?}");
+}
+
+/// The origin cutover door under the first guard: no owner key in the vault,
+/// so the cutover lands from an install that is not his machine, and signs
+/// his cut of the repository.
+#[test]
+fn the_origin_cutover_door_lands_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    served.serve_a_repo();
+    let rows = served.stored_rows();
+    let row = served
+        .cut_origin(None)
+        .expect("the cutover lands as it does today");
+    assert_eq!(row.epoch, 1);
+    assert!(
+        served.stored_rows() > rows,
+        "the cutover signs the owner's cut of the repository"
+    );
+}
+
+/// The origin cutover door under the second guard: beside an owner key this
+/// install does not hold it refuses, stores no cut, and the host's authority
+/// row it wrote in the same transaction rolls back with it.
+#[test]
+fn the_origin_cutover_door_refuses_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served.serve_a_repo();
+    served.cut_origin(None).expect("guard: the first cutover");
+    served.owner_key_held_on_another_install();
+    let (rows, row) = (served.stored_rows(), served.origin_row());
+    assert_eq!(
+        row.as_ref().map(|row| row.epoch),
+        Some(1),
+        "guard: the first cutover's row"
+    );
+    assert_owner_key_refusal(served.cut_origin(Some(1)));
+    served.assert_nothing_stored_since(rows);
+    assert_eq!(
+        served.origin_row(),
+        row,
+        "the authority row stands as it did"
+    );
+}
+
+/// The same cutover from an install that holds the owner's key lands.
+#[test]
+fn the_origin_cutover_door_lands_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.serve_a_repo();
+    served.enrol_owner_key();
+    let rows = served.stored_rows();
+    let row = served.cut_origin(None).expect("the proven cutover lands");
+    assert_eq!(row.epoch, 1);
+    assert!(
+        served.stored_rows() > rows,
+        "the cutover signs the owner's cut of the repository"
+    );
+}
+
+/// The device succession door under the first guard: no owner key in the
+/// vault, so the succession lands from an install that is not his machine.
+#[test]
+fn the_device_succession_door_lands_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    served
+        .name_predecessor()
+        .expect("the succession lands as it does today");
+    assert_eq!(served.predecessors_successor(), Some(served.install()));
+}
+
+/// The device succession door under the second guard: beside an owner key
+/// this install does not hold it refuses and stores nothing; the retired
+/// device gains no successor.
+#[test]
+fn the_device_succession_door_refuses_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served.owner_key_held_on_another_install();
+    let rows = served.stored_rows();
+    assert_owner_key_refusal(served.name_predecessor());
+    served.assert_nothing_stored_since(rows);
+    assert_eq!(
+        served.predecessors_successor(),
+        None,
+        "the retired device has no successor"
+    );
+}
+
+/// The same succession from an install that holds the owner's key lands.
+#[test]
+fn the_device_succession_door_lands_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.enrol_owner_key();
+    served
+        .name_predecessor()
+        .expect("the proven succession lands");
+    assert_eq!(served.predecessors_successor(), Some(served.install()));
 }
