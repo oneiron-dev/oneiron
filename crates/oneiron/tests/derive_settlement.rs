@@ -826,3 +826,104 @@ fn a_derived_keep_of_imported_words_stages_it_and_the_revert_takes_it_back() {
     );
     assert!(marker_is_open(), "the marker stays open after the revert");
 }
+
+/// A derived Keep of imported words that `derive.revert` took back leaves its alternative
+/// keepable: the next derived Keep of it is accepted and stages it again at a fresh id, the
+/// first proposal stays retracted, and the marker stays open.
+#[test]
+fn a_derived_keep_the_revert_took_back_stages_afresh_on_the_next_keep() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let (marker, alternative) =
+        open_conflict_with_imported_alternative(&fixture.vault, first, "a cortado")
+            .expect("an open conflict with an imported alternative");
+    let keep = |run: &str| {
+        let committed = commit(
+            &fixture.vault,
+            fixture.dreamer,
+            EdgeActorClass::System,
+            run,
+            &[Derived::Settle(Settle {
+                local: "keep_imported",
+                marker: Named::Stored(marker),
+                settlement: Settlement::Keep(Named::Stored(alternative)),
+            })],
+        )
+        .expect("commit");
+        let recorded = batch_items(&fixture.vault, committed.batch)
+            .expect("read")
+            .expect("the batch record");
+        (committed.batch, recorded)
+    };
+    let marker_is_open = || {
+        fixture
+            .vault
+            .memory(fixture.dreamer, EdgeActorClass::System)
+            .open_conflicts(None, Some(fixture.person), usize::MAX)
+            .expect("open conflicts")
+            .iter()
+            .any(|conflict| conflict.marker == marker)
+    };
+
+    let (batch, recorded) = keep("run-keep-imported");
+    let [first_try] = recorded.as_slice() else {
+        panic!("one item: {recorded:?}");
+    };
+    assert!(first_try.landed, "the imported Keep stages: {first_try:?}");
+    let [staged, _] = first_try.rows.as_slice() else {
+        panic!("the staged proposal and the marker: {first_try:?}");
+    };
+    let (reverted, left) = revert_as_owner(&fixture.vault, batch)
+        .expect("revert")
+        .expect("the owner may revert any batch");
+    assert_eq!(reverted, vec!["keep_imported".to_owned()]);
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, *staged).expect("read"),
+        Some("retracted".to_owned()),
+        "the revert takes the staged proposal back"
+    );
+
+    let (_, recorded) = keep("run-keep-imported-again");
+    let [second_try] = recorded.as_slice() else {
+        panic!("one item: {recorded:?}");
+    };
+    assert!(
+        second_try.landed,
+        "a Keep after the revert is accepted: {second_try:?}"
+    );
+    let [restaged, recorded_marker] = second_try.rows.as_slice() else {
+        panic!("the staged proposal and the marker: {second_try:?}");
+    };
+    assert_eq!(*recorded_marker, marker);
+    assert_ne!(
+        restaged, staged,
+        "it stages at a fresh id: the first proposal never reopens"
+    );
+    assert_eq!(
+        second_try.approval.as_deref(),
+        Some("proposed"),
+        "the new proposal waits for review: {second_try:?}"
+    );
+    let restaged_body = fixture
+        .vault
+        .get_claim(restaged)
+        .expect("read")
+        .expect("the staged proposal");
+    assert_eq!(restaged_body.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(restaged_body.source, Some(ClaimSource::Imported));
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, *restaged).expect("read"),
+        Some("active".to_owned()),
+        "the new proposal is live"
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, *staged).expect("read"),
+        Some("retracted".to_owned()),
+        "the first proposal stays retracted"
+    );
+    assert!(
+        marker_is_open(),
+        "the marker stays open beside the new proposal"
+    );
+}

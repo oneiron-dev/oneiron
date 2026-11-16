@@ -101,9 +101,12 @@ impl BoundBranchRead {
 
     /// The bound candidate graph and vector signals in the caller transaction.
     /// The fan-in, fresh-reference and stored-vector reads match native candidate signals exactly.
+    /// `turn_read` judges only whether a TURN source is a retrievable graph center; every
+    /// other row stays on `read`.
     pub(crate) fn candidate_signals_in_txn(
         &self,
         read: &ScopedRead<'_>,
+        turn_read: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         candidate: &PromotionCandidate,
     ) -> Result<(u64, u64, Option<Vec<f32>>)> {
@@ -131,7 +134,7 @@ impl BoundBranchRead {
                 usize::MAX,
             )?;
             count_graph_signals(&edges, since, |id| {
-                self.graph_source_in_slice_in_txn(read, txn, id)
+                self.graph_source_in_slice_in_txn(read, turn_read, txn, id)
             })?
         } else {
             (0, 0)
@@ -203,6 +206,7 @@ impl BoundBranchRead {
     fn graph_source_in_slice_in_txn(
         &self,
         read: &ScopedRead<'_>,
+        turn_read: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
@@ -240,7 +244,11 @@ impl BoundBranchRead {
                 }
                 // The native scoped ChildOf projection (signals.rs): the TURN
                 // counts only as a retrievable graph center, every MESSAGE readable.
-                let edges = read.edges_out_of_in_txn(txn, id, Some(EdgeKind::ChildOf))?;
+                // It is read through the TURN reader: the ordinary delegated lane
+                // refuses every MESSAGE that names no relationship and no private
+                // scope, so no ordinary-talk TURN would be a center there. The
+                // result is one bit in a count; no text leaves this read.
+                let edges = turn_read.edges_out_of_in_txn(txn, id, Some(EdgeKind::ChildOf))?;
                 if edges.receipt.suppressed_count != 0 {
                     return Ok(false);
                 }

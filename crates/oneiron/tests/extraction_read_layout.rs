@@ -6,6 +6,9 @@
 #[path = "extraction_verdict/support.rs"]
 mod verdict_support;
 
+use oneiron::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError};
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
@@ -13,7 +16,6 @@ use oneiron::test_doors::extraction_inputs::{
 use oneiron::test_doors::extraction_verdict::{
     ExtractionVerdictFixture, attach_extraction_verdict_lender,
     dreamer_extraction_verdict_source_version, fixture_charge_binding_count, fixture_charge_units,
-    land_extraction_verdict_listing_claim,
 };
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
@@ -45,17 +47,24 @@ fn refusal_layout_json(refused: &MemoryError) -> ExtractionVerdictTestResult<Val
     Ok(serde_json::to_value(refused)?["extraction_layout"].clone())
 }
 
-/// Lands the listing-claim fixture, enlarges its value and adds a second correctable claim.
-/// Both stored values contain exactly 50,000 characters and share one learned clock, so the
-/// native newest-first listing breaks the tie by ascending claim identifier.
+/// Lands two correctable claims with exactly 50,000-character values and one learned clock,
+/// so the native newest-first listing breaks the tie by ascending claim identifier.
 fn land_two_big_listing_claims(
     vault: &Vault,
 ) -> ExtractionVerdictTestResult<(EntityId, EntityId, EntityId)> {
-    let (subject, first) = land_extraction_verdict_listing_claim(vault)?;
-    let mut body = vault
-        .get_claim(&first)?
-        .unwrap_or_else(|| panic!("the listing fixture landed its claim"));
-    body.value = RmpValue::from("owen".chars().cycle().take(50_000).collect::<String>());
+    let subject = EntityId::now();
+    seed_named_person(vault, &subject, "owen", vault.now_recorded_at())?;
+    let first = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        RmpValue::from("owen".chars().cycle().take(50_000).collect::<String>()),
+        0.8,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    body.scope_facet = vault.default_facet()?;
     let now = vault.now_recorded_at();
     let occurred = TimeRange {
         start: now,
