@@ -315,6 +315,9 @@ async fn serve_with_handles(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // Bulk campaign email names this host's one-click unsubscribe links
+    // (ARCH-0059 #opt-out), as plain serve installs them.
+    crate::api::install_one_click_unsubscribe_origin(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
