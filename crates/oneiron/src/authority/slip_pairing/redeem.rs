@@ -369,7 +369,7 @@ impl Vault {
                     .redeem_machine_answer_in_txn(&mut txn, issuer, answer, request, possession)?;
                 // A linked peer's link records the machine it enrolled and the
                 // slip it minted (L10-16).
-                if matches!(answer.role, MachineRole::HostedNode) {
+                if matches!(answer.role(), MachineRole::HostedNode) {
                     super::linked_peer::record_redeemed_machine_in_txn(
                         self,
                         &mut txn,
