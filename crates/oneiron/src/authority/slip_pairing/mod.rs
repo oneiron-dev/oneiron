@@ -23,24 +23,9 @@ fn write_facet_key(slip_id: &[u8; 32]) -> String {
 const ORG_ADMIN_POLICY: SideTable<String, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
-/// Pairing descriptor is public liveness, not a credential or authority claim.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PairingDescriptor {
-    pub protocol: String,
-    pub slip_version: u8,
-    pub binding: String,
-    pub pairing_endpoint: String,
-}
-impl Default for PairingDescriptor {
-    fn default() -> Self {
-        Self {
-            protocol: "oneiron-pairing".into(),
-            slip_version: 2,
-            binding: "ed25519".into(),
-            pairing_endpoint: "/v1/core/pairing/redeem".into(),
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::slip_pairing::{PairingDescriptor, PairingPrincipal};
+
 /// A link/QR payload. The code is random and stored only as a keyed hash.
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -81,7 +66,15 @@ impl PairingPinRef {
 /// checkpoint pin the link kept, for the joining device to check.
 pub struct PairingRedeemed {
     pub slip: CapabilitySlip,
+    /// The machine the link added, as the roster now holds it. `None` for a
+    /// link that adds none, and for a new machine whose answer is held
+    /// (`held_answer`).
     pub machine: Option<FoldedMachine>,
+    /// The link's machine answer is stored and HELD (row
+    /// CARRIER-OWNER-PROOF): the redeeming install carried it with no owner
+    /// key, so the machine is not the owner's until he confirms it on an
+    /// owner device. The slip stands either way. Its log entry.
+    pub held_answer: Option<AuthorityEntryHash>,
     pub pin: Option<AuthorityCheckpointPin>,
     /// The owner who made the link, as the link recorded it.
     pub(crate) link_owner: Option<crate::EntityId>,
@@ -92,26 +85,6 @@ pub struct PairingRedeemed {
     /// What the redemption's mesh binding did, when the joining machine sent
     /// its mesh identity (FIX 3374).
     pub mesh: Option<MeshEnrolment>,
-}
-/// Owner-approved identity constraints. Redemption can choose a connection key,
-/// but cannot replace these claims or add organization authority.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PairingPrincipal {
-    pub holder_ref: Option<String>,
-    pub actor_class: Option<String>,
-    pub org_ref: Option<String>,
-    /// The facet (hex id) the credential's writes are born in, when its
-    /// scope reads several: one of them. With none named, the smallest. The
-    /// slip does not carry it; redemption keeps it beside the slip's id
-    /// ([`Vault::paired_write_facet`]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub write_facet: Option<String>,
-    /// Whom the paired slip may message (FIX 3899): the owner sets it when
-    /// he makes the link, and redemption copies it into the slip's signed
-    /// claims; the redeemer never picks it. `None` is the vault-wide reach.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub comm: Option<super::CommReach>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -151,9 +124,10 @@ pub(crate) struct PendingInvitationLink {
     pub(crate) invitation: String,
 }
 /// The owner's approval a single-use machine link keeps (mesh PR1b C2): his
-/// act's owner, by, surface and kind, and his answer. Redemption fills the
-/// act's target (the redeeming machine) and `seen` (its revision on the
-/// carrier, zero for a new machine), and the carrier signs.
+/// act's owner, by, surface and kind, and his answer of whose the machine
+/// is, or none for a hosted node (L10-16). Redemption fills the act's target
+/// (the redeeming machine) and `seen` (its revision on the carrier, zero for
+/// a new machine), and the carrier signs.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PendingMachine {
@@ -161,14 +135,39 @@ struct PendingMachine {
     by: ActBy,
     surface: ActSurface,
     kind: OwnerActKind,
-    ownership: MachineOwnership,
+    /// His answer, for a machine link. A hosted node's link holds none: a
+    /// hosted node starts not-mine, and no answer names it. A link stored
+    /// before hosted-node links holds his answer under this key and redeems
+    /// as it did (M-1 keep).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ownership: Option<MachineOwnership>,
+}
+
+impl PendingMachine {
+    /// The role the redeemed machine joins in: `Owned(..)` under his answer,
+    /// and a hosted node where the link holds none.
+    fn role(&self) -> MachineRole {
+        self.ownership
+            .map_or(MachineRole::HostedNode, MachineRole::Owned)
+    }
+}
+
+/// The owner's act a machine link keeps: the pairing act for his answer of
+/// whose the machine is, and a machine answer for a hosted node, which no
+/// such answer names, as [`Vault::enroll_machine`] lands one. The roster
+/// takes a pairing act only for an `Owned(..)` first revision.
+fn pairing_act_kind(ownership: Option<MachineOwnership>) -> OwnerActKind {
+    if ownership.is_some() {
+        OwnerActKind::Pairing
+    } else {
+        OwnerActKind::MachineAnswer
+    }
 }
 
 /// Crockford base32: no `I`, `L`, `O` or `U`, so a code survives being read
 /// aloud or typed from a screen.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LEN: usize = 8;
-const CODE_TTL_SECS: u64 = 60 * 60;
 const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
 
 mod code;
