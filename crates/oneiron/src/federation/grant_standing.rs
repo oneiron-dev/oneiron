@@ -295,6 +295,24 @@ impl Vault {
         )
     }
 
+    /// The scope of a Grant row over this vault as a shared vault: `Some` only when this vault
+    /// is one. A personal vault's rows (an own-device Grant, the owner's agent Grants) carry
+    /// the own-device residence scope, which is a `Vault` scope too, so a row's scope shape
+    /// alone never tells a member row from them; only a row whose scope is this one is read as
+    /// a member row ([`shared_grant_row_in_fold`]).
+    ///
+    /// # Errors
+    ///
+    /// A store read failure.
+    pub(crate) fn shared_vault_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<FederationGrantScope>> {
+        Ok(self
+            .shared_vault_creation_in_txn(txn)?
+            .map(|creation| FederationGrantScope::vault(creation.vault_id)))
+    }
+
     /// [`shared_vault_grants_for_store_in_txn`] over this vault's fold, at the vault clock.
     ///
     /// # Errors
