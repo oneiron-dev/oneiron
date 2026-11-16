@@ -12,6 +12,7 @@ pub mod archive_provenance;
 pub mod authority_ancestor_index;
 pub mod authority_floor_probe;
 pub mod authority_fold_encoding;
+pub mod authority_fold_memory;
 pub mod authority_sequence_floor;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;

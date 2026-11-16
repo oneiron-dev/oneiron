@@ -87,6 +87,8 @@ pub(crate) mod floor_probe_door;
 #[cfg(oneiron_test_support)]
 pub(crate) mod fold_encoding_door;
 mod fold_engine;
+#[cfg(oneiron_test_support)]
+pub(crate) mod fold_memory_door;
 mod fold_project;
 mod fold_resume;
 mod fold_schedule;
