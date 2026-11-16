@@ -239,7 +239,7 @@ fn the_last_bound_owners_person_is_not_deleted_and_the_refusal_names_both_ways_o
         refused.suggestions,
         [
             "Erase the vault if ending it is the goal.",
-            "To keep the vault, bind another owner first: share the vault if it is not shared yet, add an Owner, and have them enrol an owner signing key of their own, which binds them; then this person can be deleted.",
+            "To keep the vault, bind another owner first: have another Owner enrol an owner signing key of their own, which binds them (to add an Owner, share the vault first if it is not shared yet); then this person can be deleted.",
         ],
         "the hints name the same two ways out"
     );
