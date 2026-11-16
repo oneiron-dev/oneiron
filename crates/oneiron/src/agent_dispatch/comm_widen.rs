@@ -340,8 +340,8 @@ pub(crate) fn effective_comm_in_txn(
         return Ok(match ancestry_in(vault, txn, child) {
             Ok(Ancestry {
                 clamp,
-                standing: Some(standing),
-            }) => clamped(input.comm.max(standing), clamp),
+                standing: Some(_),
+            }) => clamped(input.comm, clamp),
             Ok(_) | Err(_) => input.comm,
         });
     };
