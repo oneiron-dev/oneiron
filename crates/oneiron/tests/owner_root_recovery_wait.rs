@@ -1095,6 +1095,11 @@ fn a_sheet_cancel_stops_the_attempt_and_a_retry_lands() {
         "the Cancel lands on the hold"
     );
     assert_eq!(fixture.hold_view(&hold).answered_by, vec![keeper_key]);
+    assert_eq!(
+        fixture.hold_view(&hold).cancelled_by,
+        vec![fixture.person],
+        "the hold names the owner whose device cancelled"
+    );
     let landings = fixture.land();
     assert_eq!(landings.len(), 1, "the cancelled hold is cleaned");
     assert_eq!(landings[0].state, RecoveryHoldState::Cancelled);
@@ -1979,6 +1984,64 @@ fn a_co_owners_it_is_me_never_ends_another_owners_wait() {
     );
 }
 
+/// A co-Owner's Cancel stops another owner's wait, and the hold names who
+/// cancelled (WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B: a Cancel
+/// only denies, so any live owner key of an owner of this vault counts):
+/// the first owner's install cancels the co-Owner's hold with the first
+/// owner's own key; the hold is Cancelled, names the first owner, and
+/// never lands, and the co-Owner's lost key stays live.
+#[test]
+fn a_co_owners_cancel_stops_another_owners_wait_and_names_them() {
+    let fixture = co_owner_wait_fixture();
+    fixture.enrol_root_key();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let lost = key_of(&fixture.lost_key);
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released(),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost),
+            )
+            .expect("the co-Owner's box recovery holds"),
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.owner, fixture.person, "the hold is the co-Owner's");
+    assert!(view.cancelled_by.is_empty(), "nobody cancelled yet");
+    let first_key = fixture.hold_first_owners_key(FIRST_OWNER_KEY_SEED);
+
+    fixture
+        .vault
+        .answer_recovery_hold_as(
+            &fixture.first_owner_authority(),
+            hold,
+            RecoveryHoldAnswerKind::Cancel,
+        )
+        .expect("another owner of this vault cancels");
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.state, RecoveryHoldState::Cancelled);
+    assert_eq!(view.owner, fixture.person);
+    assert_eq!(view.answered_by, vec![key_of(&first_key)]);
+    assert_eq!(
+        view.cancelled_by,
+        vec![fixture.first_owner],
+        "the hold names the first owner as who cancelled"
+    );
+    fixture.at(lands_at + 60);
+    fixture.land();
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Cancelled,
+        "a cancelled hold never lands"
+    );
+    assert!(
+        !fixture.live(&key_of(&new_key)),
+        "the successor was never enrolled"
+    );
+    assert!(fixture.live(&lost), "the co-Owner's lost key stays live");
+}
+
 #[test]
 fn the_waits_rows_are_marked_for_the_live_mirror() {
     let fixture = fixture();
@@ -2441,6 +2504,11 @@ fn the_kits_cancel_is_the_root_keys_own_row() {
     let view = fixture.hold_view(&hold);
     assert_eq!(view.state, RecoveryHoldState::Cancelled);
     assert_eq!(view.answered_by, vec![root_key]);
+    assert_eq!(
+        view.cancelled_by,
+        vec![fixture.person],
+        "the kit's Cancel names the owner its R was enrolled for"
+    );
 }
 
 #[test]
