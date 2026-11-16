@@ -165,9 +165,11 @@ pub struct AuthorityFold {
     pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
     /// Every data-key generation with a counted delivery record, keyed by
     /// generation number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) data_key_generations: BTreeMap<u32, FoldedDataKeyGeneration>,
     /// Well-signed delivery records that count for nothing under this
     /// install's pin: valid entries without effect.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub refused_data_key_generations: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
@@ -398,10 +400,12 @@ pub(super) struct FoldState {
     /// Well-signed key records that count for nothing here, merged by union.
     pub(super) refused_world_keys: BTreeSet<AuthorityEntryHash>,
     /// Each data-key generation's counted delivery records, merged by union.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) data_key_generations:
         BTreeMap<u32, Vec<super::data_key_generation_fold::CountedDataKeyGeneration>>,
     /// Well-signed delivery records that count for nothing here, merged by
     /// union.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) refused_data_key_generations: BTreeSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
