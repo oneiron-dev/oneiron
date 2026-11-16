@@ -26,10 +26,11 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityKey, AuthorityLogEntry, AuthorityOp, HostSlipIssuer,
-    MachineRole, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED, OWNER_KEY_MOVE_NOT_SYNCED,
-    OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS, OwnerKeyEnrollment,
-    OwnerKeyMovePlan, OwnerKeyMoveSigner, authority_entry_hash, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, sign_owner_key_move,
+    MachineRole, OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY,
+    OWNER_KEY_MOVE_NOT_PLANNED, OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE,
+    OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS, OwnerKeyEnrollment, OwnerKeyMovePlan, OwnerKeyMoveSigner,
+    authority_entry_hash, decode_authority_log_entry_body, encode_authority_log_entry_body,
+    sign_owner_key_move,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
@@ -540,7 +541,7 @@ fn the_device_door_signs_the_plan_with_the_key_this_install_holds() {
     unsynced.revoked.push([0x33; 32]);
     let refused = hosted
         .vault
-        .sign_owner_key_move_as(&device, &unsynced)
+        .sign_owner_key_move_as(&device, &unsynced, hosted.co_owner)
         .expect_err("a key this copy does not show");
     assert!(
         refused.to_string().contains(OWNER_KEY_MOVE_NOT_SYNCED),
@@ -550,7 +551,7 @@ fn the_device_door_signs_the_plan_with_the_key_this_install_holds() {
     unheld.signers.clear();
     let refused = hosted
         .vault
-        .sign_owner_key_move_as(&device, &unheld)
+        .sign_owner_key_move_as(&device, &unheld, hosted.co_owner)
         .expect_err("no key this install holds is named");
     assert!(
         refused.to_string().contains(OWNER_KEY_MOVE_NO_HELD_KEY),
@@ -559,7 +560,7 @@ fn the_device_door_signs_the_plan_with_the_key_this_install_holds() {
 
     let rows = hosted
         .vault
-        .sign_owner_key_move_as(&device, &plan)
+        .sign_owner_key_move_as(&device, &plan, hosted.co_owner)
         .expect("the device door signs the plan");
     hosted
         .confirm(hosted.owner, &act, &rows)
@@ -650,14 +651,18 @@ fn the_verbs_carry_the_plan_and_the_confirm_as_json() {
     let refused = sdk::sign_shared_owner_key_move(
         &hosted.vault,
         &executor,
-        SharedOwnerKeyMoveSignRequest { plan: malformed },
+        SharedOwnerKeyMoveSignRequest {
+            plan: malformed,
+            member: hosted.co_owner.to_hex(),
+        },
     )
     .expect_err("33 bytes are no authority vault id");
     assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
 
-    let sign_input: SharedOwnerKeyMoveSignRequest = serde_json::from_value(
-        json!({ "plan": serde_json::to_value(&plan).expect("the plan as JSON") }),
-    )
+    let sign_input: SharedOwnerKeyMoveSignRequest = serde_json::from_value(json!({
+        "plan": serde_json::to_value(&plan).expect("the plan as JSON"),
+        "member": hosted.co_owner.to_hex(),
+    }))
     .expect("the device reads the plan the server answered");
     let confirm = sdk::sign_shared_owner_key_move(&hosted.vault, &executor, sign_input)
         .expect("the device signs the plan");
@@ -702,10 +707,15 @@ fn a_plan_swapped_to_another_member_signs_nothing_on_the_device() {
     swapped.member = third;
     swapped.revoked = vec![public(&third_key)];
     let device = ActAuthority::Owner(proof(&hosted.vault, hosted.owner), ActSurface::ThisInstall);
-    let signed = hosted.vault.sign_owner_key_move_as(&device, &swapped);
+    let refused = hosted
+        .vault
+        .sign_owner_key_move_as(&device, &swapped, hosted.co_owner)
+        .expect_err("the device signs no revoke of a member the Owner did not confirm");
     assert!(
-        signed.is_err(),
-        "the device signs no revoke of a member the Owner did not confirm: {signed:?}"
+        refused
+            .to_string()
+            .contains(OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED),
+        "{refused}"
     );
 }
 
@@ -727,8 +737,6 @@ fn a_plan_is_answered_only_once_the_act_has_completed() {
         &act,
         Some(&hosted.issuer),
     );
-    assert!(
-        planned.is_err(),
-        "no plan while the act's objection window is open: {planned:?}"
-    );
+    let refused = planned.expect_err("no plan while the act's objection window is open");
+    assert!(refused.to_string().contains("not completed"), "{refused}");
 }

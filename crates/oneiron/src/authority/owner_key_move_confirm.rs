@@ -48,6 +48,9 @@ pub const OWNER_KEY_MOVE_NOT_SYNCED: &str = "this device's copy of the vault doe
 pub const OWNER_KEY_MOVE_NO_HELD_KEY: &str =
     "this device holds none of your owner keys that this move's plan names";
 
+/// A plan whose member is not the one the Owner confirmed on the device.
+pub const OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED: &str = "this move's plan ends the owner keys of another member than the one you confirmed on this device: nothing was signed";
+
 /// One owner key the executing Owner may confirm a move with: Ed25519, live,
 /// enrolled to them, and outside the host's custody.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,27 +256,38 @@ impl Vault {
 
     /// A device's confirm of `plan` (row HOSTED-OWNER-MOVE-TWO-PHASE): the
     /// owner `authority` proves checks the plan against this install's copy
-    /// of the vault (the same vault; each key it revokes a live owner key
-    /// enrolled to the plan's member, and no other of theirs; the key this
+    /// of the vault (the same vault; the plan's member is `member`, the one
+    /// the Owner confirmed on this device; each key it revokes a live owner
+    /// key enrolled to that member, and no other of theirs; the key this
     /// install holds enrolled to `authority`'s owner and named among the
     /// plan's signers), then signs the plan's revokes with that key
     /// ([`sign_owner_key_move`]). It writes nothing; the answer is each row's
     /// encoded body, in order, for the server's land.
     ///
+    /// The act lives on the host, so the device cannot check that the plan's
+    /// member is the act's. The Owner's confirm of `member`, shown from this
+    /// device's own copy and never filled from the plan, is what binds the
+    /// revokes to the move they chose (REVIEW2 #9093 P1-1).
+    ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act or a person who
     /// is not this vault's owner; [`RecordError::InvalidAuthorityLogBody`]
-    /// for a plan of another vault, for keys this copy does not show as the
-    /// plan names them (sync first), or when this install holds none of the
-    /// owner's keys the plan names.
+    /// for a plan of another member than `member`
+    /// ([`OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED`]), a plan of another vault,
+    /// keys this copy does not show as the plan names them (sync first), or
+    /// when this install holds none of the owner's keys the plan names.
     pub fn sign_owner_key_move_as(
         &self,
         authority: &ActAuthority,
         plan: &OwnerKeyMovePlan,
+        member: EntityId,
     ) -> Result<Vec<Vec<u8>>> {
         let ActAuthority::Owner(owner, _) = authority else {
             return Err(authority_refused(OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS));
         };
+        if plan.member != member {
+            return Err(not_valid(OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED));
+        }
         let txn = self.store.env.read_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

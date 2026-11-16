@@ -472,16 +472,18 @@ pub fn plan_shared_owner_key_move(
 /// `owner` signs the plan's revokes, after the plan is checked against this
 /// install's copy of the vault (row HOSTED-OWNER-MOVE-TWO-PHASE). It runs on
 /// the Owner's own device: a host holds none of an Owner's keys, so there it
-/// answers the refusal. It writes nothing; the answer goes to
-/// `vault.shared.execute` as it is.
+/// answers the refusal. `input.member` is the member the Owner confirmed on
+/// the device, from its own copy; a plan of another member signs nothing.
+/// It writes nothing; the answer goes to `vault.shared.execute` as it is.
 pub fn sign_shared_owner_key_move(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: SharedOwnerKeyMoveSignRequest,
 ) -> MemoryResult<SharedOwnerKeyMoveConfirm> {
+    let member = person_id("member", &input.member)?;
     let plan = owner_key_move_plan_from_wire(input.plan)?;
     let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
-    let rows = vault.sign_owner_key_move_as(&authority, &plan)?;
+    let rows = vault.sign_owner_key_move_as(&authority, &plan, member)?;
     Ok(SharedOwnerKeyMoveConfirm {
         owner_key_revokes: rows.iter().map(|row| oneiron_hex::encode(row)).collect(),
     })

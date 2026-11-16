@@ -95,11 +95,16 @@ pub struct SharedOwnerKeyMovePlan {
     pub at: u64,
 }
 
-/// `vault.shared.owner_key_move_sign`'s input: the plan the server answered.
+/// `vault.shared.owner_key_move_sign`'s input: the plan the server answered,
+/// and the member the Owner confirmed on this device.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedOwnerKeyMoveSignRequest {
     pub plan: SharedOwnerKeyMovePlan,
+    /// The member whose owner keys the Owner confirmed ending, as the
+    /// device's own copy shows them; never copied from `plan`. A plan of
+    /// another member signs nothing.
+    pub member: String,
 }
 
 /// `vault.shared.owner_key_move_sign`'s answer: the rows this device signed,

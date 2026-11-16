@@ -42,14 +42,16 @@ impl Vault {
     /// The plan a device confirms the pending act `act_id` with (row
     /// HOSTED-OWNER-MOVE-TWO-PHASE): the move it runs ends a member's Owner
     /// standing, and `executor`, a live Owner who may run the act, signs its
-    /// owner-key revokes on a device of theirs. A frontier join the plan
-    /// needs is signed by `slips` (or this install's live host issuer) and
-    /// kept; nothing else is written.
+    /// owner-key revokes on a device of theirs. A plan is answered only once
+    /// the act has completed on the store clock, so a confirm exists only
+    /// for a move that is due, never inside its objection window (REVIEW2
+    /// #9093 P2-1). A frontier join the plan needs is signed by `slips` (or
+    /// this install's live host issuer) and kept; nothing else is written.
     ///
     /// # Errors
     /// An executor who is not a live person; an act that is unknown,
-    /// already executed, ends no Owner standing, or that `executor` may not
-    /// run now; the log's.
+    /// already executed, not yet completed, ends no Owner standing, or that
+    /// `executor` may not run now; the log's.
     pub fn owner_key_move_plan(
         &self,
         executor: &AuthenticatedOwner,
@@ -64,6 +66,9 @@ impl Vault {
             .ok_or_else(invalid)?;
         if act.execution.is_some() {
             return Err(invalid());
+        }
+        if !self.authority_act_completed_in_txn(&txn, &act)? {
+            return Err(Error::ConcurrentWrite("authority act not completed"));
         }
         let member = owner_standing_ends(&act)?.ok_or_else(invalid)?;
         check_vault(self, &txn, act.vault_id)?;
