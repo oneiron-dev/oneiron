@@ -40,7 +40,7 @@ fn artifact(facade: &Memory<'_>, versions: &[&[u8]]) -> EntityId {
             id: None,
             name: "shared.bin".into(),
             media_type: "application/octet-stream".into(),
-            occurred_at: 10,
+            occurred_at: Some(10),
             learned_at: None,
         })
         .expect("artifact");

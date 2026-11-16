@@ -136,8 +136,11 @@ pub struct WitnessTurn {
     /// MESSAGE children.
     pub messages: Vec<WitnessMessage>,
     /// Unix seconds; used for both `occurred` and `learned_at` so
-    /// migration backfill stays deterministic.
-    pub occurred_at: u64,
+    /// migration backfill stays deterministic. Omitted ⇒ the vault's
+    /// recording clock, read once in the write (UC-02 B1b): the engine
+    /// stamps it, not the binding.
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     /// The records this reply names as cited or created (OF-063). Each is
     /// judged by its `id` through the writer's own read lane in the write
     /// txn, before anything stages; one the writer cannot read refuses the

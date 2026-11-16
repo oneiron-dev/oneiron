@@ -166,7 +166,7 @@ fn turn(turn_ref: &str, messages: &[(u32, &str)]) -> WitnessTurn {
     WitnessTurn {
         conversation_ref: ROOM.into(),
         turn_ref: Some(turn_ref.to_owned()),
-        occurred_at: NOW,
+        occurred_at: Some(NOW),
         messages: messages
             .iter()
             .map(|(order, content)| WitnessMessage {

@@ -259,7 +259,7 @@ fn speak(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: T0,
+            occurred_at: Some(T0),
             assertions: Default::default(),
         })?;
     Ok(())

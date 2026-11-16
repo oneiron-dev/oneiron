@@ -147,7 +147,9 @@ fn witnessed_turns(vault: &Vault, lines: &[&str], now: u64) -> Vec<EntityId> {
                         order: 0,
                         quote: None,
                     }],
-                    occurred_at: now + u64::try_from(index).expect("fixture turn counts are small"),
+                    occurred_at: Some(
+                        now + u64::try_from(index).expect("fixture turn counts are small"),
+                    ),
                     thread_audience: None,
                     assertions: Default::default(),
                 })

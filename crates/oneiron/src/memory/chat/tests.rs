@@ -194,7 +194,7 @@ fn seeded_vault(seed: u8, content: &str) -> (tempfile::TempDir, crate::Vault, En
             turn_ref: None,
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, content)],
-            occurred_at: 2100,
+            occurred_at: Some(2100),
             assertions: WitnessAssertions::default(),
         })
         .expect("witness");
@@ -215,7 +215,7 @@ fn seeded_pair(seed: u8, one: &str, two: &str) -> (tempfile::TempDir, crate::Vau
                 turn_ref: None,
                 thread_audience: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, content)],
-                occurred_at: 2100,
+                occurred_at: Some(2100),
                 assertions: WitnessAssertions::default(),
             })
             .expect("witness");

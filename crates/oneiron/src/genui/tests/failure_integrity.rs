@@ -38,7 +38,7 @@ fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 100,
+            occurred_at: Some(100),
             assertions: Default::default(),
         })
         .expect("witness a canonical Q&A message");

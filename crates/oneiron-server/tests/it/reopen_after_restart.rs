@@ -208,7 +208,7 @@ fn witnessed_text_is_found_under_the_same_reference_after_sigterm_and_restart() 
                 parts: None,
                 quote: None,
             }],
-            occurred_at: unix_seconds_now(),
+            occurred_at: Some(unix_seconds_now()),
             thread_audience: None,
             assertions: Default::default(),
         })

@@ -40,7 +40,7 @@ fn speak(
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 2,
+            occurred_at: Some(2),
             thread_audience: None,
             assertions: Default::default(),
         })
@@ -257,7 +257,7 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 2,
+            occurred_at: Some(2),
             thread_audience: None,
             assertions: Default::default(),
         })

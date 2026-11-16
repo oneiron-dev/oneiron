@@ -333,7 +333,7 @@ fn speak_trunk(rig: &Rig, room: EntityId) -> TestResult<EntityId> {
             order: 0,
             quote: None,
         }],
-        occurred_at: rig.vault.now_recorded_at(),
+        occurred_at: Some(rig.vault.now_recorded_at()),
         assertions: Default::default(),
     })?;
     Ok(turn)

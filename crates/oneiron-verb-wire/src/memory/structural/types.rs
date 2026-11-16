@@ -39,8 +39,10 @@ pub struct StructuralPutInput {
     pub text_fields: Option<Vec<TextIndexField>>,
     /// Outgoing edges from this entity.
     pub edges: Option<Vec<StructuralEdgeSpec>>,
-    /// Unix seconds.
-    pub occurred_at: u64,
+    /// Unix seconds; `None` ⇒ the vault's recording clock, read once in
+    /// the write (UC-02 B1b).
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     /// Unix seconds; `None` ⇒ `occurred_at`.
     pub learned_at: Option<u64>,
 }
@@ -55,8 +57,10 @@ pub struct HabitCheckinInput {
     /// Extra body fields (JSON object). The facade injects the pinned
     /// `role` key (`HabitCheckin`); supplying `role` here is rejected.
     pub data: Option<serde_json::Value>,
-    /// Unix seconds.
-    pub occurred_at: u64,
+    /// Unix seconds; `None` ⇒ the vault's recording clock, read once in
+    /// the write (UC-02 B1b).
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     /// Unix seconds; `None` ⇒ `occurred_at`.
     pub learned_at: Option<u64>,
 }
@@ -77,8 +81,10 @@ pub struct AdmitImportedClaimInput {
     pub predicate: String,
     /// Claim value (JSON).
     pub value: serde_json::Value,
-    /// Unix seconds.
-    pub occurred_at: u64,
+    /// Unix seconds; `None` ⇒ the vault's recording clock, read once in
+    /// the write (UC-02 B1b).
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     /// Unix seconds; `None` ⇒ `occurred_at`.
     pub learned_at: Option<u64>,
 }
@@ -92,8 +98,10 @@ pub struct BlobArtifactInput {
     pub name: String,
     /// Media type (≤256 bytes).
     pub media_type: String,
-    /// Unix seconds.
-    pub occurred_at: u64,
+    /// Unix seconds; `None` ⇒ the vault's recording clock, read once in
+    /// the write (UC-02 B1b).
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     /// Unix seconds; `None` ⇒ `occurred_at`.
     pub learned_at: Option<u64>,
 }

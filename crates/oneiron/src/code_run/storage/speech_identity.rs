@@ -257,7 +257,7 @@ pub(super) fn canonical_witness_executor_turn_sourced(
                     order,
                     quote: None,
                 }],
-                occurred_at,
+                occurred_at: Some(occurred_at),
                 assertions,
             },
             None,

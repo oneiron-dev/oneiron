@@ -55,7 +55,7 @@ fn room_fixture() -> Result<(
             parts: None,
             quote: None,
         }],
-        occurred_at: 2,
+        occurred_at: Some(2),
         thread_audience: None,
         assertions: Default::default(),
     };

@@ -728,7 +728,7 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

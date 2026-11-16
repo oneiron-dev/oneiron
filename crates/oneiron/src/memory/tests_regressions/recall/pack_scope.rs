@@ -13,7 +13,7 @@ fn recall_returns_versioned_pack_with_provenance() {
                 WitnessAuthor::User,
                 "aurora borealis sighting over the fjord",
             )],
-            occurred_at: 1500,
+            occurred_at: Some(1500),
             thread_audience: None,
             assertions: Default::default(),
         })
@@ -100,7 +100,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
                     value: "atlantis explorer".to_owned(),
                 }]),
                 edges: None,
-                occurred_at: 1600,
+                occurred_at: Some(1600),
                 learned_at: None,
             })
             .expect("subject text")
@@ -346,7 +346,7 @@ fn recall_neighbours_stay_inside_the_asked_worlds() {
                 target_ref: claim_hex,
                 weight: Some(0.9),
             }]),
-            occurred_at: 1700,
+            occurred_at: Some(1700),
             learned_at: None,
         })
         .expect("base record");
@@ -429,7 +429,7 @@ fn recall_and_query_verbs_respect_limits() {
                     WitnessAuthor::User,
                     &format!("pelican count {i}"),
                 )],
-                occurred_at: 1700,
+                occurred_at: Some(1700),
                 thread_audience: None,
                 assertions: Default::default(),
             })
@@ -473,7 +473,7 @@ fn recall_and_query_verbs_respect_limits() {
                     })
                     .collect(),
             ),
-            occurred_at: 1701,
+            occurred_at: Some(1701),
             learned_at: None,
         })
         .expect("anchor");

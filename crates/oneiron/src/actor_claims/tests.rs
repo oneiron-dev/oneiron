@@ -589,7 +589,7 @@ fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<
                     order: 0,
                     quote: None,
                 }],
-                occurred_at: now + index,
+                occurred_at: Some(now + index),
                 assertions: Default::default(),
             })
             .expect("the witness door lands the turn");

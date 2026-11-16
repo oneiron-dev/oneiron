@@ -526,7 +526,7 @@ fn lenses_default_thread_entry_cut_follows_excerpt_bytes() {
             order: 0,
             quote: None,
         }],
-        occurred_at: fx.vault.now_recorded_at(),
+        occurred_at: Some(fx.vault.now_recorded_at()),
         assertions: WitnessAssertions::default(),
     })
     .expect("a thread MESSAGE source");

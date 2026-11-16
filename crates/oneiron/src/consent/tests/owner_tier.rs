@@ -161,7 +161,7 @@ fn a_non_owner_persons_proof_witnesses_nothing_into_a_roomless_stretch() {
             order: 0,
             quote: None,
         }],
-        occurred_at: 1000,
+        occurred_at: Some(1000),
         assertions: Default::default(),
     };
     let speak = |proof: &AuthenticatedOwner| {

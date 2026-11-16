@@ -2331,7 +2331,7 @@ fn ordinary_thought_and_public_witness_cannot_forge_blocked_receipts() -> Result
             order: 0,
             quote: None,
         }],
-        occurred_at: 1_719_000_000,
+        occurred_at: Some(1_719_000_000),
         assertions: Default::default(),
     };
     let error = vault

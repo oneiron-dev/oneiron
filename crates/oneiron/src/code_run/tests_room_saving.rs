@@ -355,7 +355,7 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
                 order: 1,
                 quote: None,
             }],
-            occurred_at: 60_500,
+            occurred_at: Some(60_500),
             assertions: Default::default(),
         })
         .expect("an ordinary witness appends to the saved turn");

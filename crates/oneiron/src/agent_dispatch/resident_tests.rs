@@ -33,7 +33,7 @@ fn resident_keeps_goal_data_inbox_and_room_pointer_without_prompt_change() {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
-            occurred_at: 2,
+            occurred_at: Some(2),
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(node.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
@@ -129,7 +129,7 @@ mod foreign_owner_proof {
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
                 thread_audience: None,
-                occurred_at: 2,
+                occurred_at: Some(2),
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(node.to_hex()),
                     author: crate::memory::WitnessAuthor::User,
@@ -209,7 +209,7 @@ fn a_held_resident_binding_never_wakes_the_inbox_but_still_conflicts() {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
-            occurred_at: 2,
+            occurred_at: Some(2),
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(node.to_hex()),
                 author: crate::memory::WitnessAuthor::User,

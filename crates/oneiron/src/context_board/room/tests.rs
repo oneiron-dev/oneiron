@@ -101,7 +101,7 @@ fn spoken(room: EntityId, turn: EntityId, at: u64) -> WitnessTurn {
             order: 0,
             quote: None,
         }],
-        occurred_at: at,
+        occurred_at: Some(at),
         assertions: Default::default(),
     }
 }

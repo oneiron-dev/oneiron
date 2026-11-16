@@ -643,7 +643,7 @@ fn record_links_turn_page_refuses_zero_and_cuts_at_its_maximum() -> TestResult {
             turn_ref: None,
             thread_audience: None,
             messages,
-            occurred_at: 900,
+            occurred_at: Some(900),
             assertions: WitnessAssertions::default(),
         })?
         .turn_id

@@ -112,7 +112,7 @@ fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()>
             turn_ref: Some(later.to_hex()),
             thread_audience: None,
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
-            occurred_at: 20,
+            occurred_at: Some(20),
             assertions: Default::default(),
         })
         .expect("a later turn");
@@ -183,7 +183,7 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
         messages: vec![message(0, WitnessAuthor::User, "", true)],
-        occurred_at: now,
+        occurred_at: Some(now),
         assertions: Default::default(),
     };
     end_stream(&vault, writer, &input, "call me", "finalize");
@@ -207,7 +207,7 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
             turn_ref: Some(later.to_hex()),
             thread_audience: None,
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
-            occurred_at: now,
+            occurred_at: Some(now),
             assertions: Default::default(),
         })
         .expect("a new turn in the same second");

@@ -251,7 +251,7 @@ impl Memory<'_> {
                     order: 0,
                     quote: None,
                 }],
-                occurred_at: reserved.occurred_at,
+                occurred_at: Some(reserved.occurred_at),
                 assertions: Default::default(),
             })?;
         }

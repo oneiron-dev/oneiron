@@ -553,7 +553,7 @@ fn g83_a_room_turn_writes_into_its_bound_room() -> TestResult {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: fixture.vault.now_recorded_at(),
+            occurred_at: Some(fixture.vault.now_recorded_at()),
             assertions: Default::default(),
         })
         .map_err(at("speak in the room"))?;

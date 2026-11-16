@@ -107,7 +107,7 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
                 id: None,
                 name: "erase fixture".to_owned(),
                 media_type: "text/plain".to_owned(),
-                occurred_at: 1,
+                occurred_at: Some(1),
                 learned_at: None,
             })
             .expect("the owner writes an artifact");

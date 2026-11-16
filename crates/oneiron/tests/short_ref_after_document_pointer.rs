@@ -63,7 +63,7 @@ fn witness_turn(vault: &Vault, content: &str) -> WitnessTurn {
             order: 0,
             quote: None,
         }],
-        occurred_at: vault.now_recorded_at(),
+        occurred_at: Some(vault.now_recorded_at()),
         assertions: WitnessAssertions::default(),
     }
 }

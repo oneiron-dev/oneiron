@@ -94,7 +94,7 @@ fn witness_turn(
                 order,
                 quote: None,
             }],
-            occurred_at: at,
+            occurred_at: Some(at),
             assertions: Default::default(),
         })
         .expect("witness turn");

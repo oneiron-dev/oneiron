@@ -531,7 +531,7 @@ fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 2,
+            occurred_at: Some(2),
             assertions: Default::default(),
         })
         .expect("the local witness door still writes MESSAGE rows");

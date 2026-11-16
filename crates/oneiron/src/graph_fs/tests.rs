@@ -1264,7 +1264,7 @@ fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
             conversation_ref: test_id(0x87).to_hex(),
             turn_ref: None,
             thread_audience: None,
-            occurred_at: 1_000,
+            occurred_at: Some(1_000),
             assertions: Default::default(),
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),

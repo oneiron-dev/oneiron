@@ -251,7 +251,7 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: WITNESSED_AT,
+            occurred_at: Some(WITNESSED_AT),
             assertions: Default::default(),
         })
         .expect("plain witness");

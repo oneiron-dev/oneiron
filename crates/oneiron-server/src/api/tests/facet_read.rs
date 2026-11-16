@@ -87,7 +87,7 @@ fn facets() -> Facets {
                     parts: None,
                     quote: None,
                 }],
-                occurred_at: 2,
+                occurred_at: Some(2),
                 assertions: Default::default(),
                 thread_audience: None,
             })

@@ -251,7 +251,7 @@ fn tagged_fixture() -> Fixture {
                     Some(serde_json::json!({"rel": relationship.to_hex()})),
                 ),
             ],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .expect("witness");
@@ -463,7 +463,7 @@ fn a_mentions_hit_never_points_at_a_mention_outside_the_readers_relationship() {
                 message(r_message, 0, "Mirela called.", fixture.relationship),
                 message(s_message, 1, "She is fine.", fixture.shared),
             ],
-            occurred_at: 20,
+            occurred_at: Some(20),
             assertions: WitnessAssertions::default(),
         })
         .expect("the second turn");

@@ -26,7 +26,7 @@ fn turn(
             order: 0,
             quote: None,
         }],
-        occurred_at: at,
+        occurred_at: Some(at),
         assertions: Default::default(),
     }
 }

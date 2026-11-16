@@ -48,7 +48,7 @@ fn witness_writes_turn_messages_edges_and_text() {
                 witness_message(1, WitnessAuthor::User, "second owner row"),
                 witness_message(2, WitnessAuthor::User, "closing note"),
             ],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect("witness turn");
@@ -153,7 +153,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             turn_ref: Some(turn_hex.clone()),
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "first half")],
-            occurred_at: 600,
+            occurred_at: Some(600),
             assertions: Default::default(),
         })
         .expect("first witness");
@@ -176,7 +176,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             turn_ref: Some(turn_hex.clone()),
             thread_audience: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "system row")],
-            occurred_at: 601,
+            occurred_at: Some(601),
             assertions: Default::default(),
         })
         .expect("second witness");
@@ -245,7 +245,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             turn_ref: None,
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "x")],
-            occurred_at: 602,
+            occurred_at: Some(602),
             assertions: Default::default(),
         })
         .expect_err("turn id passed as conversation must fail");
@@ -275,7 +275,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
                 WitnessAuthor::Companion,
                 "companion turn headed for the close",
             )],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect("witness turn");
@@ -358,7 +358,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                     "companion row in the same call",
                 ),
             ],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect_err("a mixed non-system mint is a bad request");
@@ -409,7 +409,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                 WitnessAuthor::User,
                 "owner holds the turn alone",
             )],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect("mint a user turn");
@@ -436,7 +436,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                 WitnessAuthor::Companion,
                 "companion usurps the owner turn",
             )],
-            occurred_at: 600,
+            occurred_at: Some(600),
             assertions: Default::default(),
         })
         .expect_err("a cross-speaker append is a bad request");
@@ -514,7 +514,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "late joiner")],
-                occurred_at: 750,
+                occurred_at: Some(750),
                 assertions: Default::default(),
             },
             || {
@@ -602,7 +602,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 turn_ref: Some(turn2_id.to_hex()),
                 thread_audience: None,
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "speaker grab")],
-                occurred_at: 850,
+                occurred_at: Some(850),
                 assertions: Default::default(),
             },
             || {
@@ -675,7 +675,7 @@ fn witness_concurrent_wrong_type_conversation_refuses_without_rows_or_edges() {
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
                 messages: vec![message],
-                occurred_at: 750,
+                occurred_at: Some(750),
                 assertions: Default::default(),
             },
             || {
@@ -740,7 +740,7 @@ fn witness_concurrent_soft_erased_conversation_refuses_without_a_turn() {
                 turn_ref: Some(turn_id.to_hex()),
                 thread_audience: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "after erasure")],
-                occurred_at: 750,
+                occurred_at: Some(750),
                 assertions: Default::default(),
             },
             || {
@@ -773,7 +773,7 @@ fn witness_append_redirties_the_same_turn() {
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "the original turn")],
-            occurred_at: 1_000,
+            occurred_at: Some(1_000),
             assertions: Default::default(),
         })
         .expect("mint the turn");
@@ -807,7 +807,7 @@ fn witness_append_redirties_the_same_turn() {
                 witness_message(1, WitnessAuthor::User, "the turn continues"),
                 witness_message(2, WitnessAuthor::System, "tool row in between"),
             ],
-            occurred_at: 900,
+            occurred_at: Some(900),
             assertions: Default::default(),
         })
         .expect("backdated same-speaker append");
@@ -897,7 +897,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                 WitnessAuthor::Companion,
                 "the assistant turn",
             )],
-            occurred_at: 600,
+            occurred_at: Some(600),
             assertions: Default::default(),
         })
         .expect("mint an assistant turn");
@@ -912,7 +912,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
             messages: vec![witness_message(1, WitnessAuthor::System, "tool result row")],
-            occurred_at: 601,
+            occurred_at: Some(601),
             assertions: Default::default(),
         })
         .expect("system interleave on an established turn is permitted");
@@ -957,7 +957,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                     WitnessAuthor::System,
                     "orphan system rows",
                 )],
-                occurred_at: 700,
+                occurred_at: Some(700),
                 assertions: Default::default(),
             })
             .expect_err("a system-only mint has no grouping speaker");
@@ -992,7 +992,7 @@ fn witness_bumps_open_session_activity_atomically() {
             turn_ref: None,
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "hello again")],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect("witness turn");
@@ -1014,7 +1014,7 @@ fn witness_bumps_open_session_activity_atomically() {
             turn_ref: None,
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "backfilled note")],
-            occurred_at: 450,
+            occurred_at: Some(450),
             assertions: Default::default(),
         })
         .expect("witness backfill turn");
@@ -1040,7 +1040,7 @@ fn witness_without_an_open_session_stays_valid() {
             turn_ref: None,
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "sessionless turn")],
-            occurred_at: 600,
+            occurred_at: Some(600),
             assertions: Default::default(),
         })
         .expect("witness sessionless turn");
@@ -1081,7 +1081,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
                 turn_ref: None,
                 thread_audience: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, content)],
-                occurred_at: 10,
+                occurred_at: Some(10),
                 assertions: Default::default(),
             })
     };
@@ -1162,7 +1162,7 @@ fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
                 WitnessAuthor::User,
                 "keep original author",
             )],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: Default::default(),
         })
         .expect("witness");
@@ -1270,7 +1270,7 @@ fn mixed_room_messages() -> (
             turn_ref: None,
             thread_audience: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "cedarwax")],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: Default::default(),
         })
         .expect("first witness");
@@ -1292,7 +1292,7 @@ fn mixed_room_messages() -> (
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
             messages: vec![witness_message(1, WitnessAuthor::User, "orchidwax")],
-            occurred_at: 11,
+            occurred_at: Some(11),
             assertions: Default::default(),
         })
         .expect("second actor appends to the first TURN");
@@ -1590,7 +1590,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
                 WitnessAuthor::Companion,
                 "agentwitnessneedle",
             )],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: Default::default(),
         })
         .expect("admitted AGENT_DEF witness");
@@ -1617,7 +1617,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
                 WitnessAuthor::User,
                 "alicewitnessneedle",
             )],
-            occurred_at: 11,
+            occurred_at: Some(11),
             assertions: Default::default(),
         })
         .expect("Alice witness");
@@ -1683,7 +1683,7 @@ fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
                 WitnessAuthor::User,
                 "The mechanic says the car needs new brakes.",
             )],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect("witness turn");
@@ -1747,7 +1747,7 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
         turn_ref: None,
         thread_audience: None,
         messages: vec![witness_message(0, WitnessAuthor::User, "a plain turn")],
-        occurred_at,
+        occurred_at: Some(occurred_at),
         assertions: Default::default(),
     };
 
@@ -1770,7 +1770,7 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
             body: serde_json::json!({"speaker": "user"}),
             text_fields: None,
             edges: None,
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: Some(now + 10 * 365 * 86_400),
         })
         .expect_err("a far-future structural turn is refused");

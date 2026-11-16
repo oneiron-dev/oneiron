@@ -331,7 +331,7 @@ mod tests {
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: None,
                 thread_audience: None,
-                occurred_at: 1,
+                occurred_at: Some(1),
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author: crate::memory::WitnessAuthor::User,

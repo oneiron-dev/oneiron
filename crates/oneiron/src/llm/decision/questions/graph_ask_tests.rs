@@ -514,7 +514,7 @@ fn mail_and_private_note_each_get_one_receipted_prediction() -> crate::Result<()
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: Default::default(),
         })
         .expect("witness message");
@@ -801,7 +801,7 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: Default::default(),
         })
         .expect("witness relationship message");

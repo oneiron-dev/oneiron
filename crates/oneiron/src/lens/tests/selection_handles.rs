@@ -90,7 +90,7 @@ fn quote_fixture() -> Result<SpanFixture> {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 500,
+            occurred_at: Some(500),
             assertions: Default::default(),
         })
         .expect("witness canonical MESSAGE");
