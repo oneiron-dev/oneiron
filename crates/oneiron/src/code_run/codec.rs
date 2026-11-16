@@ -32,6 +32,8 @@ mod pending_step;
 pub use self::checkpoint::CODE_RUN_STEP_CHECKPOINT_KEYS;
 use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_step_checkpoints};
 pub(crate) use self::held::{decode_code_run_replay_generation, decode_code_run_replay_held};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::pending_step::pending_step_bytes_digest_for_test;
 pub(super) use self::pending_step::pending_step_digest;
 use self::pending_step::{decode_pending_step, encode_pending_step, validate_pending_step};
 
