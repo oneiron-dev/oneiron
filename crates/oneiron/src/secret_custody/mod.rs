@@ -87,6 +87,7 @@ mod pending_restore;
 mod reveal;
 pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
+pub(crate) mod setting_keys;
 mod sighted_file;
 mod storage_seal;
 mod transition;
