@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::RowKey;
 
 use super::change::record_change_in_txn;
@@ -534,22 +535,21 @@ fn check_in_scope(scope: &SettingScope) -> CheckInScope {
     }
 }
 
-/// The digest of one change: the row's key, the value it would hold and a seed's weight. BLAKE3,
-/// key derived from `oneiron setting set v1`. A change with no weight hashes as before weights
-/// existed, so a check-in opened for it still matches.
+/// The digest of one change: the row's key, the value it would hold and a seed's weight, a
+/// fingerprint under [`purposes::setting::SET_EFFECT`]. The weight is the last part and only a
+/// weighted change writes it, so a change with no weight hashes as before weights existed and a
+/// check-in opened for it still matches.
 fn effect_digest(change: &Change<'_>) -> [u8; 32] {
-    let key = change.key.encode();
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron setting set v1");
-    hasher.update(&(key.len() as u64).to_be_bytes());
-    hasher.update(&key);
+    let mut digest = Fingerprinter::new(purposes::setting::SET_EFFECT);
+    digest.part(&change.key.encode());
     match change.value {
-        None => hasher.update(&[0]),
-        Some(value) => hasher.update(&[1]).update(&value.0),
+        None => digest.flag(false),
+        Some(value) => digest.flag(true).part(&value.0),
     };
     if let Some(weight) = change.weight_runs {
-        hasher.update(&[2]).update(&weight.to_bits().to_be_bytes());
+        digest.u64(weight.to_bits());
     }
-    *hasher.finalize().as_bytes()
+    digest.finish().into_bytes()
 }
 
 /// Opens, or finds, the check-in `agent`'s change waits on, under its own live owner Grant that

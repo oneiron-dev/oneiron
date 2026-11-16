@@ -10,6 +10,7 @@ use super::gpu::{
 };
 use crate::models::{BrokerContext, is_cloud_node};
 use oneiron::federation::derivation::{DerivationScope, SealedOutput};
+use oneiron_base::unix_seconds_now;
 use oneiron_broker::{CallHeader, Shape};
 use rand_core::RngCore;
 use reqwest::header::HeaderValue;
@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// One rented inference pod: a stable id, its base URL and how many leases it
 /// serves at once.
@@ -202,12 +203,6 @@ fn default_poll_seconds() -> u64 {
 
 /// How long one pod probe may take.
 pub(crate) const POD_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
 
 fn entropy() -> [u64; 2] {
     [rand_core::OsRng.next_u64(), rand_core::OsRng.next_u64()]
@@ -426,7 +421,7 @@ impl GpuPool {
                 tracing::warn!(region = %self.region(), pod = %id, ?health, "gpu pod unhealthy");
             }
         }
-        self.registry().expire(now());
+        self.registry().expire(unix_seconds_now());
     }
 
     /// Polls every pod at once, then on the configured cadence, for the life
@@ -470,7 +465,7 @@ impl GpuPool {
                     tokio::time::interval_at(tokio::time::Instant::now() + period, period);
                 loop {
                     tick.tick().await;
-                    if pool.registry().renew(id, now()).is_err() {
+                    if pool.registry().renew(id, unix_seconds_now()).is_err() {
                         lost.store(true, Ordering::Release);
                         return;
                     }
@@ -483,7 +478,7 @@ impl GpuPool {
     /// load. The lease renews every [`GPU_RENEW_SECONDS`], past the pod's
     /// hours too, and releases when dropped.
     pub fn acquire(&self) -> Result<GpuLeaseGuard, GpuRegistryError> {
-        let lease = self.registry().acquire(now(), entropy())?;
+        let lease = self.registry().acquire(unix_seconds_now(), entropy())?;
         let url = match self.url(&lease.pod) {
             Ok(url) => url,
             Err(e) => {
@@ -510,9 +505,13 @@ impl GpuPool {
         computation: Vec<u8>,
         content: Vec<u8>,
     ) -> Result<GpuDerivationJob, GpuRegistryError> {
-        let job =
-            self.registry()
-                .acquire_derivation(scope, computation, content, now(), entropy())?;
+        let job = self.registry().acquire_derivation(
+            scope,
+            computation,
+            content,
+            unix_seconds_now(),
+            entropy(),
+        )?;
         let url = match self.url(&job.lease().pod) {
             Ok(url) => url,
             Err(e) => {
@@ -583,7 +582,9 @@ impl GpuDerivationJob {
     pub fn complete(mut self, output: Vec<u8>) -> Result<SealedOutput, GpuRegistryError> {
         self.renewer.abort();
         let job = self.job.take().ok_or(GpuRegistryError::LeaseExpired)?;
-        self.pool.registry().complete_derivation(job, output, now())
+        self.pool
+            .registry()
+            .complete_derivation(job, output, unix_seconds_now())
     }
 }
 
