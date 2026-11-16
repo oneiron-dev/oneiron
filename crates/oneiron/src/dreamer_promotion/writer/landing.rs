@@ -148,25 +148,36 @@ pub(super) fn finish_promotion_in_txn(
     Ok(())
 }
 
-/// The body of `promote_one_answering`'s no-checker arm without its
-/// `WriterHold`: the prior read, the claim and its text, then the whole
-/// of `finish_promotion`. The caller that opened the transaction holds
-/// it.
-pub(crate) fn land_prepared_promotion_in_txn(
+/// The trailing options of one in-transaction promotion landing: the fence it lands under,
+/// whether it records the attempt's output, and the caller's already-admitted checker, if any.
+pub(crate) struct PromotionLanding<'a> {
+    /// The fence the landing validates and relies on, when the caller holds one.
+    pub(crate) fence: Option<&'a crate::dreamer_consolidation::resources::ConsolidationFence>,
+    /// Whether the landed claim is recorded as the attempt's output.
+    pub(crate) record_output: bool,
+    /// The caller's already-admitted write-gate auto-checker, or none.
+    pub(crate) checker: Option<&'a crate::llm::BoundedAutoChecker>,
+}
+
+/// The body of `promote_one_answering`'s no-checker arm without its `WriterHold`: the prior
+/// read, the claim and its text through `landing`'s terminal, then the whole of
+/// `finish_promotion`. The caller that opened the transaction holds it. With a checker the
+/// batch stages through the checker's preflight and the caller counts the returned receipts
+/// only after its write commits; with none the batch stages as before and the list is empty.
+pub(crate) fn land_prepared_promotion_checked_in_txn(
     vault: &Vault,
     run: &DreamerRunContext,
     prepared: &PreparedPromotion<'_>,
     claim_candidate: crate::ClaimCandidate,
-    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
-    record_output: bool,
+    landing: PromotionLanding<'_>,
     txn: &mut heed::RwTxn<'_>,
-) -> crate::Result<()> {
+) -> crate::Result<Vec<crate::gate::RecordedClaimGateDecision>> {
     // 4. ONE wtxn: the proposed claim and its deferred closure binding
     // commit or roll back together; the prior stays active until later grant.
     // GATE-007 (Generated over UserStated) is rechecked on closure.
     read_prior_in_txn(vault, prepared, txn)?;
     let hints: Vec<&str> = prepared.hints.iter().map(String::as_str).collect();
-    vault
+    let batch = vault
         .batch_in()
         .claim_candidate_with_lexical_hints(
             &prepared.claim_id,
@@ -176,7 +187,48 @@ pub(crate) fn land_prepared_promotion_in_txn(
             prepared.learned_at,
             &hints,
         )
-        .text(&prepared.claim_id, &[("val", prepared.birth_text.as_str())])
-        .apply_recording_gate_decisions(txn)?;
-    finish_promotion_in_txn(vault, run, prepared, fence, record_output, txn)
+        .text(&prepared.claim_id, &[("val", prepared.birth_text.as_str())]);
+    let receipts = if let Some(checker) = landing.checker {
+        batch.apply_with_checker_preflight(txn, checker)?
+    } else {
+        batch.apply_recording_gate_decisions(txn)?;
+        Vec::new()
+    };
+    finish_promotion_in_txn(
+        vault,
+        run,
+        prepared,
+        landing.fence,
+        landing.record_output,
+        txn,
+    )?;
+    Ok(receipts)
+}
+
+/// [`land_prepared_promotion_checked_in_txn`] with no checker, for native's no-checker arm
+/// and the in-transaction close: the batch stages as before and the empty receipts are
+/// dropped.
+pub(crate) fn land_prepared_promotion_in_txn(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    prepared: &PreparedPromotion<'_>,
+    claim_candidate: crate::ClaimCandidate,
+    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
+    record_output: bool,
+    txn: &mut heed::RwTxn<'_>,
+) -> crate::Result<()> {
+    let receipts = land_prepared_promotion_checked_in_txn(
+        vault,
+        run,
+        prepared,
+        claim_candidate,
+        PromotionLanding {
+            fence,
+            record_output,
+            checker: None,
+        },
+        txn,
+    )?;
+    debug_assert!(receipts.is_empty());
+    Ok(())
 }

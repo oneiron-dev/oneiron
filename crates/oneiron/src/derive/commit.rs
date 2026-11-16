@@ -65,11 +65,16 @@ pub(super) struct ItemContext<'s> {
     /// landed claims recorded as attempt outputs, rows marked as the
     /// attempt's, and imported evidence landed held.
     pub(super) extraction_binding_commit: bool,
+    /// The admitted write-gate auto-checker of this commit, set only by the
+    /// extraction binding's entry: one turn serves the whole commit. Every other
+    /// entry passes none.
+    pub(super) auto_checker: Option<&'s crate::llm::BoundedAutoChecker>,
     /// The row each landed item of the batch so far created, by local name.
     landed: BTreeMap<String, EntityId>,
-    /// The deferred-grant gate receipts staged grants wrote, for the commit
-    /// to count as metrics only after its write commits. Never counted inside.
-    pub(super) grant_receipts: RefCell<Vec<crate::gate::RecordedClaimGateDecision>>,
+    /// The gate receipts whose metrics wait for the commit: the staged grants', and
+    /// under a lent checker the landings'. The commit counts them only after its write
+    /// commits. Never counted inside.
+    pub(super) post_commit_receipts: RefCell<Vec<crate::gate::RecordedClaimGateDecision>>,
 }
 
 impl ItemContext<'_> {
@@ -96,8 +101,9 @@ impl Vault {
     /// Commits `batch` for `stamp` in `txn`: each item stages in a savepoint
     /// and gets its own verdict. A refused item keeps its receipt and lands
     /// nothing; an item naming a refused item is refused in turn. The batch
-    /// record lists every outcome. Returns deferred-grant receipts for metrics
-    /// only after the caller's write commits; never counts them inside.
+    /// record lists every outcome. Returns the gate receipts whose metrics wait for the
+    /// commit, for the caller to count only after its write commits; never counts them
+    /// inside. It lends no checker, so what it returns is still only the staged grants'.
     ///
     /// # Errors
     ///
@@ -111,20 +117,22 @@ impl Vault {
         DerivationReceipt,
         Vec<crate::gate::RecordedClaimGateDecision>,
     )> {
-        self.derive_commit_in_txn_with_binding_mark(txn, stamp, batch, false)
+        self.derive_commit_in_txn_with_binding_mark(txn, stamp, batch, false, None)
     }
 
     /// The caller-owned commit with its binding mark: an extraction attempt
     /// binding's commit marks its rows as the attempt's and records its
     /// landed claims as attempt outputs. Existing host and stamp doors leave
-    /// the mark off. Deferred-grant receipts are returned for metrics only
-    /// after the caller's write commits.
+    /// the mark off. `auto_checker` is that binding's admitted checker, or none.
+    /// The gate receipts whose metrics wait for the commit are returned: the staged
+    /// grants', and under a lent checker the landings'.
     pub(crate) fn derive_commit_in_txn_with_binding_mark(
         &self,
         txn: &mut heed::RwTxn<'_>,
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
         extraction_binding_commit: bool,
+        auto_checker: Option<&crate::llm::BoundedAutoChecker>,
     ) -> Result<(
         DerivationReceipt,
         Vec<crate::gate::RecordedClaimGateDecision>,
@@ -140,8 +148,9 @@ impl Vault {
             stamp,
             now: crate::ports::recorded_at_in_txn(&self.store, txn)?,
             extraction_binding_commit,
+            auto_checker,
             landed: BTreeMap::new(),
-            grant_receipts: RefCell::new(Vec::new()),
+            post_commit_receipts: RefCell::new(Vec::new()),
         };
         let mut unavailable_names: BTreeSet<String> = BTreeSet::new();
         let mut items = Vec::with_capacity(batch.items.len());
@@ -255,7 +264,7 @@ impl Vault {
             context.batch,
             &batch_record(stamp, context.now, &items, revisions, applied_edges),
         )?;
-        let receipts = context.grant_receipts.take();
+        let receipts = context.post_commit_receipts.take();
         Ok((
             DerivationReceipt {
                 batch: context.batch,
@@ -275,11 +284,11 @@ impl Vault {
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
-        let (receipt, grants) = self.with_write_txn_grouped(|txn| {
+        let (receipt, post_commit_receipts) = self.with_write_txn_grouped(|txn| {
             self.derive_commit_in_txn_with_grant_receipts(txn, stamp, batch)
         })?;
-        for grant in &grants {
-            grant.record_metrics(&self.store.diagnostics.gate);
+        for post_commit_receipt in &post_commit_receipts {
+            post_commit_receipt.record_metrics(&self.store.diagnostics.gate);
         }
         Ok(receipt)
     }

@@ -213,8 +213,16 @@ impl DreamerAttemptBinding {
     /// binding writes no batch, receipt or item. An extraction commit marks
     /// its claim rows as this attempt's and records a landed claim as an
     /// output of the attempt in the same write (a Person item lands a PERSON
-    /// and no claim), and the deferred-grant receipts are counted once the
+    /// and no claim), and the post-commit receipts are counted once the
     /// write has committed.
+    ///
+    /// An extraction commit that holds a Candidate or a ConflictResolution item
+    /// borrows the host's write-gate auto-checker from the lender, when one lends
+    /// one, and takes its one turn before the write opens: that turn serves every
+    /// consult of the whole commit. With no loan the gates answer as before. A
+    /// commit of Person and Conflict items alone asks for no loan, since neither
+    /// reaches a gate that consults the checker, and the Strength and
+    /// ConflictSettle facets never ask.
     ///
     /// The stagers judge every grant at the commit's own recorded time: the
     /// batch observes the clock and persists it as the floor inside this
@@ -227,7 +235,28 @@ impl DreamerAttemptBinding {
             attempt: Some(self.lease.attempt()),
             lineage: SourceLineage::of(ClaimSource::Generated),
         };
-        let (receipt, grants) = self.vault.with_write_txn_grouped(|txn| {
+        let consults_checker = self.facet == BoundFacet::Extraction
+            && batch.items.iter().any(|item| {
+                matches!(
+                    item,
+                    DerivationItem::Candidate(_) | DerivationItem::ConflictResolution(_)
+                )
+            });
+        let checker = if consults_checker {
+            let loaned = match self.lender.as_ref() {
+                Some(lender) => lender.lend_auto_checker()?,
+                None => None,
+            };
+            match loaned {
+                Some(checker) => {
+                    Some(checker.admit_for_writes(&self.vault.store, self.stamp.actor)?)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let (receipt, post_commit_receipts) = self.vault.with_write_txn_grouped(|txn| {
             if let Err(refused) = self.check_in_txn(txn) {
                 return Ok(Err(refused));
             }
@@ -237,11 +266,12 @@ impl DreamerAttemptBinding {
                     &stamp,
                     &batch,
                     self.facet == BoundFacet::Extraction,
+                    checker.as_ref(),
                 )
                 .map(Ok)
         })??;
-        for grant in &grants {
-            grant.record_metrics(&self.vault.store.diagnostics.gate);
+        for post_commit_receipt in &post_commit_receipts {
+            post_commit_receipt.record_metrics(&self.vault.store.diagnostics.gate);
         }
         Ok(receipt.into())
     }

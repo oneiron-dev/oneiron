@@ -48,8 +48,13 @@ pub(super) fn grant_and_close_in_txn<'txn>(
             &request.run,
             &request.fence,
             output.claim,
+            request.context.auto_checker,
         )?;
-        request.context.grant_receipts.borrow_mut().extend(receipts);
+        request
+            .context
+            .post_commit_receipts
+            .borrow_mut()
+            .extend(receipts);
         if let Some(prior_closed) = closed {
             output.approval = ClaimApprovalStatus::Auto;
             granted.push((output.claim, prior_closed, output.evidence.clone()));

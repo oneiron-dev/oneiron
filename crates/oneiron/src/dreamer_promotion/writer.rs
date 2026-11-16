@@ -10,7 +10,9 @@ mod landing;
 use super::*;
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
 use crate::error::{ErrorKind, GateError};
-pub(crate) use landing::land_prepared_promotion_in_txn;
+pub(crate) use landing::{
+    PromotionLanding, land_prepared_promotion_checked_in_txn, land_prepared_promotion_in_txn,
+};
 use landing::{finish_promotion_in_txn, read_prior_in_txn};
 
 /// A gate refusal's outcome and reason codes, as the gate wrote them: static

@@ -216,8 +216,8 @@ fn open_markers_naming_in_txn(
 /// for the caller to count after its write commits. Anything else leaves it
 /// Proposed for the owner. Three differences from [`grant_allowed_replacement`]:
 /// the caller's transaction with a nested savepoint for the grant alone; a
-/// store error aborts the commit instead of holding; no checker (the stager
-/// passes `None`, as the ordinary owner-less auto grant does).
+/// store error aborts the commit instead of holding; the checker is the caller's,
+/// already admitted, or none.
 ///
 /// # Errors
 ///
@@ -231,6 +231,7 @@ pub(crate) fn grant_allowed_replacement_in_txn(
     run: &DreamerRunContext,
     fence: &ConsolidationFence,
     replacement: EntityId,
+    checker: Option<&BoundedAutoChecker>,
 ) -> Result<(
     Option<EntityId>,
     Vec<crate::gate::RecordedClaimGateDecision>,
@@ -256,7 +257,7 @@ pub(crate) fn grant_allowed_replacement_in_txn(
             &mut savepoint,
             &replacement,
             run.now_secs(),
-            None,
+            checker,
             auto_write_rate,
         )?;
         fence.record_root_close_in_txn(vault, &mut savepoint, prior, replacement, original)?;

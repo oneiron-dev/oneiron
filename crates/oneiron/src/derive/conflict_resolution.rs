@@ -628,6 +628,7 @@ pub(super) fn stage_in_txn(
     let provenance = rmpv::Value::Map(derive_provenance(context, &item.local));
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     let mut landed: Vec<LandedOutput> = Vec::with_capacity(passing.len());
+    let mut landing_receipts: Vec<crate::gate::RecordedClaimGateDecision> = Vec::new();
     for output in passing {
         let claim_id = output.proposal.claim_id;
         let prior = output.proposal.supersedes;
@@ -642,15 +643,19 @@ pub(super) fn stage_in_txn(
             VerifiedLandingOptions {
                 provenance: Some(provenance.clone()),
                 extraction_binding_commit: context.extraction_binding_commit,
+                auto_checker: context.auto_checker,
             },
             &mut savepoint,
         ) {
-            Ok(approval) => landed.push(LandedOutput {
-                claim: claim_id,
-                approval,
-                prior,
-                evidence: evidence_refs,
-            }),
+            Ok((approval, receipts)) => {
+                landing_receipts.extend(receipts);
+                landed.push(LandedOutput {
+                    claim: claim_id,
+                    approval,
+                    prior,
+                    evidence: evidence_refs,
+                });
+            }
             Err(LandingError::Refusal(LandingRefusal::Gate(reasons))) => {
                 savepoint.abort();
                 return refuse(vault, txn, context, &reasons);
@@ -701,6 +706,10 @@ pub(super) fn stage_in_txn(
         },
     )?;
     savepoint.commit()?;
+    context
+        .post_commit_receipts
+        .borrow_mut()
+        .extend(landing_receipts);
     // The replacement alone (skip, merge) or the members written, in set
     // order (accumulate). The item's approval is Auto unless a row waits.
     let rows: Vec<EntityId> = landed.iter().map(|output| output.claim).collect();
