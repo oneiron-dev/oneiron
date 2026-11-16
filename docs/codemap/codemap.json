@@ -117423,6 +117423,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/restore.rs",
+     "purpose": "Purposes of the managed restore contract (`oneiron-vault-contract` `restore`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/skill.rs",
      "purpose": "Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`)",
      "surface": {}
@@ -117474,7 +117482,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -117490,7 +117498,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -174741,6 +174749,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_restore_receipt_id.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.3b: the managed restore receipt id keeps its bytes",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/sleep_watch_logind_line.rs",
      "purpose": "—",
      "surface": {}
@@ -174766,7 +174784,7 @@
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
    "source_files": 61,
-   "test_files": 3
+   "test_files": 4
   },
   "oneiron-verb-wire": {
    "files": [
