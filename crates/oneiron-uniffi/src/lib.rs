@@ -188,6 +188,19 @@ impl Oneiron {
         }))
     }
 
+    /// Returns a NEW handle that answers asks as this install's owner device
+    /// (UC-05): each ask word it gives carries the proof the owner key this
+    /// install holds mints for it, and refuses `owner_key_required` where it
+    /// holds none. A connected handle refuses with `FORBIDDEN`.
+    pub fn as_owner_device(&self) -> Result<Arc<Self>, OneironError> {
+        let inner = self.inner.as_owner_device()?;
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: self.engine.clone(),
+        }))
+    }
+
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     pub fn in_room_turn(&self, room_ref: String) -> Result<Arc<Self>, OneironError> {
         let inner = self.inner.in_room_turn(&room_ref)?;
