@@ -471,6 +471,12 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let Some(storage) = self.storage else {
             return Ok(None);
         };
+        // A dry walk stores nothing (L8-23): the reply stays inline, as a host
+        // with no result store sends it, and no body commits before the entry
+        // holds with the walk's report.
+        if self.pending_replay_dry() {
+            return Ok(None);
+        }
         // A stored card stands for the reply: no skill body it holds reaches
         // the guest (FIX 3608).
         self.held_delivery.clear();
