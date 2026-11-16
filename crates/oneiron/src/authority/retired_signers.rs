@@ -260,19 +260,17 @@ pub(super) fn settle_handoffs(
 }
 
 /// Every row of `states` that `refused` names or that descends from one.
+/// One marked pass over the index, not a lookup of each refused row in
+/// each row's ancestry (row [ROSTER-KEY-LOG-FLOOD], PR 3).
 fn with_descendants(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     refused: &BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
     ancestors: &AncestorIndex,
 ) -> BTreeSet<AuthorityEntryHash> {
+    let below_refused = ancestors.marks(|row| refused.contains_key(row));
     states
         .keys()
-        .filter(|hash| {
-            refused.contains_key(*hash)
-                || ancestors
-                    .get(*hash)
-                    .is_some_and(|past| refused.keys().any(|row| past.contains(row)))
-        })
+        .filter(|hash| refused.contains_key(*hash) || below_refused.in_ancestry(hash))
         .copied()
         .collect()
 }

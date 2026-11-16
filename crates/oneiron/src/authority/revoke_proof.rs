@@ -403,22 +403,23 @@ impl RevokeFacts {
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the
     /// fold dropped counts only when every ReRoot in its ancestry `settled`.
+    /// One marked pass over the index finds the unsettled ReRoots below each
+    /// restriction (row [ROSTER-KEY-LOG-FLOOD], PR 3).
     pub(super) fn forget_unsettled(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &AncestorIndex,
     ) {
+        let below_unsettled = ancestors.marks(|row| {
+            !settled.contains_key(row)
+                && entries
+                    .get(row)
+                    .is_some_and(|entry| matches!(entry.op, AuthorityOp::ReRoot { .. }))
+        });
         self.by_hash.retain(|hash, _| {
             settled.contains_key(hash)
-                || ancestors.get(hash).is_some_and(|line| {
-                    line.iter_unordered().all(|ancestor| {
-                        settled.contains_key(ancestor)
-                            || !entries
-                                .get(ancestor)
-                                .is_some_and(|row| matches!(row.op, AuthorityOp::ReRoot { .. }))
-                    })
-                })
+                || (ancestors.get(hash).is_some() && !below_unsettled.in_ancestry(hash))
         });
     }
 }

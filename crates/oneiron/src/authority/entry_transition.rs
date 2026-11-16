@@ -71,13 +71,53 @@ pub(super) fn fold_entry_state(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     context: FoldContext<'_>,
 ) -> EntryFold {
+    transition_entry(entry, hash, states, context, Signatures::Verify)
+}
+
+/// [`fold_entry_state`] of the row `rows` holds at `hash`, or None when it
+/// holds none. The fold judged that row (`fold_engine::judged_entries`):
+/// its signatures held then and are a function of its bytes alone, so they
+/// are not verified again (row [ROSTER-KEY-LOG-FLOOD], PR 3).
+pub(super) fn fold_judged_entry_state(
+    rows: &JudgedRows,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+) -> Option<EntryFold> {
+    let entry = rows.get(&hash)?;
+    Some(transition_entry(
+        entry,
+        hash,
+        states,
+        context,
+        Signatures::Judged,
+    ))
+}
+
+/// Whether a transition verifies its row's signatures, or reads the
+/// verdict the fold took when it judged the row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Signatures {
+    Verify,
+    Judged,
+}
+
+fn transition_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+    signatures: Signatures,
+) -> EntryFold {
     #[cfg(test)]
     TRANSITIONED_FOR_TEST.with(|rows| {
         if let Some(rows) = rows.borrow_mut().as_mut() {
             rows.push(hash);
         }
     });
-    if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+    if entry.validate_shape().is_err()
+        || (signatures == Signatures::Verify && verify_entry_signatures(entry).is_err())
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // Slips are the client credential in every posture. Retired device-key
