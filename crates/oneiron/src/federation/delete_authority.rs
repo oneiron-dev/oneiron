@@ -106,6 +106,30 @@ impl DeleteTarget {
         *self.live.borrow_mut() = record.clone();
         Ok(record)
     }
+
+    /// The record's id.
+    pub(crate) const fn id(&self) -> EntityId {
+        self.id
+    }
+
+    /// Whether `person` provably owns the record, as [`Self::record_in`]
+    /// reads it: a TASK by its Owner fact, a NOTE by the author its put was
+    /// checked against. A person's own item never waits on a check-in
+    /// (ROLES-CHECKIN 2k5; Engine ruling STEWARD-DELETE-WAIT = B).
+    ///
+    /// # Errors
+    /// A store failure, or a NOTE body that does not decode.
+    pub(crate) fn owned_by_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        match self.record_in(vault, txn)? {
+            Some(record) => owned_by(vault, txn, person, &record),
+            None => Ok(false),
+        }
+    }
 }
 
 /// Why one record may not be deleted by this caller. Each refuses that
