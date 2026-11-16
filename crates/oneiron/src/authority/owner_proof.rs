@@ -395,9 +395,14 @@ impl AuthorityFold {
     /// Whether the roster rule alone trusts `machine` as the owner's machine
     /// under the install key `key`: the landing gate's "the carrier is the
     /// owner's machine" ([`super::owner_choice::owner_choice_landing`]) as a
-    /// door reads it off this fold. It reads the roster view (no pin, none of
-    /// this install's holds or staleness), the view the gate judges an entry
-    /// in at its parents.
+    /// door reads it off this fold, in the roster view (no pin, none of this
+    /// install's holds or staleness).
+    ///
+    /// This fold also holds each removal proved on a branch it dropped,
+    /// which an entry's parents may not hold. There it reads not mine where
+    /// the gate would read mine; the same removal refuses the machine as a
+    /// carrier ([`super::owner_act_signer_admits`]), so a door that signs
+    /// never reaches the gate in that state.
     #[must_use]
     pub(crate) fn carrier_is_mine_by_roster(&self, machine: EntityId, key: &[u8; 32]) -> bool {
         self.machine(machine).is_some_and(|folded| {
@@ -472,8 +477,8 @@ impl crate::Vault {
     /// owner cutover of a repository under no portable id is one: it signs no
     /// cut (FIX ORIGIN-CUTOVER-UNBOUND-REPO-NO-OWNER-PROOF).
     ///
-    /// It refuses exactly where a choice this install carried in `txn` would
-    /// wait: the vault asks for an owner key
+    /// It refuses where a choice this install carried in `txn` would wait:
+    /// the vault asks for an owner key
     /// ([`AuthorityFold::owner_key_requirement`]), this handle holds no key
     /// that proves for the owner ([`Self::owner_proof_signer`], the proof
     /// every choice door signs with), and this install is not the owner's
@@ -481,7 +486,9 @@ impl crate::Vault {
     /// install key it would sign the choice with). It adds no rule: the
     /// three are the landing gate's own readings
     /// ([`super::owner_choice::owner_choice_landing`]). A choice only an
-    /// owner key may make is not its to judge.
+    /// owner key may make is not its to judge, and neither is a carrier's
+    /// standing: where a door that signs refuses for want of a carrier, this
+    /// asks only its three readings.
     ///
     /// # Errors
     /// [`crate::error::RecordError::OwnerKeyRequired`]; the log's read
