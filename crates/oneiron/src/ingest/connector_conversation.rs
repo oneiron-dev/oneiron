@@ -232,6 +232,38 @@ impl Vault {
         Ok(history)
     }
 
+    /// The rows a connector reply's prompt is read from (DEC-0005 world
+    /// privacy, fix 12), for its run's receipts: `agent`, whose instructions
+    /// lead it; each message of `history`
+    /// ([`Self::connector_conversation_history`]); and the MESSAGE the
+    /// exchange's inbound lands at, whose words the briefing carries. The
+    /// engine's own budget steering and wake lines are no row's. `None`,
+    /// unknown, when a history message names no row id. An inbound whose
+    /// witness did not land names a row no read proves, so its receipts
+    /// name no worlds either.
+    ///
+    /// # Errors
+    /// The inbound message's id does not derive.
+    pub fn connector_reply_source_rows(
+        agent: EntityId,
+        origin: &SurfaceConnectorPayload,
+        reply_ref: &str,
+        history: &[TranscriptMessage],
+    ) -> MemoryResult<Option<Vec<EntityId>>> {
+        let [(inbound, _), _] = connector_witness_row_ids(origin, agent, reply_ref)?;
+        let said: Option<Vec<EntityId>> = history
+            .iter()
+            .map(|message| EntityId::from_hex(&message.id).ok())
+            .collect();
+        Ok(said.map(|mut rows| {
+            rows.push(agent);
+            rows.push(inbound);
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        }))
+    }
+
     fn witness_connector_turn(
         &self,
         agent: EntityId,
