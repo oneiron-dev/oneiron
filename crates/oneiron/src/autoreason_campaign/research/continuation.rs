@@ -68,7 +68,7 @@ const MAX_ROOTS_PER_PASS: usize = 32;
 use oneiron_records::autoreason_campaign::research::continuation::BUDGET_HELD;
 #[doc(hidden)]
 pub use oneiron_records::autoreason_campaign::research::continuation::{
-    ResearchContinuationState, ResearchSplit, ResearchTask, ResearchWork,
+    ResearchSplit, ResearchTask,
 };
 
 /// Exposure one serving of the sealed cohort spends: the cohort ledger
@@ -82,6 +82,25 @@ const EXPERIMENT_ANSWER: &str =
     r#"{"config_ref": "...", "config_sha256": "<64 hex>"} or {"failed": "why"}"#;
 const SCORE_ANSWER: &str = r#"{"scores": {axis: number}, "confirmed_hits": n, "attribution": 0..1, "hop_cost": n, "receipt_refs": [..]} or {"invalid": "why", "evidence_refs": [..]}"#;
 const REFEREE_ANSWER: &str = r#"{"candidate": 0..1, "incumbent": 0..1, "referee_pin": "identity@sha256:<hex>", "sufficiency": SufficiencyInput}"#;
+
+/// Which campaign work a continuation carries out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchWork {
+    /// Measure the unmeasured incumbent root on the search split.
+    Bootstrap,
+    /// Carry out selection round `n`'s fork.
+    Round(u64),
+}
+
+impl ResearchWork {
+    fn key(self) -> u64 {
+        match self {
+            Self::Bootstrap => 0,
+            Self::Round(round) => round.saturating_add(1),
+        }
+    }
+}
 
 /// The task in flight: its reservation and, once dispatched, its run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,6 +118,26 @@ pub struct ResearchRunning {
     /// shot, served the cohort and settled `exposure`: a restart re-briefs
     /// the referee and never spends a second shot.
     pub release: Option<EvalRelease>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchContinuationState {
+    Open,
+    Held { reason: String },
+    Done { note: String },
+    Failed { reason: String },
+}
+
+impl ResearchContinuationState {
+    /// Open, or held for budget: the states a pass takes up.
+    fn live(&self) -> bool {
+        match self {
+            Self::Open => true,
+            Self::Held { reason } => reason == BUDGET_HELD,
+            Self::Done { .. } | Self::Failed { .. } => false,
+        }
+    }
 }
 
 /// One campaign's host work: what is left to run, what is running, and

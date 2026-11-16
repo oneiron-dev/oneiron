@@ -28,9 +28,43 @@ const SIGNED_RUN: SideTable<[u8; 32], SignedDetectorRun, Named> =
 const SIGNED_EVENT: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::SELF_HEAL_SIGNED_EVENT);
 
-#[doc(hidden)]
-pub use oneiron_records::self_heal::scheduled::SignedDetectorRun;
-
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignedDetectorRun {
+    pub instance: String,
+    pub run_ref: String,
+    pub public_key: [u8; 32],
+    pub event_bodies: Vec<Vec<u8>>,
+    pub signature: Vec<u8>,
+    /// The tripwire policy the run's detectors read, as it was resolved
+    /// (FIX 10096); `None` for a run that read none. Signed with the run.
+    pub policy: Option<TripwirePolicyReceipt>,
+}
+impl SignedDetectorRun {
+    fn transcript(&self) -> Result<Vec<u8>> {
+        let mut out = b"oneiron/self-heal/detector-run/v1".to_vec();
+        for bytes in [
+            self.instance.as_bytes(),
+            self.run_ref.as_bytes(),
+            &self.public_key,
+        ] {
+            out.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+            out.extend_from_slice(bytes);
+        }
+        out.extend_from_slice(&(self.event_bodies.len() as u64).to_be_bytes());
+        for body in &self.event_bodies {
+            out.extend_from_slice(&(body.len() as u64).to_be_bytes());
+            out.extend_from_slice(body);
+        }
+        // A run with no policy signs exactly what it signed before.
+        if let Some(policy) = &self.policy {
+            let bytes = policy.transcript_bytes()?;
+            out.extend_from_slice(b"policy");
+            out.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+            out.extend_from_slice(&bytes);
+        }
+        Ok(out)
+    }
+}
 impl Vault {
     /// The scheduled engine instance signs exactly the validated detector output,
     /// every event of it: past `limits.detector_events` the run asks and signs

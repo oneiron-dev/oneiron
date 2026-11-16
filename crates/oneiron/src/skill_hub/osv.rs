@@ -13,8 +13,26 @@ pub const OSV_SCAN_PROVIDER: &str = "oneiron.osv.v1";
 /// Coordinates sent in one OSV querybatch request.
 const OSV_QUERY_BATCH_SIZE: usize = 256;
 const MAX_RESPONSE_BYTES: u64 = 1_048_576;
-#[doc(hidden)]
-pub use oneiron_records::skill_hub::osv::DependencyCoordinate;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyCoordinate {
+    pub ecosystem: String,
+    pub name: String,
+    pub version: String,
+}
+impl DependencyCoordinate {
+    fn validate(&self) -> Result<()> {
+        if !matches!(
+            self.ecosystem.as_str(),
+            "npm" | "PyPI" | "crates.io" | "Go" | "Maven" | "NuGet" | "RubyGems" | "Packagist"
+        ) || !token(&self.name, true)
+            || !token(&self.version, false)
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
 #[doc(hidden)]
 use oneiron_records::skill_hub::osv::{invalid, token};
 

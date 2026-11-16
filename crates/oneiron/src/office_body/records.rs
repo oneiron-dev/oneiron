@@ -23,8 +23,8 @@ pub(super) const EXPORT_AUTHORS: SideTable<(EntityId, u64, u64), OfficeBodyExpor
 
 #[doc(hidden)]
 pub use oneiron_records::office_body::records::{
-    ForkState, HeldDeckId, OfficeBodyEdit, OfficeBodyExportAuthor, OfficeBodyFork, OfficeBodyHead,
-    OfficeBodyKind, OfficeRecalcFailure, XlsxPreview,
+    HeldDeckId, OfficeBodyEdit, OfficeBodyExportAuthor, OfficeBodyHead, OfficeBodyKind,
+    OfficeRecalcFailure, XlsxPreview,
 };
 #[doc(hidden)]
 use oneiron_records::office_body::records::{OTHER_HEADER, merged_answer, merged_member, met};
@@ -34,6 +34,44 @@ pub(super) struct OfficeBodySource {
     pub(super) kind: OfficeBodyKind,
     pub(super) source_version: u64,
     pub(super) source_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ForkState {
+    Open,
+    Merged {
+        by: BodyActor,
+        at: u64,
+        head: Vec<u8>,
+    },
+    Discarded {
+        by: BodyActor,
+        at: u64,
+    },
+}
+
+/// Machine work on a body: opened at a live frontier, written only by its opener,
+/// merged by someone else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyFork {
+    pub id: EntityId,
+    pub artifact: EntityId,
+    pub opener: BodyActor,
+    pub base: Vec<u8>,
+    pub commits: u64,
+    pub opened_at: u64,
+    pub state: ForkState,
+    /// The run its opener named when it opened the fork: a label, never
+    /// what a scope matches (FIX 3551).
+    #[serde(default)]
+    pub run_root: Option<EntityId>,
+    /// The try the fork was opened from, which the host bound the opening
+    /// surface to and the opening writer proved live (FIX 3551): the run
+    /// whose approve-all scope covers it. `None` for an owner's or a direct
+    /// opening, which belongs to no run.
+    #[serde(default)]
+    pub origin: Option<crate::attempt_queue::AttemptId>,
 }
 
 pub struct OfficeBodyExportRequest<'a> {

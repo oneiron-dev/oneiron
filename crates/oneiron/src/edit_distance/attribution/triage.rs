@@ -47,11 +47,97 @@ pub(super) const NOTIFICATION_PRODUCER_WORSENING: &str = "edit_distance.worsenin
 /// keeps one packet one inbox row.
 const MAX_TRIAGE_RECEIPTS: usize = 16;
 
+/// Which worsening fired, with the numbers it fired on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorseningSignal {
+    /// The `learning.edit_cost` cell's mean rose past the spread its earlier
+    /// head held.
+    #[serde(rename_all = "camelCase")]
+    EditCostClimbing {
+        /// The head the climb is measured from.
+        previous_head: String,
+        previous_mean: f64,
+        previous_spread: f64,
+        /// The head now.
+        current_head: String,
+        current_mean: f64,
+        current_spread: f64,
+    },
+    /// The subject's newest outcomes in the scope were rejected `length`
+    /// times in a row, the newest on receipt `newest`.
+    #[serde(rename_all = "camelCase")]
+    RejectionRun { length: u32, newest: String },
+    /// The reliability floor contract's open quarantine proposal: the skill's
+    /// posterior lower bound fell under the floor.
+    #[serde(rename_all = "camelCase")]
+    ReliabilityFloor {
+        proposal: String,
+        /// The executor whose cell crossed; `None` for the skill-wide check.
+        executor: Option<String>,
+        lower_bound: f32,
+        floor: f32,
+        crossed_at: u64,
+    },
+}
+
+impl WorseningSignal {
+    /// The signal's stable token, one part of its escalation's key.
+    const fn token(&self) -> &'static str {
+        match self {
+            Self::EditCostClimbing { .. } => "edit_cost_climbing",
+            Self::RejectionRun { .. } => "rejection_run",
+            Self::ReliabilityFloor { .. } => "reliability_floor",
+        }
+    }
+
+    /// What fired it: the head now, the newest rejected receipt, or the
+    /// proposal. A re-trigger names another.
+    fn trigger(&self) -> &str {
+        match self {
+            Self::EditCostClimbing { current_head, .. } => current_head.as_str(),
+            Self::RejectionRun { newest, .. } => newest.as_str(),
+            Self::ReliabilityFloor { proposal, .. } => proposal.as_str(),
+        }
+    }
+}
+
 #[doc(hidden)]
 pub use oneiron_records::edit_distance::attribution::triage::{
     AgentDefinitionRef, ArtifactPublisher, RecentChange, RecentChanges, SkillAtVersion,
-    TriagePacket, TriageReceipt, TriageSubject, WorseningSignal,
+    TriageReceipt, TriageSubject,
 };
+
+/// The triage packet one worsening escalation carries (ARCH-0056 §5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TriagePacket {
+    /// The signal that fired and its numbers.
+    pub signal: WorseningSignal,
+    /// The skill or actor it is about.
+    pub subject: String,
+    pub subject_kind: TriageSubject,
+    /// The consent scope the failing receipts share.
+    pub scope: String,
+    /// The project the failing runs counted in, as an entity id; `None` is
+    /// the vault's (FIX 11627). A packet written before packets carried a
+    /// project decodes as the vault's.
+    #[serde(default)]
+    pub project: Option<String>,
+    pub publisher: ArtifactPublisher,
+    /// The newest failing receipts, oldest first: the judged receipts in this
+    /// scope that charge the subject or left an amended or rejected outcome
+    /// on its cells.
+    pub receipts: Vec<TriageReceipt>,
+    pub agent_definitions: Vec<AgentDefinitionRef>,
+    /// Each skill at each version the receipts name.
+    pub skills: Vec<SkillAtVersion>,
+    /// Each executor stamp the receipts name.
+    pub executors: Vec<String>,
+    pub recent_changes: RecentChanges,
+    /// When the outcome that fired it landed.
+    pub at: u64,
+}
 
 /// The packet `signal` mints for `subject` in `scope` and `project` (`None`,
 /// the vault's) at `at`, read from the judgment ledger, the subject's cells

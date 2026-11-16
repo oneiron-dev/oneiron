@@ -8780,7 +8780,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
- "heed",
  "loro",
  "oneiron-authority",
  "oneiron-base",

@@ -42,9 +42,69 @@ const ACTING_REVISION: SideTable<String, ActingRevision, Named> =
 const MAX_LINE_BYTES: usize = 512;
 
 #[doc(hidden)]
-pub use oneiron_records::edit_distance::compile::{
-    ActingRevision, ActingTarget, CompiledLine, CompiledLineKind, RevisionStatus,
-};
+pub use oneiron_records::edit_distance::compile::{ActingTarget, RevisionStatus};
+
+/// The kind of one compiled line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompiledLineKind {
+    Ban,
+    StyleRule,
+    Phrasing,
+    Affirmed,
+    CharterLine,
+    BriefPreference,
+}
+
+impl CompiledLineKind {
+    fn from_predicate(predicate: &str) -> Option<Self> {
+        Some(match predicate {
+            "preference.ban" => Self::Ban,
+            "preference.style_rule" => Self::StyleRule,
+            "preference.affirmed" => Self::Affirmed,
+            "charter.line" => Self::CharterLine,
+            "brief.preference" => Self::BriefPreference,
+            p if p == PREDICATE_PREFERENCE_PHRASING => Self::Phrasing,
+            _ => return None,
+        })
+    }
+
+    const fn heading(self) -> &'static str {
+        match self {
+            Self::Ban => "Never",
+            Self::StyleRule => "Style",
+            Self::Phrasing => "Wording",
+            Self::Affirmed => "Keep doing",
+            Self::CharterLine => "Charter",
+            Self::BriefPreference => "Brief",
+        }
+    }
+}
+
+/// One compiled line and the approved preference claim it came from.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CompiledLine {
+    pub kind: CompiledLineKind,
+    pub text: String,
+    pub claim: EntityId,
+}
+
+/// One compiled acting revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActingRevision {
+    pub id: String,
+    /// Whose preferences it compiles.
+    pub principal: EntityId,
+    pub target: ActingTarget,
+    pub lines: Vec<CompiledLine>,
+    /// The revision text the target gains.
+    pub text: String,
+    /// Who may answer, in escalation order: the principal first, the vault
+    /// owner role last.
+    pub responsible: Vec<EntityId>,
+    pub status: RevisionStatus,
+    pub at: u64,
+}
 
 /// The responsible role's answer.
 #[derive(Debug, Clone, PartialEq, Eq)]

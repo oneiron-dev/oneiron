@@ -6,10 +6,7 @@ pub use crate::recovery::checkpoint::admission::facts::CustodyRouteFact;
 pub use crate::recovery::checkpoint::admission::facts::RetiredBy;
 pub use crate::recovery::checkpoint::admission::facts::SignerTrust;
 pub use crate::recovery::checkpoint::custody_head::*;
-pub use crate::recovery::checkpoint::epochs::RestorePadState;
-pub use crate::recovery::checkpoint::pad_custody::PadRestoreNote;
 pub use crate::recovery::checkpoint::pad_reopen::PadReopenFault;
-pub use crate::recovery::checkpoint::pad_reopen::PadReopenReport;
 pub use crate::recovery::checkpoint::pad_reopen::PadReopenStage;
 pub use crate::recovery::checkpoint::watermark::BackupSelection;
 pub use crate::store::key_custody::protocol as custody_protocol;
@@ -46,22 +43,8 @@ pub enum RestoreReason {
     /// names none.
     Activate,
 }
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RestoreEpoch {
-    pub checkpoint_id: String,
-    pub restored_at: u64,
-    pub reason: RestoreReason,
-    /// What it still owes of the world key pads its image names (PAD-2):
-    /// absent from a row that owes and says nothing.
-    #[serde(default, skip_serializing_if = "RestorePadState::is_empty")]
-    pub pad_recovery: RestorePadState,
-}
 pub mod admission;
 pub mod custody_head;
-pub mod epochs;
-pub mod pad_custody;
 pub mod pad_reopen;
 pub mod payload;
 pub mod tiers;

@@ -13,6 +13,17 @@ use crate::error::Result;
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::{Deserialize, Serialize};
 
+impl TypedForkState {
+    /// Makes the one who settled the fork no one when it is `actor`; whether
+    /// it was.
+    fn forget(&mut self, actor: EntityId) -> bool {
+        match self {
+            Self::Open => false,
+            Self::Merged { by, .. } | Self::Discarded { by, .. } => by.forget(actor),
+        }
+    }
+}
+
 /// Erasing `actor` from the body forks (FIX 3520): an open fork it opened is
 /// work a merge could still land, so it goes with its snapshot; a merged or
 /// discarded fork keeps its row and names no one. An office fork's own

@@ -64,8 +64,8 @@ pub const DELEGATING_AGENT: &str = "delegating_agent";
 
 #[doc(hidden)]
 pub use oneiron_records::ingest::history::{
-    HistoryConversation, HistoryFile, HistoryMember, HistoryMessage, HistoryRole, HistorySharing,
-    HistorySkips, HistoryThreadKind, UNKNOWN_SPEAKER,
+    HistoryFile, HistoryMember, HistoryMessage, HistoryRole, HistorySharing, HistorySkips,
+    HistoryThreadKind, UNKNOWN_SPEAKER,
 };
 
 /// The history sources `oneiron import` reads. Their ids are the ingest
@@ -150,6 +150,51 @@ fn hook_transcript(text: &str, file: &HistoryFile) -> IngestResult<Vec<HistoryCo
         expected: "a GitHub Copilot or Cursor transcript",
         found: format!("{unreadable} unreadable line(s), none a record of either"),
     })
+}
+
+/// One source conversation, decoded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryConversation {
+    /// The source's id, qualified for a branch, sidechain or subagent thread.
+    pub native_id: String,
+    pub kind: HistoryThreadKind,
+    /// The conversation a branch, sidechain or subagent thread belongs to.
+    pub parent: Option<String>,
+    pub title: Option<String>,
+    /// Unix milliseconds, when the source recorded when it started.
+    pub started_at_ms: Option<u64>,
+    /// When this thread itself began, when its source records that apart from
+    /// its messages (a Codex rollout's own meta). The import makes the
+    /// conversation occur then; otherwise it occurs with its first message
+    /// that landed, since a resumed or forked log's first lines are copies
+    /// of another conversation's.
+    pub own_started_at_ms: Option<u64>,
+    /// The folder the session ran in, when the source records one (a coding
+    /// agent's working directory).
+    pub cwd: Option<String>,
+    pub messages: Vec<HistoryMessage>,
+    pub skipped: HistorySkips,
+    /// The source's own sharing of the conversation, when the source keeps
+    /// one (ARCH-0027 #import-audience). `None` lands it private to the
+    /// importer, as every source without sharing data does.
+    pub sharing: Option<HistorySharing>,
+}
+
+impl HistoryConversation {
+    fn new(native_id: String, kind: HistoryThreadKind, parent: Option<String>) -> Self {
+        Self {
+            native_id,
+            kind,
+            parent,
+            title: None,
+            started_at_ms: None,
+            own_started_at_ms: None,
+            cwd: None,
+            messages: Vec::new(),
+            skipped: HistorySkips::default(),
+            sharing: None,
+        }
+    }
 }
 
 // The lift sweep's typed acceptance for this module's authored side

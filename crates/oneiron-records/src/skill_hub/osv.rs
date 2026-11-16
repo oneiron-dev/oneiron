@@ -2,31 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use serde::Deserialize;
-use serde::Serialize;
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DependencyCoordinate {
-    pub ecosystem: String,
-    pub name: String,
-    pub version: String,
-}
-
-impl DependencyCoordinate {
-    fn validate(&self) -> Result<()> {
-        if !matches!(
-            self.ecosystem.as_str(),
-            "npm" | "PyPI" | "crates.io" | "Go" | "Maven" | "NuGet" | "RubyGems" | "Packagist"
-        ) || !token(&self.name, true)
-            || !token(&self.version, false)
-        {
-            return Err(invalid());
-        }
-        Ok(())
-    }
-}
 
 pub fn token(s: &str, package: bool) -> bool {
     !s.is_empty()

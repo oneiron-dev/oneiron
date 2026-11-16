@@ -1,8 +1,6 @@
 pub use crate::autoreason_campaign::research::budget::ResearchReservation;
-pub use crate::autoreason_campaign::research::continuation::ResearchContinuationState;
 pub use crate::autoreason_campaign::research::continuation::ResearchSplit;
 pub use crate::autoreason_campaign::research::continuation::ResearchTask;
-pub use crate::autoreason_campaign::research::continuation::ResearchWork;
 pub use crate::autoreason_campaign::research::estimator::MIN_SELECTION_BENCHMARK_CASES;
 pub use crate::autoreason_campaign::research::estimator::SelectionBenchmark;
 pub use oneiron_verb_wire::autoreason_campaign::research::BranchSnapshot;

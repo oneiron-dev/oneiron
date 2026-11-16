@@ -76,10 +76,55 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[doc(hidden)]
-pub use oneiron_records::ingest::history::land::HistoryImportReport;
-#[doc(hidden)]
-pub(super) use oneiron_records::ingest::history::land::derive;
+/// One conversation's import, in counts. It names the conversation by the
+/// source's id and carries no text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HistoryImportReport {
+    pub conversation: String,
+    pub kind: HistoryThreadKind,
+    /// Messages the reader kept.
+    pub messages: u32,
+    /// Not imported before: landed, or in a dry run would land.
+    pub new: u32,
+    /// Imported before and unchanged: nothing written.
+    pub skipped: u32,
+    /// Imported before with other text: landed as a revision.
+    pub changed: u32,
+    /// Refused at the write door; nothing written, and the next import tries
+    /// again.
+    pub refused: u32,
+    /// Not landed because other imports kept landing the same messages until
+    /// [`LEDGER_RACE_WINDOW`] passed; nothing written, and the next import
+    /// lands them.
+    pub pending: u32,
+    /// Why, as reason codes.
+    pub refusal_reasons: BTreeSet<String>,
+    /// What the reader did not keep.
+    pub not_kept: HistorySkips,
+    /// The TURNs that took the messages landed new or as a revision, each
+    /// once, in landing order: what a hosted import's progress counts for
+    /// embeddings. Not part of the report's wire form.
+    #[serde(skip)]
+    pub turns: Vec<EntityId>,
+}
+
+impl HistoryImportReport {
+    pub(super) fn new(conversation: &HistoryConversation) -> Self {
+        Self {
+            conversation: conversation.native_id.clone(),
+            kind: conversation.kind,
+            messages: 0,
+            new: 0,
+            skipped: 0,
+            changed: 0,
+            refused: 0,
+            pending: 0,
+            refusal_reasons: BTreeSet::new(),
+            not_kept: conversation.skipped,
+            turns: Vec::new(),
+        }
+    }
+}
 
 /// Where one message stands against the ledger.
 pub(super) enum Standing {
@@ -157,6 +202,9 @@ fn label(text: &str) -> String {
     }
     text[..end].to_owned()
 }
+
+#[doc(hidden)]
+pub(super) use oneiron_records::ingest::history::land::derive;
 
 /// The MESSAGE an imported message lands as. The dry run builds the same one
 /// to scan exactly the bytes the write door would.

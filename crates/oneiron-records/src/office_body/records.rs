@@ -3,6 +3,7 @@
 
 use crate::office_body::*;
 use oneiron_contracts::entity_id::EntityId;
+#[cfg(feature = "sync")]
 use oneiron_store::typed_body::body_actor::BodyActor;
 use oneiron_store::write_envelope::provenance::text_commit::TextCommitReceipt;
 use serde::Deserialize;
@@ -52,44 +53,6 @@ pub struct OfficeBodyEdit {
     pub minted: Vec<String>,
     pub receipt: TextCommitReceipt,
     pub effects: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ForkState {
-    Open,
-    Merged {
-        by: BodyActor,
-        at: u64,
-        head: Vec<u8>,
-    },
-    Discarded {
-        by: BodyActor,
-        at: u64,
-    },
-}
-
-/// Machine work on a body: opened at a live frontier, written only by its opener,
-/// merged by someone else.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OfficeBodyFork {
-    pub id: EntityId,
-    pub artifact: EntityId,
-    pub opener: BodyActor,
-    pub base: Vec<u8>,
-    pub commits: u64,
-    pub opened_at: u64,
-    pub state: ForkState,
-    /// The run its opener named when it opened the fork: a label, never
-    /// what a scope matches (FIX 3551).
-    #[serde(default)]
-    pub run_root: Option<EntityId>,
-    /// The try the fork was opened from, which the host bound the opening
-    /// surface to and the opening writer proved live (FIX 3551): the run
-    /// whose approve-all scope covers it. `None` for an owner's or a direct
-    /// opening, which belongs to no run.
-    #[serde(default)]
-    pub origin: Option<oneiron_store::attempt_id::AttemptId>,
 }
 
 /// Why an XLSX export or preview kept its cached values: the formula
