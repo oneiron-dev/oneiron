@@ -18,6 +18,7 @@ pub(crate) mod outputs;
 mod row_access;
 mod rows;
 pub(crate) mod uniffi;
+mod wire_inputs;
 
 use std::collections::BTreeSet;
 use std::ops::Index;
@@ -150,6 +151,9 @@ pub(crate) struct Generator {
     /// The crate source files the catalog fragment's own inventory read (its index's dependency set, as paths from
     /// the repository root), set by `outputs()`; `Generator::dependencies` joins it to `INVENTORY`'s.
     pub(crate) fragment_dependencies: BTreeSet<String>,
+    /// The crate source files the wire ownership lookups of `sdk_generated.rs` read (lib split W3-GEN), set by
+    /// `outputs()`; `Generator::dependencies` joins it to `INVENTORY`'s.
+    pub(crate) wire_input_dependencies: BTreeSet<String>,
 }
 
 impl Generator {

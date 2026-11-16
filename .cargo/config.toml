@@ -15,6 +15,10 @@ pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
 # lopdf 0.44.0: vendored, locally modified snapshot carrying the additive
 # DecodeAdmission hook (FIX 7654). See crates/oneiron-seal/vendor/README.md.
 lopdf = { path = "crates/oneiron-seal/vendor/lopdf-0.44.0" }
+# These patches also reach the separate Cargo workspaces under this directory.
+# The committed locks of apps/web/src-tauri and components/schema-validator list
+# them as [[patch.unused]], so `cargo build --locked` passes there; a patch added
+# or re-versioned here needs the same entry in those two lock files.
 
 # cmake 4 refuses a bundled CMakeLists that declares a minimum below 3.5
 # (expat-sys's libexpat does), so the macOS and phone-target builds pin the

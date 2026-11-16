@@ -33,7 +33,6 @@ use super::super::conflict_value::{
 };
 use super::super::git::validate_git_ref_label;
 use super::super::proposal::{self, RepoProposal};
-use super::super::support::now_secs;
 
 pub(super) fn put_engine_repo_conflict_claim_checked(
     vault: &Vault,
@@ -254,7 +253,7 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
         proposals: overlap.sources.clone(),
     };
     let body = super::open_conflict_body(subject, &value)?;
-    let learned_at = now_secs();
+    let learned_at = crate::unix_seconds_now();
     let mut wtxn = vault.store.env.write_txn()?;
     // Every shared path is kept; past the threshold row the host is asked
     // whether everything is okay (rule 5, FIX 8831).
@@ -395,7 +394,7 @@ impl Vault {
             &mut wtxn,
             &conflict,
             admission,
-            now_secs(),
+            crate::unix_seconds_now(),
         )? {
             Ok(task) => task,
             Err(held) if link.held.as_deref() == Some(held.as_str()) => return Ok(link.clone()),

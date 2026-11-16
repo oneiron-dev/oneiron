@@ -15,7 +15,6 @@ use crate::registry::{
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
-use serde::{Deserialize, Serialize};
 
 /// Durable owner tap of one project card: the tap digest and the mint receipt. Key: blake3
 /// hash32 of the card id.
@@ -27,15 +26,8 @@ pub use oneiron_verb_wire::workspace_roster::project::mint::{
     ProjectBudgetShare, ProjectGoalRecord,
 };
 
-/// A durable tap result; `grant_decision_id` identifies the Gate receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectMintReceipt {
-    pub project_id: String,
-    pub card_id: String,
-    pub grant_decision_id: GateDecisionId,
-    pub grant_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::mint::ProjectMintReceipt;
 
 /// An exact tap replay re-proves its mint against the recorded Grant
 /// decision, so the retention sweep keeps each durable tap's decision.

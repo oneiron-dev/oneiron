@@ -11,21 +11,19 @@ use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantRole as Role, MemberAskChange, PendingAuthorityAct, RemovalExportDelivery,
-    SharedActExecution, SharedActExecutionReceipt, SharedActKind, SharedActOutcome,
-    SharedMemberAsk, SharedVaultDeletion,
+    FederationGrantRole as Role, MemberAskChange, OwnerRemoval, PendingAuthorityAct,
+    RemovalExportDelivery, SharedActExecution, SharedActExecutionReceipt, SharedActKind,
+    SharedActOutcome, SharedMemberAsk, SharedVaultDeletion,
 };
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
 
-/// A shared vault, by the id its creation named.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedVaultRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::shared::{
+    HandoffAlarmRequest, SharedActRequest, SharedAddOwnerRequest, SharedMemberAskIdRequest,
+    SharedMemberAskKind, SharedMemberRequest, SharedOwnerChangeWaitSetRequest,
+    SharedReceiptRequest, SharedVaultRequest,
+};
 
 /// `vault.shared.propose_delete`'s input: the shared vault, and the approved
 /// check-in of another asker the starting Owner applies, when one is named.
@@ -55,6 +53,10 @@ pub struct SharedTransferRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub from_keeps: Option<Role>,
+    /// An asker's approved check-in for this transfer, 32 hex: the starting
+    /// Owner applies it on their own proof, and the act names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.shared.propose_remove_owner`'s input. `target` keeps
@@ -76,44 +78,10 @@ pub struct SharedRemoveOwnerRequest {
     #[schemars(with = "Option<String>")]
     pub target_keeps: Option<Role>,
     pub export_first: bool,
-}
-
-/// `vault.shared.propose_add_owner`'s input: a live Owner starts an
-/// `add_owner` act making `owner` an Owner; nobody loses the role.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedAddOwnerRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    /// The new Owner's PERSON id, hex: a live person not yet an Owner.
-    pub owner: String,
-}
-
-/// `vault.shared.owner_change_wait.set`'s input: whole days, or `null` to
-/// remove the common wait. `Some(0)` persists an explicit zero.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedOwnerChangeWaitSetRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
+    /// An asker's approved check-in for this removal, 32 hex: the starting
+    /// Owner applies it on their own proof, and the act names its asker.
     #[serde(default)]
-    pub days: Option<u64>,
-}
-
-/// A started shared act, by the id its proposal answered.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedActRequest {
-    pub act_id: String,
-}
-
-/// A shared-act or membership receipt, by id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedReceiptRequest {
-    pub receipt_id: String,
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.members.add`'s input: a live person with no membership here, at a
@@ -212,17 +180,6 @@ pub struct SharedMemberRoleRequest {
     pub check_in_ref: Option<String>,
 }
 
-/// One member of a shared vault.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedMemberRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    /// PERSON id, hex.
-    pub member: String,
-}
-
 /// The member of a shared vault `vault.members.remove` removes.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -236,18 +193,6 @@ pub struct SharedMemberRemoveRequest {
     /// a holder approved it, this call spends it and the removal runs.
     #[serde(default)]
     pub check_in_ref: Option<String>,
-}
-
-/// The member change a Steward asks for (`vault.members.ask`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedMemberAskKind {
-    /// Invite `member` at `role`, or at the preset's default member role.
-    Add,
-    /// Remove `member`.
-    Remove,
-    /// Move `member` to `role`.
-    AssignRole,
 }
 
 /// A Steward's ask for one member change in a shared vault.
@@ -265,25 +210,6 @@ pub struct SharedMemberAskRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub role: Option<Role>,
-}
-
-/// One member ask in a shared vault, by its id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SharedMemberAskIdRequest {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    #[schemars(with = "String")]
-    pub vault_id: u64,
-    /// The ask's id, hex.
-    pub ask: String,
-}
-
-/// A saved handoff alarm, by its retired key (`suite:hex`, as the alarm
-/// names it).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HandoffAlarmRequest {
-    pub signer: String,
 }
 
 /// `vault.shared.execute`'s answer: the act's receipt and, for an
@@ -332,17 +258,28 @@ pub fn propose_shared_delete(
     Ok(vault.propose_delete_vault_with_check_in(starter, input.vault_id, check_in)?)
 }
 
-/// `vault.shared.propose_transfer`: start a `transfer_ownership` act.
+/// `vault.shared.propose_transfer`: start a `transfer_ownership` act. The
+/// act records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this transfer (2k1).
 pub fn propose_shared_transfer(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedTransferRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let to = person_id("to", &input.to)?;
-    Ok(vault.propose_transfer_ownership(starter, input.vault_id, to, input.from_keeps)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_transfer_ownership_with_check_in(
+        starter,
+        input.vault_id,
+        to,
+        input.from_keeps,
+        check_in,
+    )?)
 }
 
-/// `vault.shared.propose_remove_owner`: start a `remove_owner` act.
+/// `vault.shared.propose_remove_owner`: start a `remove_owner` act. The act
+/// records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this removal (2k1).
 pub fn propose_shared_remove_owner(
     vault: &Vault,
     starter: &AuthenticatedOwner,
@@ -354,24 +291,31 @@ pub fn propose_shared_remove_owner(
         .as_deref()
         .map(|id| person_id("successor", id))
         .transpose()?;
-    Ok(vault.propose_remove_owner(
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_remove_owner_with_check_in(
         starter,
         input.vault_id,
-        target,
-        successor,
-        input.target_keeps,
-        input.export_first,
+        OwnerRemoval {
+            target,
+            successor,
+            target_keeps: input.target_keeps,
+            export_first: input.export_first,
+        },
+        check_in,
     )?)
 }
 
-/// `vault.shared.propose_add_owner`: start an `add_owner` act.
+/// `vault.shared.propose_add_owner`: start an `add_owner` act. The act
+/// records the Owner's check-in decision; with `check_in_ref` the Owner
+/// applies an asker's approved check-in for this add (2k1).
 pub fn propose_shared_add_owner(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedAddOwnerRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let owner = person_id("owner", &input.owner)?;
-    Ok(vault.propose_add_owner(starter, input.vault_id, owner)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.propose_add_owner_with_check_in(starter, input.vault_id, owner, check_in)?)
 }
 
 /// `vault.shared.owner_change_wait.set`: one live Owner sets the common
