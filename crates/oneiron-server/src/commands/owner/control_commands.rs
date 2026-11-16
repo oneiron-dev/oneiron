@@ -339,6 +339,7 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 records,
                 claim_free_partition,
                 shown_state,
+                check_in_ref: None,
             };
             hooked_row(
                 &vault,
@@ -492,7 +493,10 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
             )?
         }
         Spaces::Probes(Probes::Delete(args)) => row("vault.embedding_spaces.probes.delete").run(
-            sdk::EmbeddingSpaceProbeDeleteRequest { id: args.id },
+            sdk::EmbeddingSpaceProbeDeleteRequest {
+                id: args.id,
+                check_in_ref: None,
+            },
             sdk::delete_embedding_space_probe_as,
         )?,
     };

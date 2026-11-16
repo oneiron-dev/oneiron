@@ -464,6 +464,13 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Its conversations come back as your own words. An archive of words you and your companion did not
+speak imports with `--speakers foreign` (`ArchiveSpeakers::Foreign`, through
+`Vault::import_whole_vault_archive_from_with_speakers`): each user, companion or
+assistant message and turn lands as a counterparty's, its original author kept beside it, and
+system notices stay. Each message, turn and conversation it lands is marked foreign, so none of it
+ever counts as your own history. An archive imported again takes the choice it was imported with;
+the other is refused.
 The Owner's whole-vault export keeps credentials, those in skill source files and in JSON bodies
 included; scoped and contact exports null them. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
@@ -1212,8 +1219,10 @@ the settle applies at once (an agent waiting on the name acts on it at once) and
 
 The cleanup job files away husks: a person an extraction minted and never learned anything
 about, a summary with nothing left in it. Its only verb is archive, and an archived record comes
-back whole. While its integrity checks are open (ARCH-0066), the job only proposes: nothing is
-archived until you accept, and the engine refuses the automatic posture.
+back whole. A new vault cleans up automatically: each run takes a snapshot, archives, and lists
+what it archived in one digest, and you can revert the whole run. Each automatic digest carries
+`integrity_teeth`, the state of the two integrity checks (ARCH-0066) when it ran. If you set
+`propose_first`, the job only proposes instead: nothing is archived until you accept.
 
 - `GET /v1/owner/cleanup`: the posture, the done-task retention in days (`0` turns that arm
   off), the open proposals with what accepting would archive, the digests of what was
@@ -1233,8 +1242,9 @@ archived until you accept, and the engine refuses the automatic posture.
   kept, as for a single restore. Asking again returns the first answer with `"repeated": true`.
   A run whose proposal is still open, or one recorded before snapshots, is a 409; an unknown
   run is a 404.
-- `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
-  `auto_with_digest` is refused (409) while the integrity checks are open.
+- `POST /v1/owner/cleanup` with `{"task_retention_days": 30}`, `{"posture": "propose_first"}` or
+  `{"posture": "auto_with_digest"}`. A vault where you never set the posture runs
+  `auto_with_digest`.
 
 The per-item `vault.cleanup.review` answer reads each record through the owner's native
 `vault.get` admission and projection in the same snapshot as its eligibility, evidence and
@@ -1988,6 +1998,33 @@ on.
 A request with no editor token, from a client that is not this page, keeps
 the old public bounds: 3 MiB layouts, 16 MiB PDFs, and two free slots with
 60 requests a minute, else 429.
+
+## A signer's session
+
+A signing invitation is a reusable link, `/sign#<capability>`. When the signer opens it,
+the page removes the capability from the address bar and trades it once at
+`POST /sign/exchange` for a single-use exchange. A form POST to `/sign/session` uses that
+exchange at once and opens a signing session: a cookie (`oneiron-sign-session-<ceremony>`,
+Secure, HttpOnly, SameSite=Strict, path `/sign`) that the page itself cannot read, and the
+page lands at `/sign?ceremony=<ceremony>`. The ceremony id comes from the link and grants
+nothing on its own. Every later call of the ceremony names it and carries only that
+cookie, so a page acts only on the document it shows, even when the signer opens another
+invitation in another tab. The link's signing window, its token cap and its
+revocation still apply on every call. A browser keeps a Secure cookie only over HTTPS (or on
+`localhost`), so serve the signing page over HTTPS.
+
+Opening the link again, in another tab or on another device, opens a new session and ends
+the earlier one. The server keeps sessions in memory, so a restart ends them all; the signer
+reopens the link. A session ends when its link's signing window closes, and the server
+drops a session that has ended even if the signer never comes back. Ending a session never
+ends the link. Set the lifetimes in `[limits]`:
+
+```toml
+[limits]
+esign_exchange_seconds = 120            # an exchange not used by then opens nothing
+# esign_session_idle_seconds = 1800     # unset: no idle end of its own
+# esign_session_absolute_seconds = 43200 # unset: no absolute end of its own
+```
 
 ## The vault key on a new host
 

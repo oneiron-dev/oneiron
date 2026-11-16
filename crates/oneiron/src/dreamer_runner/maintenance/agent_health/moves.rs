@@ -272,15 +272,6 @@ fn taken(
     Ok(Some(stored.clone()))
 }
 
-/// Now in unix milliseconds, the clock the people roster reads agents at.
-fn unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 /// `self.message` to the PERSON of the card's agent, as the caller: the
 /// person comes from the card, never from the request, and the door reads
 /// it again through the caller's own read. A caller whose read does not hold
@@ -293,7 +284,7 @@ fn note(
     check: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     record: impl FnOnce(&mut heed::RwTxn<'_>, &MessagePersonReceipt) -> MemoryResult<()>,
 ) -> MemoryResult<MessagePersonReceipt> {
-    let people = People::load(memory.vault(), unix_ms(), &mut |_| Ok(true))?;
+    let people = People::load(memory.vault(), crate::unix_millis_now(), &mut |_| Ok(true))?;
     let row = people
         .get(card.subject)
         .ok_or_else(|| MemoryError::not_found("the card's agent is not a person in this vault"))?;
