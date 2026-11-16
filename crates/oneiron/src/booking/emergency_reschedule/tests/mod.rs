@@ -95,6 +95,7 @@ impl SlotOracle for Offered {
                 rank: 1.0,
             }],
             flex_used: false,
+            full_days: Vec::new(),
             host_bindings: vec![crate::booking::SlotHostBinding {
                 start_utc: self.0.start,
                 end_utc: self.0.end,
@@ -217,6 +218,7 @@ fn book_as(vault: &Vault, page_seed: u8, start: u64, host: u8) -> ConfirmReceipt
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: None,
+            cap_override: None,
         }),
         slot,
     );
