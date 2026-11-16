@@ -59,6 +59,7 @@ pub mod fanout_admission;
 pub mod feeds;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_hook_digests;
+pub mod fingerprint_keep_self_heal_digests;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
