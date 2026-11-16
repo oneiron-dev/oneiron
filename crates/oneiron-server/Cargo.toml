@@ -261,6 +261,12 @@ name = "it"
 path = "tests/it/main.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The desktop facade refusals root their server on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "self_desktop_doors"
+path = "tests/self_desktop_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
 # by `oneiron/test-support`): the e-sign dispatch signs with the install's keys.
 [[test]]
