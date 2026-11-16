@@ -410,6 +410,16 @@ pub(crate) fn history_free_snapshot(
     check: Option<&HistoryCheck>,
     baseline: Option<&VersionVector>,
 ) -> Result<Vec<u8>> {
+    rooted_history_free_snapshot(doc, check, baseline).map(|(bytes, _)| bytes)
+}
+
+/// [`history_free_snapshot`], and whether it kept the doc's own root, and so all the history the
+/// doc holds.
+fn rooted_history_free_snapshot(
+    doc: &LoroDoc,
+    check: Option<&HistoryCheck>,
+    baseline: Option<&VersionVector>,
+) -> Result<(Vec<u8>, bool)> {
     doc.commit();
     let admits = |start: &VersionVector, frontiers: &Frontiers| {
         baseline.is_none_or(|floor| root_state(start, frontiers).includes_vv(floor))
@@ -419,11 +429,11 @@ pub(crate) fn history_free_snapshot(
     };
     let own_root = doc.shallow_since_vv().to_vv();
     if admits(&own_root, &doc.shallow_since_frontiers()) {
-        return export_snapshot(doc);
+        return Ok((export_snapshot(doc)?, true));
     }
     let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
     if admits(&start, &frontiers) {
-        return Ok(bytes);
+        return Ok((bytes, false));
     }
     Err(root_unavailable())
 }
@@ -434,21 +444,21 @@ pub(crate) fn history_free_snapshot(
 /// `check` refuses takes its erased form first, so neither keeps it (FIX 21141). Persistence never
 /// fails for want of a clean root or a proved cut: a cut an import raced is stored as before, and
 /// window `key` owes the erasure sweep a compaction. No export ships the stored root without
-/// checking it again.
+/// checking it again. Returns the snapshot and whether it kept all the history `doc` holds.
 pub(crate) fn persisted_history_free_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
     check: &HistoryCheck,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, bool)> {
     check.erased_origin.rewrite_live(doc)?;
-    match history_free_snapshot(doc, Some(check), None) {
+    match rooted_history_free_snapshot(doc, Some(check), None) {
         Err(Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::HistoryFreeRootUnavailable,
         })) => {
             let cut = super::shallow::strict_window_cut(doc)?;
             super::shallow::owe_unproved_cut(vault, key, &cut)?;
-            Ok(cut.bytes)
+            Ok((cut.bytes, false))
         }
         other => other,
     }

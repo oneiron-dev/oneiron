@@ -1,7 +1,6 @@
 //! Export-body msgpack codec, row-id and fingerprint validators, decode helpers.
 
 use std::collections::BTreeSet;
-use std::io::Cursor;
 
 use rmpv::Value;
 
@@ -15,6 +14,7 @@ use super::{
 };
 use oneiron_base::error::{Error, RecordError, Result};
 use oneiron_contracts::entity_id::{EntityId, bytes_to_hex_lower};
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 
 pub fn validate_fingerprint_hex(fingerprint: &str) -> Result<()> {
     if fingerprint.len() == FINGERPRINT_HEX_LEN
@@ -123,20 +123,15 @@ pub fn encode_persona_snapshot_export_body(
     }
     let value = Value::Map(entries);
 
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value).map_err(|_| {
-        Error::InvariantViolation("persona snapshot export body MessagePack encode failed")
-    })?;
-    Ok(out)
+    Ok(msgpack::encode(&value))
 }
 
 /// Decodes and validates a PERSONA_SNAPSHOT_EXPORT body.
 pub fn decode_persona_snapshot_export_body(bytes: &[u8]) -> Result<PersonaSnapshotExportRecord> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_snapshot("body"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_snapshot("trailing bytes after body map"));
-    }
+    let value = msgpack::decode(bytes).map_err(|error| match error {
+        MsgpackError::Trailing => invalid_snapshot("trailing bytes after body map"),
+        _ => invalid_snapshot("body"),
+    })?;
     decode_persona_snapshot_export_value(&value)
 }
 
@@ -176,7 +171,7 @@ fn decode_persona_snapshot_export_value(value: &Value) -> Result<PersonaSnapshot
         included_row_ids: decode_row_ids(required_value(entries, KEY_INCLUDED_ROW_IDS)?)?,
         struck_row_ids: decode_row_ids(required_value(entries, KEY_STRUCK_ROW_IDS)?)?,
         artifact_fingerprint: decode_text(required_value(entries, KEY_ARTIFACT_FINGERPRINT)?)?,
-        omitted_refs: match optional_value(entries, KEY_OMITTED_REFS) {
+        omitted_refs: match optional_value(entries, KEY_OMITTED_REFS)? {
             Some(value) => decode_row_ids(value)?,
             None => Vec::new(),
         },
@@ -232,37 +227,30 @@ fn decode_u64(value: &Value) -> Result<u64> {
 /// Every one of `keys` is present once; each of `optional` at most once;
 /// nothing else.
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str], optional: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len() + optional.len()];
-    for (key, _) in entries {
-        let key = key
-            .as_str()
-            .ok_or_else(|| invalid_snapshot("body keys must be strings"))?;
-        let Some(index) = keys.iter().chain(optional).position(|known| *known == key) else {
-            return Err(invalid_snapshot(
-                "body key is not in the pinned PERSONA_SNAPSHOT_EXPORT_BODY_KEYS set",
-            ));
-        };
-        if seen[index] {
-            return Err(invalid_snapshot("duplicate body key"));
-        }
-        seen[index] = true;
-    }
-    if seen[..keys.len()].iter().all(|value| *value) {
-        Ok(())
-    } else {
-        Err(invalid_snapshot("missing required export record field"))
-    }
+    Entries::new(entries)
+        .exact_keys(keys, optional)
+        .map(drop)
+        .map_err(|error| {
+            invalid_snapshot(match error {
+                MsgpackError::NonTextKey => "body keys must be strings",
+                MsgpackError::UnknownKey(_) => {
+                    "body key is not in the pinned PERSONA_SNAPSHOT_EXPORT_BODY_KEYS set"
+                }
+                MsgpackError::DuplicateKey(_) => "duplicate body key",
+                _ => "missing required export record field",
+            })
+        })
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    optional_value(entries, key)
+    optional_value(entries, key)?
         .ok_or_else(|| invalid_snapshot("missing required export record field"))
 }
 
-fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(entry_key, value)| (entry_key.as_str() == Some(key)).then_some(value))
+fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_snapshot("duplicate body key"))
 }
 
 pub fn invalid_snapshot(reason: &'static str) -> Error {

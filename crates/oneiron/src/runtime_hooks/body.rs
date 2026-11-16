@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::skill_hub::pack_catalog::HookActorClass;
-use crate::{EdgeActorClass, EntityId, Result};
+use crate::{EdgeActorClass, EntityId, Error, Result};
 
 use super::filter;
 use super::grant::HookGrant;
@@ -103,6 +103,30 @@ impl HookBodyUsage {
 /// runtime did not measure.
 const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
 
+/// The longest body budget, in milliseconds, a hook selector may name when
+/// the owner sets no cap: today's bound, kept as the default.
+pub const DEFAULT_HOOK_MAX_BUDGET_MS: u32 = 60_000;
+
+/// The `runtime_hooks.hook.max_budget_ms` value: the longest body budget, in
+/// milliseconds, a hook selector may name. An accounting deadline, never a
+/// stop; at least 1; a higher value is a loosening.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct HookMaxBudgetMs(pub u32);
+
+impl crate::setting::SettingValue for HookMaxBudgetMs {
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            return Err(Error::InvalidConfig(
+                "a hook's longest budget is at least one millisecond".into(),
+            ));
+        }
+        Ok(self)
+    }
+}
+
 /// One hook run's clock (FIX 8842). Its caller makes it once, before the
 /// body runs, and reads its overrun once the run has ended. Its deadline,
 /// `budget_ms` after its start, is an accounting deadline, never a stop: an
@@ -116,6 +140,7 @@ const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
 pub struct HookRunContext {
     started: Instant,
     budget_ms: u32,
+    max_budget_ms: u32,
     deadline: Instant,
     /// Time spent in read and verdict callbacks so far.
     callbacks: Duration,
@@ -135,6 +160,7 @@ impl HookRunContext {
         Self {
             started,
             budget_ms,
+            max_budget_ms: DEFAULT_HOOK_MAX_BUDGET_MS,
             deadline: started + Duration::from_millis(u64::from(budget_ms)),
             callbacks: Duration::ZERO,
             read_overruns: 0,
@@ -147,6 +173,20 @@ impl HookRunContext {
     #[must_use]
     pub const fn budget_ms(&self) -> u32 {
         self.budget_ms
+    }
+
+    /// The longest budget this run admits, from the vault's
+    /// `runtime_hooks.hook.max_budget_ms` key; [`Self::new`] sets the default.
+    #[must_use]
+    pub const fn max_budget_ms(&self) -> u32 {
+        self.max_budget_ms
+    }
+
+    /// This run, admitting budgets up to `max_budget_ms`.
+    #[must_use]
+    pub const fn with_max_budget_ms(mut self, max_budget_ms: u32) -> Self {
+        self.max_budget_ms = max_budget_ms;
+        self
     }
 
     /// The run's accounting deadline: advisory context for a callback (a
@@ -233,58 +273,13 @@ impl HookRunContext {
     }
 }
 
-/// A hook run that ended past its `budget_ms` (FIX 8842): a measured fact
-/// beside its outcome, never a failure. Its run's state, outcome and pins
-/// are what they would be within the budget.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HookBudgetOverrun {
-    pub budget_ms: u32,
-    /// From the run's start to its end.
-    pub elapsed_ms: u64,
-    /// How far past its deadline the run ended.
-    pub overrun_ms: u64,
-    /// Time its read and verdict callbacks took, all of them.
-    pub callback_ms: u64,
-    /// Reads whose callback ended past the deadline.
-    pub read_overruns: u32,
-    /// Verdicts whose callback ended past the deadline.
-    pub verdict_overruns: u32,
-}
-
-impl HookBudgetOverrun {
-    /// The overrun as a Hook receipt's named fields.
-    pub(super) fn receipt_fields(&self) -> [(&'static str, String); 6] {
-        [
-            ("budget_ms", self.budget_ms.to_string()),
-            ("elapsed_ms", self.elapsed_ms.to_string()),
-            ("overrun_ms", self.overrun_ms.to_string()),
-            ("callback_ms", self.callback_ms.to_string()),
-            ("read_overruns", self.read_overruns.to_string()),
-            ("verdict_overruns", self.verdict_overruns.to_string()),
-        ]
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::runtime_hooks::body::{
+    HookBudgetOverrun, HookPreparation, HookSettledCallRef,
+};
 
 fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-}
-
-/// How a runtime prepared a hook body before it ran it (FIX 9208): the body
-/// stays as authored (its `body_hash` names it); a TypeScript body runs as
-/// the JavaScript its preparation printed, named here by that
-/// preparation's identity. JavaScript runs byte for byte as written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HookPreparation {
-    /// `javascript` or `typescript`: the language the body ran as.
-    pub language: String,
-    /// Why a body that is not JavaScript ran as written: the preparation's
-    /// typed note code, never a refusal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-    /// A TypeScript body's preparation identity (the Oxc pin, its options,
-    /// the executed JavaScript and its position map), lowercase hex.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity: Option<String>,
 }
 
 /// The trusted context of one `ai.verdict` a fact hook asks (FIX 10068,
@@ -321,16 +316,6 @@ impl HookVerdictContext {
     pub const fn reader_class(&self) -> EdgeActorClass {
         filter::edge_class(self.grant.reader_class)
     }
-}
-
-/// One model call a hook's verdict made, as its run settled it (FIX 10075):
-/// the run instance and the lease. A hook record names it; nothing settles
-/// it again.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HookSettledCallRef {
-    #[serde(with = "crate::serialize::entity_ref")]
-    pub instance: EntityId,
-    pub lease: String,
 }
 
 /// What one `ai.verdict` came to.
