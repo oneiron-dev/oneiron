@@ -524,6 +524,59 @@ pub(crate) fn ocsp_entry_valid<'a>(
     ocsp_basic_valid(&basic, &candidates, embedded, anchors, at_unix, memory)
 }
 
+/// The authority each bound SingleResponse's issuer grants the response's
+/// responder, one entry per `bound`: the responder is the first name match —
+/// response-embedded, then DSS, then anchors — whose key verifies the
+/// response and which every bound issuer leaves authorized. Each match is
+/// tried in turn, so a same-subject shadow filed ahead of the genuine
+/// responder fails only its own try, never the response. `None` when no
+/// match both verifies and stands authorized.
+#[allow(clippy::too_many_arguments)]
+fn ocsp_responder_authority(
+    basic: &x509_ocsp::BasicOcspResponse,
+    tbs: &[u8],
+    candidates: &[EmbeddedCert],
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    bound: &[(&EmbeddedCert, &EmbeddedCert)],
+    at_unix: u64,
+    memory: &MemoryLedger,
+) -> Result<Option<Vec<Result<(), EvidenceRejection>>>, SealMemoryRefusal> {
+    let oid = basic.signature_algorithm.oid.as_bytes();
+    for responder in candidates
+        .iter()
+        .chain(embedded.iter())
+        .chain(anchors.iter())
+        .filter(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
+    {
+        let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
+            continue;
+        };
+        if !cms::sig_alg_permitted(alg, oid) {
+            continue;
+        }
+        if cms::verify_signature_value(alg, &responder.der, tbs, basic.signature.raw_bytes())
+            .is_err()
+        {
+            continue;
+        }
+        let mut authority_of = Vec::with_capacity(bound.len());
+        let mut authorized = true;
+        for (_, issuer) in bound {
+            let authority = ocsp_responder_authorized(responder, issuer, at_unix, memory)?;
+            if authority == Err(EvidenceRejection::Unverifiable) {
+                authorized = false;
+                break;
+            }
+            authority_of.push(authority);
+        }
+        if authorized {
+            return Ok(Some(authority_of));
+        }
+    }
+    Ok(None)
+}
+
 /// The rest of [`ocsp_entry_valid`]: the responder among `candidates`, the
 /// DSS certificates and the anchors, the response signature, each
 /// SingleResponse's binding and the responder's authority over it, and
@@ -540,25 +593,7 @@ fn ocsp_basic_valid<'a>(
     memory: &MemoryLedger,
 ) -> Result<Result<OcspEvidence<'a>, EvidenceRejection>, SealMemoryRefusal> {
     use der::Encode;
-    let Some(responder) = candidates
-        .iter()
-        .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
-        .or_else(|| {
-            embedded
-                .iter()
-                .chain(anchors.iter())
-                .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
-        })
-    else {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    };
-    let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    };
-    let oid = basic.signature_algorithm.oid.as_bytes();
-    if !cms::sig_alg_permitted(alg, oid) {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    }
+    let responses = &basic.tbs_response_data.responses;
     let Some(tbs_len) = basic
         .tbs_response_data
         .encoded_len()
@@ -571,13 +606,9 @@ fn ocsp_basic_valid<'a>(
     let Ok(tbs) = basic.tbs_response_data.to_der() else {
         return Ok(Err(EvidenceRejection::Unverifiable));
     };
-    if cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes()).is_err()
-    {
-        return Ok(Err(EvidenceRejection::Unverifiable));
-    }
-    drop(tbs);
-    drop(tbs_held);
-    let responses = &basic.tbs_response_data.responses;
+    // Binding names no responder, so every SingleResponse binds before any
+    // name match is tried: an unbound response is Unverifiable whichever
+    // match would have verified it.
     memory.admit_len::<(&EmbeddedCert, &EmbeddedCert, Result<(), EvidenceRejection>)>(
         responses.len(),
     )?;
@@ -587,12 +618,16 @@ fn ocsp_basic_valid<'a>(
         else {
             return Ok(Err(EvidenceRejection::Unverifiable));
         };
-        let authority = ocsp_responder_authorized(responder, issuer, at_unix, memory)?;
-        if authority == Err(EvidenceRejection::Unverifiable) {
-            return Ok(Err(EvidenceRejection::Unverifiable));
-        }
-        bound.push((target, issuer, authority));
+        bound.push((target, issuer));
     }
+    let Some(authority_of) = ocsp_responder_authority(
+        basic, &tbs, candidates, embedded, anchors, &bound, at_unix, memory,
+    )?
+    else {
+        return Ok(Err(EvidenceRejection::Unverifiable));
+    };
+    drop(tbs);
+    drop(tbs_held);
     // producedAt sanity bound: RFC 6960 assigns producedAt no freshness
     // semantics, but a response claiming to be produced BEYOND the
     // applicable time (plus a documented clock-skew tolerance) is not
@@ -608,6 +643,10 @@ fn ocsp_basic_valid<'a>(
     let mut unknown_statuses: Vec<UnknownStatus<'_>> = Vec::new();
     memory.admit_len::<NegativeClaim<'_>>(responses.len())?;
     let mut negative = Vec::with_capacity(responses.len());
+    let bound = bound
+        .into_iter()
+        .zip(authority_of)
+        .map(|((target, issuer), authority)| (target, issuer, authority));
     for (single, (target, issuer, authority)) in responses.iter().zip(bound) {
         let rejection = if produced_late {
             Some(EvidenceRejection::Unusable)
