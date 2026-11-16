@@ -10,6 +10,11 @@
 //! ruling L2-18-WORKSPACE-FACET-CARRIER = A). On main `slack` is no `import`
 //! subcommand.
 //!
+//! L2-18 PR 3: the owner confirms the member map once per import.
+//! `--propose-members` lands nothing and writes the map the vault proposes,
+//! matching members by email; `members set` maps a contact later and gives
+//! it the conversations it is in. Before PR 3 neither is part of the command.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --features oneiron/test-support --test history_import_slack`
 #![cfg(oneiron_test_support)]
 
@@ -26,16 +31,17 @@ use serde_json::Value;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-/// The export: owen (U0, the owner's own member), yuki (U1) and sam (U2).
+/// The export: owen (U0, the owner's own member), yuki (U1) and sam (U2),
+/// each with an email address.
 /// `general` is public and lists owen and yuki; `board` is private to owen
 /// and sam. Five messages, one of them a join that is not kept.
 const EXPORT: [(&str, &str); 5] = [
     (
         "users.json",
         r#"[
-          {"id": "U0", "team_id": "T1", "name": "owen", "profile": {"display_name": "owen"}},
-          {"id": "U1", "team_id": "T1", "name": "yuki", "profile": {"display_name": "yuki"}},
-          {"id": "U2", "team_id": "T1", "name": "sam", "profile": {"display_name": "sam"}}
+          {"id": "U0", "team_id": "T1", "name": "owen", "profile": {"display_name": "owen", "email": "owen@example.com"}},
+          {"id": "U1", "team_id": "T1", "name": "yuki", "profile": {"display_name": "yuki", "email": "Yuki@Example.com"}},
+          {"id": "U2", "team_id": "T1", "name": "sam", "profile": {"display_name": "sam", "email": "sam@example.com"}}
         ]"#,
     ),
     (
@@ -137,6 +143,37 @@ impl Home {
             .arg("--members")
             .arg(members)
             .args(["--workspace", "Example"])
+            .arg("--config")
+            .arg(&self.config)
+            .env_remove("ONEIRON_VAULT_PATH")
+            .output()
+    }
+
+    /// Runs `oneiron import slack <export> --propose-members <out>`.
+    fn propose(&self, export: &Path, out: &Path) -> Result<Output, std::io::Error> {
+        Command::new(env!("CARGO_BIN_EXE_oneiron"))
+            .args(["import", "slack"])
+            .arg(export)
+            .arg("--propose-members")
+            .arg(out)
+            .args(["--workspace", "Example"])
+            .arg("--config")
+            .arg(&self.config)
+            .env_remove("ONEIRON_VAULT_PATH")
+            .output()
+    }
+
+    /// Runs `oneiron import slack members set <workspace> <member> <person>`.
+    fn set_member(
+        &self,
+        workspace: &str,
+        member: &str,
+        person: &str,
+    ) -> Result<Output, std::io::Error> {
+        Command::new(env!("CARGO_BIN_EXE_oneiron"))
+            .args([
+                "import", "slack", "members", "set", workspace, member, person,
+            ])
             .arg("--config")
             .arg(&self.config)
             .env_remove("ONEIRON_VAULT_PATH")
@@ -363,7 +400,7 @@ fn the_imports_turns_are_born_under_the_workspaces_facet() -> TestResult {
         .ok_or("the report names the workspace's facet")?;
     let facet = EntityId::from_hex(named).map_err(|_| "the facet is an id in hex")?;
     let vault = home.open()?;
-    for native_id in ["C1:1761955300.000100", "G1:1761955600.000100"] {
+    for native_id in ["T1:C1:1761955300.000100", "T1:G1:1761955600.000100"] {
         let rows = imported_message_rows(&vault, HistorySource::Slack, native_id)?
             .ok_or_else(|| format!("message {native_id} did not land"))?;
         assert_eq!(
@@ -388,5 +425,207 @@ fn the_imports_turns_are_born_under_the_workspaces_facet() -> TestResult {
         again["workspace"]["facet"], report["workspace"]["facet"],
         "a later import finds the workspace's facet by name"
     );
+    Ok(())
+}
+
+/// The JSON of a proposal written to `path`.
+fn proposed(path: &Path) -> Result<Value, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+}
+
+#[test]
+fn the_proposed_map_matches_members_by_email() -> TestResult {
+    let home = Home::new()?;
+    // The vault knows yuki by one address, and sam's address, in two
+    // spellings, by two persons.
+    let (yuki, sam_lower, sam_upper) = {
+        let vault = home.open()?;
+        (
+            oneiron::comm::resolve_or_create_comm_party(&vault, "email:yuki@example.com")?,
+            oneiron::comm::resolve_or_create_comm_party(&vault, "email:sam@example.com")?,
+            oneiron::comm::resolve_or_create_comm_party(&vault, "email:Sam@example.com")?,
+        )
+    };
+    assert_ne!(sam_lower, sam_upper, "two persons carry sam's address");
+    let export = home.zip(&[])?;
+    let out = home.dir.path().join("proposed.json");
+    let output = home.propose(&export, &out)?;
+    assert!(output.status.success(), "propose: {}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["workspace"]["key"], "T1");
+    assert_eq!(report["workspace"]["members"], 3);
+    assert_eq!(report["workspace"]["matched"], 1);
+    assert_eq!(report["workspace"]["contacts"], 2);
+    for printed in [
+        String::from_utf8_lossy(&output.stdout),
+        stderr(&output).into(),
+    ] {
+        assert!(
+            !printed.to_lowercase().contains("example.com") && !printed.contains("yuki"),
+            "the run prints counts, no address or name: {printed}"
+        );
+    }
+    let map = proposed(&out)?;
+    assert_eq!(
+        map["U1"]["person"],
+        yuki.to_hex(),
+        "yuki's address, in any case, is one person's: {map}"
+    );
+    assert_eq!(map["U1"]["name"], "yuki");
+    assert_eq!(
+        map["U2"]["person"],
+        Value::Null,
+        "two persons carry sam's address, so neither is proposed: {map}"
+    );
+    assert_eq!(
+        map["U0"]["person"],
+        Value::Null,
+        "no person carries owen's address, and the owner's own member is never guessed: {map}"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&out)?.permissions().mode() & 0o777,
+            0o600,
+            "only the owner reads the proposal"
+        );
+    }
+    {
+        let vault = home.open()?;
+        assert_eq!(
+            vault.history_import_ledger_len(HistorySource::Slack)?,
+            0,
+            "a proposal lands nothing"
+        );
+        assert!(
+            vault
+                .history_import_members(HistorySource::Slack, "T1")?
+                .is_empty(),
+            "a proposal keeps no member"
+        );
+    }
+    assert!(
+        !home.propose(&export, &out)?.status.success(),
+        "a proposal never writes over a file"
+    );
+
+    // The owner checks the map, names its own member and hands it back.
+    let mut confirmed = map;
+    confirmed["U0"]["person"] = Value::from("owner");
+    let members = home.members(&confirmed.to_string())?;
+    let report = landed(&home.import(&export, &members)?)?;
+    assert_eq!(report["totals"]["new"], LANDED);
+    assert_eq!(report["workspace"]["matched"], 1);
+    let vault = home.open()?;
+    for row in rows(&vault, "T1:C1:1761955400.000100")? {
+        assert!(
+            reads(&vault, row, &[yuki])?,
+            "the person the owner confirmed reads general's {row:?}"
+        );
+        assert!(
+            !reads(&vault, row, &[sam_lower])? && !reads(&vault, row, &[sam_upper])?,
+            "neither person with sam's address reads {row:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_later_map_gives_a_contact_the_channels_it_was_in() -> TestResult {
+    let home = Home::new()?;
+    let members = home.members(r#"{"U0": "owner"}"#)?;
+    let export = home.zip(&[])?;
+    let report = landed(&home.import(&export, &members)?)?;
+    assert_eq!(report["workspace"]["key"], "T1");
+    // sam's words in general (public) and in board (private to owen and sam).
+    let sams = ["T1:C1:1761955500.000100", "T1:G1:1761955600.000100"];
+    {
+        let vault = home.open()?;
+        for native_id in sams {
+            for row in rows(&vault, native_id)? {
+                assert!(
+                    !reads(&vault, row, &[home.sam])?,
+                    "sam is a contact, so it reads nothing of {row:?}"
+                );
+            }
+        }
+    }
+
+    let output = home.set_member("T1", "U2", &home.sam.to_hex())?;
+    assert!(output.status.success(), "members set: {}", stderr(&output));
+    let set: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        set["conversations"], 2,
+        "sam is in general, whose members are the workspace, and in board"
+    );
+    assert_eq!(set["person"], home.sam.to_hex());
+    {
+        let vault = home.open()?;
+        for native_id in sams {
+            for row in rows(&vault, native_id)? {
+                assert!(
+                    reads(&vault, row, &[home.sam])?,
+                    "sam's person reads {row:?} once the owner maps it"
+                );
+                assert!(
+                    reads(&vault, row, &[home.owner])?,
+                    "the owner still reads {row:?}"
+                );
+                assert!(
+                    !reads(&vault, row, &[home.outsider])?,
+                    "a person never in the workspace reads nothing of {row:?}"
+                );
+            }
+        }
+        for row in rows(&vault, "T1:G1:1761955600.000100")? {
+            assert!(
+                !reads(&vault, row, &[home.yuki])?,
+                "yuki, a contact, still reads nothing of board's {row:?}"
+            );
+        }
+        let sam = vault
+            .history_import_members(HistorySource::Slack, "T1")?
+            .into_iter()
+            .find(|member| member.provider_id == "U2")
+            .ok_or("sam's member row")?;
+        assert_eq!(sam.person, Some(home.sam));
+        assert_eq!(sam.name.as_deref(), Some("sam"), "its name is kept");
+    }
+
+    // The next proposal keeps what the owner mapped.
+    let out = home.dir.path().join("proposed.json");
+    let proposal = home.propose(&export, &out)?;
+    assert!(proposal.status.success(), "propose: {}", stderr(&proposal));
+    let map = proposed(&out)?;
+    assert_eq!(map["U2"]["person"], home.sam.to_hex(), "{map}");
+    assert_eq!(map["U0"]["person"], "owner", "{map}");
+
+    assert!(
+        !home
+            .set_member("T1", "U9", &home.sam.to_hex())?
+            .status
+            .success(),
+        "a member no import of the workspace kept is refused"
+    );
+    assert!(
+        !home
+            .set_member("T1", "U1", &EntityId::now().to_hex())?
+            .status
+            .success(),
+        "an id that is no live person is refused"
+    );
+
+    let back = home.set_member("T1", "U2", "contact")?;
+    assert!(back.status.success(), "members set: {}", stderr(&back));
+    let vault = home.open()?;
+    for native_id in sams {
+        for row in rows(&vault, native_id)? {
+            assert!(
+                !reads(&vault, row, &[home.sam])?,
+                "a contact again, sam reads nothing of {row:?}"
+            );
+        }
+    }
     Ok(())
 }
