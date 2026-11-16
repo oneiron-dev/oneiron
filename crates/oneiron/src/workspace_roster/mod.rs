@@ -103,6 +103,7 @@ use steps::*;
 
 pub(crate) use self::codec::companion_principal_in_txn;
 pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
+pub(crate) use self::house_link::seat_house_owner_by_act_in_txn;
 pub(crate) use self::house_link::{
     erase_house_link_actor_in_txn, house_link_receipts, house_role_lines_in_txn,
     is_house_link_grant_in_txn,
@@ -123,7 +124,6 @@ pub use self::records::{
 // The bind-interval read: the room reads' statement byline (FIX row
 // SPEAKER-BYLINE-FOR-ORG) and its test door.
 pub(crate) use self::house_link::house_org_at_in_txn;
-pub(crate) use self::house_link::seat_house_owner_by_act_in_txn;
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
     erase_member_intent_actor_in_txn,
