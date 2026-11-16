@@ -34,11 +34,17 @@
 //!   person, keeps that person's press. Its drafter's send
 //!   (`Memory::mail_reply_send`, PLAN L3-35 D6) is the drafter's own agent
 //!   send and checks in; its door dispatches only a reply from a mailbox of
-//!   the vault's Owner sent as the mailbox's own account;
+//!   the vault's Owner, sent as the mailbox's own account or through its
+//!   delegated identity bound to that drafter;
 //! * a send from a member mailbox, a delegated identity: that mailbox is its
 //!   person's (ARCH-0082 #data-owner-consent; Engine ruling L3-35-PRINCIPAL =
 //!   A), and the engine records no principal on it, so its press per send
-//!   stays;
+//!   stays. One kind reaches the vault's rows and only them
+//!   ([`SendGrantReach::RowsOnly`]; lead ruling MAIL-REPLY-GMAIL-SEND-GRANT =
+//!   A): a send through the identity an Active Google mailbox of the vault's
+//!   Owner reads through (`mail_pack::owner_mailbox_identity_in_txn`), whose
+//!   person is the Owner who writes the rows; with no row naming the class
+//!   its press per send stays, whatever its sender's role;
 //! * a native-mail cold send, or a recipient of a message that takes one: it
 //!   keeps its own graduation (OF-399), as it keeps it from an envelope slot;
 //! * a campaign leg: it names its pinned sender only as its actor (FIX 11641
@@ -91,6 +97,21 @@ enum SendAnswer {
     /// The row releases nothing; the Gate's other coverage or the press
     /// decides.
     Wait(WaitReason),
+}
+
+/// How far the vault's send grant reaches one send the Gate judges (module
+/// doc).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SendGrantReach {
+    /// An agent's own send: the vault's rows, or with none its role's
+    /// default.
+    RowsOrRole,
+    /// A send through the delegated identity of a mailbox of the vault's
+    /// Owner: the vault's rows only; with none, its press per send stays.
+    RowsOnly,
+    /// A send from a member mailbox, a native-mail cold send, or a recipient
+    /// of a message that takes one: no check-in.
+    Outside,
 }
 
 /// One agent send's check-in at the Gate.
@@ -149,10 +170,11 @@ impl SendCheckIn {
 }
 
 /// The check-in of `effect` under `read`, when it is an agent's send the row
-/// reaches; `None` for every other effect (module doc). `delegated_or_cold`:
-/// the Gate found the send from a member mailbox, or a native-mail cold send,
-/// or a recipient of a message that takes one. With no row naming the class,
-/// the sender's role is read in the Gate's `txn` ([`sender_role_in_txn`]).
+/// reaches; `None` for every other effect (module doc). `reach`: what the
+/// Gate found the send to be ([`SendGrantReach`]). With no row naming the
+/// class, the sender's role is read in the Gate's `txn`
+/// ([`sender_role_in_txn`]) for an agent's own send, and a send the rows
+/// alone reach gets no check-in.
 ///
 /// # Errors
 ///
@@ -163,11 +185,11 @@ pub(crate) fn send_check_in_in_txn(
     txn: &heed::RoTxn<'_>,
     read: CheckInPolicyRead<'_>,
     effect: &ExternalEffectGateInput,
-    delegated_or_cold: bool,
+    reach: SendGrantReach,
 ) -> Result<Option<SendCheckIn>> {
     if effect.actor.actor_class != "agent"
         || effect.verb != "send"
-        || delegated_or_cold
+        || reach == SendGrantReach::Outside
         || matches!(
             effect.provenance.approval_target,
             Some(ApprovalTarget::Campaign(_))
@@ -187,6 +209,7 @@ pub(crate) fn send_check_in_in_txn(
             source,
             check_in_with_mode(ActClass::OutboundSend, mode, None, &AlwaysUnsure),
         ),
+        None if reach == SendGrantReach::RowsOnly => return Ok(None),
         None => {
             let role = sender_role_in_txn(store, txn, effect.provenance.actor_entity_ref)?;
             // The power is the Gate's own check (`has_permission`): a send

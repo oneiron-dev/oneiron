@@ -238,6 +238,25 @@ fn judge_counterparty_policy(
     // Fix list row 17645: a recipient of a message whose send takes it
     // (another recipient's cold send) is judged against that one operation.
     let mail_once = mail_cold || member_mail || message_once;
+    // PLAN L3-35: an agent's own send checks in on the vault's send row, or
+    // with none on its role's default; a member-mailbox send checks in only
+    // through the identity of an Owner's own Google mailbox, and only on the
+    // Owner's row (lead ruling MAIL-REPLY-GMAIL-SEND-GRANT = A). Every
+    // recipient of one message names the same identity, so each is judged
+    // the same way.
+    let owner_mailbox = match hydrated_effect.channel_identity_ref {
+        Some(identity) if member_mail && !mail_cold => {
+            crate::mail_pack::owner_mailbox_identity_in_txn(store, txn, identity)?
+        }
+        _ => false,
+    };
+    let send_reach = if owner_mailbox {
+        crate::check_in::SendGrantReach::RowsOnly
+    } else if mail_once {
+        crate::check_in::SendGrantReach::Outside
+    } else {
+        crate::check_in::SendGrantReach::RowsOrRole
+    };
     // Fix list rows 17872, 17643: a drafted mail-pack reply sent as its
     // mailbox's own account names no sender identity; the owner's one press
     // for exactly that send releases it, as a member-mail press does.
@@ -312,14 +331,14 @@ fn judge_counterparty_policy(
     {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
-    // PLAN L3-35: an agent's send checks in on the vault's send row, or with
-    // none, on its role's default.
+    // PLAN L3-35: the send's check-in, as far as the vault's send grant
+    // reaches it (`send_reach`).
     let send_check_in = fold_send_check_in(
         store,
         txn,
         policy,
         &hydrated_effect,
-        mail_once,
+        send_reach,
         &mut consent_grants,
     )?;
     if let (Some(requirement), Some(effect_ctx)) =
@@ -800,9 +819,8 @@ fn judge_counterparty_policy(
 
 /// PLAN L3-35 (ARCH-0046 #send-grant): `effect`'s check-in on the vault's
 /// send row, or with none on its sender's role's default, when it is an
-/// agent's send the row reaches; `delegated_or_cold`: the Gate found it a
-/// member-mailbox send, or a native-mail cold send, or a recipient of a
-/// message that takes one (`mail_once`).
+/// agent's send the row reaches; `reach`: how far the vault's send grant
+/// reaches it ([`crate::check_in::SendGrantReach`]).
 /// `NeverAsk` covers it in `consent_grants`, as an envelope slot does, and
 /// the caller gives it the row's (or role's) ref as its authority; any other
 /// answer folds nothing, so the send keeps its other coverage or its press
@@ -812,16 +830,11 @@ fn fold_send_check_in(
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
     effect: &ExternalEffectGateInput,
-    delegated_or_cold: bool,
+    reach: crate::check_in::SendGrantReach,
     consent_grants: &mut Vec<crate::consent::StandingConsentGrant>,
 ) -> Result<Option<crate::check_in::SendCheckIn>> {
-    let Some(check_in) = crate::check_in::send_check_in_in_txn(
-        store,
-        txn,
-        policy.check_in_policy(),
-        effect,
-        delegated_or_cold,
-    )?
+    let Some(check_in) =
+        crate::check_in::send_check_in_in_txn(store, txn, policy.check_in_policy(), effect, reach)?
     else {
         return Ok(None);
     };

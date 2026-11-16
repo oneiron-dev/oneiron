@@ -345,15 +345,26 @@ pub(crate) fn embedded_owner_person_in(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<Option<EntityId>> {
+    embedded_owner_person_for_store_in(&vault.store, vault.privacy_posture(), txn, actor)
+}
+
+/// [`embedded_owner_person_in`] for a reader that holds a `Store` and the
+/// posture its vault opened with, and no `Vault` (the Gate): the same fold
+/// and the same owner census, read through the store.
+pub(crate) fn embedded_owner_person_for_store_in(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<EntityId>> {
     if actor != crate::vault::embedded_owner_actor_id()?
-        || vault
-            .authority_fold_readonly_in_txn(txn)?
+        || crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?
             .vault_id
             .is_some()
     {
         return Ok(None);
     }
-    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
+    let owners = crate::policy_model::owners_for_store_in_txn(store, posture, txn)?;
     Ok(match owners.as_slice() {
         [] => Some(actor),
         [owner] => Some(*owner),
