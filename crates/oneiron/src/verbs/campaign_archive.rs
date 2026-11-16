@@ -203,18 +203,21 @@ pub fn research_archive_judge(
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let vault = memory.vault();
     let brief = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        controller_in_txn(memory, &txn, Some(attempt(input.root)?))?;
-        let (pin, output_text, rubric) = judge::premises_in_txn(vault, &txn, &input)?;
-        pin_sources_read_in_txn(&lane, &txn, &pin)?;
+        // The task's words are read as the lane reads them: in the snapshot
+        // whose known-value pass masks repo bytes for a masked reader.
+        let snapshot = memory.lane_snapshot()?;
+        let txn = snapshot.txn();
+        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
+        let (pin, output_text, rubric) = judge::premises_in_txn(vault, txn, &input)?;
+        pin_sources_read_in_txn(&lane, txn, &pin)?;
         if lane
-            .entities_readable_in_txn(&txn, &[input.output.entity, pin.task()])?
+            .entities_readable_in_txn(txn, &[input.output.entity, pin.task()])?
             .contains(&false)
         {
             return Err(crate::Error::EntityNotFound.into());
         }
         let task = memory
-            .get_entity_in_txn(&lane, &txn, pin.task())?
+            .get_entity_in_txn(&lane, txn, snapshot.known(), pin.task())?
             .value
             .and_then(|view| view.body)
             .ok_or(crate::Error::EntityNotFound)?;
