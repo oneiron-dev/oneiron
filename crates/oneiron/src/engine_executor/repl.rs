@@ -92,26 +92,45 @@ impl EngineNativeExecutor<'_> {
         } = loaded;
         if let Some(status) = terminal_status {
             // A run parked on a wait goes on, at the step after the parked
-            // one, once the wait's reply is delivered.
+            // one, once the wait's reply is delivered; a person's pause that
+            // reached it first holds it at the wait (FIX
+            // PAUSE-BOUNDARY-PARKED-RUN), its reply kept for the resume.
+            let mut paused = false;
             let resumed = match &status {
-                EngineExecutorStatus::Waiting(wait) => match self.park(&record, wait)? {
-                    Some(key) => {
-                        // The resumed run asks the model again, so it does so
-                        // under the teaching it committed to.
-                        if prompt == PromptBinding::Drifted {
-                            return Err(Error::InvalidConfig(
-                                "engine executor config changed for existing run".to_owned(),
-                            )
-                            .into());
+                EngineExecutorStatus::Waiting(wait) => {
+                    let delivered = self.park(&record, wait)?;
+                    paused = self.take_wait_pause();
+                    match delivered {
+                        Some(key) if !paused => {
+                            // The resumed run asks the model again, so it
+                            // does so under the teaching it committed to.
+                            if prompt == PromptBinding::Drifted {
+                                return Err(Error::InvalidConfig(
+                                    "engine executor config changed for existing run".to_owned(),
+                                )
+                                .into());
+                            }
+                            self.resume_delivered_wait(
+                                &mut record,
+                                wait,
+                                &key,
+                                expected_generation,
+                            )?
                         }
-                        self.resume_delivered_wait(&mut record, wait, &key, expected_generation)?
+                        _ => None,
                     }
-                    None => None,
-                },
+                }
                 _ => None,
             };
             let Some(generation) = resumed else {
                 self.recover_checkpointed_implicit_speak(&record, &status, config)?;
+                let status = if paused {
+                    EngineExecutorStatus::Paused {
+                        next_step_seq: completed_step_count(&record)?,
+                    }
+                } else {
+                    status
+                };
                 return Ok(self.outcome(status, 0, record));
             };
             expected_generation = Some(generation);
@@ -612,14 +631,32 @@ impl EngineNativeExecutor<'_> {
 
             if let Some(status) = terminal_status {
                 // A reply that landed while the step ran resumes the run
-                // here, with no round trip through its host.
-                if let EngineExecutorStatus::Waiting(wait) = &status
-                    && let Some(key) = self.park(&record, wait)?
-                    && let Some(generation) =
-                        self.resume_delivered_wait(&mut record, wait, &key, Some(next_generation))?
-                {
-                    expected_generation = Some(generation);
-                    continue;
+                // here, with no round trip through its host. A person's
+                // pause pending when the run stops on its wait is taken at
+                // this boundary first, and the run returns paused instead
+                // of parked (FIX PAUSE-BOUNDARY-PARKED-RUN).
+                if let EngineExecutorStatus::Waiting(wait) = &status {
+                    let delivered = self.park(&record, wait)?;
+                    if self.take_wait_pause() {
+                        return Ok(self.outcome(
+                            EngineExecutorStatus::Paused {
+                                next_step_seq: completed_step_count(&record)?,
+                            },
+                            steps_run,
+                            record,
+                        ));
+                    }
+                    if let Some(key) = delivered
+                        && let Some(generation) = self.resume_delivered_wait(
+                            &mut record,
+                            wait,
+                            &key,
+                            Some(next_generation),
+                        )?
+                    {
+                        expected_generation = Some(generation);
+                        continue;
+                    }
                 }
                 return Ok(self.outcome(status, steps_run, record));
             }

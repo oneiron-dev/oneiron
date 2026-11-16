@@ -63,7 +63,7 @@ use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, CodeRunReplayRecord, CompactionHostBinding, HostPlannerBinding,
     HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat, TaskExposure, bind_compaction_caller,
-    finalize_step_captures, park_and_bind_wait_trap,
+    finalize_step_captures, open_wait_trap, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::context_board::TurnWake;

@@ -73,7 +73,7 @@ pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
 };
-pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
+pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits, trap_waits_for_attempt_in_txn};
 pub use self::trap_sent::heal_sent_markers;
 pub use self::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,

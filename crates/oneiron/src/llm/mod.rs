@@ -224,7 +224,7 @@ pub use budget::{
     VaultResidentLedger,
 };
 pub use step::heal_sent_markers;
-pub(crate) use step::{OpenTrapWait, open_trap_waits};
+pub(crate) use step::{OpenTrapWait, open_trap_waits, trap_waits_for_attempt_in_txn};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side

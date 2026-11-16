@@ -225,6 +225,24 @@ pub fn bind_wait_trap(vault: &Vault, key: &WaitKey, trap: &TrapRef, now_ms: u64)
     })
 }
 
+/// The trap `key`'s wait is still bound to while it waits for `attempt`'s
+/// step (FIX PAUSE-BOUNDARY-PARKED-RUN): a person's pause takes a parked
+/// run off its park and leaves the trap bound, so the run that re-enters
+/// the same wait parks again under it, and one wait never holds two open
+/// traps. `None` when the wait has no bound trap, or its trap was
+/// signalled already or names another attempt or step.
+pub fn open_wait_trap(
+    vault: &Vault,
+    key: &WaitKey,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<Option<TrapRef>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(trap) = TRAPS.get(&vault.store, &rtxn, &key.row())? else {
+        return Ok(None);
+    };
+    Ok(crate::llm::trap_waits_for_attempt_in_txn(vault, &rtxn, &trap, attempt)?.then_some(trap))
+}
+
 /// Parks a canonical run's attempt under its C9 trap and binds the trap to
 /// the run's parked wait, in one commit (OF-533): [`bind_wait_trap`] with the
 /// park beside it, so no crash can leave a park that no delivery wakes. A

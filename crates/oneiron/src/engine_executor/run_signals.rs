@@ -32,7 +32,11 @@
 //! the same boundary and never read to the model: once the step's
 //! checkpoint commits, one lease-fenced writer settles it and moves the
 //! run's row to Paused, and the run returns before its next model request
-//! (`attempt_queue::boundary_pause`).
+//! (`attempt_queue::boundary_pause`). A step that parks the run on a durable
+//! wait is a boundary too: a pause pending then is taken once its checkpoint
+//! commits, and the run returns paused, never parked (FIX
+//! PAUSE-BOUNDARY-PARKED-RUN); its steers and messages wait for the step
+//! after the reply.
 //! A signal's soft cancel and ask answers are not taken here. The copy is
 //! best effort: a read or acknowledgment that fails is logged and the step
 //! goes on, as it would with no signal.
@@ -204,6 +208,41 @@ impl EngineNativeExecutor<'_> {
                 tracing::warn!(%error, "a pause a step took did not pause its run");
                 false
             })
+    }
+
+    /// Takes the person's pause pending on this run's branch when the run
+    /// stops on a durable wait, whose step's checkpoint has committed (FIX
+    /// PAUSE-BOUNDARY-PARKED-RUN): no step runs until the reply comes, so
+    /// the wait is the boundary the pause waits for. The same lease-fenced
+    /// writer as at any step boundary settles it and moves the row to
+    /// Paused before its host parks the run: `true` when it did. A take
+    /// that fails is logged and the run parks as before.
+    pub(super) fn take_wait_pause(&self) -> bool {
+        let taken = self.pending_pause().unwrap_or_else(|error| {
+            tracing::warn!(?error, "a waiting run's pause was not taken");
+            TakenSignals::default()
+        });
+        self.acknowledge_step_signals(taken)
+    }
+
+    fn pending_pause(&self) -> EngineExecutorResult<TakenSignals> {
+        let (Some(vault), Some(branch)) = (self.signal_vault(), self.signal_branch()?) else {
+            return Ok(TakenSignals::default());
+        };
+        let pause = RunTreeAdapter::new(vault)
+            .read_branch_signals(branch.attempt, &branch.run_id)?
+            .into_iter()
+            .flatten()
+            .find(|signal| {
+                signal.state == RunSignalState::Pending
+                    && matches!(signal.kind, RunSignalKind::Pause { .. })
+            })
+            .map(|signal| signal.key);
+        Ok(TakenSignals {
+            branch: pause.is_some().then_some(branch),
+            keys: Vec::new(),
+            pause,
+        })
     }
 
     /// The steers and messages taken after step `seq`, as the model reads

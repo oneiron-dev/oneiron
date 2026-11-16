@@ -200,7 +200,7 @@ pub(crate) use self::storage::{
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
-    bind_wait_trap, park_and_bind_wait_trap,
+    bind_wait_trap, open_wait_trap, park_and_bind_wait_trap,
 };
 pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,

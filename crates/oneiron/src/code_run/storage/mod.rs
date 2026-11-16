@@ -129,7 +129,7 @@ pub(crate) use self::type_diagnostics::{
     session_type_diagnostics_row,
 };
 pub use self::wait_delivery::{
-    WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,
+    WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, open_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,

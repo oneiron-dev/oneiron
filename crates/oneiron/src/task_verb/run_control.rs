@@ -26,7 +26,9 @@
 //! `vault.agents.pause_tree` posts, and answers `pausing_at_next_step`; a
 //! repeat while it is pending posts nothing more. Once the run's step
 //! commits, its row stands under a person's pause that names the caller,
-//! so the caller's resume releases it. A running branch no boundary reaches
+//! so the caller's resume releases it. A run parked on a durable wait is at
+//! that boundary already: it pauses in the same write and answers `paused`
+//! (FIX PAUSE-BOUNDARY-PARKED-RUN). A running branch no boundary reaches
 //! (a landing one, one of no run) is still refused. Past that, the queue's
 //! own pause and resume run as they always did, and a repeat answers
 //! `already_paused` or `already_resumed` and writes nothing.
@@ -324,6 +326,7 @@ fn intervene_admitted(
 /// Pause signal its run takes at its next step boundary, keyed by the lease
 /// generation and the row's event count, so each pause of the row has its
 /// own; `PausingAtNextStep`, with nothing posted, while one is pending.
+/// A run parked on a durable wait takes it at once: `Paused`.
 /// `None` for a branch that is not running, or one no boundary reaches: the
 /// queue's own pause answers it.
 fn boundary_pause_in(
@@ -336,8 +339,9 @@ fn boundary_pause_in(
     if record.state != AttemptState::Leased {
         return Ok(None);
     }
+    let signals = RunTreeAdapter::new(vault);
     if pause_pending(record) {
-        return Ok(Some(AttemptInterventionEffect::PausingAtNextStep));
+        return pause_or_pausing(&signals, wtxn, record);
     }
     let Some(run_id) = record
         .run_id
@@ -346,7 +350,7 @@ fn boundary_pause_in(
     else {
         return Ok(None);
     };
-    RunTreeAdapter::new(vault).signal_in_txn(
+    signals.signal_in_txn(
         wtxn,
         RunSignalInput {
             branch: record.id,
@@ -362,7 +366,22 @@ fn boundary_pause_in(
             },
         },
     )?;
-    Ok(Some(AttemptInterventionEffect::PausingAtNextStep))
+    pause_or_pausing(&signals, wtxn, record)
+}
+
+/// `Paused` when `record`'s run is parked on a durable wait, which takes
+/// its pending Pause at once (FIX PAUSE-BOUNDARY-PARKED-RUN), else
+/// `PausingAtNextStep`.
+fn pause_or_pausing(
+    signals: &RunTreeAdapter<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+) -> crate::Result<Option<AttemptInterventionEffect>> {
+    Ok(Some(if signals.pause_parked_in_txn(wtxn, record.id)? {
+        AttemptInterventionEffect::Paused
+    } else {
+        AttemptInterventionEffect::PausingAtNextStep
+    }))
 }
 
 /// The refusal of a caller a hold keeps: `FORBIDDEN`, the signal's reason
