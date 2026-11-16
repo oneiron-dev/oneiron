@@ -94,6 +94,12 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// The root's raw signature over `statement`, which must be a checkpoint
     /// statement.
     fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>>;
+    /// The root's raw signature over `transcript`, an authority entry's
+    /// transcript, as an owner key's proof of an owner act the install that
+    /// holds it carries (row CARRIER-OWNER-PROOF). Refused for any bytes
+    /// outside the authority transcript domain, so a checkpoint statement is
+    /// never signed as a proof, nor a proof as a statement.
+    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>>;
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -103,6 +109,13 @@ impl CheckpointRootSigner for HostSlipIssuer {
 
     fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>> {
         self.sign_checkpoint(statement)
+    }
+
+    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(super::AUTHORITY_TRANSCRIPT_DOMAIN) {
+            return Err(super::invalid_authority());
+        }
+        Ok(self.sign_slip(transcript))
     }
 }
 

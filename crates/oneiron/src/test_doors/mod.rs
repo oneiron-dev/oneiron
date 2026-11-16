@@ -41,6 +41,7 @@ pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod contact_family_heads;
 pub mod conversation_membership_index;
+pub mod conversation_training_fold;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;
@@ -69,6 +70,7 @@ pub mod guest_turn_counterparty;
 pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
+pub mod home_pick_fold;
 #[cfg(feature = "sync")]
 pub mod home_sections;
 #[cfg(feature = "sync")]

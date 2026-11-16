@@ -68,6 +68,7 @@ pub(super) fn apply_home_pick(
         machine: pick.machine,
         choice: pick.node_id.as_ref(),
         context: HOME_PICK_REVISION_CONTEXT,
+        persons_own: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -237,7 +238,7 @@ impl Vault {
             current,
         );
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -248,6 +249,7 @@ impl Vault {
                 node_id,
             }),
             now,
+            self.owner_proof_signer(&fold).as_deref(),
         )?;
         let act = authority_entry_hash(&entry)?;
         let at = TimeRange {

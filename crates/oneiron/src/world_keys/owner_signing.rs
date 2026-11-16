@@ -39,7 +39,9 @@ const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
 
 /// This install's owner signing key as a checkpoint root signer: the root is
 /// the key's own Ed25519 public half, and it signs nothing but a checkpoint
-/// statement. Its `Debug` prints only the public half.
+/// statement and, as the owner's proof, the transcript of an owner act this
+/// install carries (row CARRIER-OWNER-PROOF). Its `Debug` prints only the
+/// public half.
 pub struct OwnerRootSigner {
     signing: SigningKey,
 }
@@ -85,6 +87,14 @@ impl CheckpointRootSigner for OwnerRootSigner {
             return Err(invalid_authority());
         }
         Ok(self.signing.sign(statement).to_bytes().to_vec())
+    }
+
+    /// Refused for any bytes outside the authority transcript domain.
+    fn sign_owner_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(crate::authority::AUTHORITY_TRANSCRIPT_DOMAIN) {
+            return Err(invalid_authority());
+        }
+        Ok(self.signing.sign(transcript).to_bytes().to_vec())
     }
 }
 

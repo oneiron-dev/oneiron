@@ -119,6 +119,7 @@ pub(super) fn apply_conversation_training(
         machine: set.machine,
         choice: Some(&set.leave_out),
         context: CONVERSATION_TRAINING_REVISION_CONTEXT,
+        persons_own: set.act.target == set.act.owner,
     };
     let landing = owner_choice_landing(
         state,
