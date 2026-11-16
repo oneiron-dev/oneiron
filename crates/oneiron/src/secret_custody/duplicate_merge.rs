@@ -21,6 +21,16 @@
 //! (FILE-CUSTODY-DUP-UNOPENED = A). The merge is this install's alone: `b`
 //! never reached another install, so no other install holds a row to change,
 //! and no wire kind or signed act is added (stored change: keep).
+//!
+//! A row this install wrote between `b`'s mint and the merge may hold `b`'s
+//! handle: its write door placed it for the value `b` held then, as a value
+//! custody already holds keeps that record's handle. The merge leaves such
+//! rows as written. Every custody handle resolved here follows the merge
+//! receipt to the record that holds the value now
+//! ([`merged_winner_in_txn`]), so a reveal, use, grant, label or purpose
+//! through `b`'s handle acts on that record (REVIEW2 #8875 P2-1). A copy of
+//! such a row on another install names a record that install never held,
+//! before the merge as after.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -57,6 +67,30 @@ pub(crate) struct CustodyMerge {
 /// The store's.
 pub(crate) fn custody_merged_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     MERGES.contains(store, txn, id)
+}
+
+/// The record the custody handle `short`, which names the record `id` here,
+/// reaches once merges are followed: `id` itself, or, for a record a merge
+/// retired, the record that holds its value now, under that record's own
+/// handle (REVIEW2 #8875 P2-1). A winner with no handle here leaves `id`,
+/// which its doors refuse as retired.
+///
+/// # Errors
+///
+/// The store's.
+pub(crate) fn merged_winner_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    short: String,
+    id: EntityId,
+) -> Result<(String, EntityId)> {
+    let Some(merge) = MERGES.get(store, txn, &id)? else {
+        return Ok((short, id));
+    };
+    Ok(match store.port_short_id_reference(txn, &merge.winner)? {
+        Some((handle, _)) => (handle, merge.winner),
+        None => (short, id),
+    })
 }
 
 /// One value's known-value entry, as a merge compares it: its length and

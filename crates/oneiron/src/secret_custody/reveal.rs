@@ -631,14 +631,17 @@ pub fn parse_secret_handle(text: &str) -> Result<(&str, Option<u8>)> {
 }
 
 /// Resolves a handle to the custody record it names, inside `txn`. Returns
-/// the bare handle and the record. Only a live custody short id resolves.
+/// the bare handle and the record. Only a live custody short id resolves. A
+/// record a merge retired here resolves to the record that holds its value
+/// now, with that record's handle (REVIEW2 #8875 P2-1).
 pub(super) fn resolve_handle_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     handle: &str,
 ) -> Result<(String, EntityId)> {
     let (short, hash) = parse_secret_handle(handle)?;
-    resolve_parsed_handle_in_txn(store, txn, short, hash)
+    let (short, id) = resolve_parsed_handle_in_txn(store, txn, short, hash)?;
+    super::duplicate_merge::merged_winner_in_txn(store, txn, short, id)
 }
 
 /// Typed public handle lookup shared by custody and PERSON reveals.
