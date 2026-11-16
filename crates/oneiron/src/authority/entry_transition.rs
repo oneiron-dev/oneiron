@@ -136,6 +136,7 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            held_machine_answers: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
@@ -515,6 +516,9 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if !has_authority_consent(&state, &participants, context) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &participants) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if let Some(prior_seq) = state.seqs.get(&signer).copied()
