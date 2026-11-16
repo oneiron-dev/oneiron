@@ -13,6 +13,7 @@
 //! the next run of its JSON bytes as lowercase hex at a byte offset, sized to
 //! fit the line, and no item of it is ever dropped.
 
+use oneiron_fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::facts::ManagedRestoreIdentity;
@@ -274,10 +275,15 @@ impl ManagedRestoreResultFrame {
     }
 }
 
-/// The receipt id: BLAKE3 of its exact bytes, in lowercase hex.
+/// The receipt id: BLAKE3 of its exact bytes, in lowercase hex
+/// (`oneiron_fingerprint::purposes::restore::RECEIPT_ID`).
 #[must_use]
 pub fn receipt_id(receipt: &[u8]) -> String {
-    blake3::hash(receipt).to_hex().to_string()
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::restore::RECEIPT_ID)
+            .raw(receipt)
+            .finish(),
+    )
 }
 
 /// How many receipt bytes fit as hex in a line that holds `empty` with no

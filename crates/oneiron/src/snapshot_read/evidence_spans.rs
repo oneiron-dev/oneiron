@@ -8,8 +8,6 @@
 //! its own, so no position tells where a secret was or how long it is (lead
 //! 12:4x, FIX-LIST EVIDENCE-SPANS-MASKED-COORDINATES).
 
-use std::fmt::Write as _;
-
 use serde::{Deserialize, Serialize};
 
 use super::source_version::{SourceVersion, SourceVersionCheck, blake3_ref, source_version_in_txn};
@@ -286,7 +284,7 @@ fn turn_span(turn: &TurnText, text: &str, range: EvidenceRange) -> MemoryResult<
             start: u64::try_from(slice.start).unwrap_or(u64::MAX),
             end: u64::try_from(slice.end).unwrap_or(u64::MAX),
             revision: blake3_ref(&slice.revision),
-            frontier: slice.frontier.as_deref().map(hex),
+            frontier: slice.frontier.as_deref().map(oneiron_hex::encode),
         })
         .collect();
     Ok(EvidenceSpan {
@@ -296,12 +294,4 @@ fn turn_span(turn: &TurnText, text: &str, range: EvidenceRange) -> MemoryResult<
         content_hash: blake3_ref(blake3::hash(bytes).as_bytes()),
         messages,
     })
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
 }
