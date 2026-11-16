@@ -108,6 +108,33 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuses a generic write of a cleanup-archive marker (`ac:`) or a pending
+/// tombstone (`pt:`) that names a stored audit_read grant: either row alone
+/// reads the grant deleted, and only the owner's revoke ends one (Astra
+/// delta-3 N1). Both prefixes stay open to these writers for any other row
+/// (a sync test plants its own `pt:` rows through them).
+fn reject_audit_read_grant_marker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &str,
+) -> Result<()> {
+    let bytes = key.as_bytes();
+    let hex = if bytes.starts_with(crate::side_table::DELETION_ARCHIVE_MARKER.prefix) {
+        &key[crate::side_table::DELETION_ARCHIVE_MARKER.prefix.len()..]
+    } else if bytes.starts_with(crate::side_table::DELETION_PENDING_TOMBSTONE.prefix) {
+        // `pt:<window>:<32 hex>`: the id is the fixed-width tail.
+        key.get(key.len().saturating_sub(32)..).unwrap_or_default()
+    } else {
+        return Ok(());
+    };
+    match EntityId::from_hex(hex) {
+        Ok(id) => {
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(&vault.store, txn, &id)
+        }
+        Err(_) => Ok(()),
+    }
+}
+
 impl Vault {
     // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
     // was removed — both sync replay surfaces now route through the
@@ -545,6 +572,7 @@ impl Vault {
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         check_generic_sync_state_key(key)?;
         self.with_write_txn_grouped(|wtxn| {
+            reject_audit_read_grant_marker_in_txn(self, wtxn, key)?;
             crate::side_table::host_sync_state_put(self, wtxn, key, value)
         })
     }
@@ -565,6 +593,7 @@ impl Vault {
         let class = crate::store::telemetry_batch_class(rows.iter().map(|(key, _)| *key));
         self.write_txn_door_classed(Callback::Audited, class, |wtxn| {
             for (key, value) in rows {
+                reject_audit_read_grant_marker_in_txn(self, wtxn, key)?;
                 crate::side_table::host_sync_state_put(self, wtxn, key, value)?;
             }
             Ok(())
@@ -580,6 +609,7 @@ impl Vault {
         value: &[u8],
     ) -> Result<()> {
         check_generic_sync_state_key(key)?;
+        reject_audit_read_grant_marker_in_txn(self, wtxn, key)?;
         crate::side_table::host_sync_state_put(self, wtxn, key, value)
     }
 

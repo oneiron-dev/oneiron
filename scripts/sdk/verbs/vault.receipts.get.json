@@ -1,6 +1,6 @@
 {
   "name": "vault.receipts.get",
-  "description": "One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none.",
+  "description": "One call receipt by ref, readable by its own actor, the vault's live owner or a holder of the audit_read power; anything else reads as none.",
   "input": "crate::receipt::CallReceiptRequest",
   "output": "Option<crate::receipt::CallReceipt>",
   "call": "memory.call_receipt(&input.receipt_ref)?",

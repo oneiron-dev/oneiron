@@ -38,6 +38,8 @@ pub(crate) use self::vision::*;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
+// The owner's grant and revoke of the audit_read power, likewise.
+pub(crate) use super::audit_read_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::deck_creation_doors::*;
 // The run-bound board STREAM doors (DOOR-121), likewise.

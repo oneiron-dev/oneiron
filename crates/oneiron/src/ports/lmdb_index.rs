@@ -218,6 +218,9 @@ impl RetrievalIndex for Vault {
         self.store
             .delete_guards
             .reject_audience_edit_delete(&self.store, txn, id)?;
+        // A stale mark withdraws an audit_read grant as a delete would, and
+        // only the owner's revoke ends one (Astra delta-2 F2).
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, txn, id)?;
         super::integrity::mark_stale_in_txn(&crate::secret_custody::CustodyWrite::of(self), txn, id)
     }
     fn port_retrieval_vector_search(
@@ -404,6 +407,8 @@ impl TombstoneStore for Vault {
         self.store
             .delete_guards
             .reject_audience_edit_delete(&self.store, txn, id)?;
+        // So does a tombstone and its stale mark (Astra delta-2 F2).
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, txn, id)?;
         self.store
             .vault_meta
             .put(txn, &super::integrity::tombstone_key(id), &value.encode())?;

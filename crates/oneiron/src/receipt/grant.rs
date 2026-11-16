@@ -585,6 +585,9 @@ fn append_access_grant_scope_fields(
         AccessGrantScope::DiaryCoreference { .. } => {
             unreachable!("private diary grants have no vault-wide receipt projection")
         }
+        AccessGrantScope::VaultAudit => {
+            fields.insert("scope".to_owned(), "vault_audit".to_owned());
+        }
     }
 }
 

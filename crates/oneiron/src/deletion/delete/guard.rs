@@ -70,6 +70,11 @@ impl Vault {
             self.store
                 .delete_guards
                 .reject_audience_edit_delete(&self.store, &txn, id)?;
+            // An audit_read grant ends only through the owner's revoke. Its
+            // refusal comes before a hold's: the settlement of a privacy
+            // erase a hold refused limits the record's use (Astra delta-3
+            // N3).
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, &txn, id)?;
             self.store.delete_guards.precheck_goal_delete(
                 &self.store,
                 &txn,
@@ -101,6 +106,10 @@ impl Vault {
                 Some(due) => due.prove_in(self, &txn, id)?,
                 None => actor,
             };
+            // Again in this snapshot: a grant the owner wrote and held after
+            // the first check meets its refusal before the hold's, whose
+            // settlement would limit its use (Astra delta-4 F3).
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, &txn, id)?;
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
             // A pad is held by its world's holds too (OF-470), refused as
             // this actor (FIX 3059).
@@ -121,6 +130,15 @@ impl Vault {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,
             )));
+        }
+        // Again on the header this leg read: a grant the owner wrote after
+        // the first check is refused before any writer opens.
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(
+                &self.store,
+                &self.store.env.read_txn()?,
+                id,
+            )?;
         }
         if reason == DeleteReason::UserDelete {
             let rtxn = self.store.env.read_txn()?;

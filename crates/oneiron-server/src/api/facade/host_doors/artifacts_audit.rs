@@ -206,18 +206,21 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
 }
 
 /// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
-/// owner's view under the proof `/v1/owner` takes from the request.
+/// owner's view under the proof `/v1/owner` takes from the request, or a
+/// live audit_read holder's on its own credential (RULING
+/// AUDIT-READ-POWER-LIST = B).
 pub(super) async fn vault_authority_audit_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::receipt::AuthorityAuditQuery,
 ) -> MemoryResult<oneiron::receipt::AuthorityAuditPage> {
-    let owner = owner_proof(auth, server, "vault.authority.audit")?;
+    let reader =
+        crate::api::facade::audit_read_doors::audit_reader(server, auth, "vault.authority.audit")?;
     let server = Arc::clone(server);
     crate::api::facade::clock_ingress::run_blocking(move || {
         server
             .vault()
-            .authority_audit(&owner, &input)
+            .authority_audit_as(&reader, &input)
             .map_err(MemoryError::from)
     })
     .await
