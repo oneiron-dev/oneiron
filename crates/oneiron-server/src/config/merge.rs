@@ -37,9 +37,11 @@ use super::{
     MergeQueueCheckerConfig, NativeMailConfig, embedder, remote_embedder,
 };
 
+mod file_admission;
 mod sections;
 mod validation;
 
+pub(crate) use self::file_admission::read_config_file;
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
 use self::validation::{validate_embedder_config, validate_serve_config};
@@ -277,25 +279,25 @@ pub(crate) fn settle_managed_settings(
 }
 
 /// The config file's `[backup]` table alone: a mistyped setting elsewhere in
-/// the file does not stop it being read. A file that does not parse names
-/// only itself and the place it failed (FIX 9477).
+/// the file does not stop it being read. A file that is not admitted is not
+/// read (`file_admission`), and one that does not parse names only itself
+/// and the place it failed (FIX 9477).
 fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverride>> {
     /// The file with every key but `[backup]` skipped unread.
     #[derive(Deserialize)]
     struct BackupOnly {
         backup: Option<BackupConfigOverride>,
     }
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read config file {}", path.display()))?;
+    let raw = read_config_file(path)?;
     let file: BackupOnly = super::parse_toml(path, &raw)?;
     Ok(file.backup)
 }
 
-/// The config file's layer. A file that does not parse names only itself
-/// and the place it failed (FIX 9477).
+/// The config file's layer. A file that is not admitted is not read
+/// (`file_admission`), and one that does not parse names only itself and
+/// the place it failed (FIX 9477).
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read config file {}", path.display()))?;
+    let raw = read_config_file(path)?;
     let mut config: FileServeConfig = super::parse_toml(path, &raw)?;
     let models = config
         .models
@@ -375,6 +377,7 @@ struct FileServeConfig {
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
+    phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -451,6 +454,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             channel_endpoints: value.channel_endpoints,
             apns: value.apns,
             linear: value.linear,
+            phonetic_embedder: value.phonetic_embedder,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -550,6 +554,8 @@ struct PartialServeConfig {
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
+    /// `[phonetic_embedder]` is file-only, as `[line]` is.
+    phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -649,6 +655,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
+            .field("phonetic_embedder", &self.phonetic_embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -758,6 +765,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             channel_endpoints: None,
             apns: None,
             linear: None,
+            phonetic_embedder: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
