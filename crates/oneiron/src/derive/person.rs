@@ -10,7 +10,10 @@
 //! lesson of the `about` item taken off the wire). So:
 //! - the id is derived from the attempt's retry lineage, the normalized name
 //!   and the first TURN that names it; an id that stands, that a provisional
-//!   entity holds, that was deleted or that was minted before is refused;
+//!   entity holds, that was deleted or archived, or that was minted before is
+//!   refused. Under an extraction binding's commit alone, an id that holds
+//!   the live PERSON is answered: a retry, or a second listing page, learns
+//!   the id its lineage's earlier commit returned, and the row is not written;
 //! - the name must be a bounded span, by the extraction writer's own rules,
 //!   in the words of a live TURN the actor reads at the version the batch
 //!   pins, spoken by a speaker extraction mints people from, each lifted key
@@ -22,7 +25,7 @@
 //!   where the row stands.
 //!
 //! The row is the extraction mint's: `Generated`, and while it stays empty
-//! the cleanup's to archive. A batch revert archives it by that same rule.
+//! the cleanup's to archive. Its minting batch's revert archives it by that rule.
 //!
 //! Under a queued extraction attempt the stamp's actor must be the attempt's
 //! Dreamer, each evidence TURN must be one the attempt's inputs page serves,
@@ -41,7 +44,7 @@ use crate::dreamer_consolidation::{
 };
 use crate::entity_id::derived_domains::DERIVE_PERSON;
 use crate::error::{Error, Result};
-use crate::gate::{DeriveCapability, derive_verdict_in_txn};
+use crate::gate::{DeriveAllowance, DeriveCapability, DeriveRefusal, derive_verdict_in_txn};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::snapshot_read::source_version_in_txn;
 use crate::temporal::TimeRange;
@@ -67,15 +70,48 @@ pub const PERSON_NOT_ATTEMPT_DREAMER: &str = "gate.deny.derive.person_not_attemp
 pub const PERSON_NAME_UNREAD: &str = "gate.deny.derive.person_name_unread";
 
 /// The refusal of a person whose derived id stands, is held by a provisional
-/// entity, was deleted, or was minted before.
+/// entity, was deleted or archived, or was minted before. Under an extraction
+/// binding's commit an id that holds the live PERSON is answered instead
+/// ([`PERSON_MINTED_BEFORE`]): a retry, or a second listing page, names the
+/// same person, and the answer tells the attempt's Dreamer the id its
+/// lineage's earlier commit returned.
 pub const PERSON_ID_TAKEN: &str = "gate.deny.derive.person_id_taken";
+
+/// The allowance of a person item under an extraction binding's commit whose
+/// derived id already holds the live PERSON. The item wrote no row.
+pub const PERSON_MINTED_BEFORE: &str = "gate.allow.derive.person_minted_before";
 
 /// The allowance token of a landed person.
 const PERSON_ALLOWED: &str = "gate.allow.derive.person";
 
+/// One person item's outcome, and whether its row stood before the item: an
+/// answered item wrote no row, so its batch's revert leaves the row.
+pub(super) struct StagedPerson {
+    pub(super) outcome: ItemOutcome,
+    pub(super) row_stood_before: bool,
+}
+
+impl StagedPerson {
+    fn written_or_refused(outcome: ItemOutcome) -> Self {
+        Self {
+            outcome,
+            row_stood_before: false,
+        }
+    }
+}
+
+/// What the checks of [`stage_in_txn`] hand to the mint: the derived id, the
+/// first naming TURN, the PERSON's body and the allowance in force.
+struct PersonMint<'a> {
+    id: EntityId,
+    anchor: EntityId,
+    body: &'a [u8],
+    allowance: DeriveAllowance,
+}
+
 /// Stages one person item of the batch in `context`: the name and the TURNs,
-/// then the derive verdict, then the mint, its source audience and its birth
-/// facet through a savepoint of `txn`.
+/// then the derive verdict, then a mint with its source audience and birth
+/// facet in a savepoint, or a binding's answer of an existing live PERSON.
 ///
 /// # Errors
 ///
@@ -85,7 +121,7 @@ pub(super) fn stage_in_txn(
     txn: &mut heed::RwTxn<'_>,
     context: &ItemContext<'_>,
     item: &DerivedPerson,
-) -> Result<ItemOutcome> {
+) -> Result<StagedPerson> {
     let actor = context.stamp.actor;
     let Some(attempt) = context.stamp.attempt else {
         return refuse(vault, txn, context, None, PERSON_NEEDS_ATTEMPT);
@@ -121,7 +157,8 @@ pub(super) fn stage_in_txn(
                     return refuse(vault, txn, context, None, PERSON_SOURCE_INADMISSIBLE);
                 }
                 Err(error) => {
-                    return refuse_or_abort(vault, txn, context, error, PERSON_SOURCE_INADMISSIBLE);
+                    return refuse_or_abort(vault, txn, context, error, PERSON_SOURCE_INADMISSIBLE)
+                        .map(StagedPerson::written_or_refused);
                 }
             }
         }
@@ -146,7 +183,8 @@ pub(super) fn stage_in_txn(
             ) {
                 Ok(serves) => serves,
                 Err(error) => {
-                    return refuse_or_abort(vault, txn, context, error, PERSON_SOURCE_INADMISSIBLE);
+                    return refuse_or_abort(vault, txn, context, error, PERSON_SOURCE_INADMISSIBLE)
+                        .map(StagedPerson::written_or_refused);
                 }
             };
             if !serves {
@@ -182,7 +220,7 @@ pub(super) fn stage_in_txn(
     let Some(&anchor) = naming_turns.first() else {
         return refuse(vault, txn, context, None, PERSON_NAME_UNREAD);
     };
-    let mut allowance =
+    let allowance =
         match derive_verdict_in_txn(&vault.store, txn, actor, DeriveCapability::Derive, None)? {
             Ok(allowance) => allowance,
             Err(refusal) => return refuse(vault, txn, context, None, refusal.token()),
@@ -196,6 +234,34 @@ pub(super) fn stage_in_txn(
         name,
         crate::tagging::naming_rows_audience_in_txn(vault, txn, &naming_rows)?,
     )?;
+    mint_or_answer_in_txn(
+        vault,
+        txn,
+        context,
+        PersonMint {
+            id,
+            anchor,
+            body: &body,
+            allowance,
+        },
+    )
+}
+
+/// Mints the PERSON through a savepoint of `txn`, or refuses a taken id.
+/// Under an extraction binding's commit, an id that holds a live PERSON is
+/// answered instead: the item lands naming that row and writes none.
+fn mint_or_answer_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    context: &ItemContext<'_>,
+    mint: PersonMint<'_>,
+) -> Result<StagedPerson> {
+    let PersonMint {
+        id,
+        anchor,
+        body,
+        allowance,
+    } = mint;
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     // A provisional entity's id is held for its confirmation: the mint's own
     // put would refuse it as an error, so it is refused here as an item.
@@ -213,10 +279,27 @@ pub(super) fn stage_in_txn(
         ClaimSource::Generated,
         at,
         context.now,
-        &body,
+        body,
     )? {
         drop(savepoint);
-        return refuse(vault, txn, context, Some(id), PERSON_ID_TAKEN);
+        // A live row is neither a deleted shell nor archived nor stale: each
+        // of those ids stays taken, as every id does outside a binding.
+        if !context.record_outputs
+            || !matches!(
+                live_entity_row_in_txn(&vault.store, txn, &id)?,
+                LiveEntityRow::Live {
+                    entity_type: ENTITY_TYPE_PERSON,
+                    ..
+                }
+            )
+        {
+            return refuse(vault, txn, context, Some(id), PERSON_ID_TAKEN);
+        }
+        let allowance = match person_allowance_in_txn(vault, txn, context, id, allowance)? {
+            Ok(allowance) => allowance,
+            Err(refusal) => return refuse(vault, txn, context, None, refusal.token()),
+        };
+        return land_in_txn(vault, txn, context, id, allowance, true);
     }
     // Born under the facet of the TURN its name was read in, never the
     // generic put's own substrate facet.
@@ -231,37 +314,65 @@ pub(super) fn stage_in_txn(
             facet,
         )?;
     }
-    // An actor whose standing grant has a scope is judged again over the
-    // PERSON as born, so its grant reaches where the row now stands.
-    if crate::federation::steward_reach_in(&vault.store, &savepoint, actor.entity_ref())?.is_some()
-    {
-        match derive_verdict_in_txn(
-            &vault.store,
-            &savepoint,
-            actor,
-            DeriveCapability::Derive,
-            Some(id),
-        )? {
-            Ok(judged) => allowance = judged,
-            Err(refusal) => {
-                drop(savepoint);
-                return refuse(vault, txn, context, None, refusal.token());
-            }
+    let allowance = match person_allowance_in_txn(vault, &savepoint, context, id, allowance)? {
+        Ok(allowance) => allowance,
+        Err(refusal) => {
+            drop(savepoint);
+            return refuse(vault, txn, context, None, refusal.token());
         }
-    }
+    };
     savepoint.commit()?;
+    land_in_txn(vault, txn, context, id, allowance, false)
+}
+
+/// The allowance over the PERSON `id` as it stands in `txn`: an actor whose
+/// standing grant has a scope is judged again there, so its grant reaches
+/// where the row stands; any other actor keeps `allowance`.
+fn person_allowance_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    context: &ItemContext<'_>,
+    id: EntityId,
+    allowance: DeriveAllowance,
+) -> Result<std::result::Result<DeriveAllowance, DeriveRefusal>> {
+    let actor = context.stamp.actor;
+    if crate::federation::steward_reach_in(&vault.store, txn, actor.entity_ref())?.is_some() {
+        derive_verdict_in_txn(&vault.store, txn, actor, DeriveCapability::Derive, Some(id))
+    } else {
+        Ok(Ok(allowance))
+    }
+}
+
+/// The landed outcome naming `id`, with its allowance receipt: the mint's
+/// token, or [`PERSON_MINTED_BEFORE`] for a row that stood before the item.
+fn land_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    context: &ItemContext<'_>,
+    id: EntityId,
+    allowance: DeriveAllowance,
+    row_stood_before: bool,
+) -> Result<StagedPerson> {
+    let token = if row_stood_before {
+        PERSON_MINTED_BEFORE
+    } else {
+        PERSON_ALLOWED
+    };
     let receipt = allowance_receipt_in_txn(
         vault,
         txn,
         context,
         Some(id),
-        &[PERSON_ALLOWED.to_owned()],
+        &[token.to_owned()],
         &allowance,
     )?;
-    Ok(ItemOutcome::Landed {
-        rows: vec![id],
-        approval: None,
-        receipt: Some(receipt),
+    Ok(StagedPerson {
+        outcome: ItemOutcome::Landed {
+            rows: vec![id],
+            approval: None,
+            receipt: Some(receipt),
+        },
+        row_stood_before,
     })
 }
 
@@ -314,8 +425,11 @@ fn refuse(
     context: &ItemContext<'_>,
     about: Option<EntityId>,
     reason: &str,
-) -> Result<ItemOutcome> {
+) -> Result<StagedPerson> {
     let reasons = vec![reason.to_owned()];
     let receipt = refusal_receipt_in_txn(vault, txn, context, about, &reasons)?;
-    Ok(ItemOutcome::Refused { reasons, receipt })
+    Ok(StagedPerson::written_or_refused(ItemOutcome::Refused {
+        reasons,
+        receipt,
+    }))
 }

@@ -136,12 +136,14 @@ impl Vault {
         let mut refused: BTreeSet<String> = BTreeSet::new();
         let mut items = Vec::with_capacity(batch.items.len());
         let mut applied_edges = Vec::with_capacity(batch.items.len());
+        let mut rows_stood_before = Vec::with_capacity(batch.items.len());
         for item in &batch.items {
             let names_refused = item
                 .refs()
                 .into_iter()
                 .any(|named| matches!(named, ItemRef::Local(name) if refused.contains(name)));
             let mut applied_edge = None;
+            let mut row_stood_before = false;
             let outcome = if names_refused {
                 let reasons = vec![super::DEPENDENCY_REFUSED.to_owned()];
                 let receipt = refusal_receipt_in_txn(self, txn, &context, None, &reasons)?;
@@ -203,7 +205,9 @@ impl Vault {
                         super::conflict_resolution::stage_in_txn(self, txn, &context, resolution)?
                     }
                     DerivationItem::Person(person) => {
-                        super::person::stage_in_txn(self, txn, &context, person)?
+                        let staged = super::person::stage_in_txn(self, txn, &context, person)?;
+                        row_stood_before = staged.row_stood_before;
+                        staged.outcome
                     }
                 }
             };
@@ -221,6 +225,7 @@ impl Vault {
                 }
             }
             applied_edges.push(applied_edge);
+            rows_stood_before.push(row_stood_before);
             items.push(ItemReceipt {
                 local: item.local().to_owned(),
                 kind: item.kind(),
@@ -242,7 +247,14 @@ impl Vault {
             self,
             txn,
             context.batch,
-            &batch_record(stamp, context.now, &items, revisions, applied_edges),
+            &batch_record(
+                stamp,
+                context.now,
+                &items,
+                revisions,
+                applied_edges,
+                rows_stood_before,
+            ),
         )?;
         let receipts = context.grant_receipts.take();
         Ok((
@@ -356,6 +368,7 @@ fn batch_record(
     items: &[ItemReceipt],
     revisions: Vec<Vec<[u8; 32]>>,
     applied_edges: Vec<Option<AppliedEdge>>,
+    rows_stood_before: Vec<bool>,
 ) -> DerivationBatchRecord {
     DerivationBatchRecord {
         actor: stamp.actor.entity_ref(),
@@ -366,34 +379,39 @@ fn batch_record(
             .iter()
             .zip(revisions)
             .zip(applied_edges)
-            .map(|((item, revisions), applied_edge)| match &item.outcome {
-                ItemOutcome::Landed {
-                    rows,
-                    approval,
-                    receipt,
-                } => ItemRecord {
-                    local: item.local.clone(),
-                    kind: item.kind.to_owned(),
-                    landed: true,
-                    rows: rows.clone(),
-                    approval: approval.map(|approval| approval.as_str().to_owned()),
-                    reasons: Vec::new(),
-                    receipt: receipt.map(GateDecisionId::as_bytes),
-                    revisions,
-                    applied_edge,
+            .zip(rows_stood_before)
+            .map(
+                |(((item, revisions), applied_edge), row_stood_before)| match &item.outcome {
+                    ItemOutcome::Landed {
+                        rows,
+                        approval,
+                        receipt,
+                    } => ItemRecord {
+                        local: item.local.clone(),
+                        kind: item.kind.to_owned(),
+                        landed: true,
+                        rows: rows.clone(),
+                        approval: approval.map(|approval| approval.as_str().to_owned()),
+                        reasons: Vec::new(),
+                        receipt: receipt.map(GateDecisionId::as_bytes),
+                        revisions,
+                        applied_edge,
+                        row_stood_before,
+                    },
+                    ItemOutcome::Refused { reasons, receipt } => ItemRecord {
+                        local: item.local.clone(),
+                        kind: item.kind.to_owned(),
+                        landed: false,
+                        rows: Vec::new(),
+                        approval: None,
+                        reasons: reasons.clone(),
+                        receipt: Some(receipt.as_bytes()),
+                        revisions,
+                        applied_edge,
+                        row_stood_before,
+                    },
                 },
-                ItemOutcome::Refused { reasons, receipt } => ItemRecord {
-                    local: item.local.clone(),
-                    kind: item.kind.to_owned(),
-                    landed: false,
-                    rows: Vec::new(),
-                    approval: None,
-                    reasons: reasons.clone(),
-                    receipt: Some(receipt.as_bytes()),
-                    revisions,
-                    applied_edge,
-                },
-            })
+            )
             .collect(),
     }
 }

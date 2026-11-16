@@ -26,7 +26,8 @@ pub const REVERT_CHANGED_SINCE: &str = "derive.revert.changed_since";
 
 /// Why an item was left alone: its kind has no inverse in a batch revert
 /// (a PsychProfile snapshot, a topology judgment: the profile's next
-/// snapshot and the topology ledger's own undo answer those).
+/// snapshot and the topology ledger's own undo answer those), or a person
+/// item only answered for a PERSON that stood before it and wrote no row.
 pub const REVERT_NO_INVERSE: &str = "derive.revert.no_inverse";
 
 /// Why an item was left alone: its inverse refused, so it stands.
@@ -99,8 +100,9 @@ impl Vault {
     /// `owner` proves (untangle 6.7c). Each landed item, last first, is undone
     /// in a savepoint of one write while every row it landed still stands at
     /// its recorded revision; an item changed since, one whose kind has no
-    /// inverse here, or one whose inverse refuses is left standing and
-    /// listed. The revert keeps its own receipt.
+    /// inverse here, a person item that only answered for a PERSON already
+    /// standing, or one whose inverse refuses is left standing and listed.
+    /// The revert keeps its own receipt.
     ///
     /// # Errors
     ///
@@ -149,6 +151,10 @@ impl Vault {
         let mut left = Vec::new();
         let mut reverted_rows = std::collections::BTreeSet::new();
         for item in record.items.iter().rev().filter(|item| item.landed) {
+            if item.row_stood_before {
+                left.push((item.local.clone(), REVERT_NO_INVERSE.to_owned()));
+                continue;
+            }
             let read: &heed::RoTxn<'_> = txn;
             let mut current = Vec::with_capacity(item.rows.len());
             for row in &item.rows {

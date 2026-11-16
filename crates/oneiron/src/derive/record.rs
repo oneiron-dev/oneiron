@@ -51,6 +51,12 @@ pub struct ItemRecord {
     /// for an edge that stood before the item (untangle 6.7c).
     #[serde(default)]
     pub(crate) applied_edge: Option<AppliedEdge>,
+    /// True for a person item answered for a PERSON that stood before the
+    /// item (an earlier commit's, or an earlier item's of its own batch): the
+    /// item wrote no row, and a revert leaves the row. False for every other
+    /// item and for records written before this field.
+    #[serde(default)]
+    pub(crate) row_stood_before: bool,
 }
 
 /// The SameAs edge one `same_as` item created: its endpoints, and a digest
