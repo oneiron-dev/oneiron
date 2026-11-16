@@ -28,7 +28,7 @@ pub use code_fix::{
 };
 pub(crate) use code_fix::{
     CodeFixSourceSnapshot, ExactReplay, SealedCodeFix, Sealing, code_fix_source_snapshot,
-    code_fix_subject_in, dispatch_worlds_in, exact_replay, failed_case_in, queue_sealed_in_txn,
+    code_fix_subject_in, dispatch_worlds_in, failed_case_in, queue_sealed_in_txn,
 };
 pub use delivery::{
     FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
@@ -50,51 +50,10 @@ use crate::vault::LiveEntityRow;
 use oneiron_model::llm::{LlmRole, ModelId};
 use witness::{WitnessEntry, WitnessKind};
 
-/// Graduating `Other` requires a new taxonomy variant and version; never
-/// reinterpret a previously exported class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "taxonomy_version", content = "failure_class")]
-pub enum FailureTaxonomy {
-    #[serde(rename = "v1")]
-    V1(FailureClassV1),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FailureClassV1 {
-    RefusalOverreach,
-    TaskFailure,
-    UserFrustration,
-    MemoryMiss,
-    MemoryIntrusion,
-    PersonaBreak,
-    LatencyAbandon,
-    SilentDegradation,
-    Other,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentKind {
-    System,
-    Custom,
-    /// The observation names no affected agent (a detector's diagnostic).
-    /// Exported in clear as `unattributed`; it never carries an agent ref.
-    Unattributed,
-}
-
-/// The closed, content-free surface vocabulary. A new surface needs a reviewed
-/// enum addition, not a caller-supplied name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentSurface {
-    Chat,
-    Voice,
-    Code,
-    Task,
-    Background,
-    Other,
-}
+#[doc(hidden)]
+pub use oneiron_records::failure_signals::{
+    AgentKind, AgentSurface, FailureClassV1, FailureTaxonomy,
+};
 
 /// Raw metadata is accepted only at the recording door and is never stored in
 /// the aggregate or returned by export. These values may be user-authored.

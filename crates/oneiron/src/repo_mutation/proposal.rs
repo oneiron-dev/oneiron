@@ -9,7 +9,6 @@ use super::queue::validate_operation;
 use super::snapshot::{
     SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot,
 };
-use super::support::now_millis;
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOutcome, RepoMutationRequest,
     RepoMutationStatus,

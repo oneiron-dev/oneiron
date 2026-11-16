@@ -4,10 +4,11 @@
 
 use super::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
-    GrantAskedRow, hex_opt, hex_ref, unix_ms,
+    GrantAskedRow, hex_opt, hex_ref,
 };
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
 use crate::memory::{Memory, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use oneiron_authority::federation::Scope;
 
 /// Policy hook (CALLS "OF-1379 ask authority", open): the authority an ask
@@ -57,7 +58,7 @@ impl Memory<'_> {
                 capability: scope.required_capability(),
                 scope,
                 status: AccessGrantStatus::Active,
-                created_at: unix_ms() / 1_000,
+                created_at: crate::unix_millis_now() / 1_000,
                 revoked_at: None,
                 expires_at: None,
                 companion_bounds: None,
@@ -79,10 +80,12 @@ impl Memory<'_> {
     pub fn grants_asked(&self, input: &GrantAskedRequest) -> MemoryResult<GrantAskedPage> {
         super::super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         let after = hex_opt("after", input.after.as_deref())?;
-        let limit = input
-            .limit
-            .unwrap_or(GRANTS_ASKED_PAGE_DEFAULT)
-            .clamp(1, GRANTS_ASKED_PAGE_MAX);
+        let limit = page_limit_zero_as_one(
+            input.limit,
+            GRANTS_ASKED_PAGE_DEFAULT,
+            GRANTS_ASKED_PAGE_MAX,
+        )
+        .rows;
         let (requests, next) = self.vault.pending_access_requests_addressed_page(
             self.actor,
             after.as_ref(),

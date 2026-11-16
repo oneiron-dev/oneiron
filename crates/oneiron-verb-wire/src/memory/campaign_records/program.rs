@@ -72,12 +72,8 @@ pub fn payload_from_hex(hex: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-pub const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+pub fn hex_nibble(byte: u8) -> Option<u8> {
+    oneiron_hex::nibble(byte)
 }
 
 pub fn invalid(message: &str) -> Error {
