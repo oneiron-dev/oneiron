@@ -8,10 +8,9 @@
 use loro::LoroValue;
 use loro::checkpoint::{Classify, Field, OwnerId, SlotKind};
 
+use super::descriptor::{key_refusal, root_entry, withheld_part_key};
 use super::joined_turns::{TurnInventory, TurnSource};
-use super::owners::{
-    WithheldKey, key_refusal, root_entry, withheld_client_key, withheld_key, withheld_part_key,
-};
+use super::owners::{WithheldKey, withheld_client_key, withheld_key};
 use super::parts::PartHolders;
 use super::{
     AtomHome, DerivedRole, DerivedSlot, Holder, Placement, SyncPayloadOwners, SyncUnclassified,
