@@ -16,7 +16,10 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{
+    GateDecisionId, GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor, Store,
+};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -28,7 +31,6 @@ use crate::{
     run_tree::RunTreeAdapter,
 };
 
-use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::delegation_chain::evaluate_with_delegation_chain;
 use super::doors::{
@@ -59,12 +61,6 @@ pub use agent_settle::{
 /// Gate `content_kind` of the ONE durable receipt a bundle resolution appends.
 pub const GATE_BUNDLE_CONTENT_KIND: &str = "consent_bundle";
 
-/// Ledger outcome of an approved bundle.
-pub const GATE_BUNDLE_OUTCOME_APPROVED: &str = "bundle_approved";
-
-/// Ledger outcome of a declined bundle.
-pub const GATE_BUNDLE_OUTCOME_DECLINED: &str = "bundle_declined";
-
 /// Reason code stamped on the approved-bundle receipt.
 pub const GATE_BUNDLE_REASON_APPROVED: &str = "gate.bundle.approved";
 
@@ -73,8 +69,6 @@ pub const GATE_BUNDLE_REASON_DECLINED: &str = "gate.bundle.declined";
 
 /// Per-member resolution outcomes, in the pending-consent tray's existing
 /// vocabulary — the bundle adds a unit receipt, not a second claim history.
-const GATE_BUNDLE_MEMBER_OUTCOME_APPROVED: &str = "approved";
-const GATE_BUNDLE_MEMBER_OUTCOME_REJECTED: &str = "rejected";
 
 /// `grant_ref` prefix binding each per-member receipt to its bundle.
 const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
@@ -447,14 +441,12 @@ impl Vault {
             let actor = WriteActor::new(actor, settler.actor_class());
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
-                GateConsentBundleAction::Approve => (
-                    GATE_BUNDLE_MEMBER_OUTCOME_APPROVED,
-                    GATE_BUNDLE_REASON_APPROVED,
-                ),
-                GateConsentBundleAction::Decline => (
-                    GATE_BUNDLE_MEMBER_OUTCOME_REJECTED,
-                    GATE_BUNDLE_REASON_DECLINED,
-                ),
+                GateConsentBundleAction::Approve => {
+                    (GateReceiptOutcome::Approved, GATE_BUNDLE_REASON_APPROVED)
+                }
+                GateConsentBundleAction::Decline => {
+                    (GateReceiptOutcome::Rejected, GATE_BUNDLE_REASON_DECLINED)
+                }
             };
 
             let mut ops = Vec::with_capacity(members.len());
@@ -586,7 +578,6 @@ impl Vault {
                     .close_pending_gate_consent_as_in_txn(
                         wtxn,
                         &id,
-                        now,
                         member_outcome,
                         vec![member_reason.to_owned()],
                         Some(bundle_ref.clone()),
@@ -676,34 +667,26 @@ impl Vault {
             if action == GateConsentBundleAction::Approve {
                 self.owe_settled_claim_vads_in_txn(wtxn, &member_claim_ids)?;
             }
-            let record = GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-                created_at: now,
-                outcome: match action {
-                    GateConsentBundleAction::Approve => GATE_BUNDLE_OUTCOME_APPROVED,
-                    GateConsentBundleAction::Decline => GATE_BUNDLE_OUTCOME_DECLINED,
-                }
-                .to_owned(),
-                reason_codes: vec![member_reason.to_owned()],
-                // `valid_gate_receipt_reason` admits only the counterparty /
-                // connector-key / effector-budget / charter families, so the
-                // bundle id, run id and member count ride the typed receipt
-                // and the content-bound `diff_handle` instead.
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: edge_actor_class_str(settler.actor_class()).to_owned(),
-                actor_ref: Some(actor.entity_ref().to_hex()),
-                content_kind: GATE_BUNDLE_CONTENT_KIND.to_owned(),
-                policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                // An agent's settlement names the Grant that admitted it.
-                grant_ref: grant.map(|grant| grant.to_hex()),
-                diff_handle: bundle_id.to_vec(),
-                read_frontier_hash: frontier.finalize().into(),
-                context: decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids),
-                redacted_at: None,
-            };
+            // The bundle's own row records the settler's one answer for every
+            // member: `approved` or `rejected`, as each member's row (UC-03
+            // D1 = A; its reason `gate.bundle.approved` / `declined` keeps
+            // the word). `valid_gate_receipt_reason` admits only the
+            // counterparty / connector-key / effector-budget / charter
+            // families, so the bundle id, run id and member count ride the
+            // typed receipt and the content-bound `diff_handle` instead.
+            let mut receipt = GateReceipt::new(
+                member_outcome,
+                GATE_BUNDLE_CONTENT_KIND,
+                member_reason,
+                ReceiptActor::Row(actor),
+                bundle_id.to_vec(),
+                PolicyBasis::frontier(frontier.finalize().into()),
+            );
+            // An agent's settlement names the Grant that admitted it.
+            receipt.grant_ref = grant.map(|grant| grant.to_hex());
+            receipt.context =
+                decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids);
+            let record = self.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
             decision_context::append(self, wtxn, &record, &member_claim_ids)?;
 
             Ok((
@@ -714,7 +697,7 @@ impl Vault {
                     dreamer_run_id: dreamer_run_id.to_owned(),
                     action,
                     member_claim_ids,
-                    created_at: now,
+                    created_at: record.created_at,
                 },
                 recorded_decisions,
             ))

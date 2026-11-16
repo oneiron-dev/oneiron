@@ -21,7 +21,9 @@ use crate::edge::EdgeActorClass;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensSlotDecision};
 use crate::setting::SettingScope;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
+use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
@@ -316,27 +318,20 @@ impl Vault {
         let bytes = serde_json::to_vec(receipt)
             .map_err(|_| Error::InvariantViolation("lens slot receipt encoding failed"))?;
         digest.update(&bytes);
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: decider.actor_class.gate_actor_class().to_owned(),
-            actor_ref: Some(decider.actor.to_hex()),
-            content_kind: "lens_slot".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            // An agent's decision names the Grant that admitted it.
-            grant_ref: decider.grant.map(|grant| grant.to_hex()),
-            diff_handle: digest.finalize().as_bytes().to_vec(),
-            read_frontier_hash: [0_u8; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)
+        let mut gate_receipt = GateReceipt::new(
+            GateReceiptOutcome::Approved,
+            "lens_slot",
+            reason,
+            ReceiptActor::Row(WriteActor::new(decider.actor, decider.actor_class)),
+            digest.finalize().as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        // The slot row already names this decision.
+        gate_receipt.id = Some(decision_id);
+        // An agent's decision names the Grant that admitted it.
+        gate_receipt.grant_ref = decider.grant.map(|grant| grant.to_hex());
+        self.store.record_gate_receipt_in_txn(txn, gate_receipt)?;
+        Ok(())
     }
 
     /// The generated lens the owner selected for a pack/skill slot, rechecked
