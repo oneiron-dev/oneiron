@@ -54,9 +54,13 @@ use serde::Serialize;
 /// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
 /// 34 to 36 are unused: they were left for PRs that were open when 37 landed, and each of
 /// those takes the next number at its own landing.
-/// 38: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// 39: two concurrent federation confirmations that share an id or a nonce both stay valid as
+/// spent evidence, and settlement removes neither nor any row above it (FIX
+/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is unused: it was an open PR's number when the
+/// train assigned this one.
+/// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
 /// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 38;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 40;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
