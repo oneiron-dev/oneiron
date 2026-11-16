@@ -910,18 +910,19 @@ impl Vault {
     }
 }
 
-/// Whether `room`'s pin cell is marked changed while no live window carried
-/// the room (the door of `tests/room_pins_noop_marks.rs`).
+/// Whether `room`'s host-pin cell is marked changed while no live window
+/// carried the room: the cell a room-cell refresh with no handle marks (the
+/// door of `tests/room_pins_noop_marks.rs`).
 #[cfg(oneiron_test_support)]
-pub(crate) fn room_pin_cell_marked(vault: &Vault, room: EntityId) -> Result<bool> {
+pub(crate) fn room_host_pin_cell_marked(vault: &Vault, room: EntityId) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
     DIRTY.contains(&vault.store, &rtxn, &cell_key(room, None))
 }
 
-/// Clears `room`'s pin cell mark, as a flush that took the cell does (the
-/// door of `tests/room_pins_noop_marks.rs`).
+/// Clears `room`'s host-pin cell mark, as an import that carries the cell
+/// does (the door of `tests/room_pins_noop_marks.rs`).
 #[cfg(oneiron_test_support)]
-pub(crate) fn clear_room_pin_cell_mark(vault: &Vault, room: EntityId) -> Result<()> {
+pub(crate) fn clear_room_host_pin_cell_mark(vault: &Vault, room: EntityId) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         DIRTY.delete(&vault.store, wtxn, &cell_key(room, None))?;
         Ok(())

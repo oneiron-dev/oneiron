@@ -1,16 +1,18 @@
 //! A pin door that changes nothing marks nothing (FIX ROOM-PINS-NOOP-MARKS-DIRTY):
 //! a pin of a target the room has pinned already, and a pin policy set to
-//! the value it holds, write no body, so they leave the room's pin cell
-//! unmarked and queue no room-fact flush, as an unpin of a target that is
-//! not pinned already does. A change still marks the cell.
+//! the value it holds, write no body, so they run no room-cell refresh and
+//! queue no room-fact flush, as an unpin of a target that is not pinned
+//! already does. A change still runs it. The refresh with no handle marks
+//! the room's host-pin cell (`sync/room_facts.rs`
+//! `refresh_room_cell_in_live_window`), which the tests read.
 //!
 //! Fixture (trimmed from `room_pins.rs`): a project whose home room seats
 //! its leader, a PERSON who is not the vault's owner and holds one public
 //! contact the owner precleared, a `core:read` row and a grant over the
 //! room's MESSAGEs. The leader speaks one trunk turn; its MESSAGE is the pin
-//! target. The vault runs no live window, so a refresh of the room's pin
-//! cell marks it; the door `test_doors::room_fact_marks` reads and clears
-//! that mark.
+//! target. The vault runs no live window, so a room-cell refresh marks the
+//! room's host-pin cell; the door `test_doors::room_fact_marks` reads and
+//! clears that mark.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test room_pins_noop_marks`.
@@ -30,7 +32,9 @@ use oneiron::policy_manifest_doors::{
     put_policy_manifest_as_owner,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::test_doors::room_fact_marks::{clear_room_pin_cell_mark, room_pin_cell_marked};
+use oneiron::test_doors::room_fact_marks::{
+    clear_room_host_pin_cell_mark, room_host_pin_cell_marked,
+};
 use oneiron::workspace_roster::{ProjectRecord, RoomPinPolicySet, RoomPinRequest};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
@@ -189,16 +193,16 @@ fn a_repeated_pin_marks_no_room_dirty() -> TestResult {
 
     let first = leader.rooms_pins_pin(&request)?;
     assert!(
-        room_pin_cell_marked(&fx.vault, fx.room)?,
-        "a new pin changes the room's pins and marks its cell"
+        room_host_pin_cell_marked(&fx.vault, fx.room)?,
+        "a new pin changes the room's pins and runs the room-cell refresh"
     );
-    clear_room_pin_cell_mark(&fx.vault, fx.room)?;
-    assert!(!room_pin_cell_marked(&fx.vault, fx.room)?);
+    clear_room_host_pin_cell_mark(&fx.vault, fx.room)?;
+    assert!(!room_host_pin_cell_marked(&fx.vault, fx.room)?);
 
     let again = leader.rooms_pins_pin(&request)?;
     assert_eq!(again.pin, first.pin, "the pin keeps its first record");
     assert!(
-        !room_pin_cell_marked(&fx.vault, fx.room)?,
+        !room_host_pin_cell_marked(&fx.vault, fx.room)?,
         "a pin that changes nothing marks no room cell"
     );
     Ok(())
@@ -219,15 +223,15 @@ fn an_unchanged_pin_policy_marks_no_room_dirty() -> TestResult {
     let set = leader.rooms_pins_policy_set(&managers)?;
     assert_eq!(set.policy, RoomPinPolicy::Managers);
     assert!(
-        room_pin_cell_marked(&fx.vault, fx.room)?,
-        "a policy change marks the room's cell"
+        room_host_pin_cell_marked(&fx.vault, fx.room)?,
+        "a policy change runs the room-cell refresh"
     );
-    clear_room_pin_cell_mark(&fx.vault, fx.room)?;
+    clear_room_host_pin_cell_mark(&fx.vault, fx.room)?;
 
     let again = leader.rooms_pins_policy_set(&managers)?;
     assert_eq!(again.policy, RoomPinPolicy::Managers);
     assert!(
-        !room_pin_cell_marked(&fx.vault, fx.room)?,
+        !room_host_pin_cell_marked(&fx.vault, fx.room)?,
         "a policy set to its own value marks no room cell"
     );
     Ok(())
