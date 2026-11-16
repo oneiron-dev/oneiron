@@ -2,7 +2,7 @@
 //! 6.5c); HTTP, SDK and MCP reach the same typed door.
 //! Saved terminals and response checkpoints answer before fresh provider admission.
 //! An owner's step parked on its offer's health resumes on its own once the
-//! offer is back.
+//! offer is back, after a restart too on a self-host server.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -99,10 +99,11 @@ const RESUME_POLL: Duration = Duration::from_secs(1);
 /// withdrawn meanwhile ends it, and keeps the sends the step made. A step
 /// that parks again waits again; one its owner submits meanwhile is
 /// serialized by its invocation claim. The task holds the server weakly and
-/// ends with it. A restart drops it: a later submission of the same key
-/// resumes the step. A live run's own step that parks is resumed by the
-/// run's next submission of its key: its lease, not an owner proof, admits
-/// it, and the run holds that.
+/// ends with it. A restart drops it: on a self-host server the next start
+/// resumes the step ([`resume_parked_model_steps`]), and on any other a
+/// later submission of the same key does. A live run's own step that parks
+/// is resumed by the run's next submission of its key: its lease, not an
+/// owner proof, admits it, and the run holds that.
 fn resume_when_back(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -144,6 +145,69 @@ fn resume_when_back(
             }
         }
     });
+}
+
+/// The owner's steps parked before this server started resume on their own
+/// (STEP-PARK-BOOT-RESUME), each through [`resume_when_back`], as a step
+/// parked on this server does. A self-host server holds its host root from
+/// construction, and the root acts as the vault's owner through the host
+/// action a request presenting it resolves, judged again at each resume:
+/// the caller is built from it in memory, so no stored credential and no
+/// new key proves the owner. A server that holds no root, and a hosted one,
+/// whose custodial root proves nothing, resume nothing here: the owner's
+/// next submission of the key resumes the step (STEP-PARK-HOSTED-RESUMER).
+/// A live run's parked step waits for the run's own next submission.
+pub(crate) fn resume_parked_model_steps(server: &Arc<SyncServer>) {
+    if server.vault().privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return;
+    }
+    let Some(issuer) = server.host_root_issuer.as_deref() else {
+        return;
+    };
+    match parked_on_held_root(server, issuer) {
+        Ok((auth, parked)) => {
+            for step in parked {
+                resume_when_back(server, &auth, step.input, step.until);
+            }
+        }
+        Err(error) => tracing::warn!(
+            code = %error.code,
+            "parked model steps did not resume at start; a submission of each key resumes it"
+        ),
+    }
+}
+
+/// The owner's parked steps, read under the caller the host root `issuer`
+/// makes, with that caller.
+fn parked_on_held_root(
+    server: &SyncServer,
+    issuer: &oneiron::authority::HostSlipIssuer,
+) -> MemoryResult<(CoreAuth, Vec<model_step::ParkedStep>)> {
+    let auth = held_root_caller(server, issuer)?;
+    let owner = owner_proof(&auth, server, "ai.steps.submit")?;
+    let parked = model_step::parked_as_owner(server.vault(), &owner)?;
+    Ok((auth, parked))
+}
+
+/// The caller the host root `issuer` makes, in memory: the root slip this
+/// server retains, verified again now, under its own token's fingerprint,
+/// as a request presenting that root is (FIX 4744 rebuilds a resumed call's
+/// caller the same way).
+fn held_root_caller(
+    server: &SyncServer,
+    issuer: &oneiron::authority::HostSlipIssuer,
+) -> MemoryResult<CoreAuth> {
+    let vault = server.vault();
+    let verified = vault
+        .verified_host_root_slip(issuer)
+        .map_err(MemoryError::from)?;
+    let token = vault
+        .ensure_host_root_slip(issuer)
+        .and_then(|slip| slip.to_token())
+        .map_err(MemoryError::from)?;
+    let instrument = *blake3::hash(token.as_bytes()).as_bytes();
+    CoreAuth::from_recorded_host_root(verified, instrument, &**vault)
+        .map_err(|_| internal("ai.steps.submit"))
 }
 
 async fn submit(
