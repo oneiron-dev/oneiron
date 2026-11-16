@@ -661,8 +661,11 @@ fn require_may_answer(
 /// a pending check-in the actor asked is removed, since no act of theirs
 /// waits any more; every other row drops the actor from its pinned holders
 /// and from a skipped rung's missing link, and names nobody where it named
-/// the actor as the one who answered, extended or objected. The answer, the
-/// extension, the objection and the skip stand. The receipts stand,
+/// the actor as the one who answered, extended or objected, or as the
+/// asker's spawn parent. A rung the ask enters after that reads the asker's
+/// grantor as an ask no spawned run opened does (the grant's
+/// `delegated_by`). The answer, the extension, the objection and the skip
+/// stand. The receipts stand,
 /// scrubbed by their own table's scrub, which takes the actor out of the
 /// same `missing_link` value the same way.
 ///
@@ -705,6 +708,7 @@ fn scrub_row(row: &mut PendingCheckIn, actor: &EntityId) -> bool {
     if let PendingState::Answered { by, .. } = &mut row.state {
         scrub(by);
     }
+    scrub(&mut row.spawn_parent);
     for entry in &mut row.rungs {
         if let Some(extension) = entry.extension.as_mut() {
             scrub(&mut extension.by);
