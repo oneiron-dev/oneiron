@@ -44,7 +44,7 @@ const T0: u64 = 1_800_000_000;
 const T1: u64 = 1_800_000_100;
 const T2: u64 = 1_800_000_200;
 
-/// The endpoint the configure door records for the seat.
+/// The CalDAV endpoint of the seat's `calendar.connector_seat` setup.
 const SEAT_ENDPOINT: &str = "https://calendar.example.test/";
 
 /// A Google wire that records each sync token it is sent and answers the
