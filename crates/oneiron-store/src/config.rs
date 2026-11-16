@@ -213,6 +213,12 @@ pub struct VaultConfig {
     /// vault directory, so a vault erase never reaches them. `None` in both
     /// presets; placing an owner's hold without one is refused.
     pub legal_hold_store: Option<PathBuf>,
+    /// The most bytes this vault's folder may hold on disk, as its host
+    /// declares it (`[import] storage_cap_bytes`; ARCH-0027
+    /// #archive-precheck): an archive an import unpacks stops at the room
+    /// the cap leaves. Never an owner setting or a request field; `None`, no
+    /// cap, in both presets, so a local vault never stops.
+    pub storage_cap_bytes: Option<u64>,
 }
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
@@ -399,6 +405,7 @@ impl VaultConfig {
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
             legal_hold_store: None,
+            storage_cap_bytes: None,
         }
     }
 
@@ -437,6 +444,7 @@ impl VaultConfig {
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
             legal_hold_store: None,
+            storage_cap_bytes: None,
         }
     }
 
