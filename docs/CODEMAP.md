@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7610 | 1352 | 266 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7613 | 1359 | 266 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 71 | 3 | 0 |
@@ -33,9 +33,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-dreamer](codemap/oneiron-dreamer.md) | oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A) | 2 | 0 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 38 | 11 | 3 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
-| [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 9 | 1 | 0 |
+| [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 10 | 1 | 0 |
 | [oneiron-gen](codemap/oneiron-gen.md) | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… | 8 | 0 | 0 |
-| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 11 | 2 | 0 |
+| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 12 | 3 | 0 |
 | [oneiron-hex](codemap/oneiron-hex.md) | Hex text for bytes: encode, decode and check in one place | 1 | 0 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 5 | 1 |
 | [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 15 | 3 | 2 |
@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-speech](codemap/oneiron-speech.md) | Speech wire adapters for Oneiron's voice cascade seams, one module per wire protocol (ARCH-0036 `#adapters`… | 11 | 1 | 1 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 653 | 12 | 1 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 653 | 13 | 1 |
 | [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 28 | 12 | 3 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 61 | 4 | 1 |
@@ -98,7 +98,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `branch_store_oracle` | dir | 9 | m | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
 | `browser_library` | file+dir | 9 | m | — | The replay library's store (OF-598; EIRI-ARCH-0002 "The replay library"): solved browser runs, filed per… |
 | `build_cache` | file+dir | 8 | m | — | Explicit account-scoped immutable build results |
-| `calendar` | dir | 88 | L | yes | Calendar module home (CAL-00) |
+| `calendar` | dir | 89 | L | yes | Calendar module home (CAL-00) |
 | `campaign` | file+dir | 67 | L | yes | CRM pack engine-side registration home |
 | `carry_forward_admission` | file | 1 | s | yes | The engine side of carry-forward claims (`write_envelope::carry_forward`): the confidence floor enforced at… |
 | `channel_identity` | dir | 22 | m | yes | ChannelIdentity record substrate (OF-347 CID-1) |
@@ -291,7 +291,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `task_work_line` | file | 1 | s | yes | The vault's task-work line: the inherent `Vault` methods that admit task work through the line in… |
 | `team` | dir | 22 | m | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `temporal` | file | 1 | s | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
-| `test_doors` | dir | 123 | L | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `test_doors` | dir | 125 | L | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `test_fixtures` | file | 1 | s | — | Fixture writes that every test build shares: the crate's unit tests (`test_util`), dependent crates… |
 | `test_support` | file | 1 | s | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
 | `test_util` | dir | 6 | m | — | Shared test helpers |
@@ -617,7 +617,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `legacy` | file | 1 | s | The K door: a digest that main already stores or sends keeps its exact bytes |
-| `purposes` | dir | 6 | s | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `purposes` | dir | 7 | s | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
 | `record` | file | 1 | s | The one canonical byte form of a structured value (DESIGN section 1.5) |
 
 ## oneiron-gen
@@ -632,6 +632,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `batch` | file | 1 | s | The batch transcript channel a vendor's sandbox runs the guest over (L8-43, VENDOR-BOUNDARY = A: a batch… |
 | `boot` | file | 1 | m | Linux-only PID-1 setup, isolated execution, and final-delivery custody |
 | `conformance` | file | 1 | s | Typed Component Model fixture |
 | `egress` | file | 1 | s | The native microVM supervisor's network reaches only the engine's vsock |
