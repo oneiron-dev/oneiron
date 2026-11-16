@@ -409,6 +409,29 @@ pub fn admit_imported_entity(
     )
 }
 
+/// The verdict class (`clear`, `flagged` or `indeterminate`) of the screen an
+/// imported claim's admission ran under, read back from the evidence
+/// [`imported_candidate`] wrote; `None` when no screen ran.
+pub(crate) fn imported_screen_verdict(evidence: &MsgpackValue) -> Option<&str> {
+    let MsgpackValue::Map(entries) = evidence else {
+        return None;
+    };
+    let MsgpackValue::Map(fields) = map_entry(entries, "screen")? else {
+        return None;
+    };
+    map_entry(fields, "verdict")?.as_str()
+}
+
+fn map_entry<'a>(
+    entries: &'a [(MsgpackValue, MsgpackValue)],
+    key: &str,
+) -> Option<&'a MsgpackValue> {
+    entries
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
+}
+
 pub(super) fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackValue {
     MsgpackValue::Map(vec![
         (
