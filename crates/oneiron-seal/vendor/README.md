@@ -195,3 +195,19 @@
     byte for byte from the pkix-path 0.3.2 archive
     (sha256 `325809ccf6e48c67f1e1e7a91187566372346797737ee00d1381a5881f76aecf`)
     into `tests/fixtures/pkits`.
+  - `src/lib.rs` (FIX PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH): upstream's
+    iterator backtracks from a frame as soon as it yielded the chain ending
+    at a DN-matching anchor, so an anchor that shares its DN with a pool
+    intermediate under another key hid the path through that intermediate
+    (a trusted list naming an issuing CA by its new key, an end entity
+    issued under the old one). `build_first_valid_path_with_config` keeps
+    its first pass; when every candidate fails `validate_path`, the new
+    private `first_valid_past_anchors` runs a second `PathCandidates`
+    search, with a fresh budget, under the new private
+    `explore_past_anchor` flag: a frame that yielded its anchor-matched
+    chain goes on to its pool candidates instead of backtracking. The first
+    chain it yields that validates is returned; otherwise the first pass's
+    `NoValidPath`, unchanged. `build_path`, `build_path_candidates` and
+    every chain the first pass validates are unchanged; only the all-fail
+    path does up to twice the search and validation work, each pass
+    bounded by `dfs_budget`.

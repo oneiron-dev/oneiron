@@ -436,7 +436,8 @@ struct Frame {
     /// True if this frame yielded a chain via anchor match. On the next
     /// `next()` call, that frame is immediately backtracked rather than
     /// trying its candidates (the recursive DFS short-circuits on anchor
-    /// match; the iterator preserves that semantic).
+    /// match; the iterator preserves that semantic), unless the iterator
+    /// explores past anchors (`PathCandidates::explore_past_anchor`).
     anchor_yielded: bool,
 }
 
@@ -537,6 +538,13 @@ pub struct PathCandidates<'a> {
     /// True once the iterator has yielded a fatal error or exhausted
     /// the search space; subsequent calls return `None`.
     done: bool,
+    /// When true, a frame that yielded its anchor-matched chain goes on to
+    /// its pool candidates on the next call instead of backtracking.
+    /// Oneiron local change (FIX PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH): only
+    /// the second pass of [`build_first_valid_path_with_config`] sets it, so
+    /// an anchor that shares its DN with a pool intermediate under another
+    /// key cannot hide the path through that intermediate.
+    explore_past_anchor: bool,
 }
 
 impl<'a> PathCandidates<'a> {
@@ -566,6 +574,7 @@ impl<'a> PathCandidates<'a> {
             budget: config.dfs_budget,
             started: false,
             done: false,
+            explore_past_anchor: false,
         }
     }
 }
@@ -587,7 +596,8 @@ impl<'a> Iterator for PathCandidates<'a> {
         // When resuming after a yield, the top frame's `anchor_yielded`
         // flag is true; the loop below will see this and immediately
         // backtrack from that frame, advancing the parent's candidate
-        // cursor on the next iteration.
+        // cursor on the next iteration. With `explore_past_anchor`, the
+        // frame instead goes on to its own candidates.
         self.started = true;
 
         loop {
@@ -601,7 +611,11 @@ impl<'a> Iterator for PathCandidates<'a> {
             // prior call, backtrack from it now (the recursive DFS
             // short-circuits on anchor match without exploring
             // candidates; the iterator preserves that semantic).
-            if self.frames.last().expect("non-empty").anchor_yielded {
+            //
+            // With `explore_past_anchor`, the frame is kept: its
+            // `anchor_checked` is set, so the code below skips the anchor
+            // check and pulls the frame's next pool candidate.
+            if self.frames.last().expect("non-empty").anchor_yielded && !self.explore_past_anchor {
                 self.frames.pop();
                 self.path.pop();
                 continue;
@@ -940,6 +954,19 @@ pub fn build_path_with_config(
 ///   retained verbatim for backward compatibility; callers opt in to the
 ///   iterating semantics by using this function.
 ///
+/// # Second pass past anchor matches (Oneiron local change)
+///
+/// The iterator backtracks from a frame once it yielded the chain ending at
+/// a DN-matching anchor, so when an anchor shares its DN with a pool
+/// intermediate under a different key, the path through that intermediate
+/// is never yielded. When every first-pass candidate fails `validate_path`,
+/// a second pass runs that goes on into a frame's pool candidates after its
+/// anchor match, and returns the first chain it yields that validates. A
+/// chain the first pass validates is returned unchanged; if the second pass
+/// finds none (or exhausts its budget), the first pass's
+/// [`Error::NoValidPath`] is returned unchanged (FIX
+/// PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH).
+///
 /// # Relationship to other path-builder entry points
 ///
 /// | Entry point                  | Verifier? | Returns                                      |
@@ -1015,10 +1042,19 @@ where
                 return match last_error {
                     // At least one candidate was yielded; every one was
                     // rejected by validate_path.
-                    Some(last) => Err(Error::NoValidPath {
-                        tried,
-                        last_error: last,
-                    }),
+                    // Oneiron local change: before giving up, search again
+                    // past every anchor match (see the function docs).
+                    Some(last) => {
+                        match first_valid_past_anchors(
+                            target, pool, anchors, policy, verifier, config,
+                        ) {
+                            Some(chain) => Ok(chain),
+                            None => Err(Error::NoValidPath {
+                                tried,
+                                last_error: last,
+                            }),
+                        }
+                    }
                     // Zero candidates ever yielded. Distinguish
                     // NoPathFound from DepthExceeded the same way
                     // build_path does: probe at max_depth + 1.
@@ -1039,6 +1075,33 @@ where
             }
         }
     }
+}
+
+/// The second pass of [`build_first_valid_path_with_config`] (Oneiron local
+/// change, FIX PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH): the same depth-first
+/// search with a fresh budget, going on into a frame's pool candidates after
+/// its anchor match. Returns the first yielded chain that validates, or
+/// `None` when the search ends (exhausted or out of budget) without one.
+fn first_valid_past_anchors<V>(
+    target: &Certificate,
+    pool: &CertPool,
+    anchors: &[pkix_path::TrustAnchor],
+    policy: &pkix_path::ValidationPolicy,
+    verifier: &V,
+    config: &PathBuilderConfig,
+) -> Option<Vec<Certificate>>
+where
+    V: pkix_path::SignatureVerifier,
+{
+    let mut iter = PathCandidates::new(target, pool.as_slice(), anchors, config);
+    iter.explore_past_anchor = true;
+    for candidate in iter {
+        let chain = candidate.ok()?;
+        if pkix_path::validate_path(&chain, anchors, policy, verifier).is_ok() {
+            return Some(chain);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
