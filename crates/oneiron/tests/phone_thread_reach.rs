@@ -291,6 +291,7 @@ fn set_reach_as_owner(fixture: &Fixture, reach: PhoneReach) {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("owner sets the line's reach");
@@ -1098,6 +1099,7 @@ fn the_line_agents_narrowing_lands_at_the_next_read() {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("the line agent's narrowing sets");
@@ -1147,6 +1149,7 @@ fn an_agents_widening_of_a_lines_reach_waits_for_the_owner() {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("the line agent's widening asks");
@@ -1212,7 +1215,7 @@ fn the_line_config_no_longer_takes_share_scope() {
     );
     assert!(
         serde_json::from_str::<PhoneLineConfig>(r#"{"enabled":true}"#).is_ok(),
-        "an {enabled}-only body decodes",
+        "an {{enabled}}-only body decodes",
     );
     let fixture = fixture();
     configure(&fixture, true, worlds_scope(&[base_world_id()]));
@@ -2775,6 +2778,7 @@ fn set_reach_as_agent(fixture: &Fixture, reach: Option<&PhoneReach>) -> SetSetti
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("the line agent's reach change is taken")

@@ -299,6 +299,7 @@ fn set_reach_as_owner(fixture: &Fixture, reach: PhoneReach) {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("owner sets the line's reach");
