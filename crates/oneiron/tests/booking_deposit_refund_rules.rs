@@ -18,11 +18,15 @@
 //! lifecycle home node, the owner's seat, policy and page grant), with a
 //! deposit on the page's event type. Only public paths and the test doors
 //! that file uses, so the pre-fix head builds it: its red is an assert.
+//!
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_deposit_refund_rules`.
 
+mod booking_host_seat_support;
 mod common;
 
 use std::sync::Mutex;
 
+use booking_host_seat_support::{Seat, SeatChange};
 use oneiron::booking::lifecycle::{
     DepositCheckoutStart, DepositProviderEvent, DepositProviderEventKind,
     DepositProviderEventOutcome, DepositProviderFailure, DepositSettleMove, DepositSettleRequest,
@@ -41,6 +45,7 @@ use oneiron::booking::{
     mint_publish_page_invite_grant, plan_emergency_reschedule, run_booking_lifecycle_once,
 };
 use oneiron::calendar::CalendarError;
+use oneiron::calendar::connectors::{CalendarConnectorError, RemoteWriteReceipt};
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
@@ -378,6 +383,31 @@ fn poll_host_feed(
         cadence_max_seconds: 900,
     };
     run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).map(|_| ())
+}
+
+/// The host's own calendar, as its seat system names it: the calendar each
+/// cancelled booking below is written to before its first pull.
+const HOST_SEAT_SYSTEM: &str = "host-seat";
+
+/// One pull of a seat with the booking at the slot starting `start` and at
+/// `sequence`, cancelled or not. The booking was written to the seat before
+/// its first pull, so the resource rides the href its write returned.
+fn pull_seat(
+    seat: &Seat,
+    fixture: &Fixture,
+    wrote: &RemoteWriteReceipt,
+    start: u64,
+    sequence: u32,
+    cancelled: bool,
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    let end = start + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60;
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(wrote, start, end, sequence, cancelled)],
+        now,
+    )
+    .map(|_| ())
 }
 
 /// A sink whose every delivery lands.
@@ -770,24 +800,26 @@ fn a_host_cancel_seen_after_the_start_keeps_the_deposit() {
     let fixture = Fixture::open();
     // The 09:00 meeting happened (or the visitor did not show); at 09:01 the
     // host deletes it from their calendar.
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
     let booked = captured_booking(&fixture, "pi_after_start", 9);
-    poll_host_feed(
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
         &fixture,
-        &booked,
+        &wrote,
         slot_at(9).start,
         0,
         false,
-        "v1",
         NOW + 60,
     )
-    .expect("the first host feed poll");
-    poll_host_feed(
+    .expect("the seat's first pull");
+    pull_seat(
+        &seat,
         &fixture,
-        &booked,
+        &wrote,
         slot_at(9).start,
         1,
         true,
-        "v2",
         slot_at(9).start + 60,
     )
     .expect("the host's cancellation after the start");
@@ -800,35 +832,37 @@ fn a_host_cancel_seen_after_the_start_keeps_the_deposit() {
     );
 }
 
-/// The host's feed carries the booking live at SEQUENCE 5; a stale copy of
-/// the feed then sends an older SEQUENCE 3 that reads cancelled. The passport
-/// keeps SEQUENCE 5 (an older replay changes nothing), so the booking stays
-/// live and its deposit stays captured (Muse Wonder blind review of #8230,
-/// F2, 16 Nov 08:10).
+/// The host's seat carries the booking live at SEQUENCE 5; a stale pull then
+/// replays an older SEQUENCE 3 that reads cancelled. The passport keeps
+/// SEQUENCE 5 (an older replay changes nothing), so the booking stays live
+/// and its deposit stays captured (Muse Wonder blind review of #8230, F2,
+/// 16 Nov 08:10).
 #[test]
 fn an_older_sequence_cancellation_replayed_after_a_live_one_keeps_the_deposit() {
     let fixture = Fixture::open();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
     let booked = captured_booking(&fixture, "pi_stale_replay", 9);
-    poll_host_feed(
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
         &fixture,
-        &booked,
+        &wrote,
         slot_at(9).start,
         5,
         false,
-        "v5",
         NOW + 60,
     )
-    .expect("the host feed at SEQUENCE 5, live");
-    poll_host_feed(
+    .expect("the host seat at SEQUENCE 5, live");
+    pull_seat(
+        &seat,
         &fixture,
-        &booked,
+        &wrote,
         slot_at(9).start,
         3,
         true,
-        "v3-stale",
         NOW + 120,
     )
-    .expect("a stale feed copy at SEQUENCE 3, cancelled");
+    .expect("a stale pull at SEQUENCE 3, cancelled");
     assert_eq!(
         fixture.state_of("pi_stale_replay"),
         DepositState::Captured {
@@ -842,32 +876,34 @@ fn an_older_sequence_cancellation_replayed_after_a_live_one_keeps_the_deposit() 
 #[test]
 fn a_host_cancel_seen_before_the_start_and_repaired_after_it_refunds() {
     let fixture = Fixture::open();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
     let booked = captured_booking(&fixture, "pi_repaired", 9);
-    poll_host_feed(
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
         &fixture,
-        &booked,
+        &wrote,
         slot_at(9).start,
         0,
         false,
-        "v1",
         NOW + 60,
     )
-    .expect("the first host feed poll");
-    // The cancellation's passport commits at 08:02, and the poll stops
+    .expect("the seat's first pull");
+    // The cancellation's passport commits at 08:02, and the pull stops
     // before its refund does.
     oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
     assert!(
-        poll_host_feed(
+        pull_seat(
+            &seat,
             &fixture,
-            &booked,
+            &wrote,
             slot_at(9).start,
             1,
             true,
-            "v2",
             NOW + 120
         )
         .is_err(),
-        "the door stops the poll"
+        "the door stops the pull"
     );
     assert_eq!(
         fixture.state_of("pi_repaired"),
@@ -875,17 +911,17 @@ fn a_host_cancel_seen_before_the_start_and_repaired_after_it_refunds() {
             amount_minor: 4_000
         }
     );
-    // The next read of the same feed comes after the start.
-    poll_host_feed(
+    // The next read of the same seat comes after the start.
+    pull_seat(
+        &seat,
         &fixture,
-        &booked,
+        &wrote,
         slot_at(9).start,
         1,
         true,
-        "v3",
         slot_at(9).start + 60,
     )
-    .expect("the repair poll");
+    .expect("the repair pull");
     assert_eq!(
         fixture.state_of("pi_repaired"),
         DepositState::RefundDue {
