@@ -1323,6 +1323,78 @@ fn retiring_a_world_named_space_is_refused() {
     );
 }
 
+/// The host seeds the world's space again at the same width without text, a system move with
+/// no owner behind it. While W's order names the space, the space keeps text, so A stays held
+/// for it and reaches neither the vault's embedder nor a remote rung that allows it. Once the
+/// order no longer names the space, a redeclaration without text applies as declared.
+#[test]
+fn redeclaring_a_world_named_space_without_text_keeps_its_text() {
+    let fixture = world_space_fixture();
+    let image_only = EmbeddingSpace {
+        accepts: BTreeSet::from([InputKind::Image]),
+        query_towers: BTreeSet::from([InputKind::Image]),
+        ..text_space(WORLD_SPACE_ID)
+    };
+    fixture
+        .vault
+        .seed_embedding_space(image_only.clone())
+        .expect("the host seeds the world's space again without text");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space read"),
+        Some(EmbeddingSpace {
+            accepts: BTreeSet::from([InputKind::Text, InputKind::Image]),
+            query_towers: BTreeSet::from([InputKind::Text, InputKind::Image]),
+            ..text_space(WORLD_SPACE_ID)
+        }),
+        "W's order names the space, so the redeclaration keeps its text",
+    );
+    let remote = Arc::new(RecordingVaultEmbedder::new(EmbedderLocality::ThirdParty));
+    let report = fixture
+        .reconciler()
+        .with_remote_rung(RemoteRung::new(remote.clone(), Arc::new(AllowAll)))
+        .expect("public remote rung with an allow-all egress predicate")
+        .reconcile_once()
+        .expect("text pass after the redeclaration");
+    assert_eq!(
+        report.world_space, 1,
+        "A stays pending for its world's space"
+    );
+    assert_eq!(
+        remote.seen(),
+        vec![fixture.base_claim],
+        "the remote rung never sees A"
+    );
+    assert!(
+        fixture.primary.seen().is_empty(),
+        "the vault's embedder never sees A"
+    );
+
+    fixture.set_models(ModelOrder::Inherit);
+    fixture
+        .vault
+        .declare_embedding_space(&fixture.owner, image_only.clone())
+        .expect("owner declares the space again without text");
+    assert_eq!(
+        fixture
+            .vault
+            .world_text_space(fixture.world)
+            .expect("world text space read"),
+        None,
+        "W inherits, so it names no text space",
+    );
+    assert!(
+        fixture
+            .vault
+            .embedding_spaces()
+            .expect("declared spaces")
+            .contains(&image_only),
+        "with no world naming the space, the redeclaration applies as declared",
+    );
+}
+
 #[test]
 fn joining_a_world_drops_the_vault_index_vector() {
     let fixture = world_space_fixture();
