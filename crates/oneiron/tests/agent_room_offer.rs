@@ -246,6 +246,53 @@ fn a_custom_agent_made_through_the_agent_definition_door_can_mint_a_room_offer_c
     Ok(())
 }
 
+/// L9-52 (Engine RULING L9-52-ROOM-STRUCTURE = A; FIX
+/// [ROOM-STRUCTURE-FACADE-ROOM-RECORD]): a room's current offer cards are its
+/// structure, so they list only to a caller that reads its roster or that the
+/// room's own admission admits. An agent outside the room (it reads the
+/// room's row, but has no seat, no Ready join and no grant, and is not the
+/// host) lists no cards and no open cards, still publishes its own card, as
+/// an agent asks to join a room (OF-530), and the host lists that card.
+#[test]
+fn an_agent_outside_the_room_lists_no_offer_cards() -> TestResult {
+    let fixture = open()?;
+    let room = fixture.room;
+    let agent = create_agent(&fixture, "outside-lister")?;
+    permit_room_reads(&fixture, agent)?;
+    let asker = fixture.vault.memory(agent, EdgeActorClass::Agent);
+    let host = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let refusal = asker
+        .rooms_offers(&OffersRequest {
+            room,
+            branch: None,
+            after: None,
+            limit: None,
+        })
+        .expect_err("an agent outside the room lists no offer cards");
+    assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_NOT_FOUND);
+    assert_eq!(refusal.message, "no room or thread the caller reads");
+    let open_refusal = asker
+        .rooms_open_offers(room)
+        .expect_err("an agent outside the room lists no open cards");
+    assert_eq!(open_refusal.code, oneiron::memory::MEMORY_CODE_NOT_FOUND);
+    assert_eq!(open_refusal.message, "no room or thread the caller reads");
+    let draft = offer_draft(room, agent, "outside-lister-1");
+    let card = asker.rooms_offer(&draft)?;
+    assert_eq!(card.room, room);
+    assert_eq!(card.agent, agent);
+    let page = host.rooms_offers(&OffersRequest {
+        room,
+        branch: None,
+        after: None,
+        limit: None,
+    })?;
+    assert!(
+        page.rows.iter().any(|row| row.offer_id == card.offer_id),
+        "the host lists the outside agent's card"
+    );
+    Ok(())
+}
+
 /// The fix does not widen the rule: an AGENT_DEF anchored to a member's own
 /// PERSON takes part as that person, who joins by writing.
 #[test]
