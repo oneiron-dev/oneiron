@@ -180,6 +180,7 @@ fn install_fixture(vault: &Vault) -> Fixture {
             reply_snooze_policy: None,
             voice_guide_ref: None,
             copy_review: None,
+            send_mode: None,
         },
         1,
     )
@@ -889,6 +890,7 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
             reply_snooze_policy: None,
             voice_guide_ref: None,
             copy_review: None,
+            send_mode: None,
         },
         102,
     )?
