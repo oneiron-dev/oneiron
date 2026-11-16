@@ -33,6 +33,7 @@ impl Memory<'_> {
             None => self.rooms_messages_page(room, after, limit),
             Some(root) => self.thread_messages_page(room, EntityId::from_hex(root)?, after, limit),
         }?;
+        page.for_org = self.turns_for_org(&page.rows)?;
         page.actors =
             self.actor_attributions(page.rows.iter().map(|turn| turn.actor.clone()).collect())?;
         Ok(page)
@@ -47,16 +48,7 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), room, limit)?;
         let (scope, rows) = self.thread_rows(room, root)?;
         page_after(rows, after, limit, scope)
     }
@@ -75,16 +67,7 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), room, limit)?;
         let mut scope: Option<crate::federation::Scope> = None;
         let mut rows = Vec::new();
         for root in self.privileged_private_roots(room)? {
@@ -157,6 +140,7 @@ fn page_after(
         rows,
         next_after,
         scope,
+        for_org: std::collections::BTreeMap::new(),
         actors: std::collections::BTreeMap::new(),
     })
 }

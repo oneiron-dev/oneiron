@@ -35,6 +35,11 @@ fn main() -> Result<()> {
             file.write_all(&bytes)?;
             Ok(())
         }
+        // A run on a vendor's sandbox (L8-43): the host's opening in, the
+        // guest's frames out, both files.
+        [mode, input, output, workspace] if mode == "--batch" => {
+            oneiron_guest::serve_batch(Path::new(input), Path::new(output), Path::new(workspace))
+        }
         [mode, socket, workspace] if mode == "--localtest-socket" => {
             // SAFETY: geteuid has no preconditions.
             if unsafe { libc::geteuid() } == 0 {
@@ -44,7 +49,7 @@ fn main() -> Result<()> {
             oneiron_guest::serve_localtest(stream, Path::new(workspace))
         }
         _ => Err(Error::Runtime(
-            "usage: no arguments (Linux PID 1); --artifact-digest FILE; --write-conformance NEW.wasm; --localtest-socket SOCKET EMPTY_WORKSPACE",
+            "usage: no arguments (Linux PID 1); --artifact-digest FILE; --write-conformance NEW.wasm; --localtest-socket SOCKET EMPTY_WORKSPACE; --batch HOST_FRAMES NEW_GUEST_FRAMES EMPTY_WORKSPACE",
         )),
     }
 }

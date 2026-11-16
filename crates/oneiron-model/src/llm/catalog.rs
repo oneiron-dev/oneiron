@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -14,8 +15,11 @@ pub const MEDIA_METADATA_KEY: &str = "media";
 /// The metadata key a catalog row's model family sits under.
 const FAMILY_METADATA_KEY: &str = "family";
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("llm.capability")]
 pub enum LlmCapability {
     Streaming,
     ToolCalling,
@@ -46,26 +50,6 @@ pub enum LlmCapability {
     /// `reasoning.summary`); support only, still gated on [`Self::Reasoning`]
     /// for any request to reason.
     ReasoningSummary,
-}
-
-impl LlmCapability {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Streaming => "streaming",
-            Self::ToolCalling => "tool_calling",
-            Self::ToolResults => "tool_results",
-            Self::ImageInput => "image_input",
-            Self::JsonResponse => "json_response",
-            Self::Reasoning => "reasoning",
-            Self::Voice => "voice",
-            Self::AssistantPrefill => "assistant_prefill",
-            Self::AudioInput => "audio_input",
-            Self::ReasoningContentHistory => "reasoning_content_history",
-            Self::TokenLogprobs => "token_logprobs",
-            Self::ReasoningSummary => "reasoning_summary",
-        }
-    }
 }
 
 impl fmt::Display for LlmCapability {
