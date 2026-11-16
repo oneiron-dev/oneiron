@@ -1,5 +1,5 @@
-//! The `vault.weave` doors: recipe admission and parking, schedule CRUD and its role
-//! gate, per-reader digests, wrong-label ownership, coachless setting changes,
+//! The `vault.weave` doors: recipe admission and parking, schedule settings and their
+//! role gate, per-reader digests, wrong-label ownership, coachless setting changes,
 //! and the fresh-vault refusal table.
 //!
 //! What this file proves, through `POST /v1/core/facade/<verb>` on the real router:
@@ -9,10 +9,11 @@
 //!   recipe runtime, so nothing drafts (the ND-040 boundary).
 //! - Admission refuses a live non-Candidate skill (400), an unknown skill (404),
 //!   and non-hex refs (400).
-//! - `schedules.put` / `list` / `clear` round-trip one reader's schedule, and
-//!   clearing an unknown reader answers `{cleared: false}`.
-//! - `schedules.put` refuses a cross-role recipe (agent + `budgets`, 400) while
-//!   the agent + `digest` control put answers 200.
+//! - A reader's schedule is the setting `weave.digest.reader_schedule` (SETTING-KEYED-A
+//!   K2b; the `schedules.put` / `clear` verbs are gone): `vault.settings.set` sets it,
+//!   `schedules.list` reads it back due at its `starts_at`, and a null value clears it.
+//! - The key's hook refuses a cross-role recipe (agent + `budgets`, 400) while
+//!   the agent + `digest` control set applies.
 //! - A digest is shown only to its own reader: A's due schedule renders `Some`
 //!   over an empty vault and reads back under A, while B and the owner read
 //!   `null`, and A's schedule advances past the rendered period.
@@ -361,6 +362,43 @@ fn assert_owner_refusal(status: StatusCode, body: &Value, verb: &str) {
     );
 }
 
+/// The digest schedule keys, and the door that sets them.
+const OWNER_SCHEDULE: &str = "weave.digest.owner_schedule";
+const READER_SCHEDULE: &str = "weave.digest.reader_schedule";
+const SETTINGS_SET: &str = "/v1/core/facade/vault.settings.set";
+
+/// A `vault.settings.set` body for a digest schedule key: its row at the reader's own
+/// `kind` scope (`person` or `agent`); a null `value` clears the row.
+fn schedule_set(key: &str, kind: &str, reader: &str, value: Value) -> Value {
+    json!({"key": key, "scope": {"kind": kind, "id": reader}, "value": value})
+}
+
+/// A schedule value: `cadence`, one section of `section`, first due at `starts_at`.
+fn schedule_value(cadence: &str, section: &str, starts_at: u64) -> Value {
+    json!({"cadence": cadence, "recipe": [{"kind": section}], "starts_at": starts_at})
+}
+
+/// A set the owner's own credential applies at once.
+fn assert_applied(status: StatusCode, body: &Value, what: &str) {
+    assert_eq!(status, StatusCode::OK, "{what}: {body}");
+    assert_eq!(body["status"].as_str(), Some("applied"), "{what}: {body}");
+}
+
+/// The schedule keys' hook runs the weave report policy's recipe check for the reader.
+fn assert_recipe_refusal(status: StatusCode, body: &Value, what: &str) {
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("BAD_REQUEST")),
+        "{what}: {body}"
+    );
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("invalid weave report recipe")),
+        "{what}: {body}"
+    );
+}
+
 /// One exact refusal: `what` names the layer that refuses.
 fn assert_refusal(
     status: StatusCode,
@@ -561,12 +599,12 @@ async fn enqueue_refuses_case() {
 }
 
 #[test]
-fn schedules_put_list_clear_round_trip() {
+fn schedule_setting_lists_and_clears() {
     run_on_engine_stack("weave-schedules-round-trip", schedules_round_trip_case);
 }
 
-/// One reader's schedule lands, lists, clears, and lists empty again; clearing
-/// an unknown reader answers `{cleared: false}`.
+/// One reader's schedule setting lands, lists due at its `starts_at`, clears with a null
+/// value, and lists empty again.
 async fn schedules_round_trip_case() {
     let fixture = setup().await;
     let person_a = fixture.person_a.to_hex();
@@ -580,38 +618,18 @@ async fn schedules_round_trip_case() {
     assert_eq!(&empty, &json!([]), "a fresh vault holds no schedule");
     // A fixed future instant; no timer runs in the test, so nothing renders.
     let due = 4_100_000_000u64;
-    let (status, stored) = post_as_owner(
+    let (status, applied) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.put",
-        json!({
-            "reader": {"kind": "person", "reader_ref": &person_a},
-            "cadence": "daily",
-            "next_due_at": due,
-            "sections": [{"kind": "changes"}],
-        }),
+        SETTINGS_SET,
+        schedule_set(
+            READER_SCHEDULE,
+            "person",
+            &person_a,
+            schedule_value("daily", "changes", due),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "a schedule lands: {stored}");
-    assert_eq!(
-        stored["reader"]["reader_ref"].as_str(),
-        Some(person_a.as_str()),
-        "the put names its reader: {stored}"
-    );
-    assert_eq!(
-        stored["cadence"].as_str(),
-        Some("daily"),
-        "the put echoes its cadence: {stored}"
-    );
-    assert_eq!(
-        stored["next_due_at"].as_u64(),
-        Some(due),
-        "the put echoes its due time: {stored}"
-    );
-    assert_eq!(
-        stored["sections"],
-        json!([{"kind": "changes", "predicates": [], "edge_kinds": []}]),
-        "the put echoes its recipe: {stored}"
-    );
+    assert_applied(status, &applied, "a schedule lands");
     let (status, listed) = post_as_owner(
         &fixture,
         "/v1/core/facade/vault.weave.schedules.list",
@@ -624,19 +642,39 @@ async fn schedules_round_trip_case() {
         Some(1),
         "one schedule lists: {listed}"
     );
-    assert_eq!(&listed[0], &stored, "the list reads back the put");
+    let stored = &listed[0];
+    assert_eq!(
+        stored["reader"]["kind"].as_str(),
+        Some("person"),
+        "the schedule names its reader's kind: {stored}"
+    );
+    assert_eq!(
+        stored["reader"]["reader_ref"].as_str(),
+        Some(person_a.as_str()),
+        "the schedule names its reader: {stored}"
+    );
+    assert_eq!(
+        stored["cadence"].as_str(),
+        Some("daily"),
+        "the schedule reads its cadence: {stored}"
+    );
+    assert_eq!(
+        stored["next_due_at"].as_u64(),
+        Some(due),
+        "the schedule is due at its starts_at: {stored}"
+    );
+    assert_eq!(
+        stored["sections"],
+        json!([{"kind": "changes", "predicates": [], "edge_kinds": []}]),
+        "the schedule reads its recipe: {stored}"
+    );
     let (status, cleared) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.clear",
-        json!({"kind": "person", "reader_ref": &person_a}),
+        SETTINGS_SET,
+        schedule_set(READER_SCHEDULE, "person", &person_a, Value::Null),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "a clear answers: {cleared}");
-    assert_eq!(
-        cleared["cleared"].as_bool(),
-        Some(true),
-        "clearing a held schedule clears: {cleared}"
-    );
+    assert_applied(status, &cleared, "a null value clears the schedule");
     let (status, empty) = post_as_owner(
         &fixture,
         "/v1/core/facade/vault.weave.schedules.list",
@@ -649,92 +687,84 @@ async fn schedules_round_trip_case() {
         "the list reads after clear: {empty}"
     );
     assert_eq!(&empty, &json!([]), "nothing lists after clear");
-    let (status, missing) = post_as_owner(
-        &fixture,
-        "/v1/core/facade/vault.weave.schedules.clear",
-        json!({"kind": "person", "reader_ref": fresh_hex()}),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "clearing unknown answers: {missing}"
-    );
-    assert_eq!(
-        missing["cleared"].as_bool(),
-        Some(false),
-        "clearing an unknown reader clears nothing: {missing}"
-    );
 }
 
 #[test]
-fn schedules_put_refuses_a_cross_role_recipe() {
+fn schedule_setting_refuses_a_cross_role_recipe() {
     run_on_engine_stack("weave-schedules-cross-role", schedules_cross_role_case);
 }
 
-/// The role gate: an agent reader with a `budgets` section is 400, while the
-/// agent + `digest` control put lands; a person + `digest` put is 400 too.
+/// The role gate in the schedule key's hook: an agent reader with a `budgets` section is
+/// 400, while the agent + `digest` control set applies; a person + `digest` set is 400 too,
+/// and only the control's schedule stands.
 async fn schedules_cross_role_case() {
     let fixture = setup().await;
     let agent = fixture.agent_person.to_hex();
     let (status, refused) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.put",
-        json!({
-            "reader": {"kind": "agent", "reader_ref": &agent},
-            "cadence": "daily",
-            "next_due_at": 1u64,
-            "sections": [{"kind": "budgets"}],
-        }),
+        SETTINGS_SET,
+        schedule_set(
+            READER_SCHEDULE,
+            "agent",
+            &agent,
+            schedule_value("daily", "budgets", 1),
+        ),
     )
     .await;
-    assert_refusal(
+    assert_recipe_refusal(
         status,
         &refused,
-        StatusCode::BAD_REQUEST,
-        "BAD_REQUEST",
-        "invalid config: invalid weave report recipe",
         "the engine role gate refuses an agent budgets recipe",
     );
     let (status, allowed) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.put",
-        json!({
-            "reader": {"kind": "agent", "reader_ref": &agent},
-            "cadence": "daily",
-            "next_due_at": 1u64,
-            "sections": [{"kind": "digest"}],
-        }),
+        SETTINGS_SET,
+        schedule_set(
+            READER_SCHEDULE,
+            "agent",
+            &agent,
+            schedule_value("daily", "digest", 1),
+        ),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "the digest control lands: {allowed}"
-    );
-    assert_eq!(
-        allowed["sections"],
-        json!([{"kind": "digest", "predicates": [], "edge_kinds": []}]),
-        "the control echoes its recipe: {allowed}"
-    );
+    assert_applied(status, &allowed, "the digest control lands");
     let (status, refused) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.put",
-        json!({
-            "reader": {"kind": "person", "reader_ref": fixture.person_a.to_hex()},
-            "cadence": "daily",
-            "next_due_at": 1u64,
-            "sections": [{"kind": "digest"}],
-        }),
+        SETTINGS_SET,
+        schedule_set(
+            READER_SCHEDULE,
+            "person",
+            &fixture.person_a.to_hex(),
+            schedule_value("daily", "digest", 1),
+        ),
     )
     .await;
-    assert_refusal(
+    assert_recipe_refusal(
         status,
         &refused,
-        StatusCode::BAD_REQUEST,
-        "BAD_REQUEST",
-        "invalid config: invalid weave report recipe",
         "the engine role gate refuses a person digest recipe",
+    );
+    let (status, listed) = post_as_owner(
+        &fixture,
+        "/v1/core/facade/vault.weave.schedules.list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the schedules list: {listed}");
+    assert_eq!(
+        listed.as_array().map(Vec::len),
+        Some(1),
+        "only the control's schedule stands: {listed}"
+    );
+    assert_eq!(
+        listed[0]["reader"]["reader_ref"].as_str(),
+        Some(agent.as_str()),
+        "the standing schedule is the agent's: {listed}"
+    );
+    assert_eq!(
+        listed[0]["sections"],
+        json!([{"kind": "digest", "predicates": [], "edge_kinds": []}]),
+        "the control reads its recipe: {listed}"
     );
 }
 
@@ -751,16 +781,16 @@ async fn digest_reader_case() {
     let person_a = fixture.person_a.to_hex();
     let (status, stored) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.put",
-        json!({
-            "reader": {"kind": "person", "reader_ref": &person_a},
-            "cadence": "daily",
-            "next_due_at": 1u64,
-            "sections": [{"kind": "changes"}],
-        }),
+        SETTINGS_SET,
+        schedule_set(
+            READER_SCHEDULE,
+            "person",
+            &person_a,
+            schedule_value("daily", "changes", 1),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "A's schedule lands: {stored}");
+    assert_applied(status, &stored, "A's schedule lands");
     let (status, rendered) = post_as_person_a(
         &fixture,
         "/v1/core/facade/vault.weave.digest.render",
@@ -1081,16 +1111,16 @@ async fn setting_changes_case() {
     let owner = fixture.owner.to_hex();
     let (status, stored) = post_as_owner(
         &fixture,
-        "/v1/core/facade/vault.weave.schedules.put",
-        json!({
-            "reader": {"kind": "owner", "reader_ref": owner},
-            "cadence": "daily",
-            "next_due_at": 1u64,
-            "sections": [{"kind": "links"}],
-        }),
+        SETTINGS_SET,
+        schedule_set(
+            OWNER_SCHEDULE,
+            "person",
+            &owner,
+            schedule_value("daily", "links", 1),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "the owner schedule lands: {stored}");
+    assert_applied(status, &stored, "the owner schedule lands");
     let (status, echoed) = post_as_owner(
         &fixture,
         "/v1/core/facade/vault.weave.digest_feedback.put",
@@ -1122,14 +1152,13 @@ fn fresh_vault_refusal_table() {
     run_on_engine_stack("weave-refusal-table", refusal_table_case);
 }
 
-/// The gates: the 11 owner doors refuse a person, the person doors refuse an
+/// The gates: the 9 owner doors refuse a person, the person doors refuse an
 /// agent, the lens family refuses a system actor, the admin doors refuse an
 /// unstepped caller and a malformed grant, and malformed bodies refuse at
 /// their own layer. No engine-behavior rows.
 async fn refusal_table_case() {
     let fixture = setup().await;
-    let person = fixture.person_a.to_hex();
-    // W1: each of the 11 owner doors refuses a person with a body that decodes.
+    // W1: each of the 9 owner doors refuses a person with a body that decodes.
     let owner_calls = [
         (
             "vault.weave.enqueue",
@@ -1138,19 +1167,6 @@ async fn refusal_table_case() {
                 "subject_ref": fresh_hex(),
                 "evidence_ref": fresh_hex(),
             }),
-        ),
-        (
-            "vault.weave.schedules.put",
-            json!({
-                "reader": {"kind": "person", "reader_ref": person.clone()},
-                "cadence": "daily",
-                "next_due_at": 1u64,
-                "sections": [{"kind": "changes"}],
-            }),
-        ),
-        (
-            "vault.weave.schedules.clear",
-            json!({"kind": "person", "reader_ref": person.clone()}),
         ),
         ("vault.weave.schedules.list", json!({})),
         (
@@ -1455,19 +1471,4 @@ async fn refusal_table_case() {
             "{verb} names the decode failure: {body}"
         );
     }
-    // W21: a bad reader ref refuses in the wire reader mapping.
-    let (status, malformed) = post_as_owner(
-        &fixture,
-        "/v1/core/facade/vault.weave.schedules.clear",
-        json!({"kind": "person", "reader_ref": "zz"}),
-    )
-    .await;
-    assert_refusal(
-        status,
-        &malformed,
-        StatusCode::BAD_REQUEST,
-        "BAD_REQUEST",
-        "reader_ref is not an entity id",
-        "the wire reader mapping refuses a bad reader ref",
-    );
 }
