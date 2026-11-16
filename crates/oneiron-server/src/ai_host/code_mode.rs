@@ -659,6 +659,10 @@ impl CodeModeBackend {
                 .as_ref()
                 .is_some_and(|caller| caller.keeps_no_record(&self.vault));
             let record_request = self.caller.as_ref().map(|_| call.request.clone());
+            // FIX 6999: the host data routing added after the staged messages,
+            // the browser planner's handoff, has no row witness. A call that
+            // carries any names no rows, as its refreshed capture keeps none.
+            let sources = sources.filter(|_| call.request.messages.len() <= staged_len);
             let run = self
                 .models
                 .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone())
