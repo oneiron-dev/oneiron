@@ -557,7 +557,7 @@ fn live_passports_for_event_in_txn(
             .find(|(_, kept)| kept.system == value.system && kept.uid == value.uid)
         {
             Some(kept) => {
-                if claim_id.as_bytes() > kept.0.as_bytes() {
+                if claim_id.as_bytes() < kept.0.as_bytes() {
                     *kept = (claim_id, value);
                 }
             }
