@@ -564,8 +564,8 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         before: &AuthorityFold,
     ) -> Result<BTreeSet<EntityId>> {
-        let rows =
-            authority_rows_counted_since(before, &self.authority_view_readonly_in_txn(txn)?)?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let rows = authority_rows_counted_since(before, &after)?;
         self.mark_authority_rows_in_txn(txn, &rows)?;
         Ok(rows)
     }
