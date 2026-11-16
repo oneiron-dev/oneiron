@@ -118,7 +118,7 @@ pub(super) fn live_person_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId
 /// The PERSON the importing `actor` stands for: its own PERSON or its pen's,
 /// or the one owner of a vault with no authority root for its embedded owner
 /// actor ([`source_audience::embedded_owner_person_in`]).
-fn importer_person_in(
+pub(super) fn importer_person_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,

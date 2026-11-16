@@ -125,9 +125,17 @@ naming `"owner"` twice, is refused before anything is written.
 { "U012AB3CD": "owner", "U045EF6GH": "3f2a…", "U078IJ9KL": null }
 ```
 
+Every turn the import lands is born under the workspace's own facet, named
+after the workspace and worn by you: the first import makes it, and every
+later import of that name finds it again. A facet grants nothing and never
+limits what you see; it groups the workspace's turns, and an agent whose
+credential opted into that facet reads them. Conversations and messages keep
+their own facet, as for every source.
+
 The run ends with one line on the members, for example `Example: 0 of 7
 matched, kept as contacts, owner-only`. The JSON report adds a `workspace`
-object (`name`, `members`, `matched`, `contacts`, `owner_only`) and, on each
+object (`name`, `members`, `matched`, `contacts`, `owner_only`, and `facet`,
+the facet's id) and, on each
 conversation, `sharing` with the count of persons that read it (`readers`) and
 of contacts (`unmapped`). A later import of the same workspace with a longer
 map gives the newly mapped members their conversations, and one that maps a
