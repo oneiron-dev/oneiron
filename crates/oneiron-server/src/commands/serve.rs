@@ -409,6 +409,10 @@ pub(crate) async fn build_server(
     sync_server
         .browser_readiness()
         .seed(config.browser.as_ref(), None);
+    // The runner fence each seat CLI starts under, proved now so the proof's
+    // outcome is in the start log and its cost is not the first run's
+    // (L8-27).
+    let _ = sync_server.runner_fence();
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within
