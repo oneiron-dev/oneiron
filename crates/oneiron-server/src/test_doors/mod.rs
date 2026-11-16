@@ -11,6 +11,7 @@ pub mod calendar_ics_egress;
 pub mod coach_round;
 #[cfg(unix)]
 pub mod hosted_import;
+pub mod lens_frames;
 pub mod lfs_install_line;
 pub mod live_lease;
 pub mod live_run_payer;
