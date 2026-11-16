@@ -5,7 +5,6 @@
 //! moves either head re-keys the slot before its write commits.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Mutex, PoisonError};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -26,6 +25,14 @@ use super::keys::{
 };
 use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
+
+mod delete;
+mod rekey;
+
+pub(crate) use self::delete::{clear_assignment_for_delete, close_claim_heads_for_delete_in_txn};
+pub(crate) use self::rekey::{
+    AssignmentRekeys, note_claim_delete_for_rekey, note_claim_put_for_rekey,
+};
 
 /// One assignment key's two slots: occupant id then predecessor id, zeros for an empty slot.
 const SLOTS: SideTable<[u8; 32], [u8; 32], Raw> =
@@ -541,165 +548,6 @@ pub(crate) fn maintain_assignment_put(
     Ok(())
 }
 
-/// Re-keys one identity's slot from its final channel and address heads
-/// (OF-272), once a write unit has staged all its claim rows, edges and
-/// closures. Whether it occupies is its row's custody answer; the pair is
-/// its heads'. Nothing moves, and the slot keeps holding its pair, for
-/// anything but a live identity (absent, a deleted shell, another kind) or
-/// for heads that settle on no single pair: none, withdrawn, or a
-/// correction still in flight across transactions. No pair is ever taken
-/// from the row. A slot conflict is returned so the whole write rolls back.
-fn reconcile_assignment_from_claim_heads_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
-    let Some(row) = store.port_entity_record(txn, id)? else {
-        return Ok(());
-    };
-    if row.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY || ERASED.get(store, txn, id)?.is_some() {
-        return Ok(());
-    }
-    let identity = decode_channel_identity_body(&row.body)?;
-    let HeadsKey::Settled(key) = heads_key(store, txn, id)? else {
-        return Ok(());
-    };
-    move_assignment_slot(
-        store,
-        txn,
-        id,
-        &key,
-        identity.occupies_assignment_key(),
-        true,
-    )
-}
-
-/// Identities a CLAIM put, delete or `claim_of` removal moved a
-/// `channel_identity.*` head of, per store environment: one write
-/// transaction's set, since LMDB runs one write transaction per environment
-/// at a time. Only a write unit that opened [`AssignmentRekeys`] has an entry.
-type PendingRekeys = BTreeMap<usize, BTreeSet<EntityId>>;
-
-static PENDING_REKEYS: Mutex<PendingRekeys> = Mutex::new(BTreeMap::new());
-
-fn pending_rekeys<T>(f: impl FnOnce(&mut PendingRekeys) -> T) -> T {
-    f(&mut PENDING_REKEYS
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner))
-}
-
-fn pending_key(store: &Store) -> usize {
-    // Identity only: never dereferenced or kept past the write unit.
-    std::ptr::from_ref(&store.env) as usize
-}
-
-/// A write unit's assignment re-key (OF-272). The owner of a raw write
-/// transaction that may write `channel_identity.*` claims opens it with the
-/// transaction and finishes it once, right before commit, after the whole
-/// logical write. One opened inside an open one joins it, so only the
-/// outermost owner re-keys. Dropping an unfinished owner (an abort, an
-/// error, an unwind) discards what it noted, so nothing reaches the next
-/// transaction.
-#[must_use]
-pub(crate) struct AssignmentRekeys {
-    key: usize,
-    owner: bool,
-}
-
-impl AssignmentRekeys {
-    pub(crate) fn begin(store: &Store) -> Self {
-        let key = pending_key(store);
-        let owner = pending_rekeys(|pending| {
-            if pending.contains_key(&key) {
-                return false;
-            }
-            pending.insert(key, BTreeSet::new());
-            true
-        });
-        Self { key, owner }
-    }
-
-    /// Re-keys every identity noted since [`Self::begin`] from its final
-    /// heads in `txn`. An error (a slot conflict is
-    /// [`RecordError::ChannelIdentityAlreadyExists`]) must roll the write back.
-    pub(crate) fn finish(mut self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        if !self.owner {
-            return Ok(());
-        }
-        self.owner = false;
-        let noted = pending_rekeys(|pending| pending.remove(&self.key)).unwrap_or_default();
-        for id in &noted {
-            reconcile_assignment_from_claim_heads_in_txn(store, txn, id)?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for AssignmentRekeys {
-    fn drop(&mut self) {
-        if self.owner {
-            pending_rekeys(|pending| {
-                pending.remove(&self.key);
-            });
-        }
-    }
-}
-
-/// Notes, for the open [`AssignmentRekeys`], the identity a CLAIM put writes
-/// a `channel_identity.*` head for and the one the claim it overwrites was
-/// about. The put chokepoint calls it before the new body lands; with no
-/// re-key open it reads and records nothing.
-pub(crate) fn note_claim_put_for_rekey(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    body: Option<&ClaimBody>,
-) -> Result<()> {
-    let Some(body) = body else {
-        return Ok(());
-    };
-    let key = pending_key(store);
-    if !pending_rekeys(|pending| pending.contains_key(&key)) {
-        return Ok(());
-    }
-    let mut noted = Vec::new();
-    noted.extend(rekey_subject(body));
-    if let Some(old) = stored_claim_body(store, txn, id)? {
-        noted.extend(rekey_subject(&old));
-    }
-    note_rekeys(key, noted);
-    Ok(())
-}
-
-/// Notes, for the open [`AssignmentRekeys`], the identity that loses a
-/// `channel_identity.*` head when the stored claim `id` is deleted
-/// (`edge_subject` `None`, its own subject) or only its `claim_of` edge to
-/// `edge_subject` is removed. The caller runs it in the write transaction of
-/// the delete or the edge removal, while the claim row still reads; any other
-/// entity type, and any other predicate, notes nothing. With no re-key open it
-/// reads and records nothing, as [`note_claim_put_for_rekey`].
-pub(crate) fn note_claim_delete_for_rekey(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    edge_subject: Option<EntityId>,
-) -> Result<()> {
-    let key = pending_key(store);
-    if !pending_rekeys(|pending| pending.contains_key(&key)) {
-        return Ok(());
-    }
-    let Some(old) = stored_claim_body(store, txn, id)? else {
-        return Ok(());
-    };
-    let noted = match edge_subject {
-        Some(subject) if is_channel_identity_claim_predicate(&old.predicate) => Some(subject),
-        Some(_) => None,
-        None => rekey_subject(&old),
-    };
-    note_rekeys(key, noted);
-    Ok(())
-}
-
 /// The claim stored at `id` in `txn`, when the row is a CLAIM whose body
 /// decodes.
 fn stored_claim_body(
@@ -711,123 +559,6 @@ fn stored_claim_body(
         .port_entity_record(txn, id)?
         .filter(|prior| prior.entity_type == ENTITY_TYPE_CLAIM)
         .and_then(|prior| crate::claim::decode_claim_body(&prior.body, true).ok()))
-}
-
-fn note_rekeys(key: usize, noted: impl IntoIterator<Item = EntityId>) {
-    pending_rekeys(|pending| {
-        if let Some(set) = pending.get_mut(&key) {
-            set.extend(noted);
-        }
-    });
-}
-
-fn rekey_subject(body: &ClaimBody) -> Option<EntityId> {
-    match body.subject {
-        ClaimSubject::Entity(subject) if is_channel_identity_claim_predicate(&body.predicate) => {
-            Some(subject)
-        }
-        _ => None,
-    }
-}
-
-/// Clears every reference to a deleted ChannelIdentity before its body is
-/// removed or soft-erased. The caller supplies the stored type while the row
-/// is still readable, and stages this in the SAME write transaction as deletion.
-///
-/// Scan the small assignment projection rather than deriving just one key
-/// from the body: a damaged body or stray second slot must not leave a dangling
-/// occupant or predecessor behind. A successor in the other slot is preserved.
-///
-/// A self-held row holds its address forever (never-recycle), so its delete
-/// keeps it as the key's occupant: the record goes, the address stays bound to
-/// the deleted id, and a fresh id is refused (H102). The deletion marker below
-/// is what tells readers that occupant routes nothing. A delegated row frees
-/// its key, as its retirement does.
-pub(crate) fn clear_assignment_for_delete(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-) -> Result<()> {
-    if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-        return Ok(());
-    }
-    // FIX 6424 part 3: the erased identity's kept lifecycle receipts go.
-    crate::channel_identity_lifecycle::drop_lifecycle_requests_of_identity_in_txn(store, txn, id)?;
-    crate::phone_line::drop_identity_in_txn(store, txn, id)?;
-    // Its mailbox progress and the messages a run set aside from its mailbox
-    // go with it, on the tear and the soft erase alike.
-    crate::channel_identity_provider::mailbox_cursor::drop_mailbox_cursor_in_txn(store, txn, id)?;
-    crate::channel_identity_provider::mailbox_skipped::drop_skipped_messages_in_txn(
-        store, txn, id,
-    )?;
-    crate::channel_identity_provider::native_mail::drop_native_mail_skipped_messages_in_txn(
-        store, txn, id,
-    )?;
-    let holds_address = match store.port_entity_record(txn, id)? {
-        Some(row) => match decode_channel_identity_body(&row.body) {
-            Ok(row) => !row.is_delegated(),
-            // A soft erase's shell kept the hold it took then.
-            Err(_) => ERASED.get(store, txn, id)?.is_some(),
-        },
-        None => false,
-    };
-    let mut changed = Vec::new();
-    for item in SLOTS.iter_from(store, &*txn, &[])? {
-        let (key, mut slot) = item?;
-        let mut touched = false;
-        let (occupant, predecessor) = slot.split_at_mut(16);
-        if occupant == id.as_bytes() && !holds_address {
-            occupant.fill(0);
-            touched = true;
-        }
-        if predecessor == id.as_bytes() {
-            predecessor.fill(0);
-            touched = true;
-        }
-        if touched {
-            changed.push((key, slot));
-        }
-    }
-    for (key, slot) in changed {
-        if slot == [0; 32] {
-            SLOTS.delete(store, txn, &key)?;
-        } else {
-            SLOTS.put(store, txn, &key, &slot)?;
-        }
-    }
-    // Soft erase retains the type-index row and a metadata-only shell. This
-    // marker proves that empty body was deleted rather than live corruption,
-    // and on either tier marks a kept occupant as a hold. It is retired on put.
-    ERASED.put(store, txn, id, &[1])?;
-    Ok(())
-}
-
-/// Closes a deleted ChannelIdentity's own `channel_identity.*` heads, the
-/// claim half of [`clear_assignment_for_delete`] (OF-272). The caller stages
-/// it in the SAME write transaction as the deletion, with the type it read
-/// while the row was still readable, and BEFORE the deletion tears the
-/// `claim_of` edges the heads are found by: each live head is closed
-/// `retracted` at `now` on the family's engine-owned setting, so a deleted
-/// identity has no live facts and its heads leave the live postings. Other
-/// kinds are left alone.
-pub(crate) fn close_claim_heads_for_delete_in_txn(
-    writer: &crate::counterparty_contact::ClaimHeadWriter<'_>,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    now: u64,
-) -> Result<()> {
-    if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-        return Ok(());
-    }
-    writer.retract_subject_heads_in_txn(
-        txn,
-        id,
-        super::codec::is_channel_identity_claim_predicate,
-        now,
-    )?;
-    Ok(())
 }
 
 /// Explicit CID-7 recovery. Only this door scans stored rows; normal routing
