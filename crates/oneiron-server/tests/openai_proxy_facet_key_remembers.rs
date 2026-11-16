@@ -369,5 +369,10 @@ async fn facet_narrowed_key_core_door_refused() {
         StatusCode::FORBIDDEN,
         "the key's own-subject proposal on the core door is refused: {body}"
     );
+    assert!(
+        body.to_string()
+            .contains("subject not found or not readable"),
+        "the core door's own subject read refuses it: {body}"
+    );
     paired.host.shutdown().await;
 }
