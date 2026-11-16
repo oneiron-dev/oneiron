@@ -443,6 +443,8 @@ fn owned_by(
 /// Admin grant that holds the record (a Delegate), and on a shared vault
 /// keeps its pact membership. Grants are never unioned. On an owner's agent
 /// Grant, a verb class it names that admits `delete` lists it (FIX 8735).
+/// Only a Grant the fold stands behind counts ([`delegate_stands`]), never a
+/// row alone (pass 28 R3).
 fn agent_arm(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -481,6 +483,9 @@ fn agent_arm(
         {
             continue;
         }
+        if !delegate_stands(vault, txn, id, &grant, now)? {
+            continue;
+        }
         let issuer_stands = match grant.delegated_by {
             Some(owner) if grant.owner_agent => owners.contains(&owner),
             Some(issuer) => issuer_holds(vault, txn, issuer, &owners, position)?,
@@ -495,6 +500,33 @@ fn agent_arm(
         }));
     }
     Ok(None)
+}
+
+/// Whether the fold stands behind the live Delegate row `id`, which holds
+/// `grant`, at `now` (pass 28 R3): an owner's agent Grant on its counted mint,
+/// as the agent Grant list reads it ([`Vault::agent_grant_standing_in_txn`]),
+/// and an admin's delegate on its counted Delegate giving
+/// ([`super::shared_grant_row_in_fold`]). A row no counted act gives, one put
+/// back after its end and one whose terms are not its act's delete nothing.
+fn delegate_stands(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    grant: &FederationGrant,
+    now: u64,
+) -> Result<bool> {
+    if grant.owner_agent {
+        return Ok(vault.agent_grant_standing_in_txn(txn, id)?.is_some());
+    }
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+        body,
+    } = live_entity_row_in_txn(&vault.store, txn, &id)?
+    else {
+        return Ok(false);
+    };
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    Ok(super::shared_grant_row_in_fold(&fold, id, &body, now).is_some())
 }
 
 /// Whether the person who gave a Delegate still deletes `position`: a live

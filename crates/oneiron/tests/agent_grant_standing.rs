@@ -1,9 +1,10 @@
 //! The owner's agent Grants confer only on their counted mint (pass 28 R3).
 //!
 //! A FEDERATION_GRANT row gives nothing by itself: a row no counted mint gives names no
-//! `ai.*` operation and shows in the owner's consent registry as revoked, and a minted row
-//! widened in place stands for nothing until the owner mints the wider terms. The honest
-//! mint keeps its standing, and a revoked Grant's row put back stays revoked.
+//! `ai.*` operation, deletes nothing and shows in the owner's consent registry as revoked,
+//! and a minted row widened in place stands for nothing until the owner mints the wider
+//! terms. The honest mint keeps its standing and its delete, and a revoked Grant's row put
+//! back stays revoked.
 //!
 //! Runs on public paths and the test doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
@@ -19,17 +20,25 @@ use oneiron::consent::{
     AuthenticatedOwner, ConsentGrantStatus, ConsentRegistryQuery, ConsentRegistryRow,
 };
 use oneiron::federation::{FederationGrant, Scope, ScopeAxis, decode_federation_grant_body};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
+use oneiron::note::TakeTarget;
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::task_verb::sdk::invoke;
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::grant_act::put_unkeyed_member_grant;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::verbs::{
-    AgentGrantMintRequest, AgentGrantRevokeRequest, mint_agent_grant_as, revoke_agent_grant_as,
+    AgentDefinitionCreateRequest, AgentGrantMintRequest, AgentGrantRevokeRequest,
+    create_agent_definition_as, mint_agent_grant_as, revoke_agent_grant_as,
 };
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
+use serde_json::json;
 
 struct Fixture {
     vault: Vault,
     _dir: tempfile::TempDir,
+    owner: EntityId,
     owner_proof: AuthenticatedOwner,
 }
 
@@ -40,13 +49,14 @@ fn fixture() -> Fixture {
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    let (_owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("this install's live machine profile");
     Fixture {
         vault,
         _dir: dir,
+        owner,
         owner_proof,
     }
 }
@@ -112,6 +122,68 @@ fn named_agent(vault: &Vault, name: &str) -> EntityId {
         .expect("a named agent principal")
 }
 
+/// An enabled, active agent definition the owner creates: an agent that calls verbs.
+fn defined_agent(fixture: &Fixture, agent_id: &str) -> EntityId {
+    let agent = EntityId::now();
+    create_agent_definition_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        AgentDefinitionCreateRequest {
+            agent_def_ref: agent,
+            definition: serde_json::from_value(json!({
+                "agent_id": agent_id,
+                "desc": "Agent Grant standing test agent",
+                "version": "1.0.0",
+                "ceiling": "auto",
+                "enabled": true,
+            }))
+            .expect("typed agent definition"),
+        },
+    )
+    .expect("the owner creates an enabled, active agent definition");
+    agent
+}
+
+/// A NOTE the owner writes about a fresh person, by its full hex ref.
+fn owner_note(fixture: &Fixture) -> String {
+    let subject = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a live person");
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .author_take(TakeTarget::Subject(subject), "a take about the subject")
+        .expect("the owner authors a NOTE")
+        .id_hex
+}
+
+/// `agent` calls the `vault.delete` verb on `note`.
+fn agent_deletes(
+    vault: &Vault,
+    agent: EntityId,
+    note: &str,
+) -> Result<serde_json::Value, MemoryError> {
+    invoke(
+        &vault.memory(agent, EdgeActorClass::Agent),
+        "vault.delete",
+        json!({ "entity_ref": note, "reason": "user_delete" }),
+    )
+}
+
+fn deleted(vault: &Vault, note: &str) -> bool {
+    vault
+        .is_deleted_shell(&EntityId::from_hex(note).expect("note id"))
+        .expect("shell read")
+}
+
 /// Puts the honest Grant `template`'s terms for `holder` at a fresh id, with no act: a
 /// forged row that passes every check of the row alone.
 fn put_bare_copy(vault: &Vault, template: &FederationGrant, holder: EntityId) -> EntityId {
@@ -136,6 +208,56 @@ fn a_bare_agent_grant_row_names_no_ai_operation() {
         operations.is_empty(),
         "agent={mika:?} grant={forged:?}; expected a row no counted mint gives to name no ai \
          operation; seen operations={operations:?}"
+    );
+}
+
+/// Catches a bare agent Grant row conferring delete: the delete authority's agent arm read
+/// every live Delegate row naming the agent alone (review of R3a's fix, P2-1).
+#[test]
+fn a_bare_agent_grant_row_deletes_nothing() {
+    let fixture = fixture();
+    let yuki = defined_agent(&fixture, "standing_delete_agent");
+    let mika = defined_agent(&fixture, "standing_read_agent");
+    let honest = mint(&fixture, yuki, &["read", "delete"]);
+    mint(&fixture, mika, &["read"]);
+    let template = row(&fixture.vault, honest);
+    let forged = put_bare_copy(&fixture.vault, &template, mika);
+    let note = owner_note(&fixture);
+
+    let refused = agent_deletes(&fixture.vault, mika, &note);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.code == MEMORY_CODE_FORBIDDEN
+                && error.message.starts_with("no_delete_grant:")),
+        "agent={mika:?} grant={forged:?}; expected a row no counted mint gives to confer no \
+         delete; seen {refused:?}"
+    );
+    assert!(
+        !deleted(&fixture.vault, &note),
+        "note={note}; expected the refused NOTE untouched"
+    );
+}
+
+/// Guard: the owner's minted delete Grant still deletes through `vault.delete`.
+#[test]
+fn a_minted_agent_grant_deletes() {
+    let fixture = fixture();
+    let yuki = defined_agent(&fixture, "standing_delete_agent");
+    let id = mint(&fixture, yuki, &["read", "delete"]);
+    let note = owner_note(&fixture);
+
+    let receipt = agent_deletes(&fixture.vault, yuki, &note);
+    assert!(
+        receipt
+            .as_ref()
+            .is_ok_and(|receipt| receipt["existed"] == true),
+        "agent={yuki:?} grant={id:?}; expected the minted delete Grant to delete; seen \
+         {receipt:?}"
+    );
+    assert!(
+        deleted(&fixture.vault, &note),
+        "note={note}; expected the NOTE a deleted shell"
     );
 }
 
