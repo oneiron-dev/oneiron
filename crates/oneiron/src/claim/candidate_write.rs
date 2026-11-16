@@ -7,8 +7,19 @@ use crate::ports::EntityStoreRead;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
+use std::collections::{HashMap, VecDeque};
 
 impl Vault {
+    /// `gate_decision`: the decision the write gate already recorded for this
+    /// exact candidate in an earlier transaction (a live-run claim put's
+    /// pre-check, FIX LIVE-RUN-CHECKER-INJECT). The apply reuses it rather
+    /// than judge the candidate again (FIX 8752): a checker that decision
+    /// consulted is not asked twice, and its hold stays the verdict. `None`
+    /// judges it here.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the candidate apply carries the gate decision its pre-check recorded"
+    )]
     pub(super) fn apply_candidate_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -17,7 +28,13 @@ impl Vault {
         envelope: &WriteEnvelope,
         occurred: TimeRange,
         learned_at: u64,
+        gate_decision: Option<crate::store::GateDecisionId>,
     ) -> Result<()> {
+        let mut gate_mode = ApplyOpsGateMode::new(false, true).with_source_in_gate_input();
+        if let Some(decision) = gate_decision {
+            let preflight = HashMap::from([(id, VecDeque::from([Some(decision)]))]);
+            gate_mode = gate_mode.with_preflight_gate_decision_ids(preflight);
+        }
         crate::batch::apply_ops_with_gate_mode(
             &self.store,
             &self.config,
@@ -39,7 +56,7 @@ impl Vault {
             ],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
+            gate_mode,
         )
     }
 
@@ -47,6 +64,16 @@ impl Vault {
     /// original and returns its successor. Stable state and non-semantic
     /// updates keep their requested id. The landing and both writes share
     /// one transaction; neither a refused birth nor a refused close commits.
+    ///
+    /// `gate_decision`: the decision the write gate recorded for the
+    /// requested row ([`Self::apply_candidate_in_txn`]). It answers only for
+    /// that row: a successor is a fresh row, which that decision did not
+    /// judge (a re-put the gate saw closing its stored value consults no
+    /// checker), so the successor is judged afresh.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the claim put carries its landing and the gate decision its pre-check recorded"
+    )]
     pub(crate) fn put_claim_candidate_with_landing_returning_actual(
         &self,
         id: &EntityId,
@@ -55,6 +82,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        gate_decision: Option<crate::store::GateDecisionId>,
     ) -> Result<EntityId> {
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut txn = self.store.env.write_txn()?;
@@ -85,7 +113,16 @@ impl Vault {
             }
             None => (*id, candidate),
         };
-        self.apply_candidate_in_txn(&mut txn, actual, candidate, envelope, occurred, learned_at)?;
+        let gate_decision = gate_decision.filter(|_| actual == *id);
+        self.apply_candidate_in_txn(
+            &mut txn,
+            actual,
+            candidate,
+            envelope,
+            occurred,
+            learned_at,
+            gate_decision,
+        )?;
         if actual != *id {
             self.supersede_claim_in_txn_as(
                 &mut txn,

@@ -393,12 +393,32 @@ impl HostSelfDispatcher<'_> {
         let envelope = self
             .write_envelope_with(SelfEffect::MemoryPutClaim, admission.as_ref(), producer)?
             .with_approval(approval);
-        // The write gate reads no facet; the stored body takes the vault
+        // A live run's put to canonical storage is reviewed by the checker
+        // its door lent (FIX LIVE-RUN-CHECKER-INJECT).
+        let lent_checker = match (&self.storage, self.auto_checker) {
+            (ExecutorStorage::Canonical(vault), Some(checker)) if checker_review => {
+                Some((*vault, checker))
+            }
+            _ => None,
+        };
+        // The write gate reads no facet. A put reviewed by a lent checker is
+        // judged as its landing stores it, at the facet the landing stamps,
+        // so the decision its gate records names the stored body (its diff
+        // handle) and the landing can reuse it. Any other put's gate body
+        // takes its writer's substrate facet, and the stored body the vault
         // default when the write applies.
-        let gate_body = candidate.clone().into_claim_body(
-            &envelope,
-            crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
-        )?;
+        let gate_facet = match lent_checker {
+            Some((vault, _)) => {
+                let txn = vault.store.env.read_txn()?;
+                crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+                    &vault.store,
+                    &txn,
+                    &call.id,
+                )?
+            }
+            None => crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+        };
+        let gate_body = candidate.clone().into_claim_body(&envelope, gate_facet)?;
         let authored_rules = crate::dreamer_consolidation::prepare_authored_claim(
             &gate_body.predicate,
             &gate_body.value,
@@ -426,7 +446,28 @@ impl HostSelfDispatcher<'_> {
         )? {
             return Ok(refused);
         }
-        self.check_write_gate(call.id, &gate_body, &envelope, true)?;
+        // The lent checker reviews the put once: its gate consults it and
+        // records the decision, which the landing reuses (FIX 8752). Its turn
+        // is taken before any write transaction opens, as the Dreamer's
+        // writer takes it (FIX 8751), so the gate never waits for capacity.
+        let gate_decision = match lent_checker {
+            Some((vault, checker)) => {
+                let checker = checker.admit_for_writes(&vault.store, self.actor.entity_ref())?;
+                super::envelope::check_write_gate_against_vault_with_checker(
+                    vault,
+                    call.id,
+                    &gate_body,
+                    &envelope,
+                    true,
+                    |_| Ok(()),
+                    Some(&checker),
+                )?
+            }
+            None => {
+                self.check_write_gate(call.id, &gate_body, &envelope, true)?;
+                None
+            }
+        };
         let actual_id = match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .put_claim_candidate_with_landing_returning_actual(
@@ -436,6 +477,7 @@ impl HostSelfDispatcher<'_> {
                     call.occurred,
                     call.learned_at,
                     |_| Ok(()),
+                    gate_decision,
                 )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,

@@ -261,15 +261,49 @@ pub(crate) fn check_write_gate_against_vault(
     can_resolve_pending_consent: bool,
     landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
+    check_write_gate_against_vault_with_checker(
+        vault,
+        id,
+        body,
+        envelope,
+        can_resolve_pending_consent,
+        landing,
+        None,
+    )
+    .map(drop)
+}
+
+/// [`check_write_gate_against_vault`] with the host's auto checker a live-run
+/// door lent (FIX LIVE-RUN-CHECKER-INJECT), which the gate consults as it
+/// consults one for a Dreamer write. Answers the decision it recorded, so the
+/// write's landing reuses it rather than judge the candidate again (FIX
+/// 8752). A refusal answers only its refusal; its decision is committed.
+pub(super) fn check_write_gate_against_vault_with_checker(
+    vault: &Vault,
+    id: EntityId,
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    can_resolve_pending_consent: bool,
+    landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    checker: Option<&crate::llm::BoundedAutoChecker>,
+) -> Result<Option<crate::store::GateDecisionId>> {
     let mut wtxn = vault.store.env.write_txn()?;
     landing(&wtxn)?;
     validate_write_actor_binding(vault, &wtxn, envelope)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-    let gate_result = crate::gate::check_claim_policy_for_write(
+    let mut recorded = None;
+    // This door pre-checks a PERSISTED claim candidate, so it keeps the full
+    // GATE-12 floor (the record seam never opens the synthetic-operation
+    // mode, which belongs only to the memory verbs' own gate bodies in
+    // `claim/put.rs`).
+    let gate_result = crate::gate::check_claim_policy_for_write_with_record(
         &vault.store,
         &mut wtxn,
         &id,
-        crate::gate::ClaimGateWrite::plain(body, Some(envelope)),
+        crate::gate::ClaimGateWrite {
+            auto_checker: checker,
+            ..crate::gate::ClaimGateWrite::plain(body, Some(envelope))
+        },
         &policy,
         crate::gate::GateWriteMode {
             record_decision: true,
@@ -278,13 +312,10 @@ pub(crate) fn check_write_gate_against_vault(
             can_resolve_pending_consent,
             include_source_in_gate_input: true,
         },
-        // This door pre-checks a PERSISTED claim candidate, so it keeps the
-        // full GATE-12 floor: the synthetic-operation mode belongs only to the
-        // memory verbs' own gate bodies in `claim/put.rs`.
-        false,
+        &mut recorded,
     );
     wtxn.commit()?;
-    gate_result
+    gate_result.map(|()| recorded.map(|decision| decision.decision_id()))
 }
 
 fn validate_write_actor_binding(

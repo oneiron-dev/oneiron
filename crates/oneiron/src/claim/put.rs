@@ -391,7 +391,9 @@ impl Vault {
         landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
+        self.apply_candidate_in_txn(
+            &mut wtxn, *id, candidate, envelope, occurred, learned_at, None,
+        )?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
