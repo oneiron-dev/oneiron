@@ -26,7 +26,7 @@ pub(crate) mod setting_keys;
 mod solo;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
-    InferencePolicySnapshot,
+    InferencePolicySnapshot, InferenceRefusal,
 };
 #[doc(hidden)]
 pub(crate) use oneiron_consent_state::llm::entity_refs;
@@ -194,8 +194,8 @@ pub use oneiron_model::llm::{
     LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
     PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
     ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
-    TransportFault, TransportFaultKind, UnsupportedCapability,
+    SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
+    TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 
 #[cfg(test)]
