@@ -528,7 +528,6 @@ pub(crate) fn require_holding_machine(
         .map_err(|_| not_valid(MACHINE_PROOF_NOT_VALID))?;
     let folded = fold
         .machine(request.machine)
-        .filter(|folded| folded.chains().all(|(_, chain)| !chain.removed))
         .ok_or_else(|| not_valid(MACHINE_PROOF_NOT_VALID))?;
     let mut verified = false;
     for (_, chain) in folded.chains() {

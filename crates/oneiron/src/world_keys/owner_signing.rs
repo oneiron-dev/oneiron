@@ -267,7 +267,6 @@ impl Vault {
     /// anything, and the slot is read, checked and renewed under this
     /// vault's `owner_signing_slot_lock`.
     fn device_owner_key_for_enrollment(&self, authority: &ActAuthority) -> Result<DeviceOwnerKey> {
-        self.owner_key_act_owner(authority)?;
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
@@ -277,6 +276,7 @@ impl Vault {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let mut signer = slot_owner_signer(keystore.as_ref(), &slot)?;
+        self.owner_key_act_owner(authority)?;
         // The owner's proof is revalidated before the roster is read.
         let mut challenge =
             self.owner_key_enrollment_challenge_as(authority, machine, &signer.public_key())?;
