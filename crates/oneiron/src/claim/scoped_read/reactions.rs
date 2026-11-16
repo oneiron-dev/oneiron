@@ -243,8 +243,10 @@ impl ScopedRead<'_> {
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
     /// messages this read reads get pills, and a pill counts only the
     /// reactions it reads, each under its whole admission. The pills come
-    /// with the receipt of that read (FIX 8669). Like every read on this
-    /// lane, an owner lane refuses once its binding is gone.
+    /// with the receipt of that read (FIX 8669). The reaction claims a pill
+    /// counts count toward the reader's read exposure (L8-65), as a reaction
+    /// line's do. Like every read on this lane, an owner lane refuses once its
+    /// binding is gone.
     pub fn reaction_pills(
         &self,
         messages: &[EntityId],
@@ -260,11 +262,17 @@ impl ScopedRead<'_> {
                 readable.push(*message);
             }
         }
+        let mut counted = Vec::new();
         let value = self
             .vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
-                self.row_admitted_in(&rtxn, &admission, &row.id)
+                let admitted = self.row_admitted_in(&rtxn, &admission, &row.id)?;
+                if admitted {
+                    counted.push(row.id);
+                }
+                Ok(admitted)
             })?;
+        self.charge_served(counted);
         Ok(ScopedReadResult {
             value,
             receipt: admission.receipt,
