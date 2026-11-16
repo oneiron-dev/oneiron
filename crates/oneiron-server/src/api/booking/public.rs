@@ -5,8 +5,9 @@ use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
-    BookingPageLens, BookingPageModel, BookingPagePublication, BookingVerb,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, slot_mask,
+    BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication,
+    BookingVerb, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
+    slot_mask,
 };
 use oneiron::settings::ReadDestination;
 
@@ -192,12 +193,14 @@ pub(crate) async fn render_public_booking_page(
         .booking_conversion_policy(None)
         .map_err(booking_error)?;
     let model = BookingPageModel::new(
-        publication.owner_display,
-        publication.event_types,
+        BookingPagePresentation {
+            owner_display: publication.owner_display,
+            event_types: publication.event_types,
+            constraint_field: publication.constraint_field,
+            theme: publication.theme,
+            landing: publication.landing,
+        },
         slots,
-        publication.constraint_field,
-        publication.theme,
-        publication.landing,
         request.visitor_tz,
         &policy,
     )
