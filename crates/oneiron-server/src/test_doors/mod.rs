@@ -11,6 +11,7 @@ pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod catch_all_status;
 pub mod coach_round;
+pub mod compaction_pass;
 pub mod connector_sends;
 #[cfg(unix)]
 pub mod hosted_import;
