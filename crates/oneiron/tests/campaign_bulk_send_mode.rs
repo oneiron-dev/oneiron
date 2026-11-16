@@ -35,6 +35,7 @@ use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{SurfaceCall, invoke_campaign_surface, launch_campaign};
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use oneiron::counterparty_contact::CounterpartyContactRecord;
+use oneiron::memory::campaign_records::CampaignSendMode;
 use oneiron::outbound_consent::{OutboundResultSender, OutboundTransportResult};
 use oneiron::outbound_intent_ledger::FrozenOutboundCall;
 use oneiron::saved_query::{
@@ -228,6 +229,31 @@ fn bulk_campaign_create_read_round_trips_send_mode() {
             .is_err_and(|err| format!("{err:?}").contains("send_mode")),
         "an unknown send mode is refused by name: {refused:?}"
     );
+}
+
+/// The two stored tokens, generated from
+/// `scripts/ratchet/hand_name_tables.py --names --only crates/oneiron/src/memory/campaign_records/records.rs`
+/// before `CampaignSendMode` became a Register: the words a stored campaign
+/// definition and a frozen send envelope carry. Green on the hand table and
+/// on the derive, so no stored row changes meaning (M-1 keep).
+#[test]
+fn send_mode_keeps_its_stored_tokens() {
+    // `as_str` is a `const fn` on the hand table and on the derive alike.
+    const BULK: &str = CampaignSendMode::Bulk.as_str();
+    assert_eq!(BULK, "bulk");
+    assert_eq!(CampaignSendMode::OneToOne.as_str(), "one_to_one");
+    assert_eq!(CampaignSendMode::Bulk.as_str(), "bulk");
+    assert_eq!(
+        CampaignSendMode::parse("one_to_one"),
+        Some(CampaignSendMode::OneToOne)
+    );
+    assert_eq!(
+        CampaignSendMode::parse("bulk"),
+        Some(CampaignSendMode::Bulk)
+    );
+    assert_eq!(CampaignSendMode::parse("Bulk"), None);
+    assert_eq!(CampaignSendMode::parse("one-to-one"), None);
+    assert_eq!(CampaignSendMode::parse(""), None);
 }
 
 // ---------------------------------------------------------------------------

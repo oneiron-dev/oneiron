@@ -103,6 +103,8 @@ pub(crate) struct ShadowBridgeHost<'a> {
     reads: ArmReads,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     watch: LimitWatch,
+    /// The owner's search context bound, frozen for the arm's reads.
+    search_max_context: usize,
     streams: ArmStreams,
     /// The run's full output count as the step started (FIX 1393
     /// follow-up): the base the arm's store ordinals count from, the same
@@ -169,6 +171,7 @@ impl<'a> ShadowBridgeHost<'a> {
             bridge_end: prepared.bridge_end,
             reads,
             watch: LimitWatch::new(limits),
+            search_max_context: prepared.search_max_context,
             streams: ArmStreams::default(),
             output_ordinal_base: crate::engine_executor::store_ordinal_base(&prepared.prefix),
             spilled: 0,
