@@ -183,12 +183,13 @@ fn entity_ref(field: &str, hex: &str) -> MemoryResult<EntityId> {
 /// exchange (its ask and answer, and whether an erase scrubbed an older
 /// draft): the Coach's answer is built from rows no attempt places (the
 /// agent's pads, the skills its run loaded, its TASK's text), so it stays
-/// whole-vault-only. A card keeps the dial it was measured against,
-/// whichever row set it: a dial in force over the reader's own project is
-/// that project's governance, which the reader is subject to, while the
-/// vault's rows themselves and the catalog stay out of the narrowed
-/// `vault.settings.learning` (Engine rulings U08-CARD-COACH-SCOPE and
-/// U08-CARD-DIAL-SCOPE, 16 Nov).
+/// whole-vault-only. Its stuck mark (`agent_blocked`) stands only while its
+/// own TASK reads Blocked ([`task_reads_blocked_in_txn`]). A card keeps the
+/// dial it was measured against, whichever row set it: a dial in force over
+/// the reader's own project is that project's governance, which the reader
+/// is subject to, while the vault's rows themselves and the catalog stay out
+/// of the narrowed `vault.settings.learning` (Engine rulings
+/// U08-CARD-COACH-SCOPE and U08-CARD-DIAL-SCOPE, 16 Nov).
 ///
 /// # Errors
 ///
@@ -210,10 +211,35 @@ pub fn agent_health_cards(
         for card in &mut cards {
             card.coach = None;
             card.legacy_draft_scrubbed = false;
+            if card.agent_blocked {
+                card.agent_blocked = task_reads_blocked_in_txn(vault, &txn, card.task)?;
+            }
         }
     }
     cards.truncate(limit(input.limit));
     Ok(cards)
+}
+
+/// Whether `task`, a narrowed card's own TASK, reads Blocked in `txn`: the
+/// one source of the stuck mark (`agent_blocked`) a narrowed reader reads.
+/// The mark's other source is the agent's own blocked report. A report the
+/// host ran under no attempt binds none and speaks for every attempt of its
+/// agent, so it rests in no project; and the stored mark does not say which
+/// source set it. So a mark that its TASK does not carry stays
+/// whole-vault-only, as the Coach exchange does (REVIEW-8771 P1).
+fn task_reads_blocked_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: Option<EntityId>,
+) -> MemoryResult<bool> {
+    let Some(task) = task else {
+        return Ok(false);
+    };
+    Ok(
+        crate::task_verb::task_is_blocked_with_source_in(vault, txn, task)
+            .map_err(MemoryError::from)?
+            .is_some_and(|(blocked, _)| blocked),
+    )
 }
 
 /// One agent's call receipts since `since` (`vault.agent_health.calls`),
