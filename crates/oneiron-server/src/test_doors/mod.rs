@@ -10,7 +10,6 @@ pub mod booking_turn_line;
 pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod coach_round;
-pub mod hosted_egress_guards;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
@@ -33,5 +32,6 @@ pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod voice_call;
+pub mod web_egress_guards;
 pub mod wire_health_sweep;
 pub mod workflow_park;

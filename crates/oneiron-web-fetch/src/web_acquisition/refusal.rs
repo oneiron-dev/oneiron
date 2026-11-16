@@ -21,8 +21,8 @@ pub enum HostedEgressRefusal {
     /// Hosted infrastructure: loopback, "this host", link-local, a cloud
     /// metadata endpoint or one of the node's own addresses.
     Infrastructure,
-    /// A private network (RFC1918, CGNAT, ULA) no operator network or origin
-    /// admits (FIX 7657, HOSTED-EGRESS-OPERATOR-SETTING).
+    /// A private network (RFC1918, CGNAT, ULA) no operator origin admits
+    /// (FIX 7657).
     PrivateNetwork,
 }
 
@@ -103,7 +103,7 @@ impl std::fmt::Display for HostedEgressRefusal {
             ),
             Self::PrivateNetwork => write!(
                 f,
-                "web fetch refused ({HOSTED_PRIVATE_NETWORK_REASON}): on a hosted node, the destination is a private-network address (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the networks and origins the hosting operator allows; a self-hosted node fetches it, or the hosting operator can allow its private network or its named private origin"
+                "web fetch refused ({HOSTED_PRIVATE_NETWORK_REASON}): on a hosted node, the destination is a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
             ),
         }
     }
