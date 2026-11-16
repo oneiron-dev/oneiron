@@ -26,7 +26,12 @@
 //! rechecks liveness and authority, so a dangling id is safe. A one-unit
 //! `tasks.ask` or health question is its one answer, so its one version,
 //! its matching head and its watch go with the answer, as FIX 9918 does.
-//! An erased outcome fact's deferred outcome marks go with it.
+//! An erased outcome fact's deferred outcome marks go with it. Every
+//! question version either erase drops takes the Coach's override records of
+//! that version with it (FIX ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS): a
+//! one-unit question erased with its unit keeps a record whose principal is
+//! someone else, and the actor scrub of the person-changed tables, by
+//! principal and source, never meets it.
 
 use std::collections::BTreeSet;
 
@@ -294,6 +299,19 @@ pub(crate) fn erase_questions_for_actor_in_txn(
     }
     for seq in &unit_asks {
         UNIT_ASKS.delete(&vault.store, wtxn, seq)?;
+    }
+    if !doomed.is_empty() || !cascades.is_empty() {
+        crate::dreamer_runner::maintenance::coach::erase_person_changed_question_in_txn(
+            &vault.store,
+            wtxn,
+            |question, version| {
+                doomed.contains(&question)
+                    || cascades.contains(&VersionKey {
+                        id: question,
+                        version,
+                    })
+            },
+        )?;
     }
     // A trained head bound to an erased question version goes with it, its
     // run back to scored (FIX 3864).

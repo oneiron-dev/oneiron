@@ -34,12 +34,15 @@ use rmpv::Value;
 mod eval_measurement;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
+// A question teardown's override records (ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS).
+mod question_erase;
 // Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
 mod think_threshold;
 
 pub use self::think_threshold::ThinkThresholdPolicy;
 
 pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
+pub(crate) use self::question_erase::erase_person_changed_question_in_txn;
 
 pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 /// Skill authoring from sessions: the session-end `actor.*` craft-note distill

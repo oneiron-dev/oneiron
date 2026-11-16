@@ -6,6 +6,10 @@
 //! transaction, at both delete doors ([`crate::deletion`]), so no question
 //! read serves an erased selection. A generic question's version, used by
 //! surviving answers, stays.
+//!
+//! A teardown that drops a question version also drops the Coach's override
+//! records of that version (FIX ERASED-QUESTION-KEEPS-PERSON-CHANGED-PAIRS),
+//! so no person-changed pair outlives the head that judged it.
 
 use super::arrival::unwatch;
 use super::records::AnswerRecord;
@@ -58,9 +62,14 @@ pub(crate) fn erase_question_source_in_txn(
         return Ok(());
     }
     // A tasks.ask question is its one answer: its version holds the copied
-    // selection as its only option, so the version, its head and its watch
-    // go with the answer.
+    // selection as its only option, so the version, its head, its watch and
+    // the override records of that version go with the answer.
     QUESTION_VERSION.delete(store, wtxn, &version)?;
+    crate::dreamer_runner::maintenance::coach::erase_person_changed_question_in_txn(
+        store,
+        wtxn,
+        |id, of| id == question && of == version.version,
+    )?;
     if QUESTION_HEAD
         .get(store, &*wtxn, &HeadKey(question))?
         .is_some_and(|head| head.version == version.version)
@@ -82,9 +91,10 @@ pub(crate) fn erase_question_source_in_txn(
 /// transaction (FIX 12218): every typed-question row kept under its id (its
 /// versions, head, answer receipts, outcome labels, windows, backfill marks
 /// and ask log head), its ask log, its pending refreshes, its artifact-asked
-/// stamps and its unit asks (FIX 12224), and the unit, predicate and source
-/// watches of each version. Gives back the answer claims its receipts named,
-/// for the caller to tear; an id no question has erases nothing.
+/// stamps and its unit asks (FIX 12224), the unit, predicate and source
+/// watches of each version, and the Coach's override records of the question.
+/// Gives back the answer claims its receipts named, for the caller to tear;
+/// an id no question has erases nothing.
 pub(crate) fn erase_standing_question_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -121,6 +131,11 @@ pub(crate) fn erase_standing_question_in_txn(
     for seq in unit_asks {
         super::role_asks::UNIT_ASKS.delete(store, wtxn, &seq)?;
     }
+    crate::dreamer_runner::maintenance::coach::erase_person_changed_question_in_txn(
+        store,
+        wtxn,
+        |id, _| id == question,
+    )?;
     // A trained head bound to any of its versions goes with it (FIX 3864).
     crate::training_pack::drop_question_heads_in_txn(store, wtxn, question, None)?;
     crate::training_pack::drop_question_trials_in_txn(store, wtxn, question, None)?;
