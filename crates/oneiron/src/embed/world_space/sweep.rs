@@ -53,9 +53,11 @@ pub(crate) struct WorldTextSpaceSweep {
 /// world's space drops the vault-index vector of every row the world carries, and queues the
 /// row again: it stays pending for the world's space, and the vault's index takes it again
 /// should the world inherit once more. An order that stops naming a space drops the world's
-/// rows from it, and queues each row the vault's index now takes. A derived sweep rather than
-/// a door hook, because an order edit that arrives by sync passes no door; a read when nothing
-/// changed, and one writer when it did.
+/// rows from it, and queues each row the vault's index now takes. A record the pending worker
+/// does not embed (a NOTE, a caption) keeps a refill mark instead, so the idle refill gives its
+/// published revision a vault-index vector again once no world's space takes it. A derived
+/// sweep rather than a door hook, because an order edit that arrives by sync passes no door; a
+/// read when nothing changed, and one writer when it did.
 ///
 /// # Errors
 ///
@@ -115,10 +117,14 @@ fn sweep_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>) -> Result<WorldTextSpaceSwe
             if spaces.of_row(&vault.store, wtxn, &id)?.is_empty() {
                 continue;
             }
-            if crate::vault::entity_revision::drop_index_vector_in_txn(vault, wtxn, &id)? {
+            let dropped =
+                crate::vault::entity_revision::drop_index_vector_in_txn(vault, wtxn, &id)?;
+            if dropped {
                 sweep.index_drops += 1;
             }
-            requeue_text_work_in_txn(vault, wtxn, &id)?;
+            if !requeue_text_work_in_txn(vault, wtxn, &id)? && dropped {
+                crate::vault::entity_revision::mark_vector_refill_in_txn(&vault.store, wtxn, &id)?;
+            }
         }
     }
     SWEPT.put(&vault.store, wtxn, &(), &current)?;
@@ -126,10 +132,11 @@ fn sweep_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>) -> Result<WorldTextSpaceSwe
 }
 
 /// Queues `id`'s text work anew, as a repo row's requeue does: the vault's pending-text pass
-/// leases it, or leaves it pending while a world's text space takes it.
-fn requeue_text_work_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+/// leases it, or leaves it pending while a world's text space takes it. Whether it queued: a
+/// gone row, or one the pending worker does not embed, queues nothing.
+fn requeue_text_work_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(record) = vault.store.port_entity_record(wtxn, id)? else {
-        return Ok(());
+        return Ok(false);
     };
     if !super::super::eligibility::is_embeddable_in_txn(
         vault,
@@ -138,7 +145,7 @@ fn requeue_text_work_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, id: &EntityId) 
         record.entity_type,
         &record.body,
     )? {
-        return Ok(());
+        return Ok(false);
     }
     if !vault.store.has_current_pending_embedding_in_txn(wtxn, id)? {
         vault.store.mark_pending_embedding(wtxn, id, &record.body)?;
@@ -150,5 +157,6 @@ fn requeue_text_work_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, id: &EntityId) 
         wtxn,
         id,
         super::super::EMBED_PRIORITY_BACKFILL,
-    )
+    )?;
+    Ok(true)
 }
