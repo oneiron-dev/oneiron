@@ -33,6 +33,12 @@
 //! take-back on the custody machine keeps the run's scope and folds the
 //! other machines' shares into it (FIX 4889).
 //!
+//! A take that queues a try from the TASK's frozen payload, a re-created
+//! live try or a successor, first asks that the payload's writer proof counts
+//! here (`super::run_writer_proof`): the TASK rides every machine's window
+//! and its bytes name no signer, so a payload no machine of the owner's
+//! signed is not run here, and the run waits.
+//!
 //! The same pass renews this machine's own lease on each run with a try
 //! pending in its queue (`own_agent_run_lease_renewal`): a parked or queued
 //! try, or a step that runs past half a hold, commits nothing that renews it.
@@ -90,6 +96,9 @@ const HOST_RUNS_NO_AGENT_RUNS: &str = "host_runs_no_agent_runs";
 const WORLD_NOT_READABLE_HERE: &str = "world_not_readable_here";
 /// The TASK's frozen payload or try ids do not read.
 const RUN_TASK_UNREADABLE: &str = "run_task_unreadable";
+/// No writer proof that counts here stands behind the TASK's frozen fields
+/// (`super::run_writer_proof`), so its payload is not re-created here.
+const RUN_TASK_WRITER_UNPROVEN: &str = "run_task_writer_unproven";
 /// A try of the run is leased, landing or paused here.
 const TRY_HELD_HERE: &str = "try_held_here";
 /// The run's newest try here ended another way than failed.
@@ -603,7 +612,8 @@ fn take_expired_agent_run(
 /// exactly `run.lease` and no outcome: a try of the run is queued here as
 /// `run.local` rules, with its launch spend reserved here, in a savepoint
 /// that commits only when the try is a run of the agent run pump's here and
-/// this machine can fund it; then the lease moves here at the next
+/// this machine can fund it; a re-created or successor try only while the
+/// TASK's writer proof counts here; then the lease moves here at the next
 /// generation with a fresh hold, and the TASK names a re-created or
 /// successor try as its live one. A kept try is named by its own claim, and
 /// its scope is judged as a re-created try's is. What the take folded into
@@ -671,6 +681,12 @@ fn take_expired_agent_run_in_txn(
             (id, AgentRunResume::QueuedHere, folded)
         }
         LocalTry::Recreate | LocalTry::Succeed(_) => {
+            // The try runs from the TASK's frozen payload, so a machine that
+            // counts must have written it (`super::run_writer_proof`): the
+            // TASK's bytes name no signer, and any peer can write them.
+            if !body.writer_proven_in(vault, &*wtxn, run.task_ref) {
+                return Ok(AgentRunTake::Waits(RUN_TASK_WRITER_UNPROVEN));
+            }
             let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
                 return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
             };

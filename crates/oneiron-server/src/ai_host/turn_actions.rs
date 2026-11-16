@@ -304,14 +304,26 @@ async fn act(
         }
         (shown, None)
     };
+    // Somebody else's imported words (`counterparty`) ride as labelled
+    // foreign data, as chat's compacted log carries them: never the user's
+    // own turn, never the agent's reply.
     for line in context.history {
         today_sources.add(line.sources.as_deref());
-        let role = if line.author == WitnessAuthor::User {
-            LlmMessageRole::User
-        } else {
-            LlmMessageRole::Assistant
+        let (role, text) = match line.author {
+            WitnessAuthor::User => (LlmMessageRole::User, line.text),
+            WitnessAuthor::Counterparty => (
+                LlmMessageRole::User,
+                serde_json::json!({
+                    "author": WitnessAuthor::Counterparty.as_str(),
+                    "content": line.text,
+                })
+                .to_string(),
+            ),
+            WitnessAuthor::Companion | WitnessAuthor::System => {
+                (LlmMessageRole::Assistant, line.text)
+            }
         };
-        messages.push(text_message(role, line.text));
+        messages.push(text_message(role, text));
     }
     // FIX 6920: the board the action reads, hydrated once, as its
     // requester's kept slip reads now. It rides in two parts (I1 = C, FIX
@@ -483,8 +495,11 @@ async fn act(
         Answer {
             vault: Arc::clone(vault),
             agent: context.agent,
-            session_key: None,
-            activity: None,
+            // The sitting the reply joined, which the engine read from its
+            // TURN (FIX 1034): the answer binds it, as a live chat binds its
+            // caller's, and its end signals activity there.
+            session_key: context.sitting,
+            activity: context.sitting,
             open,
             mode: MessageWriteMode::Atomic,
             admitted,

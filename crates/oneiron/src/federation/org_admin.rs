@@ -20,19 +20,8 @@ pub struct OrgAdminPolicy {
     powers: BTreeSet<OrgAdminPower>,
 }
 
-/// A failed setup or power check; failures never fall back to owner authority.
-#[derive(Debug, thiserror::Error)]
-pub enum OrgAdminError {
-    /// Setup is one-time, including attempts to widen it.
-    #[error("organization administration is already configured")]
-    AlreadyConfigured,
-    /// The named actor or power has not been granted.
-    #[error("organization administration power denied")]
-    Denied,
-    /// Store access or malformed persisted state.
-    #[error(transparent)]
-    Engine(#[from] crate::Error),
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::federation::org_admin::OrgAdminError;
 
 impl OrgAdminPolicy {
     /// Defines the fixed power set at organization setup.

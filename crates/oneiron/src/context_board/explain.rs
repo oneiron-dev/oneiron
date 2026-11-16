@@ -29,7 +29,9 @@ pub struct GateExplanation {
     /// `allow`, `pending` or `deny`.
     pub outcome: String,
     pub reason_codes: Vec<String>,
-    /// The policy rows and checks behind the outcome, by opaque reference.
+    /// The policy rows, the charter stamp and the checks behind the
+    /// outcome, by opaque reference (`policy_row_<row>`,
+    /// `charter_stamp_<approval>`).
     pub receipt_reasons: Vec<String>,
     /// Each system notice's type, and the policy row it cites.
     pub notices: Vec<(String, Option<String>)>,
@@ -93,12 +95,18 @@ impl Vault {
         let record = self
             .store
             .gate_decision_in_txn(&txn, GateDecisionId::from_bytes(bytes))?;
-        drop(txn);
         let Some(record) = record else {
             return Ok(None);
         };
+        // The owner flag is the key's stored sight: it widens the answer only
+        // while the key's owner binding and credential still hold in the
+        // snapshot that read the record, as every point read judges it. A
+        // record that names no claim runs no scoped read below, so an owner
+        // key kept past its holder's demotion or revocation would otherwise
+        // read another actor's receipt (FIX GATE-EXPLAIN-STALE-OWNER-KEY).
+        let owner = read.actor_key().reads_as_vault_owner() && read.credential_live_in(&txn)?;
+        drop(txn);
         let own = record.actor_ref.as_deref() == Some(read.actor_key().actor_ref());
-        let owner = read.actor_key().reads_as_vault_owner();
         let claim = record
             .claim_id
             .and_then(|claim| EntityId::from_bytes(claim).ok());

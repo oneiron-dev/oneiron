@@ -170,6 +170,7 @@ impl<'a> BranchResources<'a> {
             known: known.cloned().unwrap_or_default(),
             rules: vault.consolidation_key_rules()?,
             read_receipt: std::sync::Mutex::new(read_receipt),
+            held: std::cell::RefCell::default(),
         };
         resources.check_axes(&resources.scope)?;
         for parent in &parents {
@@ -230,6 +231,19 @@ impl<'a> BranchResources<'a> {
             return Err(invalid_consolidation("branch turn crossed its partition"));
         }
         Ok(facts)
+    }
+
+    /// The sitting a queued TURN joined, from its DREAM-008 membership row;
+    /// `None` when none was recorded (FIX 395). Read after [`Self::turn`]
+    /// admitted the TURN. The row is first-write-wins, so it never names
+    /// another sitting later.
+    pub(in crate::dreamer_consolidation) fn turn_sitting(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let vault = self.read.vault();
+        let txn = vault.store.env.read_txn()?;
+        crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, id)
     }
 
     /// Whether `scope` reads every part's bucket: the branch reads whole.

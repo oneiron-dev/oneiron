@@ -9,6 +9,7 @@ use rmpv::Value;
 use crate::entity_id::EntityId;
 use crate::store::agent_memory_profile::MemoryProfile;
 use crate::store::agent_model::AgentModel;
+use crate::store::agent_optional_memory::OptionalMemoryProfile;
 use crate::store::agent_record::{AgentCeiling, AgentWakeCadence, DreamingMode, McpRef};
 use crate::store::agent_refusal::RefusalDial;
 use crate::store::agent_scope::AgentScope;
@@ -73,4 +74,9 @@ pub struct AgentDefinition {
     /// self-compaction row's cheap model, FIX 6029). It need not be listed;
     /// resolve through [`crate::agent_def::resolve_compaction_model`].
     pub compaction_model: Option<ModelId>,
+    /// The optional recall this reader takes per task family (ZERO-RETRIEVAL
+    /// = A); absent = the caller's pack request as sent. Apart from the
+    /// window profile, so it never changes the window, its compaction or its
+    /// pack budget. A dial, not identity: deliberately NOT in the freeze-set.
+    pub optional_memory: Option<OptionalMemoryProfile>,
 }

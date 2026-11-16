@@ -1,7 +1,8 @@
 //! The health check past a threshold (OF-520, ARCH-0044 C5). Wire counters,
-//! `[limits]` rows, engine scans and the e-sign ceremony's burst counters
-//! (ARCH-0064a) keep their crossings as questions, and
-//! none refuses for a count. This worker reads the kept crossings off every
+//! `[limits]` rows, engine scans, the e-sign ceremony's burst counters
+//! (ARCH-0064a) and own actors' advisory rate windows keep their crossings as
+//! questions, and none refuses for a count. This worker reads the kept
+//! crossings off every
 //! lock and write path and asks each one typed question on the host's ladder:
 //! "is everything okay: a bot, or a valid burst?". A known actor under a
 //! grant passes at the rule rung, the model rungs answer the rest, and a
@@ -17,6 +18,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::catalogue::WIRE_HEALTH;
 use oneiron::llm::decision::questions::{
     HEALTH_OUTCOME_PREDICATE, HealthAnswer, OutcomeBinding, OutcomeSource,
@@ -75,6 +77,9 @@ pub enum CrossingSource {
     Esign,
     /// One caller's `ai.verdict` spend past its window's check (FIX 1123).
     Spend,
+    /// One own actor's acts of one kind past their advisory rate: its first
+    /// crossing in a window (ARCH-0044 C5).
+    OwnRate,
 }
 
 /// Who answered a check.
@@ -192,8 +197,20 @@ pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
     }
 }
 
-fn put_check(vault: &Vault, check: &HealthCheck) -> Result<()> {
-    vault.sync_state_put(&format!("{CHECK}{}", check.subject), &encode(check)?)
+/// Writes an asked or answered check back over its row, and whether it did.
+/// A row gone since the pass read it stays gone: an actor's erase takes its
+/// own-rate checks (FIX 3520), and a pass that read one before must not
+/// write it back.
+fn put_check(vault: &Vault, check: &HealthCheck) -> Result<bool> {
+    let key = format!("{CHECK}{}", check.subject);
+    let body = encode(check)?;
+    vault.with_write_txn_grouped(|txn| {
+        let kept = vault.sync_state_get_in_write_txn(txn, &key)?.is_some();
+        if kept {
+            vault.sync_state_put_in_write_txn(txn, &key, &body)?;
+        }
+        Ok(kept)
+    })
 }
 
 /// Whether `actor`, as the wire counted it, is a known actor under a grant:
@@ -228,7 +245,13 @@ fn state(vault: &Vault, owner: EntityId, check: &HealthCheck) -> Value {
         .as_array()
         .map(|actors| actors.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    // Refused capabilities are no caller's: no grant makes guesses at a
+    // capability a valid burst.
+    let refusals_crossed = check.crossing["crossed"]["capability_refusals"]
+        .as_array()
+        .is_some_and(|routes| !routes.is_empty());
     let granted = !crossed.is_empty()
+        && !refusals_crossed
         && crossed
             .iter()
             .all(|actor| known_under_grant(vault, owner, actor));
@@ -333,7 +356,7 @@ fn ask_to(vault: &Vault, check: &HealthCheck) -> Result<Option<AskTo>> {
 }
 
 /// Asks one held check on the ladder and binds the decision to its unit.
-fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
+pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let vault = server.vault();
     let host = server.decision_host();
     let wording = host.wire_health_wording().unwrap_or(WORDING).to_owned();
@@ -357,16 +380,19 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
         &RetrievalDeadline::hard(Instant::now(), ASK_BUDGET),
     )?;
     let now = oneiron_vault_contract::now_ts();
+    // The unit claim outlives the check, so an own-rate crossing is bound
+    // without its actor (FIX 3520).
+    let crossing = oneiron::own_rate::health_bound_crossing(&check.crossing);
     let bound = vault.bind_health_answer(&HealthAnswer {
         principal: owner,
         question: &question,
         dial,
         decision: &decision,
-        crossing: &check.crossing,
+        crossing: &crossing,
         binding: &binding(),
         now,
     })?;
-    let (question, unit) = (question.id.to_hex(), bound.unit.to_hex());
+    let (question_id, unit) = (question.id.to_hex(), bound.unit.to_hex());
     check.state = match &decision.answer {
         DecisionAnswer::Choice(answer) if decision.human_ask.is_none() => CheckState::Answered {
             answer: answer.clone(),
@@ -379,10 +405,13 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
                     .map_or(DecisionRung::Rule, |pin| pin.rung),
             ),
             at: now,
-            question,
+            question: question_id,
             unit,
         },
-        _ => CheckState::Asked { question, unit },
+        _ => CheckState::Asked {
+            question: question_id,
+            unit,
+        },
     };
     check.asked_in = Some(wording);
     if let CheckState::Answered { answer, .. } = &check.state
@@ -395,11 +424,23 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
             "the health check answered bot; the work it covers still runs"
         );
     }
-    put_check(vault, &check)
+    if put_check(vault, &check)? || !matches!(check.state, CheckState::Asked { .. }) {
+        return Ok(());
+    }
+    // An actor's erase took the check while the ladder asked it (FIX 3520):
+    // the ask it queued holds the crossing as the state it was asked over,
+    // so it drops that state and leaves the owner's queue.
+    if let Some(queued) = vault.latest_decision_ask(&question, owner)? {
+        vault.withdraw_decision_ask_dropping_state(queued.seq)?;
+    }
+    Ok(())
 }
 
-/// Looks for a role holder's answer to an asked check. The answer is what
-/// happened next: it lands as the decision's outcome.
+/// Looks for a role holder's answer to an asked check and settles the check
+/// on it. The answer is what happened next: the owner's answer door landed it
+/// as the decision's outcome label, in the write that kept the answer and
+/// under his proof (ARCH-0044 C5). This pass holds no owner proof, so it
+/// writes no label.
 fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let CheckState::Asked { question, unit } = &check.state else {
         return Ok(());
@@ -417,13 +458,6 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
     let DecisionAnswer::Choice(label) = answer.answer else {
         return Ok(());
     };
-    let unit_id = EntityId::from_hex(unit)?;
-    server.vault().record_health_outcome(
-        owner,
-        unit_id,
-        &label,
-        oneiron_vault_contract::now_ts(),
-    )?;
     check.state = CheckState::Answered {
         answer: label,
         probability: None,
@@ -432,15 +466,13 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
         question: question.clone(),
         unit: unit.clone(),
     };
-    put_check(server.vault(), &check)
+    put_check(server.vault(), &check).map(drop)
 }
 
 /// One pass: fold every new crossing in, ask each held check, and look for
 /// the owner's answers. A check that fails stays as it was for the next pass.
-fn sweep(server: &SyncServer) -> Result<()> {
-    for crossing in unread(server)? {
-        fold(server.vault(), crossing)?;
-    }
+pub(crate) fn sweep(server: &SyncServer) -> Result<()> {
+    fold_unread(server)?;
     let open: Vec<HealthCheck> = checks(server.vault())?
         .into_iter()
         .filter(HealthCheck::open)
@@ -466,17 +498,28 @@ fn sweep(server: &SyncServer) -> Result<()> {
     Ok(())
 }
 
+/// Folds every crossing kept since the last pass into its check.
+pub(crate) fn fold_unread(server: &SyncServer) -> Result<()> {
+    for crossing in unread(server)? {
+        fold(server.vault(), crossing)?;
+    }
+    Ok(())
+}
+
 /// The owner records what happened next to a check's crossing `unit`: a bot
-/// or a valid burst. It labels the bound decision.
-pub fn record_outcome(vault: &Vault, unit: EntityId, outcome: &str) -> Result<EntityId> {
+/// or a valid burst. It labels the bound decision, as his own act under the
+/// proof `owner` of the door that admitted him.
+pub fn record_outcome(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    unit: EntityId,
+    outcome: &str,
+) -> Result<EntityId> {
     if outcome != VALID_BURST && outcome != BOT {
         return Err(Error::InvalidConfig(format!(
             "a health outcome is {VALID_BURST} or {BOT}"
         )));
     }
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|error| Error::InvalidConfig(format!("no owner principal: {error}")))?;
     vault.record_health_outcome(owner, unit, outcome, oneiron_vault_contract::now_ts())
 }
 

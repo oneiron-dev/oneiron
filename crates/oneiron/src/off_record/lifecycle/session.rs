@@ -765,7 +765,10 @@ impl OffRecordSession<'_> {
             table,
             key,
             value,
-            accepts_current,
+            |stored| {
+                let current = stored.map(|bytes| table.decode_value(bytes)).transpose()?;
+                accepts_current(current.as_ref())
+            },
             counter,
             counter_key,
             update_counter,
@@ -777,6 +780,8 @@ impl OffRecordSession<'_> {
     /// writing more rows to the same target in the same transaction, after
     /// the row and its counter: a turn's code-run replay append, its heal
     /// tally and the fold receipts it staged commit together or not at all.
+    /// `accepts_stored` reads the row's stored bytes in place, so a compare
+    /// over part of a large row decodes only that part (FIX 16).
     #[expect(
         clippy::too_many_arguments,
         reason = "the counter-routed put's axes, plus the rows that commit with it"
@@ -787,7 +792,7 @@ impl OffRecordSession<'_> {
         table: &SideTable<K, V, C>,
         key: &K,
         value: &V,
-        accepts_current: impl FnOnce(Option<&V>) -> Result<()>,
+        accepts_stored: impl FnOnce(Option<&[u8]>) -> Result<()>,
         counter: &SideTable<CK, CV, CC>,
         counter_key: &CK,
         update_counter: impl FnOnce(Option<CV>, Option<CV>, RouteTarget) -> Result<(CV, u64)>,
@@ -817,7 +822,7 @@ impl OffRecordSession<'_> {
                 };
                 route.revalidate()?;
                 let view = self.vault.store.session_view(overlay.clone())?;
-                accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                accepts_stored(table.get_borrowed(&view, wtxn, key)?.as_deref())?;
                 let base = counter.get(&self.vault.store, wtxn, counter_key)?;
                 let delta = self.overlay_counter_delta(counter, counter_key)?;
                 let (next_counter, total) = update_counter(base, delta, target)?;
@@ -993,6 +998,12 @@ impl OffRecordSession<'_> {
         self.vault.limit_watch()
     }
 
+    /// The owner's `code_run.result_search.max_context` on this session's
+    /// vault.
+    pub(crate) fn result_search_max_context(&self) -> crate::Result<usize> {
+        crate::code_run::setting_keys::result_search_max_context(self.vault)
+    }
+
     /// A share of the result-memory pool for one run in this session.
     pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
@@ -1033,13 +1044,14 @@ impl OffRecordSession<'_> {
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
         let mut state = session_entry_state(&self.entry)?;
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
             OffRecordMode::OffRecord,
         )?;
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// Records one emit-adjacent receipt in the registry-owned log consumed

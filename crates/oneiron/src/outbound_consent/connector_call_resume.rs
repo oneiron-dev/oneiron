@@ -15,8 +15,7 @@ use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_i
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
-    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, now_ms, refused,
-    step_from_host,
+    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, refused, step_from_host,
 };
 use super::execution::resume_scoped_mcp_outbound_intent;
 
@@ -68,7 +67,7 @@ impl Vault {
             record.id,
             record.payload(),
             pending.agent_run,
-            now_ms(),
+            crate::unix_millis_now(),
             &mut *host,
         )?;
         if dispatch.agent_run_stood_down {

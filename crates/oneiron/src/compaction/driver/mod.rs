@@ -115,6 +115,13 @@ pub trait CompactionBackend: Send + Sync {
     > {
         self.compact(request, retry).map(|product| (product, None))
     }
+    /// The record of the last call this backend sent as its agent that came
+    /// back refused after it went out (FIX 7745): what ran it, with no usage
+    /// the provider did not report. Taken once, by the pass that saw the
+    /// refusal; `None` from every other backend.
+    fn take_refused_execution(&self) -> Option<crate::compaction::CompactionExecution> {
+        None
+    }
     /// At a breakpoint that seals a flight, the fork of the run's latest
     /// completed call as the rung that answered it sent it (FIX 4933), when
     /// this backend writes as its agent from the live context (FIX 4465 C),
@@ -158,24 +165,8 @@ pub trait CompactionBackend: Send + Sync {
     fn end_flight(&self) {}
 }
 
-/// One message-log row the host hands the backend.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct CompactionWindowMessage {
-    /// The MESSAGE whose words `content` renders: a `DerivedFrom` target
-    /// when the vault stores it.
-    pub message_id: EntityId,
-    /// The covered TURN entity — a `DerivedFrom` target and the H-S3 probe
-    /// subject.
-    pub turn_id: EntityId,
-    /// Rendered MESSAGE content: the material the backend summarizes.
-    pub content: String,
-    /// The turn NUMBER this row belongs to, in its lineage's own ordering:
-    /// the session's, or a chat window's conversation within the session.
-    pub turn: u64,
-    pub tokens: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::compaction::driver::CompactionWindowMessage;
 
 /// The snapshot point a compaction runs against.
 ///

@@ -38,8 +38,7 @@ use sha2::{Digest, Sha256};
 
 use super::cohort::{cohorts_in_txn, exposure_in_txn};
 use super::{
-    EvalCase, EvalExposureCounts, EvalLabelKind, EvalSeat, FamilyPurpose, SourceFamily,
-    family_in_txn, invalid, root_family_in_txn,
+    EvalCase, EvalSeat, FamilyPurpose, SourceFamily, family_in_txn, invalid, root_family_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -68,23 +67,10 @@ const EVAL_AUTHORING_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
 const EVAL_AUTHORING_MAX_CANDIDATES: usize = 256;
 const INVENTORY_DOMAIN: &[u8] = b"skill_optimize:eval_authoring_inventory:v1\0";
 
-/// One label fixed code found for a candidate in grounded evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CandidateLabel {
-    pub kind: EvalLabelKind,
-    /// `amended` or `kept` for an amendment, `preferred` or `not_preferred`
-    /// for an owner's pick.
-    pub value: String,
-    /// The amendment receipt or preference pair it came from.
-    pub reference: String,
-    pub at: u64,
-    /// The candidate's case already holds it.
-    pub held: bool,
-    /// The rows the label's value was read from, as fixed code found them
-    /// (FIX 5761); kept from the skill, which never asserts them.
-    #[serde(skip)]
-    pub source_rows: Option<Vec<EntityId>>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::{
+    CandidateLabel, CohortSummary, PurposeCounts, UncutFamily,
+};
 
 /// One recent attempt receipt that records a seat: a candidate case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -123,40 +109,6 @@ pub struct EvalSourceGroup {
     /// The roots themselves, which stay with fixed code.
     #[serde(skip)]
     root_set: BTreeSet<String>,
-}
-
-/// How many of a seat's families have each purpose.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-pub struct PurposeCounts {
-    pub development: usize,
-    pub judge_audit: usize,
-    pub sealed_confirmation: usize,
-}
-
-/// A sealed family no cohort holds yet: what a cut could take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct UncutFamily {
-    pub family: EntityId,
-    pub cases: usize,
-    /// The first and last source date of its cases.
-    pub first_at: u64,
-    pub last_at: u64,
-}
-
-/// One cohort of a seat, as the skill reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CohortSummary {
-    pub id: EntityId,
-    pub from: u64,
-    pub until: u64,
-    pub reference: bool,
-    pub retired: bool,
-    pub members: usize,
-    pub families: usize,
-    pub rubric_revision: String,
-    pub exposure: EvalExposureCounts,
 }
 
 /// One seat's set as it stands.

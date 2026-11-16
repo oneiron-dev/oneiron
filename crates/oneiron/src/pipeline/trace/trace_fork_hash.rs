@@ -19,11 +19,11 @@ use crate::vault::RevisionRef;
 use super::replay_identity::RetrievalReplayIdentity;
 
 use super::super::builder::PipelineBuilder;
+use super::super::params::{RETRIEVAL_FORMULA_VERSION, RetrievalParams};
 use super::super::types::{
-    ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ActiveWorldSelection, COSINE_GHOST_VECTOR_THRESHOLD,
-    DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PPR_DAMPING, RECENCY_DECAY_TAU_SECS,
-    RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE, RETRIEVAL_TRACE_RRF_K, RelMode,
-    ResolvedWorldAuthority, TEMPORAL_FLOOR, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
+    ActiveWorldSelection, DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode,
+    RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE, RelMode, ResolvedWorldAuthority,
+    TemporalSearchConfig, WorldAuthoritySet, WorldScope,
 };
 
 /// Evidence captured under the retrieval transaction; hashing never rescans claims.
@@ -46,7 +46,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     resolved_occurred_range: Option<(u64, u64)>,
     rerank_query: Option<&str>,
     evidence: RetrievalTraceForkEvidence<'_>,
-) -> [u8; 32] {
+) -> crate::error::Result<[u8; 32]> {
     let mut hasher = Sha256::new();
     fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v1");
 
@@ -57,6 +57,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
     fork_hash_phonetic_query(&mut hasher, builder.phonetic_search.as_deref());
+    fork_hash_phonetic_vector_query(&mut hasher, builder.phonetic_vector_search.as_ref());
     fork_hash_media_queries(&mut hasher, &builder.media_search);
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
@@ -117,7 +118,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
     fork_hash_recency_weight_table(&mut hasher);
     fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
-    fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
+    fork_hash_scoring_constants(&mut hasher, &builder.params, builder.vault.config.fast_dims)?;
     // RET-01 reads the embedding space's own evidence floors, and a folding
     // run returns a matched MESSAGE as its TURN: both change the result.
     let floors = builder.no_match_floors();
@@ -161,7 +162,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_candidate_revisions(&mut hasher, evidence.candidate_revisions);
     fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
 
-    hasher.finalize().into()
+    Ok(hasher.finalize().into())
 }
 
 /// ONE-1402 read-side decay segment. The caller-supplied override map is
@@ -290,6 +291,24 @@ fn fork_hash_text_query(hasher: &mut Sha256, query: Option<&(String, usize)>) {
     fork_hash_bool(hasher, true);
     fork_hash_len(hasher, *limit);
     fork_hash_str(hasher, query);
+}
+
+/// The learned rung's query, hashed only when the run has one, so every fork hash of a run
+/// without it stays as it was.
+fn fork_hash_phonetic_vector_query(
+    hasher: &mut Sha256,
+    query: Option<&super::super::phonetic_vector_channel::PhoneticVectorQuery>,
+) {
+    let Some(query) = query else {
+        return;
+    };
+    fork_hash_bytes(hasher, b"phonetic_vector");
+    fork_hash_str(hasher, &query.model_id);
+    fork_hash_len(hasher, query.limit);
+    fork_hash_len(hasher, query.vector.len());
+    for value in &query.vector {
+        fork_hash_f32(hasher, *value);
+    }
 }
 
 fn fork_hash_phonetic_query(hasher: &mut Sha256, codes: Option<&[String]>) {
@@ -561,15 +580,16 @@ fn fork_hash_retrieval_blend_weights(hasher: &mut Sha256, weights: RetrievalBlen
     fork_hash_f32(hasher, weights.relevance);
 }
 
-fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
-    fork_hash_f32(hasher, RETRIEVAL_TRACE_RRF_K);
-    fork_hash_f32(hasher, PPR_DAMPING);
-    fork_hash_f64(hasher, RECENCY_DECAY_TAU_SECS);
-    fork_hash_f64(hasher, ALPHA_BASE);
-    fork_hash_f64(hasher, ALPHA_RANGE);
-    fork_hash_f64(hasher, ALPHA_TAU_SECS);
-    fork_hash_f64(hasher, TEMPORAL_FLOOR);
-    fork_hash_f32(hasher, COSINE_GHOST_VECTOR_THRESHOLD);
+/// The call's scoring numbers enter by their digest and the formula version
+/// that reads them (RESEARCH-0651 contract item 1), so a candidate set's run
+/// never shares a key with a shipped one.
+fn fork_hash_scoring_constants(
+    hasher: &mut Sha256,
+    params: &RetrievalParams,
+    fast_dims: Option<u16>,
+) -> crate::error::Result<()> {
+    fork_hash_bytes(hasher, &params.digest()?);
+    fork_hash_u32(hasher, RETRIEVAL_FORMULA_VERSION);
     fork_hash_f32(hasher, crate::fusion::BLEND_SCORE_CEILING);
     // EMBED-PACK: each ranked list's fusion scale is its top
     // FUSION_LIST_LENGTH, and the phonetic list is scored over every
@@ -578,6 +598,7 @@ fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
     fork_hash_str(hasher, "sparse:phonetic");
     // EMB-2: the funnel prefix changes vector-channel scoring space.
     fork_hash_u32(hasher, u32::from(fast_dims.unwrap_or(0)));
+    Ok(())
 }
 
 fn fork_hash_source_and_model_identity(

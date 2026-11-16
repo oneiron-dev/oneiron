@@ -1,4 +1,4 @@
-//! The image organ: six verbs over the `image` body, schema 1.
+//! The image organ: eight verbs over the `image` body, schema 1.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -10,7 +10,10 @@ use oneiron_organ_protocol::{
 };
 use serde::Deserialize;
 
-use crate::body::{Filter, Format, Icc, ImageBody, KIND, Shape, Source, Stroke, bad, from_value};
+use crate::body::{
+    Filter, Format, Icc, ImageBody, KIND, SCHEMA, Shape, Size, Source, Stroke, bad, from_value,
+    to_value,
+};
 use crate::decode::{Header, Profile, check_size, decode, header_cost, read_header};
 use crate::ops::{self, Edited};
 use crate::render::{encode_png, render};
@@ -21,16 +24,32 @@ pub const VERB_CROP: &str = "image.crop";
 pub const VERB_RESIZE: &str = "image.resize";
 pub const VERB_ANNOTATE: &str = "image.annotate";
 pub const VERB_EXPORT: &str = "image.export";
+pub const VERB_RENDER: &str = "image.render";
+pub const VERB_PREVIEW: &str = "image.preview";
 
 /// Every verb, with whether it reads a body.
-const VERBS: [(&str, bool); 6] = [
+const VERBS: [(&str, bool); 8] = [
     (VERB_INSPECT, false),
     (VERB_OPEN, false),
     (VERB_CROP, true),
     (VERB_RESIZE, true),
     (VERB_ANNOTATE, true),
     (VERB_EXPORT, true),
+    (VERB_RENDER, false),
+    (VERB_PREVIEW, false),
 ];
+
+/// The most ops one `image.render` or `image.preview` applies when its call
+/// names no `max_ops`: the host's default count (`organ_host.image.max_ops`).
+const MAX_RENDER_OPS: usize = 256;
+
+const fn default_max_render_ops() -> usize {
+    MAX_RENDER_OPS
+}
+
+/// The bounds of `image.preview`'s `max_side`, in pixels.
+pub const MIN_PREVIEW_SIDE: u32 = 16;
+pub const MAX_PREVIEW_SIDE: u32 = 2048;
 
 /// The warning code for a source with no colour profile, read as sRGB. Notes
 /// carry codes; the host words them.
@@ -170,6 +189,35 @@ struct ExportArgs {
     format: String,
 }
 
+/// `image.render`'s args: the ops in order, each a map naming its `op`
+/// beside that op's own args, the format, and `max_ops`, the most ops this
+/// render applies: the host's count, which is the vault owner's
+/// `organ_host.image.max_ops`. A call that names none takes
+/// [`MAX_RENDER_OPS`]. The memory grant and frame limits bound each call
+/// whatever the count.
+#[derive(Deserialize)]
+struct RenderArgs {
+    ops: Vec<Value>,
+    format: String,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
+}
+
+/// `image.preview`'s args: `image.render`'s ops and `max_ops`, and the
+/// longest side the preview may have.
+#[derive(Deserialize)]
+struct PreviewArgs {
+    ops: Vec<Value>,
+    max_side: u32,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
+}
+
+#[derive(Deserialize)]
+struct RenderOpName {
+    op: String,
+}
+
 impl Organ for ImageOrgan {
     fn identity(&self) -> OrganIdentity {
         OrganIdentity {
@@ -224,6 +272,8 @@ impl Organ for ImageOrgan {
                 })?)
             }
             VERB_EXPORT => self.export(call),
+            VERB_RENDER => self.render(call),
+            VERB_PREVIEW => self.preview(call),
             other => Err(OrganError::new(ErrorCode::UnknownVerb, other)),
         }
     }
@@ -288,6 +338,59 @@ fn header_report(header: &Header, too_large: Option<OrganError>) -> Value {
         ("refusal", refusal),
     ];
     Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
+}
+
+/// Refuses any export format but PNG.
+fn png_only(format: &str) -> Result<(), OrganError> {
+    if format == "png" {
+        Ok(())
+    } else {
+        Err(OrganError::new(
+            ErrorCode::Unsupported,
+            format!("export to {format} is not built; png is"),
+        ))
+    }
+}
+
+/// Applies one `image.render` op to `body`: `{op: crop, x, y, w, h}` or
+/// `{op: resize, w, h, filter}`, as `image.crop` and `image.resize` do.
+fn render_op(
+    body: ImageBody,
+    op: &Value,
+    max_bytes: u64,
+    check: &dyn Fn() -> Result<(), OrganError>,
+) -> Result<ImageBody, OrganError> {
+    let RenderOpName { op: name } = from_value(op, "render op")?;
+    let edited = match name.as_str() {
+        "crop" => {
+            let args: CropArgs = from_value(op, "crop op")?;
+            ops::crop(body, args.x, args.y, args.w, args.h, check)?
+        }
+        "resize" => {
+            let args: ResizeArgs = from_value(op, "resize op")?;
+            ops::resize(body, args.w, args.h, args.filter, max_bytes, check)?
+        }
+        other => return Err(bad(format!("a render op is crop or resize, not {other}"))),
+    };
+    Ok(edited.body)
+}
+
+/// The size a preview of `canvas` scales to so that neither side passes
+/// `max_side`, its aspect kept and each side at least one pixel; `None`
+/// when the canvas fits already.
+fn preview_fit(canvas: Size, max_side: u32) -> Option<Size> {
+    let long = canvas.w.max(canvas.h);
+    if long <= max_side {
+        return None;
+    }
+    let scaled = |side: u32| {
+        let side = (u64::from(side) * u64::from(max_side) + u64::from(long) / 2) / u64::from(long);
+        u32::try_from(side).map_or(max_side, |side| side.clamp(1, max_side))
+    };
+    Some(Size {
+        w: scaled(canvas.w),
+        h: scaled(canvas.h),
+    })
 }
 
 /// Refuses what the first slice cannot keep, then checks the size.
@@ -373,11 +476,22 @@ impl ImageOrgan {
         Ok(image)
     }
 
+    /// `input`'s header and its profile, once [`admit`] finds that the
+    /// first slice keeps it.
+    fn admitted(
+        &self,
+        call: &CallContext<'_>,
+        input: &InputBytes,
+    ) -> Result<(Header, Icc), OrganError> {
+        let header = self.header(call, input)?;
+        let icc = admit(&header, decode_budget(call))?;
+        Ok((header, icc))
+    }
+
     /// `image.open`: checks the header, decodes once, returns a fresh body.
     fn open(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let input = only_input(call)?;
-        let header = self.header(call, input)?;
-        let icc = admit(&header, decode_budget(call))?;
+        let (header, icc) = self.admitted(call, input)?;
         if lock(&self.decoded).get(&input.content_hash).is_none() {
             let _held = self.hold(call, decode_cost(&header, input))?;
             self.decode_and_keep(call, input, &header)?;
@@ -393,17 +507,12 @@ impl ImageOrgan {
         })
     }
 
-    /// `image.export {format: png}`: the only verb that makes pixels. The
-    /// call must carry the source every time, and the source must be what
-    /// the body records: the cache only saves a decode.
+    /// `image.export {format: png}`: with `image.render`, the only verb that
+    /// makes pixels. The call must carry the source every time, and the
+    /// source must be what the body records: the cache only saves a decode.
     fn export(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: ExportArgs = from_value(call.args, "export args")?;
-        if args.format != "png" {
-            return Err(OrganError::new(
-                ErrorCode::Unsupported,
-                format!("export to {} is not built; png is", args.format),
-            ));
-        }
+        png_only(&args.format)?;
         let body = ImageBody::from_typed(call.body, &|| call.check_cancel())?;
         let peak = ops::render_peak(&body, &|| call.check_cancel())?;
         let input = call
@@ -411,24 +520,111 @@ impl ImageOrgan {
             .iter()
             .find(|input| input.content_hash == body.source.hash)
             .ok_or_else(|| bad("export needs the source image as an input"))?;
-        let header = self.header(call, input)?;
-        let icc = admit(&header, decode_budget(call))?;
+        let (header, icc) = self.admitted(call, input)?;
         if source_from(input, &header, icc) != body.source {
             return Err(bad("the input does not match the body's source"));
         }
+        self.export_png(call, &body, peak, input, &header)
+    }
+
+    /// `image.render {ops, format: png}` over its one input: `image.open`,
+    /// each op in order, then `image.export`, in one call, so a host holds
+    /// or redrives a whole edit as one call (RULING 09:53 Fri 13 Nov,
+    /// IO-HOLD C). Its answer is the export's: the same PNG, report and
+    /// notes. The body it builds is never returned on its own.
+    fn render(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+        let args: RenderArgs = from_value(call.args, "render args")?;
+        png_only(&args.format)?;
+        let (body, input, header) = self.rendered_body(call, &args.ops, args.max_ops)?;
+        let peak = ops::render_peak(&body, &|| call.check_cancel())?;
+        self.export_png(call, &body, peak, input, &header)
+    }
+
+    /// `image.preview {ops, max_side}` over its one input (L4-16):
+    /// `image.render`'s ops, then one bilinear resize, its aspect kept, when
+    /// the canvas is wider or taller than `max_side`, then the PNG. Its answer
+    /// is the export's; a host shows the PNG and lands nothing.
+    fn preview(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+        let args: PreviewArgs = from_value(call.args, "preview args")?;
+        if !(MIN_PREVIEW_SIDE..=MAX_PREVIEW_SIDE).contains(&args.max_side) {
+            return Err(bad(format!(
+                "a preview's max_side is {MIN_PREVIEW_SIDE} to {MAX_PREVIEW_SIDE}, not {}",
+                args.max_side
+            )));
+        }
+        let (mut body, input, header) = self.rendered_body(call, &args.ops, args.max_ops)?;
+        let check = || call.check_cancel();
+        if let Some(fit) = preview_fit(body.canvas, args.max_side) {
+            body = ops::resize(
+                body,
+                fit.w,
+                fit.h,
+                Filter::Bilinear,
+                work_budget(call),
+                &check,
+            )?
+            .body;
+        }
+        let peak = ops::render_peak(&body, &check)?;
+        self.export_png(call, &body, peak, input, &header)
+    }
+
+    /// The body of the call's one input with `ops` applied in order, as
+    /// `image.render` and `image.preview` build it, beside the input and its
+    /// checked header. `max_ops` is the call's count: the host's, which is
+    /// the vault owner's `organ_host.image.max_ops`.
+    fn rendered_body<'a>(
+        &self,
+        call: &'a CallContext<'_>,
+        ops: &[Value],
+        max_ops: usize,
+    ) -> Result<(ImageBody, &'a InputBytes, Header), OrganError> {
+        if ops.len() > max_ops {
+            return Err(bad(format!(
+                "a render takes at most {max_ops} ops, not {}",
+                ops.len()
+            )));
+        }
+        let input = only_input(call)?;
+        let (header, icc) = self.admitted(call, input)?;
+        let check = || call.check_cancel();
+        let mut body = ImageBody::new(source_from(input, &header, icc));
+        for op in ops {
+            check()?;
+            body = render_op(body, op, work_budget(call), &check)?;
+        }
+        Ok((body, input, header))
+    }
+
+    /// The PNG of `body` over its source `input`, whose header and profile
+    /// the caller has checked, with `peak` the most bytes rendering it
+    /// holds: the answer of `image.export`, `image.render` and
+    /// `image.preview` alike.
+    fn export_png(
+        &self,
+        call: &CallContext<'_>,
+        body: &ImageBody,
+        peak: u64,
+        input: &InputBytes,
+        header: &Header,
+    ) -> Result<Answer, OrganError> {
         // A cold source decodes first, then renders: book the larger.
-        let _held = self.hold(call, peak.max(decode_cost(&header, input)))?;
-        let source = self.decode_and_keep(call, input, &header)?;
+        let _held = self.hold(call, peak.max(decode_cost(header, input)))?;
+        let source = self.decode_and_keep(call, input, header)?;
         call.check_cancel()?;
-        let pixels = render(&source, &body, &|| call.check_cancel())?;
+        let pixels = render(&source, body, &|| call.check_cancel())?;
         drop(source);
         call.check_cancel()?;
         let png = encode_png(&pixels, header.alpha)?;
+        // The body it rendered rides in the report, so a proposal the export
+        // lands keeps the edit that made it (RULING 09:34 Fri 13 Nov, IO-BODY A).
         let report = Value::Map(vec![
             ("format".into(), "png".into()),
             ("width".into(), pixels.width().into()),
             ("height".into(), pixels.height().into()),
             ("bytes".into(), (png.len() as u64).into()),
+            ("body_schema".into(), SCHEMA.into()),
+            ("body".into(), to_value(body)?),
         ]);
         let mut notes = Notes::default();
         if header.profile == Profile::Untagged {

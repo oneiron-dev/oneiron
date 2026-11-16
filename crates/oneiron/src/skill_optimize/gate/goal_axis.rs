@@ -4,28 +4,10 @@ use super::*;
 use crate::skill::learning_judge::HONESTY_AXIS;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GoalAxisKind {
-    Primary,
-    Floor,
-    Cost,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalAxisSpec {
-    pub name: String,
-    pub kind: GoalAxisKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalAxisScore {
-    pub kind: GoalAxisKind,
-    pub before: f32,
-    pub after: f32,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::goal_axis::{
+    GoalAxisKind, GoalAxisScore, GoalAxisSpec,
+};
 
 /// A vault-owned revision. Rewriting even the same axes advances the revision,
 /// so a previously earned admission never silently inherits a new human ruling.

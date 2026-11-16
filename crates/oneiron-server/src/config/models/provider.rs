@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
-use oneiron_llm_openai::EmbedShape;
+use oneiron_contracts::register::Register;
+use oneiron_llm::openai_compat::EmbedShape;
 use serde::Deserialize;
 
 /// How the server talks to a provider. Every kind is reached over HTTP; none
@@ -132,8 +133,9 @@ impl ProviderKind {
 /// from. Most servers (llama.cpp, vLLM, MLX, most proxies) read
 /// `max_tokens`; some hosted reasoning models accept only
 /// `max_completion_tokens`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("output.limit.field")]
 pub enum OutputLimitField {
     #[default]
     MaxTokens,
@@ -143,10 +145,7 @@ pub enum OutputLimitField {
 impl OutputLimitField {
     #[must_use]
     pub fn key(self) -> &'static str {
-        match self {
-            Self::MaxTokens => "max_tokens",
-            Self::MaxCompletionTokens => "max_completion_tokens",
-        }
+        self.as_str()
     }
 }
 
@@ -561,10 +560,9 @@ impl ProviderFile {
     }
 }
 
-/// Whether a kind's request bodies can go compressed: a chat wire's, and
-/// our own VoxCPM2 worker's render uploads, which it decodes (OF-604, D1).
+/// Whether a kind's request bodies can go compressed: a chat wire's.
 fn compresses(kind: ProviderKind) -> bool {
-    kind.generates() || kind == ProviderKind::Voxcpm2
+    kind.generates()
 }
 
 /// The request compression an entry has: what it wrote, else its route's in
@@ -610,7 +608,7 @@ fn request_compression(
         }
         if file.is_some() {
             anyhow::bail!(
-                "models.providers.{name}.request_compression applies to a generating or VoxCPM2 provider whose key is not key_secret"
+                "models.providers.{name}.request_compression applies to a generating provider whose key is not key_secret"
             );
         }
         return Ok(None);
