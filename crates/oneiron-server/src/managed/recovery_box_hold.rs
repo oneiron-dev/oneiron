@@ -23,6 +23,15 @@
 //! hold matching the preset, once, on its own thread, and a switch's hold
 //! waits for that heal within the same bound.
 //!
+//! Two more asks go the same way (WAYBACK-WAIT-BINDS-HONEST-CLIENT-ONLY = B,
+//! lead 17 Nov 00:1x): [`HypnosRecoveryBoxHold::report_recovery_wait`]
+//! reports the vault's recovery wait, which the box's release of the
+//! recovery-authority seed waits, and
+//! [`HypnosRecoveryBoxHold::cancel_pending_box_release`] carries an owner
+//! device's cancel of the box's pending release. Their callers retry (the
+//! next boot or setting change; the owner's next cancel), and neither waits
+//! for the boot heal, which is the kit-only hold's alone.
+//!
 //! The call is a blocking `std` socket under one deadline, so it needs no
 //! runtime and is safe on a runtime's thread or off one. A self-hosted
 //! vault has no supervisor and so no client: `SyncServer::recovery_box_hold`
@@ -35,8 +44,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use oneiron::EntityId;
 use oneiron_vault_contract::{
-    MAX_CTL_LINE, RECOVERY_BOX_KIT_ONLY_OP, RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, TokenHex,
+    MAX_CTL_LINE, RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_WAIT_MAX_SECS,
+    RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck, RecoveryBoxCancelledBy,
+    RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck, RecoveryBoxWait, TokenHex,
 };
 use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, sockopt};
 use zeroize::Zeroizing;
@@ -176,8 +188,7 @@ impl HypnosRecoveryBoxHold {
         held(&ack)
     }
 
-    /// One request and its ack: the write and the whole answer under one
-    /// deadline.
+    /// One kit-only request and its ack, under `deadline`.
     fn ask(&self, kit_only: bool, deadline: Instant) -> Result<RecoveryBoxKitOnlyAck, String> {
         let request = RecoveryBoxKitOnly {
             op: RECOVERY_BOX_KIT_ONLY_OP.to_owned(),
@@ -190,9 +201,110 @@ impl HypnosRecoveryBoxHold {
         request
             .validate()
             .map_err(|e| format!("was not sent: {e}"))?;
-        // The line carries the token, so it is wiped once it is written.
+        let first = self.exchange(&request, deadline)?;
+        let ack: RecoveryBoxKitOnlyAck = serde_json::from_slice(&first)
+            .map_err(|_| "had an answer outside the contract".to_owned())?;
+        if !ack.well_formed() {
+            return Err("had an answer outside the contract".to_owned());
+        }
+        Ok(ack)
+    }
+
+    /// Reports this vault's recovery wait (the owner Setting
+    /// `recovery.wait`) to its recovery box, which waits it before it
+    /// releases the recovery-authority seed. Whole seconds; a wait over 30
+    /// days is refused before anything is sent. `Ok` only when the
+    /// supervisor answers that the box took it (or the node has no box).
+    pub fn report_recovery_wait(&self, wait: Duration) -> oneiron::Result<()> {
+        const OP: &str = "recovery wait report";
+        let wait_secs = wait.as_secs();
+        if wait_secs > RECOVERY_BOX_WAIT_MAX_SECS {
+            return Err(op_failed(OP, "was not sent: the wait is over 30 days"));
+        }
+        let request = RecoveryBoxWait {
+            op: RECOVERY_BOX_WAIT_OP.to_owned(),
+            vault: self.vault.clone(),
+            token: self.token.clone(),
+            wait_secs,
+        };
+        request
+            .validate()
+            .map_err(|e| op_failed(OP, &format!("was not sent: {e}")))?;
+        let deadline = Instant::now() + self.timeout;
+        let first = self
+            .exchange(&request, deadline)
+            .map_err(|why| op_failed(OP, &why))?;
+        let ack: RecoveryBoxKitOnlyAck = serde_json::from_slice(&first)
+            .ok()
+            .filter(RecoveryBoxKitOnlyAck::well_formed)
+            .ok_or_else(|| op_failed(OP, "had an answer outside the contract"))?;
+        match (ack.held, ack.error.as_deref()) {
+            (true, None) => Ok(()),
+            (false, Some(code)) => Err(op_failed(
+                OP,
+                &format!("was refused by the supervisor ({code})"),
+            )),
+            _ => Err(op_failed(OP, "had an answer outside the contract")),
+        }
+    }
+
+    /// Carries an owner device's cancel to this vault's recovery box: its
+    /// pending release of the recovery-authority seed is voided. The caller
+    /// sends it only for an owner act it proved: `person` is the owner and
+    /// `device_key` the owner key whose signed proof it checked, which the
+    /// box's receipt and the owner's notice name. With `release_receipt`
+    /// (the `recovery_started` act's receipt the device saw) the box voids
+    /// only that release. `Ok(true)` when a release was pending and is now
+    /// void, `Ok(false)` when none was (or the node has no box); an error
+    /// for any other answer.
+    pub fn cancel_pending_box_release(
+        &self,
+        person: EntityId,
+        device_key: &[u8; 32],
+        release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        const OP: &str = "cancel of a pending release";
+        let request = RecoveryBoxCancel {
+            op: RECOVERY_BOX_CANCEL_OP.to_owned(),
+            vault: self.vault.clone(),
+            token: self.token.clone(),
+            cancelled_by: RecoveryBoxCancelledBy {
+                person: person.to_hex(),
+                device_key: oneiron_hex::encode(device_key),
+            },
+            release_receipt,
+        };
+        request
+            .validate()
+            .map_err(|e| op_failed(OP, &format!("was not sent: {e}")))?;
+        let deadline = Instant::now() + self.timeout;
+        let first = self
+            .exchange(&request, deadline)
+            .map_err(|why| op_failed(OP, &why))?;
+        let ack: RecoveryBoxCancelAck = serde_json::from_slice(&first)
+            .ok()
+            .filter(RecoveryBoxCancelAck::well_formed)
+            .ok_or_else(|| op_failed(OP, "had an answer outside the contract"))?;
+        match (ack.held, ack.cancelled, ack.error.as_deref()) {
+            (true, Some(cancelled), None) => Ok(cancelled),
+            (false, None, Some(code)) => Err(op_failed(
+                OP,
+                &format!("was refused by the supervisor ({code})"),
+            )),
+            _ => Err(op_failed(OP, "had an answer outside the contract")),
+        }
+    }
+
+    /// One request line and the supervisor's first answer line: the
+    /// connect, the write and the whole answer under one deadline. The line
+    /// carries the spawn token, so it is wiped once it is written.
+    fn exchange(
+        &self,
+        request: &impl serde::Serialize,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, String> {
         let mut line = Zeroizing::new(Vec::with_capacity(LINE_ROOM));
-        serde_json::to_writer(&mut *line, &request).map_err(|_| "was not encoded".to_owned())?;
+        serde_json::to_writer(&mut *line, request).map_err(|_| "was not encoded".to_owned())?;
         if line.len() >= MAX_CTL_LINE {
             return Err("is over the supervisor's line cap".to_owned());
         }
@@ -242,13 +354,8 @@ impl HypnosRecoveryBoxHold {
                 Err(_) => return Err("lost the supervisor's answer".to_owned()),
             }
         };
-        let first = answer.get(..end).unwrap_or_default();
-        let ack: RecoveryBoxKitOnlyAck = serde_json::from_slice(first)
-            .map_err(|_| "had an answer outside the contract".to_owned())?;
-        if !ack.well_formed() {
-            return Err("had an answer outside the contract".to_owned());
-        }
-        Ok(ack)
+        answer.truncate(end);
+        Ok(answer)
     }
 
     /// Sends the hold matching the recovery preset now, once, on its own
@@ -422,7 +529,12 @@ fn held(ack: &RecoveryBoxKitOnlyAck) -> oneiron::Result<()> {
 }
 
 fn failed(what: &str) -> oneiron::Error {
+    op_failed("kit-only hold", what)
+}
+
+/// The recovery box `op`'s failure in words, never the token.
+fn op_failed(op: &str, what: &str) -> oneiron::Error {
     oneiron::Error::Io(std::io::Error::other(format!(
-        "the recovery box's kit-only hold {what}"
+        "the recovery box's {op} {what}"
     )))
 }
