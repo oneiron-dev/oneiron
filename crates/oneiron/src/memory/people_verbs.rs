@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::say::MessageMarks;
 use super::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
     WitnessReceipt, WitnessTurn,
@@ -138,14 +139,8 @@ pub struct MessagePersonReceipt {
     pub receipt: WitnessReceipt,
 }
 
-/// The pending access request. Asking grants nothing; the vault owner, or
-/// the person asked, answers it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantAskReceipt {
-    pub request: String,
-    pub asked: String,
-    pub status: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::people_verbs::{GrantAskReceipt, GrantAskedPage, GrantAskedRow};
 
 /// What an access request's `scope` asks for, as its answer and the asked
 /// one's list (`self.grants.asked`) name it; `None` for a scope no access
@@ -168,32 +163,6 @@ pub(crate) fn grant_requested_scope(scope: &AccessGrantScope) -> Option<GrantReq
     })
 }
 
-/// One pending access request that asks the caller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantAskedRow {
-    /// 32-hex request id, as `self.grants.answer` takes it.
-    pub request: String,
-    /// 32-hex id of the actor who asked; the grant would be theirs.
-    pub asker: String,
-    pub capability: String,
-    pub scope: GrantRequestedScope,
-    /// When the request was filed, in unix seconds.
-    pub created_at: u64,
-    /// When the requested grant would end, in unix seconds; none when it
-    /// would not.
-    pub expires_at: Option<u64>,
-}
-
-/// One page of the pending access requests that ask the caller, in request
-/// id order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantAskedPage {
-    pub requests: Vec<GrantAskedRow>,
-    /// The cursor of the next page; none when no more requests ask the
-    /// caller.
-    pub next_after: Option<String>,
-}
-
 fn hex_ref(field: &str, value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value)
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
@@ -206,7 +175,7 @@ fn hex_opt(field: &str, value: Option<&str>) -> MemoryResult<Option<EntityId>> {
 impl Memory<'_> {
     /// The people the caller reads, each with the `about` line of the
     /// highest band its read admits.
-    fn people_roster(&self) -> MemoryResult<People> {
+    pub(super) fn people_roster(&self) -> MemoryResult<People> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let mut people = People::load(self.vault, crate::unix_millis_now(), &mut |person| {
             read.is_entity_readable(&person)
@@ -215,6 +184,7 @@ impl Memory<'_> {
         let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
         people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
         people.disclose_names(self.vault, read.actor_key())?;
+        read.charge_served(people.rows().iter().map(|row| row.person));
         Ok(people)
     }
 
@@ -225,7 +195,8 @@ impl Memory<'_> {
     /// caller whose credential grants it no read names no one at all. The
     /// table labels a page already served, never admits it: a caller this
     /// read refuses (an unbound handle whose actor the vault does not hold)
-    /// keeps its page and names no one too.
+    /// keeps its page and names no one too. Each PERSON it names counts
+    /// toward the caller's read exposure (L8-65), as the roster's do.
     pub(crate) fn actor_attributions(
         &self,
         actors: BTreeSet<String>,
@@ -251,6 +222,7 @@ impl Memory<'_> {
                     &mut |person| read.is_entity_readable(&person),
                 )?;
                 people.disclose_names(self.vault, read.actor_key())?;
+                read.charge_served(people.rows().iter().map(|row| row.person));
                 people
             }
             None => People::default(),
@@ -314,7 +286,7 @@ impl Memory<'_> {
         &self,
         input: &MessagePersonRequest,
     ) -> MemoryResult<MessagePersonReceipt> {
-        self.message_person_linked(input, |_| Ok(()), |_, _| Ok(()))
+        self.message_person_linked(input, MessageMarks::default(), |_| Ok(()), |_, _| Ok(()))
     }
 
     /// [`Self::message_person`], under every rule of that door, for a caller
@@ -322,10 +294,11 @@ impl Memory<'_> {
     /// `check` runs there before the message lands, `record` after it, given
     /// the room and the TURN and MESSAGE ids the message actually stored.
     /// Either refusing rolls the message back, so neither commits without
-    /// the other.
+    /// the other. `marks` go on the message and its turn (`say`, L8-25).
     pub(crate) fn message_person_linked(
         &self,
         input: &MessagePersonRequest,
+        marks: MessageMarks,
         check: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
         record: impl FnOnce(&mut heed::RwTxn<'_>, &MessagePersonReceipt) -> MemoryResult<()>,
     ) -> MemoryResult<MessagePersonReceipt> {
@@ -378,7 +351,9 @@ impl Memory<'_> {
         };
         let room = route.room();
         let now_ms = crate::unix_millis_now();
-        let author = if self.actor_class == EdgeActorClass::Agent {
+        // Generated code speaks as the companion, a person's own code run
+        // included (the witness door refuses it a user's word).
+        let author = if self.actor_class == EdgeActorClass::Agent || self.writes_generated() {
             WitnessAuthor::Companion
         } else {
             WitnessAuthor::User
@@ -395,13 +370,13 @@ impl Memory<'_> {
                     message_type: "text".to_owned(),
                     content: text.to_owned(),
                     parts: None,
-                    metadata: None,
+                    metadata: marks.metadata,
                     is_visible: true,
                     order: 0,
                     quote: None,
                 }],
                 occurred_at: now_ms / 1_000,
-                assertions: Default::default(),
+                assertions: marks.assertions,
             },
             |wtxn| {
                 check(wtxn)?;

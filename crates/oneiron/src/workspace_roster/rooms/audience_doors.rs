@@ -26,8 +26,12 @@
 //! Owner ruling 2026-10-20 (FIX 6381, 6383, 6384). The Owner or an Admin,
 //! as a person, adding themselves walks in: from now on, whatever history
 //! the call asked for. An Admin walks in only while the Owner's
-//! `rooms.private_threads.admin_walk_in` is on. Every member is told, and
-//! the walker shows in the thread's member list
+//! `rooms.private_threads.admin_walk_in` is on. A walk-in is a self-add, so
+//! into a closed room it asks the room's owners as any add does
+//! (P26B-WALKIN = A): the Owner and an Admin who owns the room walk in at
+//! once, any other Admin's walk-in waits on them, and the Admin's call
+//! naming the approved ask walks in. Every member is told, and the walker
+//! shows in the thread's member list
 //! ([`super::audience_notices`]). An agent never walks in, a pen of the
 //! Owner or an Admin included: it asks to join ([`super::thread_join`]).
 //! Anyone adding themselves when already in, a member or an agent alike,
@@ -55,6 +59,7 @@ use super::audience_events::{
 use super::audience_notices::{ThreadNotice, tell_thread_members};
 use super::*;
 use crate::EdgeActorClass;
+use crate::check_in::DoorCheckIn;
 use crate::memory::MEMORY_CODE_INVALID_STATE;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::settings::room_threads::{
@@ -124,6 +129,16 @@ pub(crate) fn vault_standing_in(
         Some(crate::federation::MembershipStanding::Member { role, .. }) if role.is_admin()
     )
     .then_some(VaultStanding::Admin))
+}
+
+/// The verb whose door adds someone to a private thread's audience.
+const THREAD_AUDIENCE_ADD_VERB: &str = "vault.rooms.thread_audience.add";
+
+/// What an audience edit's writer did: the edit, or an add of someone else
+/// that waits on its pending check-in, the writer's one write.
+enum AudienceEdit {
+    Done(Box<ThreadAudienceReceipt>, Option<ThreadNotice>),
+    Waits(EntityId),
 }
 
 /// The refusal for a thread the caller may not edit, or that is no private
@@ -273,6 +288,7 @@ pub(super) fn receipt_in(
         thread_ref: binding.root.to_hex(),
         event_ref: id.to_hex(),
         history,
+        check_in: None,
     }
 }
 
@@ -282,12 +298,28 @@ impl Memory<'_> {
     /// the thread. The Owner or an Admin adding themselves walks in from now
     /// on (FIX 6381); an agent never walks in (FIX 6384). Audience changes
     /// persist even while talk is off record; they are not saved or
-    /// discarded with the transcript (FIX 5643).
+    /// discarded with the transcript (FIX 5643). An add of someone else is
+    /// judged by check-in (ROLES-CHECKIN P2.6a): an agent's waits
+    /// (`CHECK_IN_PENDING`) until the call that names the approved check-in
+    /// as `check_in_ref`, and is from now on.
     pub fn rooms_thread_audience_add(
         &self,
         input: &ThreadAudienceAddRequest,
     ) -> MemoryResult<ThreadAudienceReceipt> {
-        self.edit_thread_audience(&input.thread_ref, &input.person_ref, Some(input.history))
+        let check_in_ref = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
+        self.edit_thread_audience(
+            &input.thread_ref,
+            &input.person_ref,
+            Some(input.history),
+            check_in_ref.as_ref(),
+        )
     }
 
     /// Removes a person from a private thread's audience (FIX 5545): every
@@ -298,7 +330,7 @@ impl Memory<'_> {
         &self,
         input: &ThreadAudienceRemoveRequest,
     ) -> MemoryResult<ThreadAudienceReceipt> {
-        self.edit_thread_audience(&input.thread_ref, &input.person_ref, None)
+        self.edit_thread_audience(&input.thread_ref, &input.person_ref, None, None)
     }
 
     /// The private thread rooted at `root` as an edit door reads it in its
@@ -437,19 +469,22 @@ impl Memory<'_> {
     }
 
     /// The write both doors make, in one transaction: the thread, the
-    /// caller's standing, the target and the edit's TURN. `history` is an
-    /// add's; `None` removes. A walk-in that entered, and the Owner's add
-    /// with full history, tell the thread's members once it committed.
+    /// caller's standing, the target, an add's check-in and the edit's
+    /// TURN. `history` is an add's; `None` removes. An add of someone else,
+    /// or a walk-in into a closed room, that waits writes nothing but its
+    /// pending check-in. A walk-in that entered, and the Owner's add with
+    /// full history, tell the thread's members once it committed.
     fn edit_thread_audience(
         &self,
         thread_ref: &str,
         person_ref: &str,
         history: Option<ThreadAudienceHistory>,
+        check_in_ref: Option<&EntityId>,
     ) -> MemoryResult<ThreadAudienceReceipt> {
         let root = EntityId::from_hex(thread_ref)?;
         let person = EntityId::from_hex(person_ref)?;
         let actor = self.actor();
-        let (receipt, notice) = self.with_verified_actor_write_txn(|txn| {
+        let edit = self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
             let thread = self.edited_thread_in(txn, root)?;
             let event = match history {
@@ -470,19 +505,65 @@ impl Memory<'_> {
                     request: None,
                 },
             };
+            let entering = !thread.folded.current().contains(&person);
+            // An add of someone else, and a walk-in that enters, which into a
+            // closed room asks its owners as any add does (P26B-WALKIN = A);
+            // a self re-add is none.
+            let judged = if matches!(event.op, AudienceOp::Add | AudienceOp::OpenFullHistory) {
+                crate::check_in::agent_add_is_from_now(
+                    self,
+                    event.history == Some(ThreadAudienceHistory::Full),
+                )?;
+                let digest = crate::check_in::room_add_effect_digest(
+                    &thread.binding.room,
+                    Some(&root),
+                    &person,
+                    event.op == AudienceOp::OpenFullHistory
+                        || event.history == Some(ThreadAudienceHistory::Full),
+                );
+                crate::check_in::room_add_check_in_in_txn(
+                    self,
+                    txn,
+                    THREAD_AUDIENCE_ADD_VERB,
+                    thread.binding.room,
+                    digest,
+                    check_in_ref,
+                )?
+            } else if event.op == AudienceOp::WalkIn && entering {
+                crate::check_in::walk_in_check_in_in_txn(
+                    self,
+                    txn,
+                    THREAD_AUDIENCE_ADD_VERB,
+                    thread.binding.room,
+                    root,
+                    person,
+                    check_in_ref,
+                )?
+            } else {
+                None
+            };
+            let check_in = match judged {
+                Some(DoorCheckIn::Go(decision)) => Some(decision),
+                Some(DoorCheckIn::Wait(id)) => return Ok(AudienceEdit::Waits(id)),
+                None => None,
+            };
             let id = put_audience_event_in(vault, txn, &thread.binding, &event)?;
             let notice = match event.op {
-                AudienceOp::WalkIn if !thread.folded.current().contains(&person) => {
-                    Some(ThreadNotice::WalkIn { event: id })
-                }
+                AudienceOp::WalkIn if entering => Some(ThreadNotice::WalkIn { event: id }),
                 AudienceOp::OpenFullHistory => {
                     Some(ThreadNotice::OwnerAddedFullHistory { event: id, person })
                 }
                 _ => None,
             };
             let named = (event.op != AudienceOp::Remove).then_some(person);
-            Ok((receipt_in(vault, txn, &thread.binding, id, named), notice))
+            let mut receipt = receipt_in(vault, txn, &thread.binding, id, named);
+            receipt.check_in = check_in;
+            Ok(AudienceEdit::Done(Box::new(receipt), notice))
         })?;
+        let (receipt, notice) = match edit {
+            AudienceEdit::Done(receipt, notice) => (*receipt, notice),
+            AudienceEdit::Waits(id) => return Err(Error::CheckInPending(id.to_hex()).into()),
+        };
         if let Some(notice) = notice {
             if let ThreadNotice::OwnerAddedFullHistory { event, .. } = notice {
                 tracing::info!(

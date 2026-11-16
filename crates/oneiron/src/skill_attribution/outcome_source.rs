@@ -13,8 +13,8 @@
 use crate::attempt_queue::ManifestKind;
 use crate::learning::Anchor;
 use crate::learning::honesty::SEAL_QUALITY_AXIS;
-use crate::receipt::{ReceiptRecord, attempt_pack_receipt_in_txn};
-use crate::self_heal::audit::{SealedAudit, bound_random_audit_in_txn, pack_receipt_attempt};
+use crate::receipt::{ReceiptRecord, attempt_pack_receipt_in_txn, parse_attempt_pack_receipt_id};
+use crate::self_heal::audit::{SealedAudit, bound_random_audit_in_txn};
 use crate::{Error, Result, Vault};
 
 use super::AnchoredPackOutcome;
@@ -98,7 +98,7 @@ fn read_in_txn(
     if receipt.outcome != "completed" {
         return Ok(None);
     }
-    let Some(attempt) = pack_receipt_attempt(attempt_receipt) else {
+    let Some(attempt) = parse_attempt_pack_receipt_id(attempt_receipt) else {
         return Ok(None);
     };
     let Some(audit) = bound_random_audit_in_txn(vault, txn, attempt)? else {
