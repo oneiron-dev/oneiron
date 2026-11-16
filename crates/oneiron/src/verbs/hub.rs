@@ -425,6 +425,14 @@ pub fn skill_hub_clawhub_search_as_owner(
     input: &ClawHubSearchRequest,
 ) -> MemoryResult<crate::skill_hub::ClawHubSearchReply> {
     owner.revalidate(vault)?;
+    // A negative limit is refused before the hub is read or asked
+    // (UC13-PAGE-FIXES = A); the wire field stays `i64`.
+    let limit = input.limit.map(u64::try_from).transpose().map_err(|_| {
+        crate::memory::MemoryError::bad_request_with(
+            "limit must be at least 0",
+            &["Omit limit for the hub's own page size, or ask 0 or more."],
+        )
+    })?;
     let hub = vault.skill_hub_record(&input.hub)?;
     if hub.kind != SkillHubKind::HttpIndex {
         return Err(crate::memory::MemoryError::bad_request(
@@ -434,7 +442,7 @@ pub fn skill_hub_clawhub_search_as_owner(
     let adapter = crate::skill_hub::HttpEndpointSkillHubAdapter::new(input.hub, &hub.endpoint)?;
     Ok(adapter.search_clawhub(
         &input.q,
-        input.limit,
+        limit,
         input.highlighted_only,
         input.non_suspicious_only,
         input.response_limit_bytes,
