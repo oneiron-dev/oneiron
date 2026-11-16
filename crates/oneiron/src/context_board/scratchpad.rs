@@ -5,10 +5,13 @@
 //! The pad is a NOTE, so it is an entity: exact-author private admission,
 //! BM25 and indexed-idle text, and the kind's AfterSeal/SessionSealed
 //! defaults. This module keeps only what a NOTE has no field for: the pad
-//! each (actor, session) writes and each pad's author and session. A pad
-//! belongs to its own session or fork (FIX 9748): opening another session's
-//! pad never seals it. The seal is the NOTE seal (`note/lifecycle.rs`), the
-//! one seal authority every NOTE shares.
+//! each (actor, session) writes, or each (run, actor, session) when a host
+//! bound the writer to a durable code run, and each pad's author and
+//! session. A pad belongs to its own session or fork (FIX 9748): opening
+//! another session's pad never seals it. Each live run writes its own pad,
+//! and the run's terminal write seals exactly its pads (OF-548: "one per
+//! wake and one per fork"; forks never share writes). The seal is the NOTE
+//! seal (`note/lifecycle.rs`), the one seal authority every NOTE shares.
 //! Line marks and pins have no NOTE body field either, so each line carries a
 //! fixed engine-owned header the write door stamps and the projection reads
 //! back: `[-]`, `[keep]`, `[scratch]`, `[pin]`, `[pin keep]`, `[pin scratch]`,
@@ -27,9 +30,11 @@ use crate::memory::{
 use crate::note::{NoteEditLanding, NoteProgramEdit, NoteProgramEditOutcome};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::ops::Range;
 
 mod run_lifecycle;
+pub(crate) use run_lifecycle::seal_run_pads_in_txn;
 
 /// The registered NOTE kind every pad is born as.
 const PAD_KIND: &str = "scratchpad";
@@ -64,19 +69,47 @@ const HEADERS: [(&str, Option<ScratchpadMark>, bool); 6] = [
 ];
 
 const TAG_SESSION: u8 = 1;
+// Tag 2 was the live-pad pointer, removed in #3945: never reuse it.
 const TAG_PAD: u8 = 3;
+const TAG_RUN: u8 = 4;
 
-/// Scratchpad pointers. Key: one tag byte, then an id, then (for a session
-/// pointer) the session bytes; see [`PadKey`].
+/// Scratchpad pointers. Key: one tag byte, then an id, then (for a run
+/// pointer) the actor id, then (for a session or run pointer) the session
+/// bytes; see [`PadKey`].
 const PAD: SideTable<PadKey, PadRow, Named> = SideTable::new(&side_table::CONTEXT_BOARD_SCRATCHPAD);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PadKey {
-    /// The pad one (actor, session) writes: tag 1 ‖ actor ‖ session bytes.
-    /// The one pointer a live pad has (FIX 9748).
+    /// The pad one unbound (actor, session) writes: tag 1 ‖ actor ‖ session
+    /// bytes. The one pointer a live pad has (FIX 9748).
     Session { actor: EntityId, session: String },
     /// Every pad, written at its birth: tag 3 ‖ pad NOTE id.
     Pad { pad: EntityId },
+    /// The pad one durable code run's (actor, session) writes: tag 4 ‖ run
+    /// ‖ actor ‖ session bytes. Two live runs on one label each write their
+    /// own pad (OF-548), and the run's end finds exactly its pads under one
+    /// key prefix.
+    Run {
+        run: EntityId,
+        actor: EntityId,
+        session: String,
+    },
+}
+
+impl PadKey {
+    /// The pointer `actor`'s `session` writes through: the run's own when a
+    /// host bound the writer to durable code run `run`, else the session's.
+    fn pointer(actor: EntityId, run: Option<EntityId>, session: &str) -> Self {
+        let session = session.to_owned();
+        match run {
+            Some(run) => Self::Run {
+                run,
+                actor,
+                session,
+            },
+            None => Self::Session { actor, session },
+        }
+    }
 }
 
 impl SideKey for PadKey {
@@ -91,6 +124,16 @@ impl SideKey for PadKey {
                 out.push(TAG_PAD);
                 out.extend_from_slice(pad.as_bytes());
             }
+            Self::Run {
+                run,
+                actor,
+                session,
+            } => {
+                out.push(TAG_RUN);
+                out.extend_from_slice(run.as_bytes());
+                out.extend_from_slice(actor.as_bytes());
+                out.extend_from_slice(session.as_bytes());
+            }
         }
     }
 
@@ -104,6 +147,17 @@ impl SideKey for PadKey {
                 session: std::str::from_utf8(rest).ok()?.to_owned(),
             }),
             TAG_PAD if rest.is_empty() => Some(Self::Pad { pad: id }),
+            TAG_RUN => {
+                let (actor, session) = rest.split_at_checked(16)?;
+                if session.is_empty() {
+                    return None;
+                }
+                Some(Self::Run {
+                    run: id,
+                    actor: EntityId::from_bytes(actor.try_into().ok()?).ok()?,
+                    session: std::str::from_utf8(session).ok()?.to_owned(),
+                })
+            }
             _ => None,
         }
     }
@@ -116,7 +170,9 @@ struct PadRow {
     actor: [u8; 16],
     session: String,
     pad: [u8; 16],
-    /// Only the session pointer owns a run's close; archival pad rows carry None.
+    /// Written `None` since run pointers (OF-548): a run-bound pad lives under
+    /// its run's own key, so no row owns a run's close. Kept so rows written
+    /// before them still decode; nothing reads it.
     close_run: Option<[u8; 16]>,
 }
 
@@ -136,9 +192,9 @@ pub struct ScratchpadAppendReceipt {
     pub pad: EntityId,
     /// This line opened the pad: it was the session's first.
     pub opened: bool,
-    /// This session's earlier pad, sealed because a racing first line of the
-    /// same session opened this one. Another session's pad is never sealed
-    /// here (FIX 9748), so it is `None` otherwise.
+    /// Always `None`: no append seals a pad. A first line that loses the
+    /// race to open its pointer's pad lands on the pad the other line
+    /// opened. Kept for the write reply's `sealed_prior`.
     pub sealed_prior: Option<EntityId>,
 }
 
@@ -373,6 +429,26 @@ fn sealed_pad() -> MemoryError {
     )
 }
 
+/// A run-bound line after its run's end: the run's terminal write sealed its
+/// pads, so no pad opens for it (OF-548).
+fn ended_run_pad() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "this run has ended, and its scratchpads are sealed",
+        &["A run that ended takes no pad writes; the next run opens a new pad."],
+    )
+}
+
+/// A first line that lost the race to open its pointer's pad, when that pad
+/// was erased before the line could land on it.
+fn raced_pad_gone() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "another first line opened this session's scratchpad, and it was erased",
+        &["Append the line again; it opens a new pad."],
+    )
+}
+
 impl crate::Vault {
     /// The pads `actor` wrote that are sealed, in key order: what its own
     /// dreaming reads (OF-490).
@@ -400,8 +476,9 @@ impl crate::Vault {
         self.scratchpad_sealed_in_txn(&txn, pad)
     }
 
-    /// Whether `pad` is the pad the board bound to `actor`'s `session`: the
-    /// actor's own board block, where its pad append lands with no grant
+    /// Whether `pad` is the pad the board bound to `actor`'s `session`, the
+    /// pad of durable code run `run` when a host bound the writer to one:
+    /// the actor's own board block, where its pad append lands with no grant
     /// (ARCH-0032 #scratchpad-one-store). Every other NOTE edit is the
     /// Grant's answer (DEC-0006 #10).
     pub(crate) fn is_session_pad_in_txn(
@@ -409,12 +486,10 @@ impl crate::Vault {
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
         session: &str,
+        run: Option<EntityId>,
         pad: EntityId,
     ) -> crate::error::Result<bool> {
-        let key = PadKey::Session {
-            actor,
-            session: session.to_owned(),
-        };
+        let key = PadKey::pointer(actor, run, session);
         Ok(PAD.get(&self.store, txn, &key)?.is_some_and(|row| {
             row.actor == *actor.as_bytes() && row.session == session && row.pad == *pad.as_bytes()
         }))
@@ -431,7 +506,7 @@ impl crate::Vault {
     }
 }
 
-/// The pointer rows an erase of `id` purges: each session pointer
+/// The pointer rows an erase of `id` purges: each session or run pointer
 /// `id` writes as the actor or names as its pad, and pad `id`'s own row. An
 /// erased author's pads keep their rows and seals: each pad is its own NOTE
 /// and stays a sealed pad until it is erased itself.
@@ -444,7 +519,9 @@ fn rows_erased_with(
         .scan(&vault.store, txn)?
         .into_iter()
         .filter(|(key, row)| match key {
-            PadKey::Session { actor, .. } => actor == id || row.pad == *id.as_bytes(),
+            PadKey::Session { actor, .. } | PadKey::Run { actor, .. } => {
+                actor == id || row.pad == *id.as_bytes()
+            }
             PadKey::Pad { pad } => pad == id,
         })
         .map(|(key, _)| key)
@@ -466,25 +543,33 @@ fn seal_pad_in_txn(
     Ok(())
 }
 
-/// Seals the pad `actor`'s session `session` writes, in the caller's write,
-/// when that session ends (FIX 9748): that pad alone, never another
-/// session's. `None` when the session has no pad.
+/// Seals the pad `key` points at, by `actor`, in the caller's write: that
+/// pad alone, never another session's or run's (FIX 9748). `None` when the
+/// pointer holds no pad.
+fn seal_pointed_pad_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &PadKey,
+    actor: EntityId,
+) -> crate::error::Result<Option<EntityId>> {
+    let Some(row) = PAD.get(&vault.store, txn, key)? else {
+        return Ok(None);
+    };
+    let pad = EntityId::from_bytes(row.pad)?;
+    seal_pad_in_txn(vault, txn, pad, actor)?;
+    Ok(Some(pad))
+}
+
+/// Seals the pad `actor`'s unbound session `session` writes, in the
+/// caller's write, when that session ends (FIX 9748): that pad alone, never
+/// another session's. `None` when the session has no pad.
 pub(crate) fn seal_session_pad_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     session: &str,
 ) -> crate::error::Result<Option<EntityId>> {
-    let key = PadKey::Session {
-        actor,
-        session: session.to_owned(),
-    };
-    let Some(row) = PAD.get(&vault.store, txn, &key)? else {
-        return Ok(None);
-    };
-    let pad = EntityId::from_bytes(row.pad)?;
-    seal_pad_in_txn(vault, txn, pad, actor)?;
-    Ok(Some(pad))
+    seal_pointed_pad_in_txn(vault, txn, &PadKey::pointer(actor, None, session), actor)
 }
 
 /// Whether an erase of `id` has scratchpad rows to purge.
@@ -512,15 +597,23 @@ pub(crate) fn erase_scratchpad_rows_in_txn(
 }
 
 impl Memory<'_> {
-    /// The pad this actor's session writes, and whether it is sealed.
-    fn scratchpad_pointer(&self, session: &str) -> MemoryResult<Option<(EntityId, bool)>> {
+    /// The pointer this caller's `session` writes through: its bound run's
+    /// own when a host bound it to a durable code run (OF-548), else the
+    /// session's.
+    fn pad_key(&self, session: &str) -> PadKey {
+        PadKey::pointer(self.actor(), self.bound_code_run(), session)
+    }
+
+    /// The pad `key`, one of this actor's pointers for `session`, holds, and
+    /// whether it is sealed.
+    fn scratchpad_pointer(
+        &self,
+        key: &PadKey,
+        session: &str,
+    ) -> MemoryResult<Option<(EntityId, bool)>> {
         let store = &self.vault().store;
         let txn = store.env.read_txn().map_err(crate::error::Error::from)?;
-        let key = PadKey::Session {
-            actor: self.actor(),
-            session: session.to_owned(),
-        };
-        let Some(row) = PAD.get(store, &txn, &key)? else {
+        let Some(row) = PAD.get(store, &txn, key)? else {
             return Ok(None);
         };
         if row.actor != *self.actor().as_bytes() || row.session != session {
@@ -538,7 +631,7 @@ impl Memory<'_> {
     /// it. It never opens, appends to or seals a pad.
     pub fn scratchpad_ref(&self, session: &str) -> MemoryResult<Option<EntityId>> {
         validate_session(session)?;
-        let Some((pad, false)) = self.scratchpad_pointer(session)? else {
+        let Some((pad, false)) = self.scratchpad_pointer(&self.pad_key(session), session)? else {
             return Ok(None);
         };
         Ok(self.pad_markdown(pad)?.map(|_| pad))
@@ -547,8 +640,12 @@ impl Memory<'_> {
     /// Appends one line to this session's live pad. The session's first line
     /// births a new `scratchpad` NOTE: a new pad per run (`dr:P16`), each
     /// session's or fork's its own, so another session's pad, live or not,
-    /// is never sealed here (FIX 9748). A sealed pad refuses writes. The
-    /// mark and pin ride the line as its header.
+    /// is never sealed here (FIX 9748). A run-bound caller writes its own
+    /// run's pad, so a later wake on a label opens a fresh pad and two live
+    /// runs on one label never share one (OF-548). Two first lines that race
+    /// land on one pad: the later lands on the pad the earlier opened. A
+    /// sealed pad refuses writes, and so does a run-bound caller's first line
+    /// once its run has ended. The mark and pin ride the line as its header.
     pub fn scratchpad_append(
         &self,
         session: &str,
@@ -569,92 +666,129 @@ impl Memory<'_> {
             .find(|&&(_, line_mark, line_pin)| line_mark == mark && line_pin == pin)
             .map_or("-", |&(name, _, _)| name);
         let line = format!("[{head}] {text}\n");
-        if let Some((pad, sealed)) = self.scratchpad_pointer(session)? {
-            if sealed {
-                return Err(sealed_pad());
-            }
-            let doc = self
-                .vault()
-                .note_program_document(pad)?
-                .ok_or_else(corrupt_pad)?;
-            let end = doc.anchor(doc.text().chars().count())?;
-            let note = pad;
-            let edit = NoteProgramEdit::InsertAfter {
-                anchor: end,
-                text: line,
-            };
-            let actor = self.write_actor();
-            let outcome = self.with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn, lane| {
-                    let outcome = self.vault().edit_note_landing_in_txn(
-                        txn,
-                        note,
-                        &edit,
-                        actor,
-                        lane,
-                        NoteEditLanding::SessionPad { session },
-                    )?;
-                    if matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
-                        run_lifecycle::observe_append_in_txn(self, txn, session, pad)?;
-                    }
-                    Ok(outcome)
-                })
-            })?;
-            #[cfg(feature = "sync")]
-            self.vault().notify_note_document(note);
-            if !matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_INVALID_STATE,
-                    "scratchpad line did not land on the live pad",
-                    &["Only the pad's author writes its pad."],
-                ));
-            }
-            return Ok(ScratchpadAppendReceipt {
-                pad,
-                opened: false,
-                sealed_prior: None,
-            });
+        let key = self.pad_key(session);
+        if let Some(receipt) = self.append_to_pointed_pad(&key, session, &line)? {
+            return Ok(receipt);
         }
-        let pad = EntityId::from_hex(&self.create_note(PAD_KIND, &line)?.id_hex)?;
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::scratchpad_wake::at_pad_birth(self, session)?;
         let actor = self.actor();
-        let mut row = PadRow {
-            actor: *actor.as_bytes(),
-            session: session.to_owned(),
-            pad: *pad.as_bytes(),
-            close_run: None,
-        };
-        let sealed_prior = self.with_verified_actor_write_txn(|txn| {
+        let run = self.bound_code_run();
+        let raced = Cell::new(false);
+        // OF-548: the pad's birth and its pointers commit in one write. A
+        // run's terminal write, which seals the run's pads, either commits
+        // first, and this birth refuses, or reads these pointers and seals
+        // the pad, so no pad outlives its run unsealed.
+        let born = self.create_note_then(PAD_KIND, &line, |txn, pad| {
+            self.verify_actor_write_in_txn(txn)?;
+            if let Some(run) = run
+                && run_lifecycle::code_run_ended_in_txn(self.vault(), txn, run)?
+            {
+                return Err(ended_run_pad());
+            }
             let store = &self.vault().store;
-            // Two first lines racing for one session both birth a pad; the
-            // later commit seals the earlier, so the session still holds one.
-            // Only this session's own pointer is read: no other session's
-            // pad is sealed.
-            let prior = seal_session_pad_in_txn(self.vault(), txn, actor, session)?;
-            PAD.put(store, txn, &PadKey::Pad { pad }, &row)?;
-            row.close_run = self.bound_code_run().map(|run| *run.as_bytes());
-            let session = PadKey::Session {
-                actor,
+            // A racing first line of this pointer committed its pad after
+            // this line read none: this birth rolls back and the line lands
+            // on that pad below, so the pointer keeps one pad that holds both
+            // lines, the pad the run's end seals and names. Only this
+            // caller's own pointer is read.
+            if PAD.get(store, txn, &key)?.is_some() {
+                raced.set(true);
+                return Err(raced_pad_gone());
+            }
+            let row = PadRow {
+                actor: *actor.as_bytes(),
                 session: session.to_owned(),
+                pad: *pad.as_bytes(),
+                close_run: None,
             };
-            PAD.put(store, txn, &session, &row)?;
-            Ok(prior)
+            PAD.put(store, txn, &PadKey::Pad { pad }, &row)?;
+            PAD.put(store, txn, &key, &row)?;
+            Ok(pad)
+        });
+        match born {
+            Ok((_, pad)) => Ok(ScratchpadAppendReceipt {
+                pad,
+                opened: true,
+                sealed_prior: None,
+            }),
+            Err(refused) if raced.get() => self
+                .append_to_pointed_pad(&key, session, &line)?
+                .ok_or(refused),
+            Err(refused) => Err(refused),
+        }
+    }
+
+    /// Appends `line` to the live pad that `key`, this caller's pointer for
+    /// `session`, holds. `None` when the pointer holds no pad; a sealed pad,
+    /// sealed before the read or before the line's write, refuses the line.
+    fn append_to_pointed_pad(
+        &self,
+        key: &PadKey,
+        session: &str,
+        line: &str,
+    ) -> MemoryResult<Option<ScratchpadAppendReceipt>> {
+        let Some((pad, sealed)) = self.scratchpad_pointer(key, session)? else {
+            return Ok(None);
+        };
+        if sealed {
+            return Err(sealed_pad());
+        }
+        let doc = self
+            .vault()
+            .note_program_document(pad)?
+            .ok_or_else(corrupt_pad)?;
+        let end = doc.anchor(doc.text().chars().count())?;
+        let edit = NoteProgramEdit::InsertAfter {
+            anchor: end,
+            text: line.to_owned(),
+        };
+        let actor = self.write_actor();
+        let landing = NoteEditLanding::SessionPad {
+            session,
+            run: self.bound_code_run(),
+        };
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::scratchpad_wake::at_live_pad_append(self, session)?;
+        let outcome = self.with_actor_content_write_txn_as(actor, |content| {
+            content.update_note(pad, |txn, lane| {
+                // A seal can commit after the read above, as a run's terminal
+                // write does; a sealed pad refuses the line here, before an
+                // edit of a sealed NOTE stores a fork of it.
+                if crate::note::note_sealed_in_txn(&self.vault().store, txn, pad)? {
+                    return Err(sealed_pad());
+                }
+                self.vault()
+                    .edit_note_landing_in_txn(txn, pad, &edit, actor, lane, landing)
+            })
         })?;
-        Ok(ScratchpadAppendReceipt {
+        #[cfg(feature = "sync")]
+        self.vault().notify_note_document(pad);
+        if !matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "scratchpad line did not land on the live pad",
+                &["Only the pad's author writes its pad."],
+            ));
+        }
+        Ok(Some(ScratchpadAppendReceipt {
             pad,
-            opened: true,
-            sealed_prior,
-        })
+            opened: false,
+            sealed_prior: None,
+        }))
     }
 
     /// Seals this session's pad at the end of its run: it takes no more
     /// writes, leaves the live board, and stays a referenceable NOTE.
     /// Sealing a sealed pad changes nothing; a session without a pad seals
-    /// nothing and returns `None`. Only this session's own pad is sealed.
+    /// nothing and returns `None`. Only this session's own pad is sealed,
+    /// the bound run's own for a run-bound caller.
     pub fn scratchpad_seal(&self, session: &str) -> MemoryResult<Option<EntityId>> {
         validate_session(session)?;
         let actor = self.actor();
+        let key = self.pad_key(session);
         self.with_verified_actor_write_txn(|txn| {
-            Ok(seal_session_pad_in_txn(self.vault(), txn, actor, session)?)
+            Ok(seal_pointed_pad_in_txn(self.vault(), txn, &key, actor)?)
         })
     }
 
@@ -664,7 +798,29 @@ impl Memory<'_> {
     /// withholds it.
     pub fn scratchpad_board_section(&self, session: &str) -> MemoryResult<Option<ScratchpadBoard>> {
         validate_session(session)?;
-        let Some((pad, false)) = self.scratchpad_pointer(session)? else {
+        self.pad_board_section(&self.pad_key(session), session)
+    }
+
+    /// [`Self::scratchpad_board_section`] of the pad durable code run `run`
+    /// writes on this actor's `session`: the run's own board, read through a
+    /// surface no host bound to that run. Only this actor's pad of that run
+    /// is read.
+    pub fn scratchpad_board_section_in_run(
+        &self,
+        session: &str,
+        run: EntityId,
+    ) -> MemoryResult<Option<ScratchpadBoard>> {
+        validate_session(session)?;
+        self.pad_board_section(&PadKey::pointer(self.actor(), Some(run), session), session)
+    }
+
+    /// The SCRATCHPAD section of the live pad `key` holds for `session`.
+    fn pad_board_section(
+        &self,
+        key: &PadKey,
+        session: &str,
+    ) -> MemoryResult<Option<ScratchpadBoard>> {
+        let Some((pad, false)) = self.scratchpad_pointer(key, session)? else {
             return Ok(None);
         };
         let Some(text) = self.pad_markdown(pad)? else {
@@ -698,7 +854,7 @@ impl Memory<'_> {
                 "scratchpad recall query must be 1 to {SCRATCHPAD_LINE_MAX_BYTES} bytes of words"
             )));
         }
-        let Some((pad, sealed)) = self.scratchpad_pointer(session)? else {
+        let Some((pad, sealed)) = self.scratchpad_pointer(&self.pad_key(session), session)? else {
             return Ok(None);
         };
         let Some(text) = self.pad_markdown(pad)? else {
