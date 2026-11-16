@@ -39,22 +39,15 @@ async fn setup_with_dreamer(fake: &FakeLlm) -> (tempfile::TempDir, Arc<SyncServe
     (dir, server, actor, host)
 }
 
-/// A person entity with a DAG write policy, as the wire `actor`.
+/// The embedded owner as the wire `actor`: on a host root or the local dev
+/// hatch the body actor must be the owner (FIX 2222, 55f11420183). The owner
+/// is a live PERSON and reads and writes as owner, so it needs no DAG policy.
 fn author(server: &SyncServer) -> Value {
-    let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
-    server
+    let owner = server
         .vault
-        .put_entity(
-            &actor.entity_ref(),
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&json!({"name": "author"})).unwrap(),
-        )
-        .unwrap();
-    oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, actor, true)
-        .unwrap();
-    json!({"entity_ref": actor.entity_ref().to_hex(), "actor_class": "human"})
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    json!({"entity_ref": owner.to_hex(), "actor_class": "human"})
 }
 
 async fn declare(server: &Arc<SyncServer>, path: &str, body: Value) -> Value {

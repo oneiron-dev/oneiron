@@ -98,24 +98,12 @@ pub fn mint_transcript(claims: &SlipClaims) -> EngineResult<Vec<u8>> {
 }
 
 pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 pub fn unhex(value: &str) -> EngineResult<Vec<u8>> {
-    if value.len() > MAX_WIRE_BYTES * 2
-        || !value.len().is_multiple_of(2)
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
+    if value.len() > MAX_WIRE_BYTES * 2 {
         return Err(invalid_authority());
     }
-    value
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let nibble = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
-            Ok(nibble(pair[0]) * 16 + nibble(pair[1]))
-        })
-        .collect()
+    oneiron_hex::decode_vec(value).ok_or_else(invalid_authority)
 }
