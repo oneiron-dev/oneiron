@@ -51,6 +51,16 @@ impl GpuJobHost {
             .insert(name.to_owned(), connector);
     }
 
+    /// Takes the backend `name` off this host, as a restart that no longer
+    /// registers it does.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn remove_backend(&self, name: &str) {
+        self.backends
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
+    }
+
     /// The backend registered as `name`.
     pub(crate) fn backend(&self, name: &str) -> Option<Arc<dyn GpuJobConnector>> {
         self.backends

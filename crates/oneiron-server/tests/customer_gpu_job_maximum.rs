@@ -9,7 +9,8 @@
 //! - Starting and cancelling are the owner's acts; an agent whose Grant names
 //!   the verbs may quote and read status, and is refused start and cancel.
 //! - An offer whose backend is not registered refuses its start before any
-//!   reservation.
+//!   reservation; a stopped job's cancel calls no provider and needs no
+//!   backend.
 //! - `serve` refuses a section with a price shape other than our list, a zero
 //!   price, or an unknown key.
 //!
@@ -54,6 +55,7 @@ use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::test_doors::gpu_backend::{
     gpu_jobs_section, grant_gpu_allocation, register_gpu_backend, step_gpu_jobs,
+    unregister_gpu_backend,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
@@ -720,4 +722,55 @@ fn the_gpu_jobs_section_is_checked() {
     let unknown = SECTION.replace("price_per_second = 2", "price_per_second = 2\nprice = 2");
     let refused = gpu_jobs_section(&unknown).expect_err("an unknown key");
     assert!(format!("{refused:#}").contains("price"), "{refused:#}");
+}
+
+/// A stopped job's cancel calls no provider, so it needs no backend: on a
+/// host that no longer registers the job's backend, the owner's cancel still
+/// ends the job and gives up its resume (review of #8063, round 1).
+#[test]
+fn a_stopped_job_cancels_with_no_backend() {
+    run_on_engine_stack("gpu-job-cancel-stopped", || async {
+        let fixture = setup(SECTION);
+        let quote = owner_quote(&fixture, "h100-test", None).await;
+        let (status, started) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "owner start: {started}");
+        let job = started["job"].as_str().expect("job id").to_owned();
+        for used in [50, 80, 95] {
+            step_at(&fixture, &job, used, None).await;
+        }
+        step_at(&fixture, &job, 97, Some("ck-1")).await;
+        fixture.gpu.state().termination = Some(GpuTermination::Confirmed { billed_secs: 100 });
+        let mut stopped = step_at(&fixture, &job, 100, Some("ck-1")).await;
+        for _ in 0..2 {
+            if stopped["state"].as_str() == Some("stopped") {
+                break;
+            }
+            stopped = step_at(&fixture, &job, 100, Some("ck-1")).await;
+        }
+        assert_eq!(stopped["state"].as_str(), Some("stopped"), "{stopped}");
+
+        unregister_gpu_backend(&fixture.server, "fake");
+        let calls = fixture.gpu.state().calls.len();
+        let (status, body) = as_owner(&fixture, "vault.gpu.jobs.cancel", json!({"job": job})).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a stopped job cancels with no backend: {body}"
+        );
+        assert_eq!(body["state"].as_str(), Some("ended"), "{body}");
+        assert!(
+            body["stop"].is_null(),
+            "the cancel gave up the resume: {body}"
+        );
+        assert_eq!(
+            fixture.gpu.state().calls.len(),
+            calls,
+            "no provider was called"
+        );
+    });
 }
