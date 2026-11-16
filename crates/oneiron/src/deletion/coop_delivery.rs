@@ -95,11 +95,7 @@ use oneiron_records::deletion::coop_delivery::invalid;
 pub use oneiron_records::deletion::coop_delivery::parse_hex;
 
 fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    oneiron_hex::encode(bytes)
 }
 
 /// The pseudonym the sender's ledger keeps for a recipient, in place of its
