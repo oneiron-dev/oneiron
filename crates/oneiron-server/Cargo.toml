@@ -357,6 +357,13 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# FIX 4748 on the mesh: the devices of one vault serve each other while the home is down. Each
+# device's install keys sit in a `MemoryKeystore`; the listeners need the `mesh` feature.
+[[test]]
+name = "mesh_two_machine_peer_e2e"
+path = "tests/mesh_two_machine_peer_e2e.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
