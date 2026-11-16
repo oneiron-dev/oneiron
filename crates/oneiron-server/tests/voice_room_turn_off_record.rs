@@ -3,7 +3,7 @@
 //! turn runs unsourced during an off-record stretch, and sourced otherwise.
 //!
 //! One turn of a call heard in a room, driven through the room-turn door
-//! (`oneiron_server::test_doors::voice_room_turn::RoomTurnCall`), with the
+//! (`oneiron_server::test_doors::room_turn_call::RoomTurnCall`), with the
 //! turn's run receipts going to an in-memory sink. (a) Control, no stretch in
 //! the room: the turn's run is sourced, and some `Admitted` receipt of it
 //! names the answering agent's row. (b) After a member starts an off-record
@@ -40,7 +40,7 @@ use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
 use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::voice_room_turn::RoomTurnCall;
+use oneiron_server::test_doors::room_turn_call::RoomTurnCall;
 use serde_json::Value;
 
 type TestError = Box<dyn std::error::Error>;
