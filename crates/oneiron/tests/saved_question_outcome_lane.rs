@@ -42,6 +42,15 @@
 //! owner's own question over the same unit reads each as before. A window
 //! that closed unknown reads as it closed, even after a fact recorded later
 //! labels its answer.
+//!
+//! PERSON-CHANGED-PAIRS-SKIP-DEVICE-LOCAL-WORLDS and
+//! PERSON-PAIRS-IN-LANE-JUDGE-ASK-ID: a person-changed pair is judged on the
+//! rows its ask was put over. Read through a base-world lane, the owner's
+//! own-lane question keeps the pair of its ask over a base-world claim and
+//! not the one over a claim in another world. Read from another machine, it
+//! keeps no pair of an ask over a claim in a world kept on this machine,
+//! and, while any world is kept here, no pair of a record with no ask of
+//! its own.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,9 +64,9 @@ use oneiron::llm::decision::questions::{
     AnswerRecord, CalibrationPair, GraphAnswerer, GraphPrediction, GraphUnitContext,
     OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation,
     QuestionDefinitionInput, RefreshPolicy, SILENCE_OUTCOME, WindowOutcome, calibration_pairs,
-    close_due_outcome_windows, closed_outcome_windows, create_question, create_question_with_lane,
-    edit_question_with_lane, outcome_labels, person_changed_pairs, project_bound_outcomes,
-    read_question, refresh_standing_question_with,
+    calibration_pairs_in_lane, close_due_outcome_windows, closed_outcome_windows, create_question,
+    create_question_with_lane, edit_question_with_lane, outcome_labels, person_changed_pairs,
+    project_bound_outcomes, read_question, refresh_standing_question_with,
 };
 use oneiron::llm::decision::{
     AnswerContract, AskTo, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
@@ -1456,6 +1465,198 @@ fn a_person_changed_record_naming_an_earlier_version_under_an_open_ask_pairs_not
          calibration pair from its answered ask over claim {inside:?} only, none from the \
          first-version record put under its open ask {:?} over claim {outside:?}; seen {pairs:?}",
         open.id
+    );
+}
+
+/// The owner's two changed answers to its own-lane question: one over the
+/// unit and a base-world claim, one over the unit and a claim in the
+/// fixture's second world. The base-world lane reads the first claim and not
+/// the second; the owner reads both.
+struct TwoWorldAsks {
+    inside: EntityId,
+    outside: EntityId,
+    over_inside: EntityId,
+    over_outside: EntityId,
+}
+
+fn two_world_asks(fixture: &Fixture) -> TwoWorldAsks {
+    let claim_in = |world: EntityId| {
+        write_owner_claim(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.proof,
+            fixture.unit,
+            REFERENCE_PREDICATE,
+            fixture.fact_at(),
+            world,
+            all_relationships(),
+        )
+    };
+    let inside = claim_in(base_world_id());
+    let outside = claim_in(fixture.other_world);
+    assert!(
+        fixture.owner_reads(&outside)
+            && fixture.bound_lane_reads(&inside)
+            && !fixture.bound_lane_reads(&outside),
+        "precondition: the owner reads claim {outside:?} in world {:?}, and the base-world lane \
+         reads claim {inside:?} and not that one",
+        fixture.other_world
+    );
+    let over_inside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, inside],
+    );
+    let over_outside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, outside],
+    );
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question person-changed pairs on this device");
+    assert_eq!(
+        paired_asks(&pairs).into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from([over_inside, over_outside]),
+        "precondition: on this device the owner's own-lane question pairs both changed answers"
+    );
+    TwoWorldAsks {
+        inside,
+        outside,
+        over_inside,
+        over_outside,
+    }
+}
+
+#[test]
+fn a_base_world_lane_reads_the_person_changed_pair_over_a_base_world_claim_and_not_one_outside_its_worlds()
+ {
+    let fixture = fixture();
+    let asks = two_world_asks(&fixture);
+    let pairs = calibration_pairs_in_lane(
+        &fixture.vault,
+        &fixture.bound_lane(),
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("the owner's question calibration pairs through the base-world lane");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![asks.over_inside],
+        "actor=owner reading its own-lane question through the base-world lane; expected the \
+         person-changed pair of its ask over claim {:?} only, none from its ask {:?} over claim \
+         {:?} outside the lane's worlds; seen {pairs:?}",
+        asks.inside,
+        asks.over_outside,
+        asks.outside
+    );
+}
+
+#[test]
+fn a_person_changed_pair_over_a_claim_in_a_world_kept_on_this_machine_reaches_no_other_machine() {
+    let fixture = fixture();
+    let asks = two_world_asks(&fixture);
+    // Kept after the asks are answered: a device-local world is judged at
+    // each read.
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(fixture.other_world, true)
+        .expect("precondition: the owner keeps the second world on this machine");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OffDevice,
+    )
+    .expect("the owner's question person-changed pairs off this device");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![asks.over_inside],
+        "actor=owner reading off this device; expected the person-changed pair of its ask over \
+         base-world claim {:?} only, none from its ask {:?} over claim {:?} in world {:?} kept on \
+         this machine; seen {pairs:?}",
+        asks.inside,
+        asks.over_outside,
+        asks.outside,
+        fixture.other_world
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OffDevice,
+    )
+    .expect("the owner's question calibration pairs off this device");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![asks.over_inside],
+        "actor=owner reading off this device; expected the calibration pair of its ask over \
+         base-world claim {:?} only, none from its ask {:?} over claim {:?} in world {:?} kept on \
+         this machine; seen {pairs:?}",
+        asks.inside,
+        asks.over_outside,
+        asks.outside,
+        fixture.other_world
+    );
+}
+
+#[test]
+fn a_person_changed_record_with_no_ask_of_its_own_reaches_no_other_machine_while_a_world_is_kept_on_this_one()
+ {
+    let fixture = fixture();
+    let saved = read_question(&fixture.vault, fixture.owner, fixture.control, None)
+        .expect("read the owner's question")
+        .expect("precondition: the owner's saved question");
+    // A question no one saved, as a catalogue question is: no head.
+    let mut unsaved = saved.definition.question;
+    unsaved.id = EntityId::now();
+    let record = asked_up(unsaved.clone(), fixture.owner, vec![fixture.unit])
+        .changed_by(DecisionAnswer::Noul(false))
+        .expect("a person's no")
+        .expect("precondition: the no changes the model's yes");
+    let source = EntityId::now();
+    fixture
+        .vault
+        .record_person_changed_answer(source, &record)
+        .expect("precondition: the host keeps a record under a source that is no ask");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        unsaved.id,
+        CallerLocality::OnDevice,
+    )
+    .expect("the unsaved question person-changed pairs on this device");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![source],
+        "precondition: on this device the unsaved question pairs the record as it is"
+    );
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(fixture.other_world, true)
+        .expect("precondition: the owner keeps the second world on this machine");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        unsaved.id,
+        CallerLocality::OffDevice,
+    )
+    .expect("the unsaved question person-changed pairs off this device");
+    assert!(
+        pairs.is_empty(),
+        "actor=owner reading off this device while world {:?} is kept on this machine; expected \
+         no person-changed pair from record {source:?}, which names no ask and so no row the \
+         person answered over; seen {pairs:?}",
+        fixture.other_world
     );
 }
 
