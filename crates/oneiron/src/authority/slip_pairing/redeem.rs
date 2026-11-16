@@ -301,7 +301,7 @@ impl Vault {
             .map(canonical_id)
             .transpose()?;
         // Recheck in the actual mint transaction: policy may have narrowed
-        // after link issuance while the one-hour link was still outstanding.
+        // after link issuance while the link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         // A live owner's own device gets their residence grant, named in the
