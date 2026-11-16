@@ -190,8 +190,8 @@ pub use oneiron_model::llm::{
     LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
     PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
     ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
-    TransportFault, TransportFaultKind, UnsupportedCapability,
+    SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
+    TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 
 #[cfg(test)]
