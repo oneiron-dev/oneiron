@@ -118,6 +118,9 @@ pub(super) enum Credential<'a> {
     /// The owner's sign-in: the file of upgrade headers it is read from for
     /// each new socket. His calls name no holder proof.
     Owner { headers_file: &'a Path },
+    /// An OAuth access token, sent as the bearer over HTTP with no holder
+    /// proof: the server swaps it for the slip it holds for the sign-in.
+    OAuth { bearer: &'a str },
 }
 
 /// The bridge's connection: the socket while the server offers it, else one
@@ -164,16 +167,27 @@ impl Link {
                 Err(Carried::Unsent) => {}
             }
         }
-        // The owner's sign-in is attested for a socket upgrade alone: owner
-        // mode never posts over HTTP.
-        let Credential::Slip { bearer, sign } = credential else {
-            return Err(Cut::Unavailable(
+        match credential {
+            Credential::Slip { bearer, sign } => {
+                let binding = sign().map_err(Cut::Failed)?;
+                self.http.post(
+                    &self.endpoint(surface),
+                    bearer,
+                    Some(&binding),
+                    body,
+                    bounds,
+                )
+            }
+            Credential::OAuth { bearer } => {
+                self.http
+                    .post(&self.endpoint(surface), bearer, None, body, bounds)
+            }
+            // The owner's sign-in is attested for a socket upgrade alone:
+            // owner mode never posts over HTTP.
+            Credential::Owner { .. } => Err(Cut::Unavailable(
                 "owner mode carries MCP over the server's socket alone".to_owned(),
-            ));
-        };
-        let binding = sign().map_err(Cut::Failed)?;
-        self.http
-            .post(&self.endpoint(surface), bearer, &binding, body, bounds)
+            )),
+        }
     }
 }
 
@@ -197,20 +211,24 @@ impl HttpLink {
         Ok(Self { client, runtime })
     }
 
+    /// One POST carrying `bearer`, and `binding` when a slip's holder proof
+    /// goes with it.
     fn post(
         &self,
         url: &str,
         bearer: &str,
-        binding: &str,
+        binding: Option<&str>,
         body: Vec<u8>,
         bounds: &Bounds,
     ) -> Result<Exchange, Cut> {
-        let request = self
+        let mut request = self
             .client
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header(BINDING_HEADER, binding);
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"));
+        if let Some(binding) = binding {
+            request = request.header(BINDING_HEADER, binding);
+        }
         // OF-604: a large body crosses zstd, as the remote SDK's does.
         let request = match oneiron::sync::transport::encode_http_body(&body) {
             Some(encoded) => {
@@ -403,7 +421,7 @@ impl SocketLink {
             Credential::Slip { sign, .. } => {
                 Some(sign().map_err(|error| Carried::Cut(Cut::Failed(error)))?)
             }
-            Credential::Owner { .. } => None,
+            Credential::Owner { .. } | Credential::OAuth { .. } => None,
         };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let frame = request_frame(id, surface, binding.as_deref(), body).map_err(Carried::Cut)?;
@@ -578,6 +596,11 @@ impl SocketLink {
                 Ok(upgrade) => upgrade.apply(headers),
                 Err(refused) => return Opened::Refused(refused.to_string()),
             },
+            // The upgrade takes a slip or the owner's sign-in, never an OAuth
+            // token: an OAuth bridge holds no socket.
+            Credential::OAuth { .. } => {
+                return Opened::Declined("the socket's upgrade takes no OAuth token".to_owned());
+            }
         }
         // Set after the owner's headers, which may not name it either.
         let Ok(protocol) = crate::handler::MCP_SUBPROTOCOL.parse() else {
