@@ -2,15 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_setting_contract::{Decided, FoundRow, RowKey, decide};
+use oneiron_setting_contract::{Decided, FitCell, FoundFit, FoundRow, RowKey, decide};
 
+use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
 use super::{
-    EncodedValue, Kind, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting, SettingMode,
-    SettingScope, SettingSource, SettingSpec, SettingValue,
+    EncodedValue, Kind, LearnedRange, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting,
+    SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
 };
 use crate::Vault;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::SubstrateRead;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
@@ -29,7 +32,7 @@ pub(super) const fn table_of(spec: &SettingSpec) -> SideTable<Vec<u8>, StoredRow
 }
 
 /// One stored row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct StoredRow {
     pub(super) value: EncodedValue,
@@ -41,14 +44,23 @@ pub(super) struct StoredRow {
     /// The sequence of the change that wrote it: the row's revision. It only grows, through a
     /// clear and a new write too, so a caller's `expected_revision` never matches a later row.
     pub(super) change: u64,
+    /// A learned key's seed: its weight in runs (ARCH-0003 `#learning-settings`). Absent on every
+    /// other row, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) weight_runs: Option<f64>,
 }
 
 impl StoredRow {
-    /// Whether the row is the owner's: set by the owner, or by the engine, which writes the
-    /// owner's answer or its own path's choice. A holder or a subject asks before it replaces
-    /// either, and a holder's value stays inside either.
+    /// Whether the row is the owner's: set by the owner; by the engine, which writes the owner's
+    /// answer or its own path's choice; or by an agent spending a check-in the owner approved,
+    /// whose effect digest named this row and this value, so the row is the owner's answer too.
+    /// A holder or a subject asks before it replaces any of them, and a holder's value stays
+    /// inside them.
     pub(super) const fn by_owner(&self) -> bool {
-        matches!(self.setter, Setter::Owner | Setter::Engine { .. })
+        matches!(
+            self.setter,
+            Setter::Owner | Setter::Engine { .. } | Setter::Approved { .. }
+        )
     }
 }
 
@@ -120,12 +132,15 @@ pub(super) enum Walked<V> {
     Unreadable(SettingScope),
 }
 
-/// The walk over loaded rows, with values decoded by `decode`.
+/// The walk over loaded rows and a learned key's fits, with values decoded by `decode`;
+/// `default` is the catalogue default, a holder's cap where the owner set no row.
 pub(super) fn walk<V: Clone>(
     loaded: &[Loaded],
+    fits: &[LoadedFit],
     chain: &[SettingScope],
     decode: impl Fn(&EncodedValue) -> Option<V>,
     tighter: Option<&dyn Fn(&V, &V) -> bool>,
+    default: &V,
 ) -> Walked<V> {
     let found: Vec<FoundRow<V>> = loaded
         .iter()
@@ -137,14 +152,39 @@ pub(super) fn walk<V: Clone>(
             value: row.found.value.as_ref().and_then(&decode),
         })
         .collect();
+    // A fit that does not decode as the key's type is passed over: it is no row of the key.
+    let (found_fits, fit_cells): (Vec<FoundFit<V>>, Vec<&FitCell>) = fits
+        .iter()
+        .filter_map(|fit| {
+            let value = decode(&fit.found.value)?;
+            Some((
+                FoundFit {
+                    at: fit.found.at,
+                    value,
+                },
+                &fit.cell,
+            ))
+        })
+        .unzip();
     let index_of = |decided: &FoundRow<V>| {
         found
             .iter()
             .position(|row| std::ptr::eq(row, decided))
             .unwrap_or_default()
     };
-    match decide(&found, tighter) {
+    match decide(&found, &found_fits, tighter, Some(default)) {
         Decided::Default => Walked::Default,
+        Decided::Fit(fit) => {
+            let index = found_fits
+                .iter()
+                .position(|found| std::ptr::eq(found, fit))
+                .unwrap_or_default();
+            Walked::Row {
+                value: fit.value.clone(),
+                source: SettingSource::Fit(fit_cells[index].clone()),
+                revision: 0,
+            }
+        }
         Decided::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
         Decided::Pin(row) | Decided::Row(row) => {
             let loaded = &loaded[index_of(row)];
@@ -201,10 +241,19 @@ impl<T: SettingValue> Setting<T> {
         self.spec.check_item(item)?;
         let chain = SettingScope::chain(known, self.spec.scopes)?;
         let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
+        let fits = fits_in_txn(dbs, txn, self.spec, &chain)?;
         let tighter = self.kind.tighter_typed();
         let tighter_ref = tighter.as_ref().map(|f| f as &dyn Fn(&T, &T) -> bool);
+        let default = self.kind.default_typed();
         Ok(
-            match walk(&loaded, &chain, Kind::<T>::decode, tighter_ref) {
+            match walk(
+                &loaded,
+                &fits,
+                &chain,
+                Kind::<T>::decode,
+                tighter_ref,
+                &default,
+            ) {
                 Walked::Row {
                     value,
                     source,
@@ -215,7 +264,7 @@ impl<T: SettingValue> Setting<T> {
                     revision,
                 },
                 Walked::Default => Resolved {
-                    value: self.kind.default_typed(),
+                    value: default,
                     source: SettingSource::Default,
                     revision: 0,
                 },
@@ -243,6 +292,9 @@ pub struct SettingView {
     pub source: SettingSource,
     /// The deciding row's revision; 0 when no row decided.
     pub revision: u64,
+    /// A learned key's narrowest fit on the read's chain, also when a row or a pin decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<SettingFitView>,
 }
 
 /// One stored row, as the verbs show it.
@@ -260,6 +312,9 @@ pub struct SettingRowView {
     pub by: Option<String>,
     pub setter: Setter,
     pub set_at: u64,
+    /// A learned key's seed: its weight in runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight_runs: Option<f64>,
 }
 
 /// The value in force for `spec` in `txn`, as JSON.
@@ -279,6 +334,7 @@ pub(super) fn view_in_txn(
         value: spec.kind.to_json(&value).unwrap_or(serde_json::Value::Null),
         source,
         revision,
+        fit: fit_view(spec, &fits_in_txn(store, txn, spec, &chain)?),
     })
 }
 
@@ -291,19 +347,28 @@ pub(super) fn in_force_in_txn(
     item: Option<&str>,
 ) -> Result<(EncodedValue, SettingSource, u64)> {
     let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
+    let fits = fits_in_txn(dbs, txn, spec, chain)?;
     let tighter = |a: &EncodedValue, b: &EncodedValue| spec.kind.is_tighter(a, b).unwrap_or(false);
     let tighter_ref = spec
         .kind
         .has_direction()
         .then_some(&tighter as &dyn Fn(&EncodedValue, &EncodedValue) -> bool);
+    let default = spec.kind.default_value()?;
     Ok(
-        match walk(&loaded, chain, |value| Some(value.clone()), tighter_ref) {
+        match walk(
+            &loaded,
+            &fits,
+            chain,
+            |value| Some(value.clone()),
+            tighter_ref,
+            &default,
+        ) {
             Walked::Row {
                 value,
                 source,
                 revision,
             } => (value, source, revision),
-            Walked::Default => (spec.kind.default_value()?, SettingSource::Default, 0),
+            Walked::Default => (default, SettingSource::Default, 0),
             Walked::Unreadable(scope) => (
                 spec.kind.strictest_value()?.ok_or(Error::CorruptedIndex(
                     "a setting row does not decode and its key names no strictest value",
@@ -340,6 +405,7 @@ pub(super) fn rows_in_txn(
             by: stored.as_ref().and_then(|row| row.by).map(|by| by.to_hex()),
             setter: stored.as_ref().map_or(Setter::Owner, |row| row.setter),
             set_at: stored.as_ref().map_or(0, |row| row.set_at),
+            weight_runs: stored.as_ref().and_then(|row| row.weight_runs),
         });
     }
     Ok(rows)
@@ -354,7 +420,9 @@ pub(crate) enum SettingReader {
 
 /// Whether `reader` may read `spec`'s rows at `scope` (all its rows when `None`), in `txn`: the
 /// owner always; a member of the vault for a key read by members; a live holder of the key's
-/// `engine.controls` class; the agent or person a row's scope names, for that row.
+/// `engine.controls` class; for a dials key, a live whole-vault Steward grant naming any
+/// `engine.controls` class; an agent whose live owner Grant lists the key's read line
+/// ([`super::get_line`]), vault-wide; the agent or person a row's scope names, for that row.
 pub(crate) fn reader_reads_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -374,7 +442,36 @@ pub(crate) fn reader_reads_key_in_txn(
     {
         return Ok(true);
     }
-    Ok(scope.is_some_and(|scope| names_subject(scope, actor)))
+    if spec.read_by == ReadBy::Dials
+        && vault.substrate_read_granted_in_txn(txn, actor, SubstrateRead::Dials)?
+    {
+        return Ok(true);
+    }
+    if scope.is_some_and(|scope| names_subject(scope, actor)) {
+        return Ok(true);
+    }
+    Ok(key_line_grant_in_txn(vault, txn, actor, &super::get_line(spec.name))?.is_some())
+}
+
+/// The live owner Grant through which `agent` holds the per-key line `line`
+/// ([`super::set_line`], [`super::get_line`]), vault-wide: the rule of the vault-wide review
+/// policy doors (FIX 8268), which takes any verb. The shipped principal rule for an agent, then
+/// the first live Grant in id order that alone stands for the agent and lists `line` exactly,
+/// stands under this vault's own rule and carries no repo bounds. Grants are never unioned, and
+/// a Grant over every verb lists no line.
+///
+/// # Errors
+///
+/// A store, fold or clock failure; never a refusal.
+pub(super) fn key_line_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    line: &str,
+) -> Result<Option<EntityId>> {
+    Ok(vault
+        .admit_queue_review_policy_in_txn(txn, agent, EdgeActorClass::Agent, line)?
+        .ok())
 }
 
 /// Whether `scope` is `actor`'s own: an agent's or a person's row about them.
@@ -406,6 +503,9 @@ pub struct SettingCatalogueEntry {
     /// For a family key, what its items name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
+    /// For a learned key, the range its rows and its fits stay in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned: Option<LearnedRange>,
     /// The value in force at the vault (or at the places the request named), when the reader
     /// reads the whole key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -446,7 +546,8 @@ impl Vault {
         };
         if !reader_reads_key_in_txn(self, &txn, reader, spec, own)? {
             return Err(Error::InvalidConfig(format!(
-                "reading `{key}` needs the owner, a holder of its class, or its subject"
+                "reading `{key}` needs the owner, a holder of its class, its Grant line, or its \
+                 subject"
             )));
         }
         view_in_txn(&self.store, &txn, spec, at, item)
@@ -520,6 +621,7 @@ impl Vault {
                     .filter(|kind| spec.admits_scope(*kind))
                     .collect(),
                 item: spec.item.map(|domain| domain.name.to_owned()),
+                learned: spec.kind.learned_range(),
                 value,
                 rows,
             });
