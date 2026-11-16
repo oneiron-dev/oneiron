@@ -53,7 +53,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
     AgentVerbClasses, FederationGrant, FederationGrantRole, FederationGrantScope, ScopeAxis,
-    ScopeId, SensitivityCeiling, decode_federation_grant_body,
+    ScopeId, SensitivityCeiling,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -226,10 +226,12 @@ fn asker_grant_in_txn(
 }
 
 /// The live FederationGrant row `id`, decoded; `None` for any other row. A
-/// Grant over this shared vault reads only while the fold stands behind it
-/// (pass 28 R3), never as a row alone; a guest's or a Connect Grant is read
-/// from its row until pass 28 R3's guests and slips step, and a personal
-/// vault's own-device residence rows until R4.
+/// Grant reads only while the fold stands behind it (pass 28 R3), never as a
+/// row alone: one over this shared vault on its counted giving, the owner's
+/// agent Grant on his counted mint, a guest's Grant on its counted giving
+/// (R3c; a Connect guest's on its Active pact too); a personal vault's
+/// own-device residence rows are read from themselves until R4
+/// ([`crate::federation::grant_row_in_fold`]).
 pub(super) fn grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -242,17 +244,13 @@ pub(super) fn grant_in_txn(
     else {
         return Ok(None);
     };
-    let Ok(grant) = decode_federation_grant_body(&body) else {
-        return Ok(None);
-    };
-    if vault.shared_vault_scope_in_txn(txn)?.as_ref() != Some(&grant.scope) {
-        return Ok(Some(grant));
-    }
+    let shared_scope = vault.shared_vault_scope_in_txn(txn)?;
     let fold = vault.authority_view_readonly_in_txn(txn)?;
-    Ok(crate::federation::shared_grant_row_in_fold(
+    Ok(crate::federation::grant_row_in_fold(
         &fold,
         *id,
         &body,
+        shared_scope.as_ref(),
         vault.store.clock.now_recorded_at(),
     )
     .map(|row| row.into_parts().1))
@@ -444,12 +442,13 @@ fn holder_standing_in_txn(
             else {
                 continue;
             };
-            if let Ok(grant) = decode_federation_grant_body(&body)
-                && grant.member_ref == holder
-                && grant.scope == asker_grant.scope
-                && crate::federation::pact_admits_grant(&fold, &id, &grant)
+            // A guest's Grant gives a holder a role only on its counted giving (pass 28
+            // R3c), never as a row alone.
+            if let Some(standing) = crate::federation::guest_grant_in_fold(&fold, id, &body, now)
+                && standing.grant().member_ref == holder
+                && standing.grant().scope == asker_grant.scope
             {
-                grants.push(grant);
+                grants.push(standing.into_grant());
             }
         }
     }

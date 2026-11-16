@@ -47,9 +47,7 @@ use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::federation::{
-    Ceiling, FederationGrant, connect_direction_projection, pact_admits_grant,
-};
+use crate::federation::{Ceiling, FederationGrant, connect_direction_projection};
 use crate::side_table::{self, Raw, SideTable};
 
 use super::edge::{
@@ -416,8 +414,9 @@ pub(crate) fn answer_inquiry_in_txn(
 /// credential is the company host's own, bound to this edge's grant and
 /// live in `txn` (its holder, its grant's expiry and withdrawal, its pact),
 /// as this vault minted it, with no holder caveat, and its scope holds the
-/// edge's whole scope; the grant is a live inquiry edge, not expired or
-/// withdrawn, whose Connect pact is Active and still holds the edge's
+/// edge's whole scope; the grant is a live inquiry edge its owner's counted
+/// act gives (no counted end, not expired), whose Connect pact is Active and
+/// still holds the edge's
 /// scope; and the inquiry comes from the edge's company. One refusal for
 /// every credential, edge or pact failure.
 ///
@@ -451,9 +450,12 @@ fn admitted_edge_in_txn(
         return Err(not_admitted());
     }
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    // The edge stands on its owner's counted giving, which no counted act ended, and its one
+    // Active pact (pass 28 R3c), never on its row: a row widened in place admits nothing.
     if !decoded.is_live_at(now)
-        || vault.guest_grant_withdrawn_in_txn(txn, &grant)?
-        || !pact_admits_grant(&fold, &grant, &decoded)
+        || vault
+            .guest_grant_standing_in_txn(txn, grant, now)?
+            .is_none()
         || !pact_holds_edge_scope(&fold, &grant, &decoded)
     {
         return Err(not_admitted());

@@ -85,8 +85,14 @@ pub enum GrantFamily {
     Delegate,
     /// A house seated in its org at a role.
     HouseLink,
-    /// A Connect inquiry edge's terms, rewritten in place.
+    /// A Connect inquiry edge: its owner's mint and every rewrite of its terms in place.
     InquiryEdge,
+    /// A Connect guest Grant that is no inquiry edge, given by the vault's owner. It confers
+    /// only while one Active operative pact with its peer binds it, too.
+    Connect,
+    /// An Ask guest Grant, given with its ask: its decider is the live owner whose recorded
+    /// consent the guest's disclosure stands on.
+    AskGuest,
     /// The owner's agent Grant: its giving is `AgentGrantAct`'s mint and his own end that
     /// act's revoke, so a grant act of this family is a rule's end alone (a lapse, or a direct
     /// delete of its row).
@@ -105,6 +111,8 @@ impl GrantFamily {
             Self::Delegate => "delegate",
             Self::HouseLink => "house_link",
             Self::InquiryEdge => "inquiry_edge",
+            Self::Connect => "connect",
+            Self::AskGuest => "ask_guest",
             Self::OwnerAgent => "owner_agent",
             Self::AgentDefinition => "agent_definition",
         }
@@ -118,6 +126,8 @@ impl GrantFamily {
             "delegate" => Self::Delegate,
             "house_link" => Self::HouseLink,
             "inquiry_edge" => Self::InquiryEdge,
+            "connect" => Self::Connect,
+            "ask_guest" => Self::AskGuest,
             "owner_agent" => Self::OwnerAgent,
             "agent_definition" => Self::AgentDefinition,
             _ => return None,

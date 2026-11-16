@@ -104,9 +104,6 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
-        if WITHDRAWN.get(&self.store, &txn, &grant_ref)?.is_some() {
-            return Err(Error::EntityNotFound);
-        }
         let LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_FEDERATION_GRANT,
             body,
@@ -114,14 +111,19 @@ impl Vault {
         else {
             return Err(Error::EntityNotFound);
         };
-        let grant = decode_federation_grant_body(&body)?;
-        require_guest_purpose_in_txn(self, &txn, grant_ref, &grant)?;
         let now = self.instant_in_txn(&txn)?.secs();
         // The grant's end is the visit's, a wall-clock fact (DEC-0006 duration
         // amendment), so it is judged no earlier than the recording clock; the
         // slip's own lifetime stays on the authority clock (identity
         // #slip-clocks).
         let grant_at = now.max(crate::ports::job_recorded_at_in_txn(&self.store, &txn)?);
+        // The guest's Grant stands on its counted giving, never on its row (pass 28 R3c): a
+        // row no counted act gives, one put back after its revoke and one widened in place
+        // mint no slip.
+        let grant = crate::federation::guest_grant_in_fold(&fold, grant_ref, &body, grant_at)
+            .ok_or(Error::EntityNotFound)?
+            .into_grant();
+        require_guest_purpose_in_txn(self, &txn, grant_ref, &grant)?;
         if !grant.is_live_at(grant_at) || expires_at <= now {
             return Err(invalid_authority());
         }
@@ -229,7 +231,7 @@ impl Vault {
         }
         if grant.member_ref.to_hex() != claims.holder_ref
             || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
-            || WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some()
+            || self.grant_line_ended_in_txn(txn, grant_ref)?
             || !grant.confers_at(self.instant_in_txn(txn)?.secs())
             || live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.live_type()
                 != Some(crate::registry::ENTITY_TYPE_PERSON)
@@ -274,7 +276,8 @@ impl Vault {
     }
 
     /// An Ask or active Connect guest's FEDERATION_GRANT `grant_ref` still stands for `member`
-    /// (PERSON hex): live, not withdrawn, a guest grant whose member it
+    /// (PERSON hex): a guest grant the verified fold stands behind (its counted giving, no
+    /// counted end, and for a Connect guest's its Active pact; pass 28 R3c), whose member it
     /// is, and live at `now` ([`crate::federation::FederationGrant::is_live_at`],
     /// no verb asked, FIX 8734). A grant-bound slip and a guest's task-verb
     /// proof (OF-220) both read it.
@@ -297,37 +300,19 @@ impl Vault {
         member: &str,
         now: u64,
     ) -> Result<crate::federation::FederationGrant> {
-        if WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some() {
-            return Err(invalid_authority());
-        }
-        let LiveEntityRow::Live {
-            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-            body,
-        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
-        else {
-            return Err(invalid_authority());
-        };
-        let grant = decode_federation_grant_body(&body)?;
-        require_guest_purpose_in_txn(self, txn, grant_ref, &grant)?;
         // A guest grant's end is the visit's, a wall-clock fact (DEC-0006
         // duration amendment): a caller's slip-clock `now` can bring it
         // forward, never put it back past the recording clock.
         let at = now.max(crate::ports::job_recorded_at_in_txn(&self.store, txn)?);
+        let grant = self
+            .guest_grant_standing_in_txn(txn, grant_ref, at)?
+            .ok_or_else(invalid_authority)?
+            .into_grant();
+        require_guest_purpose_in_txn(self, txn, grant_ref, &grant)?;
         if grant.member_ref.to_hex() != member || !grant.is_live_at(at) {
             return Err(invalid_authority());
         }
         Ok(grant)
-    }
-
-    /// Whether the owner withdrew guest grant `grant_ref` here (OF-232):
-    /// a withdrawn grant confers nothing, whatever its row says. A booking
-    /// payer's grant is judged by it too (FIX 5327).
-    pub(crate) fn guest_grant_withdrawn_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        grant_ref: &EntityId,
-    ) -> Result<bool> {
-        Ok(WITHDRAWN.get(&self.store, txn, grant_ref)?.is_some())
     }
 
     /// Tombstones, in the caller's writer, every slip minted under
@@ -558,6 +543,8 @@ impl Vault {
         vault_id: u64,
         leaver: EntityId,
     ) -> Result<Vec<EntityId>> {
+        // A Grant a counted act ended (its revoke) is released already (pass 28 R3c).
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut grants = Vec::new();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -566,7 +553,7 @@ impl Vault {
             None,
         )? {
             let id = id?;
-            if WITHDRAWN.get(&self.store, txn, &id)?.is_some() {
+            if fold.grant_line(id).is_some_and(|line| line.ended) {
                 continue;
             }
             let LiveEntityRow::Live {
@@ -595,6 +582,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         person: EntityId,
     ) -> Result<Vec<EntityId>> {
+        // A Grant a counted act ended (its revoke) is withdrawn already (pass 28 R3c).
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut grants = Vec::new();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -603,7 +592,7 @@ impl Vault {
             None,
         )? {
             let id = id?;
-            if WITHDRAWN.get(&self.store, txn, &id)?.is_some() {
+            if fold.grant_line(id).is_some_and(|line| line.ended) {
                 continue;
             }
             let LiveEntityRow::Live {

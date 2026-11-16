@@ -41,6 +41,8 @@ fn not_recorded() -> crate::Error {
 
 /// A guest is never allowed to expand the person's standing disclosure. The
 /// bound and its owner stamp are checked at admission AND at answer intake.
+/// Answers the disclosed refs and the live owner who recorded the consent
+/// they stand on: that owner decides the guest's Grant (pass 28 R3c).
 pub(super) fn check_disclosure(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -48,7 +50,7 @@ pub(super) fn check_disclosure(
     asker: EntityId,
     guest: &TaskAskGuest,
     spec: &super::TaskAskSpec,
-) -> Result<BTreeSet<EntityId>> {
+) -> Result<(BTreeSet<EntityId>, EntityId)> {
     let question = &spec.what;
     let class = question.class_key.as_deref().ok_or_else(invalid)?;
     let refs: BTreeSet<_> = std::iter::once(question.reference.entity_ref())
@@ -107,7 +109,17 @@ pub(super) fn check_disclosure(
             *reference,
         )?;
     }
-    Ok(refs)
+    Ok((refs, row.owner_stamp.actor))
+}
+
+/// Loads this install's key before an ask's writer opens when the ask names guests: each
+/// guest's Grant is given by a counted act this install signs in the ask's transaction
+/// (pass 28 R3c), and a giving refuses when the install cannot carry it
+/// (GRANT-ACT-FAILURE-POLICY = A).
+pub(super) fn load_carrier_for_guests(vault: &Vault, input: &super::TaskAskSpec) {
+    if matches!(input.who, Some(TaskAskTarget::Guests(_))) {
+        vault.load_membership_carrier();
+    }
 }
 
 /// The answer-class delegation is a separate ACTION grant a live owner
@@ -193,7 +205,12 @@ fn guest_holder_key(hex: &str) -> Result<[u8; 32]> {
 }
 
 /// Admit only the exact question facts inside a live owner-stamped bound, then
-/// materialize a disjoint guest grant in the same transaction as the ask.
+/// materialize a disjoint guest grant in the same transaction as the ask. Each
+/// grant is given by the general grant act in that transaction (pass 28 R3c,
+/// RULING R3C-GUEST-GIVING-ACT = A), decided by the live owner whose recorded
+/// consent the guest's disclosure stands on: no agent decides a Grant, so an
+/// agent's ask is carried as that owner's consent. The row stands on that act
+/// alone, never on itself.
 pub(super) fn mint_guest_grants(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -205,7 +222,8 @@ pub(super) fn mint_guest_grants(
     let mut guest_grants = std::collections::BTreeMap::new();
     if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
         for (person, guest) in guests {
-            let refs = check_disclosure(vault, txn, *person, asker, guest, effective)?;
+            let (refs, consent_owner) =
+                check_disclosure(vault, txn, *person, asker, guest, effective)?;
             // The guest grant keeps every disclosed ref; its old storage
             // bound is observed where the grant is minted (FIX 10173).
             if let Ok(mut count) = crate::scan_check::ScanCount::start(
@@ -236,12 +254,24 @@ pub(super) fn mint_guest_grants(
                 crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT,
                 &[group_ref.as_bytes(), person.as_bytes()],
             )?;
-            let encoded = crate::federation::encode_federation_grant_body(&grant)?;
             if let Some(raw) = vault.get_raw_in(txn, &grant_id)? {
-                if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(encoded.as_slice()) {
+                // A replayed ask finds its own Grant: the same terms under the row's own key.
+                let stored = raw
+                    .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                    .and_then(|body| {
+                        crate::federation::decode_federation_grant_body_keyed(body).ok()
+                    });
+                if stored.is_none_or(|(stored, _)| stored != grant) {
                     return Err(invalid());
                 }
             } else {
+                let encoded = vault.give_grant_in_txn(
+                    txn,
+                    consent_owner,
+                    grant_id,
+                    crate::authority::GrantFamily::AskGuest,
+                    &grant,
+                )?;
                 // FEDERATION_GRANT is an engine-authored maintenance kind.
                 // This known guest constructor and live parent-bound check
                 // are the only minting path; raw public puts stay denied.
@@ -313,15 +343,7 @@ pub(super) fn check_companion_answer(
 ) -> Result<()> {
     validate_companion_fact(vault, txn, id, group, actor, word)?;
     let person = word.companion_for.ok_or_else(invalid)?;
-    let grant_id = group.guest_grants.get(&person).ok_or_else(invalid)?;
-    let raw = vault.get_raw_in(txn, grant_id)?.ok_or_else(invalid)?;
-    // A deleted guest grant confers nothing, even while its body is stored.
-    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, grant_id)?.is_live() {
-        return Err(invalid());
-    }
-    let grant = crate::federation::decode_federation_grant_body(
-        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-    )?;
+    let grant = standing_guest_grant(vault, txn, group, person, now)?;
     if !grant.confers_at(now) {
         return Err(invalid());
     }
@@ -341,8 +363,28 @@ pub(super) fn check_companion_answer(
     Ok(())
 }
 
+/// The guest Grant the ask `group` minted for guest `person`, as the verified
+/// fold stands behind it at `now` (pass 28 R3c): its counted giving, which no
+/// counted act ended (the guest's revoke), states the row. A row no counted
+/// act gives, one put back after its revoke, one widened in place and one
+/// deleted confer nothing, even while a body is stored.
+fn standing_guest_grant(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group: &super::ask_record::AskGroup,
+    person: EntityId,
+    now: u64,
+) -> Result<crate::federation::FederationGrant> {
+    let grant_id = group.guest_grants.get(&person).ok_or_else(invalid)?;
+    Ok(vault
+        .guest_grant_standing_in_txn(txn, *grant_id, now)?
+        .ok_or_else(invalid)?
+        .into_grant())
+}
+
 /// Replayed companion evidence must still be tied to the exact stored guest
-/// allowlist. Revoking the parent later does not rewrite admitted evidence.
+/// allowlist, read from the Grant the fold stands behind. Revoking the parent
+/// later does not rewrite admitted evidence.
 pub(super) fn validate_companion_fact(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -352,16 +394,12 @@ pub(super) fn validate_companion_fact(
     word: &super::TaskAskWord,
 ) -> Result<()> {
     let person = word.companion_for.ok_or_else(invalid)?;
-    let grant_id = group.guest_grants.get(&person).ok_or_else(invalid)?;
-    let raw = vault.get_raw_in(txn, grant_id)?.ok_or_else(invalid)?;
-    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT
-        || !crate::vault::live_entity_row_in_txn(&vault.store, txn, grant_id)?.is_live()
-    {
-        return Err(invalid());
-    }
-    let grant = crate::federation::decode_federation_grant_body(
-        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    let grant = standing_guest_grant(
+        vault,
+        txn,
+        group,
+        person,
+        vault.store.clock.now_recorded_at(),
     )?;
     let asker = super::ask_record::entity(&group.owner)?;
     if !grant.allows_ask_fact(

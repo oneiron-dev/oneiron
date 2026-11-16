@@ -510,6 +510,8 @@ impl Vault {
             return Err(refused("an inquiry edge names its company"));
         }
         let name = format!("What {company} can ask about");
+        // The edge's giving is signed by this install's key, loaded before the writer opens.
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             // An edge cannot join a live Connect with the company: the grant
             // row is never widened in place and a re-scope only narrows
@@ -571,6 +573,8 @@ impl Vault {
             ));
         }
         let name = format!("Inquiry edge: {member}");
+        // The grant's giving is signed by this install's key, loaded before the writer opens.
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let world = self.create_world_in_txn(txn, owner, &name, now)?;
@@ -632,6 +636,18 @@ impl Vault {
                     "that grant is not a live inquiry edge of this vault",
                 ));
             };
+            // The owner gives again only an edge his own counted act gave (pass 28 R3c): a
+            // row no counted act gives, or one widened in place, is not his to rewrite. Its
+            // pact need not be Active yet: terms change before the company accepts.
+            if !self.grant_row_given_in_txn(
+                txn,
+                grant,
+                crate::authority::GrantFamily::InquiryEdge,
+            )? {
+                return Err(refused(
+                    "that grant is not a live inquiry edge of this vault",
+                ));
+            }
             let previous = edge.terms;
             let terms = InquiryTerms {
                 check_in_modes: InquiryKeepModes {

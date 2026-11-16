@@ -79,6 +79,9 @@ impl Memory<'_> {
                 "Choose approve-and-remember for this cap.",
             ));
         }
+        // A held ask's release gives its guests' Grants, signed by this install's key, loaded
+        // before the writer opens (pass 28 R3c).
+        self.vault().load_membership_carrier();
         let now = self.vault().now_recorded_at();
         let receipt = self
             .vault()
@@ -114,6 +117,9 @@ impl Memory<'_> {
         remembered_cap: Option<u64>,
     ) -> MemoryResult<FanoutLaunchReceipt> {
         require_holder_launch_choice(choice, remembered_cap)?;
+        // A held ask's release gives its guests' Grants, signed by this install's key, loaded
+        // before the writer opens (pass 28 R3c).
+        self.vault().load_membership_carrier();
         let now = self.vault().now_recorded_at();
         let receipt = self.vault().try_with_write_txn_grouped(|txn| {
             self.resume_task_fanout_in(
@@ -280,6 +286,9 @@ impl Memory<'_> {
                 "Choose ack-and-remember for this cap.",
             ));
         }
+        // A held ask's release gives its guests' Grants, signed by this install's key, loaded
+        // before the writer opens (pass 28 R3c).
+        self.vault().load_membership_carrier();
         let now = self.vault().now_recorded_at();
         self.vault()
             .memory(owner_actor, EdgeActorClass::Human)

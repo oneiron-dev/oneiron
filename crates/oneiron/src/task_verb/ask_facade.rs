@@ -116,6 +116,7 @@ impl Memory<'_> {
                 .task_work_memory()
                 .tasks_ask_with_txn_effect(input, effect);
         }
+        super::ask_guest::load_carrier_for_guests(self.vault(), input);
         let digest = ask_admission_digest(input)?;
         let auto = self.ask_auto_gate(input);
         self.with_verified_actor_write_txn(|txn| {
@@ -141,6 +142,7 @@ impl Memory<'_> {
         if !self.has_task_work_turn() {
             return self.task_work_memory().tasks_ask_composed(input, effect);
         }
+        super::ask_guest::load_carrier_for_guests(self.vault(), input);
         let digest = ask_admission_digest(input)?;
         let auto = self.ask_auto_gate(input);
         self.with_verified_actor_write_txn(|txn| {
