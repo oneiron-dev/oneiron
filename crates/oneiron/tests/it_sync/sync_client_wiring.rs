@@ -419,6 +419,17 @@ fn local_commit_buffers_to_sync_queue_when_disconnected() {
     let manager = make_manager(&vault);
     let window = manager.open_window(&WindowKey::new("2026-03")).unwrap();
     let queue = SyncQueue::new(Arc::clone(&vault)).unwrap();
+    // The manager's live mirror also opens every window a pending-mirror marker
+    // names (the seeded owner rows mark "1970-01") and, with no live receiver,
+    // queues that window's recovery commits; this test counts its own window's.
+    let window_updates = || -> Vec<_> {
+        queue
+            .drain_updates()
+            .unwrap()
+            .into_iter()
+            .filter(|update| update.window_key == "2026-03")
+            .collect()
+    };
 
     // (a) Never attached → durable queue.
     let first = EntityId::now();
@@ -432,7 +443,7 @@ fn local_commit_buffers_to_sync_queue_when_disconnected() {
         .unwrap();
     window.doc.commit();
 
-    let updates = queue.drain_updates().unwrap();
+    let updates = window_updates();
     assert_eq!(updates.len(), 1, "offline update must land in sync_queue");
     assert_eq!(updates[0].window_key, "2026-03");
     let receiver_doc = LoroDoc::new();
@@ -456,7 +467,7 @@ fn local_commit_buffers_to_sync_queue_when_disconnected() {
         .unwrap();
     window.doc.commit();
 
-    let updates = queue.drain_updates().unwrap();
+    let updates = window_updates();
     assert_eq!(
         updates.len(),
         2,
