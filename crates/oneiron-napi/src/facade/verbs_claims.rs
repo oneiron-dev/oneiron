@@ -212,7 +212,11 @@ impl ActorScopedVault {
             &memory,
             &oneiron::verbs::VERB_TABLE,
             "vault.delete",
-            SafeDeleteRequest { entity_ref, reason },
+            SafeDeleteRequest {
+                entity_ref,
+                reason,
+                check_in_ref: None,
+            },
             |input| memory.safe_delete(&input.entity_ref, input.reason),
         )
         .map_err(facade_error)?;
