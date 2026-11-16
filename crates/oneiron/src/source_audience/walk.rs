@@ -121,7 +121,6 @@ fn word_sources(
     Ok((every, supports))
 }
 
-#[cfg(feature = "sync")]
 impl Vault {
     /// What the words of the row `id` (bytes `bytes`) came from, as this
     /// walk reads them ([`word_sources`]): the rows each of which must read,
