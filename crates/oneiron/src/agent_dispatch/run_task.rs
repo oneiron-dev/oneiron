@@ -58,6 +58,7 @@ use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
 
+use super::run_writer_proof::AgentRunWriterProof;
 use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -267,6 +268,14 @@ pub(super) struct AgentRunTaskBody {
     /// body. Empty for a run that started none, so its TASK reads as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) effects: Vec<super::run_effects::AgentRunEffectMark>,
+    /// The proof of the machine that wrote the run's frozen fields
+    /// ([`AgentRunTaskBody::frozen_digest`]; `super::run_writer_proof`):
+    /// another machine re-creates the run from its frozen payload only while
+    /// it counts. `None` for a TASK minted before it, one written where no
+    /// signer was loaded, and one rewritten over a proof that did not count,
+    /// so such a TASK reads as before and moves to no other machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) writer_proof: Option<AgentRunWriterProof>,
 }
 
 /// The context bound a spawned child that outlived its root (REVIEW-6638)
@@ -316,6 +325,94 @@ impl AgentRunTaskBody {
                 bound.chat_sections,
             )
         })
+    }
+
+    /// The BLAKE3 digest of the run's frozen fields, the ones its writer
+    /// proof covers (`super::run_writer_proof`): role, schema version,
+    /// subkind, attempt, live try, run id, realized TASK, agent definition,
+    /// requester, dedupe key, queue payload, world, project, the
+    /// outlived-root flag, the frozen parent bound and the creation time,
+    /// each length-prefixed in that order. The lease, the outcome and the
+    /// effect marks change while the run runs, so they are left out.
+    pub(super) fn frozen_digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[self.role, self.schema_version]);
+        absorb(&mut hasher, self.subkind.as_bytes());
+        absorb(&mut hasher, self.attempt_ref.as_bytes());
+        absorb(&mut hasher, self.live_attempt_ref.as_bytes());
+        absorb_option(&mut hasher, self.run_id.as_deref().map(str::as_bytes));
+        absorb_option(
+            &mut hasher,
+            self.realized_task_ref.as_deref().map(str::as_bytes),
+        );
+        absorb(&mut hasher, self.agent_definition_ref.as_bytes());
+        absorb_option(
+            &mut hasher,
+            self.requester_ref.as_deref().map(str::as_bytes),
+        );
+        absorb_option(&mut hasher, self.dedupe_key.as_deref().map(str::as_bytes));
+        absorb(&mut hasher, &self.queue_payload);
+        absorb_option(&mut hasher, self.world_ref.as_deref().map(str::as_bytes));
+        absorb_option(&mut hasher, self.project_ref.as_deref().map(str::as_bytes));
+        hasher.update(&[u8::from(self.outlived_root)]);
+        match &self.parent_context {
+            Some(bound) => {
+                hasher.update(&[1]);
+                for section in [&bound.layers, &bound.memory_sections, &bound.chat_sections] {
+                    absorb_len(&mut hasher, section.len());
+                    for entry in section {
+                        absorb(&mut hasher, entry.as_bytes());
+                    }
+                }
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+        hasher.update(&self.created_at.to_be_bytes());
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Whether this body, the run TASK `task_ref`'s as read in `txn`,
+    /// carries a writer proof that counts for its frozen fields
+    /// (`super::run_writer_proof::counts_in`).
+    pub(super) fn writer_proven_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> bool {
+        super::run_writer_proof::counts_in(
+            vault,
+            txn,
+            task_ref,
+            &self.frozen_digest(),
+            self.writer_proof.as_ref(),
+        )
+    }
+}
+
+/// Feeds `len` to `hasher` as eight big-endian bytes.
+fn absorb_len(hasher: &mut blake3::Hasher, len: usize) {
+    hasher.update(&u64::try_from(len).unwrap_or(u64::MAX).to_be_bytes());
+}
+
+/// Feeds `bytes` to `hasher`, prefixed with its length.
+fn absorb(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    absorb_len(hasher, bytes.len());
+    hasher.update(bytes);
+}
+
+/// Feeds an optional field to `hasher`: a presence byte, then the bytes.
+fn absorb_option(hasher: &mut blake3::Hasher, bytes: Option<&[u8]>) {
+    match bytes {
+        Some(bytes) => {
+            hasher.update(&[1]);
+            absorb(hasher, bytes);
+        }
+        None => {
+            hasher.update(&[0]);
+        }
     }
 }
 
@@ -559,7 +656,7 @@ fn put_agent_run_task_in_txn(
     } else {
         agent_run_lease_held_until(now)
     };
-    let body = AgentRunTaskBody {
+    let mut body = AgentRunTaskBody {
         role: TaskRole::Task.role_byte(),
         schema_version: AGENT_RUN_TASK_SCHEMA_VERSION,
         subkind: AGENT_RUN_TASK_SUBKIND.to_owned(),
@@ -588,7 +685,12 @@ fn put_agent_run_task_in_txn(
         parent_context,
         created_at: record.created_at,
         effects: Vec::new(),
+        writer_proof: None,
     };
+    // This machine wrote every frozen field from its own queue row and
+    // dispatch input, so it signs them (`super::run_writer_proof`).
+    body.writer_proof =
+        super::run_writer_proof::sign_in_txn(vault, &*wtxn, task_ref, &body.frozen_digest());
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
     // Its birth edge names the dispatch's facet, else the vault default
@@ -1059,9 +1161,136 @@ pub(super) fn agent_run_task_body_in(
         .transpose()
 }
 
+/// Test support (`oneiron_test_support`; FIX
+/// AGENT-RUN-HANDOVER-TRUSTS-REPLICATED-PAYLOAD): puts the run TASK a peer
+/// machine of client id `node_id` syncs for a root run it holds, under the
+/// try `attempt`'s run TASK id, in `wtxn`: `payload` frozen, the lease at
+/// the first generation and long expired, born at the store clock's now.
+/// With `writer`, its machine's proof, the signature its `key` makes over
+/// the frozen fields as they stand with `signed_payload` in place of
+/// `payload`. Answers the run TASK's id.
+///
+/// # Errors
+///
+/// A payload that is no agent dispatch, a vault with no genesis-bound id
+/// for a signed TASK, and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_peer_agent_run_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    payload: &[u8],
+    node_id: u64,
+    writer: Option<(EntityId, &ed25519_dalek::SigningKey, &[u8])>,
+) -> Result<EntityId> {
+    let now = vault.now_recorded_at();
+    let input =
+        super::decode_agent_dispatch_input(&decode_dreamer_attempt_payload(payload)?.input)?;
+    let task_ref = agent_run_task_id(attempt)?;
+    let mut body = AgentRunTaskBody {
+        role: TaskRole::Task.role_byte(),
+        schema_version: AGENT_RUN_TASK_SCHEMA_VERSION,
+        subkind: AGENT_RUN_TASK_SUBKIND.to_owned(),
+        attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
+        live_attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
+        run_id: None,
+        realized_task_ref: None,
+        agent_definition_ref: input.target.agent_definition_ref()?.to_hex(),
+        requester_ref: input
+            .requester
+            .as_ref()
+            .map(|requester| requester.actor.to_hex()),
+        dedupe_key: None,
+        queue_payload: payload.to_vec(),
+        world_ref: input
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.world)
+            .filter(|world| *world != crate::claim::base_world_id())
+            .map(|world| world.to_hex()),
+        project_ref: input.project_ref.map(|project| project.to_hex()),
+        executor: AgentRunExecutorLease {
+            node_id,
+            generation: AGENT_RUN_LEASE_FIRST_GENERATION,
+            held_until: 0,
+        },
+        outcome: None,
+        outlived_root: false,
+        parent_context: None,
+        created_at: now,
+        effects: Vec::new(),
+        writer_proof: None,
+    };
+    if let Some((machine, key, signed_payload)) = writer {
+        let genesis = vault
+            .authority_view_readonly_in_txn(&*wtxn)?
+            .vault_id
+            .ok_or(Error::InvariantViolation(
+                "a vault with no genesis-bound id signs no run TASK",
+            ))?;
+        let signed = AgentRunTaskBody {
+            queue_payload: signed_payload.to_vec(),
+            ..body.clone()
+        };
+        body.writer_proof = Some(AgentRunWriterProof::signed(
+            &genesis,
+            machine,
+            key,
+            task_ref,
+            &signed.frozen_digest(),
+        ));
+    }
+    let encoded = rmp_serde::to_vec_named(&body)
+        .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
+    vault
+        .batch_in()
+        .put(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: body.created_at,
+                end: body.created_at,
+            },
+            now,
+            &encoded,
+        )
+        .apply(wtxn)?;
+    Ok(task_ref)
+}
+
+/// Test support (`oneiron_test_support`): the machine whose writer proof
+/// counts here on the run TASK of the try `attempt`, read in `txn`; `None`
+/// with no such TASK, or no proof that counts.
+///
+/// # Errors
+///
+/// A run TASK that does not read, and storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn proven_agent_run_task_writer_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<EntityId>> {
+    let task_ref = agent_run_task_id(attempt)?;
+    let Some(body) = agent_run_task_body_in(vault, txn, task_ref)? else {
+        return Ok(None);
+    };
+    Ok(body
+        .writer_proof
+        .filter(|_| body.writer_proven_in(vault, txn, task_ref))
+        .map(|proof| proof.machine()))
+}
+
 /// Read-modify-write of one run TASK body in the caller's write; a no-op
 /// update writes nothing, so a renewal not yet due leaves the row
 /// byte-identical.
+///
+/// An update that changes the frozen fields
+/// ([`AgentRunTaskBody::frozen_digest`]) is signed again by this machine
+/// (`super::run_writer_proof`), but only over a stored proof that counts:
+/// the update keeps the frozen fields it does not set, so a row another
+/// machine rewrote with no proof that counts stays unproven, and no write
+/// here lends it one.
 pub(super) fn update_agent_run_task_body_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1074,7 +1303,22 @@ pub(super) fn update_agent_run_task_body_in_txn(
         .port_entity_record(&*wtxn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
     let mut body = decode_agent_run_task_body(raw.entity_type, &raw.body)?;
+    let frozen = body.frozen_digest();
     update(&mut body)?;
+    let refrozen = body.frozen_digest();
+    if refrozen != frozen {
+        body.writer_proof = if super::run_writer_proof::counts_in(
+            vault,
+            &*wtxn,
+            task_ref,
+            &frozen,
+            body.writer_proof.as_ref(),
+        ) {
+            super::run_writer_proof::sign_in_txn(vault, &*wtxn, task_ref, &refrozen)
+        } else {
+            None
+        };
+    }
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
     if raw.body == encoded[..] {
