@@ -428,3 +428,21 @@ fn consolidate_witnessed_turns(
         landed: std::mem::take(&mut sink.outcome.landed),
     })
 }
+
+/// The park cause a consolidation recipe step takes when it meets `error`
+/// (OF-193a), for tests/message_rel_relationship_row.rs.
+#[must_use]
+pub fn recipe_park_cause(error: &Error) -> crate::dreamer_runner::DreamerParkCause {
+    crate::dreamer_consolidation::recipe_park_cause_for_test(error)
+}
+
+/// The refusal a write meets when `relationship` names no live RELATIONSHIP
+/// row, as the claim write and the MESSAGE door raise it.
+#[must_use]
+pub fn invalid_relationship_error(relationship: EntityId) -> Error {
+    crate::error::RegistryError::InvalidRelationship {
+        relationship,
+        found: None,
+    }
+    .into()
+}
