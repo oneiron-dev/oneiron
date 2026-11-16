@@ -6,7 +6,9 @@
 //! stays gone, and so does one a custody record declares, however the record
 //! spells its path: a declared or T2 file re-materializes from the vault
 //! alone (ARCH-0069 S4). A withheld file the checkout still holds keeps its
-//! bytes and its permissions.
+//! bytes and its permissions. A gone withheld file whose committed bytes the
+//! object store lost stays gone, and the restore goes on without it (review 2
+//! of #8290, P3-1).
 //!
 //! `cargo test --locked -p oneiron --all-features --test repo_snapshot_withheld_restore`.
 #![allow(
@@ -30,6 +32,8 @@ use tempfile::TempDir;
 
 /// A token the release scan detects, so snapshot custody withholds the file.
 const SECRET_FILE: &[u8] = b"TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n";
+/// Another such token, so a second withheld file has a blob of its own.
+const OTHER_SECRET_FILE: &[u8] = b"TOKEN=ghp_zyxwvutsrqponmlkjihgfedcba9876543210\n";
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -289,5 +293,48 @@ fn a_restore_keeps_a_held_withheld_file_and_its_owner_only_mode() {
         mode_of(&secret),
         0o600,
         "the restore never widens a withheld file"
+    );
+}
+
+/// A blob the object store no longer holds (a partial clone, or a gc after a
+/// rewrite) recreates nothing at its path, and the restore goes on: the other
+/// gone withheld file comes back from its own blob, the README is restored,
+/// and the file whose bytes are lost stays gone. Red at 48911c5997, where the
+/// whole restore failed on the lost blob before it wrote anything.
+#[cfg(unix)]
+#[test]
+fn a_restore_goes_on_when_a_gone_withheld_files_committed_bytes_are_lost() {
+    let (_vault_dir, vault) = open_vault();
+    let repo = repo_with(&[("lost.env", SECRET_FILE), ("kept.env", OTHER_SECRET_FILE)]);
+    let lost_blob = git(repo.path(), &["rev-parse", "HEAD:lost.env"]);
+    let snapshot = write_readme(&vault, &repo, "mutated\n");
+    let lost = repo.path().join("lost.env");
+    let kept = repo.path().join("kept.env");
+    fs::remove_file(&lost).expect("the first withheld file is removed");
+    fs::remove_file(&kept).expect("the second withheld file is removed");
+    fs::remove_file(
+        repo.path()
+            .join(".git/objects")
+            .join(&lost_blob[..2])
+            .join(&lost_blob[2..]),
+    )
+    .expect("the first file's blob leaves the object store");
+
+    vault
+        .recover_repo_snapshot(&repo_ref(&repo), snapshot)
+        .expect("the restore applies");
+
+    assert!(
+        fs::symlink_metadata(&lost).is_err(),
+        "no store holds the lost file's bytes, so it stays gone"
+    );
+    assert_eq!(
+        fs::read(&kept).ok().as_deref(),
+        Some(OTHER_SECRET_FILE),
+        "the other withheld file comes back from its own blob"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path().join("README.md")).expect("read README"),
+        "base\n"
     );
 }
