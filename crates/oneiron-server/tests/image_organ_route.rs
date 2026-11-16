@@ -5,9 +5,15 @@
 //! refused as if it were absent; with no image organ on the host the
 //! owner's whole edit is one held call with the reason, and nothing lands
 //! (RULING 09:53, IO-HOLD C); and a request no organ takes gets its typed
-//! refusal. A server test cannot
+//! refusal. `vault.artifacts.image.preview` (L4-16) takes the same caller
+//! and lane read; with no image organ it is refused `image_no_node` with the
+//! reason, and holds and lands nothing. Each reads one version, admitted
+//! whole by the caller's lane: a lane that reads the artifact but not the
+//! version's CLAIM and ASSET is refused as if the artifact were absent
+//! (review of #7924). A server test cannot
 //! start the organ binary (cargo names it only to its own package's tests),
-//! so the real crop is `oneiron-image`'s `image_edit_landing` test.
+//! so the real crop and preview are `oneiron-image`'s `image_edit_landing`
+//! test.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -23,6 +29,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::agent_dispatch::DEFAULT_BASE_LOGICAL_ID;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
@@ -34,6 +41,7 @@ use tower::ServiceExt;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const EDIT: &str = "vault.artifacts.image.edit";
+const PREVIEW: &str = "vault.artifacts.image.preview";
 /// A 1 x 1 PNG.
 const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
@@ -116,10 +124,10 @@ impl Fixture {
         })
     }
 
-    /// The owner grants the agent reads of [`Self::agent_facets`] alone. The
-    /// Grant act rides this install's live machine profile, so the install
-    /// gets a keystore and a profile first, as a serving start enrols it.
-    async fn grant_agent_facets(&self) -> TestResult {
+    /// The Grant act rides this install's live machine profile, so the
+    /// install gets a keystore and a profile first, as a serving start enrols
+    /// it. Once per fixture, before its first Grant.
+    fn enrol_install(&self) -> TestResult {
         let Holder::Issuer(issuer) = &self.owner.holder else {
             return Err("the owner signs with the host's issuer".into());
         };
@@ -127,10 +135,26 @@ impl Fixture {
             .install_device_keystore(Arc::new(MemoryKeystore::new()));
         self.vault
             .ensure_serving_install_profile(issuer, MachineRole::Unanswered)?;
+        Ok(())
+    }
+
+    /// The owner grants the agent reads of [`Self::agent_facets`] alone.
+    async fn grant_agent_facets(&self) -> TestResult {
+        self.enrol_install()?;
         let ScopeAxis::Some(facets) = &self.agent_facets else {
             return Err("the agent reads one facet".into());
         };
         let facets: Vec<String> = facets.iter().map(|facet| facet.0.to_hex()).collect();
+        self.grant_agent(
+            json!({ "kind": "some", "values": facets }),
+            json!({ "kind": "all" }),
+        )
+        .await
+    }
+
+    /// The owner grants the agent reads of `facets` and of the entity types
+    /// `bands`, on an install [`Self::enrol_install`] enrolled.
+    async fn grant_agent(&self, facets: Value, bands: Value) -> TestResult {
         let agent = self.agent.slip.claims.holder_ref.clone();
         let (status, body) = self
             .call(
@@ -140,8 +164,8 @@ impl Fixture {
                     "agent": agent,
                     "authority_scope": {
                         "worlds": { "kind": "all" },
-                        "facets": { "kind": "some", "values": facets },
-                        "bands": { "kind": "all" },
+                        "facets": facets,
+                        "bands": bands,
                         "audience": { "kind": "all" },
                         "verbs": { "kind": "some", "values": ["read"] },
                         "sensitivity": { "kind": "at_most", "value": "restricted" },
@@ -149,7 +173,7 @@ impl Fixture {
                 }),
             )
             .await?;
-        assert_eq!(status, 200, "the owner grants the agent one facet: {body}");
+        assert_eq!(status, 200, "the owner grants the agent a read: {body}");
         assert_eq!(
             (
                 body["grant"]["agent"].as_str(),
@@ -512,5 +536,245 @@ async fn typed_refusals() -> TestResult {
             "nothing waits for Keep: {proposals:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn with_no_image_organ_a_preview_is_refused_with_the_reason_and_nothing_is_held_or_lands()
+-> TestResult {
+    on_engine_stack(preview_refused)
+}
+
+async fn preview_refused() -> TestResult {
+    let fixture = Fixture::new()?;
+    // The Grant stands before the owner's own preview, which it does not
+    // narrow.
+    fixture.grant_agent_facets().await?;
+    let photo = fixture
+        .artifact("photo.png", "image/png", PNG_BASE64)
+        .await?;
+    let preview = |ops: Value, max_side: u32| json!({ "artifact_ref": photo, "ops": ops, "max_side": max_side });
+    let (status, body) = fixture
+        .call(Some(&fixture.owner), PREVIEW, &preview(crop(), 64))
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (503, Some("image_no_node")),
+        "FAILBEFORE: the owner's preview, with no image organ on the host, is refused: {body}"
+    );
+    assert!(
+        message(&body).contains("image.preview") && message(&body).contains("here:"),
+        "the refusal says why: {body}"
+    );
+    // The bound defaults when absent; no op previews the version as it is.
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            PREVIEW,
+            &json!({ "artifact_ref": photo }),
+        )
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (503, Some("image_no_node")),
+        "a preview of the version as it is: {body}"
+    );
+    let (held, proposals) = fixture.waiting(&photo).await?;
+    assert!(held.is_empty(), "a preview holds nothing: {held:?}");
+    assert!(
+        proposals.is_empty(),
+        "nothing waits for Keep: {proposals:?}"
+    );
+
+    // The owner's one Grant for the agent reads one facet that does not
+    // hold the owner's artifact: its lane does not read it.
+    let (status, body) = fixture
+        .call(Some(&fixture.agent), PREVIEW, &preview(crop(), 64))
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "an agent whose lane does not read the artifact: {body}"
+    );
+    let (status, body) = fixture.call(None, PREVIEW, &preview(crop(), 64)).await?;
+    assert_eq!(status, 401, "a call with no credential: {body}");
+
+    for (max_side, why) in [(15, "under 16 pixels"), (2049, "over 2048 pixels")] {
+        let (status, body) = fixture
+            .call(Some(&fixture.owner), PREVIEW, &preview(crop(), max_side))
+            .await?;
+        assert_eq!(
+            (status, code(&body)),
+            (400, Some("image_preview_side")),
+            "a side bound {why}: {body}"
+        );
+    }
+    let ops: Vec<Value> = (0..257).map(|_| crop()[0].clone()).collect();
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            PREVIEW,
+            &preview(Value::Array(ops), 64),
+        )
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (400, Some("image_too_many_ops")),
+        "a preview of 257 ops: {body}"
+    );
+    let note = fixture
+        .artifact("note.txt", "text/plain", "YSBub3Rl")
+        .await?;
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            PREVIEW,
+            &json!({ "artifact_ref": note }),
+        )
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (400, Some("image_not_an_image")),
+        "a text artifact: {body}"
+    );
+    let mut input = preview(crop(), 64);
+    input["version"] = json!(9);
+    let (status, body) = fixture.call(Some(&fixture.owner), PREVIEW, &input).await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "a version the artifact does not hold: {body}"
+    );
+
+    for previewed in [&photo, &note] {
+        let (held, proposals) = fixture.waiting(previewed).await?;
+        assert!(held.is_empty(), "nothing is held: {held:?}");
+        assert!(
+            proposals.is_empty(),
+            "nothing waits for Keep: {proposals:?}"
+        );
+    }
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            "vault.artifacts.view",
+            &json!({ "artifact_ref": photo }),
+        )
+        .await?;
+    assert_eq!(status, 200, "the owner reads the artifact: {body}");
+    let view = if body.get("head").is_some() {
+        &body
+    } else {
+        &body["value"]
+    };
+    assert_eq!(
+        view["head"],
+        json!(1),
+        "the artifact keeps its one version: {body}"
+    );
+    Ok(())
+}
+
+/// The entity types a Grant that reads `types` names, as its `bands` axis.
+fn bands(types: &[u8]) -> Value {
+    json!({ "kind": "some", "values": types })
+}
+
+#[test]
+fn a_preview_of_a_version_whose_rows_the_lane_does_not_read_is_refused_as_absent() -> TestResult {
+    on_engine_stack(preview_version_rows_unread)
+}
+
+async fn preview_version_rows_unread() -> TestResult {
+    let fixture = Fixture::new()?;
+    fixture.enrol_install()?;
+    let photo = fixture
+        .artifact("photo.png", "image/png", PNG_BASE64)
+        .await?;
+    // The owner's Grant reads every facet, and of the entity types only the
+    // artifact's: the agent reads the artifact, never the CLAIM or the ASSET
+    // its version is.
+    fixture
+        .grant_agent(
+            json!({ "kind": "all" }),
+            bands(&[ENTITY_TYPE_BLOB_ARTIFACT]),
+        )
+        .await?;
+    let input = json!({ "artifact_ref": photo, "ops": crop(), "max_side": 64 });
+    let (status, body) = fixture.call(Some(&fixture.agent), PREVIEW, &input).await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "FAILBEFORE: the head of an artifact whose version rows the lane does not read: {body}"
+    );
+    let mut pinned = input.clone();
+    pinned["version"] = json!(1);
+    let (status, body) = fixture.call(Some(&fixture.agent), PREVIEW, &pinned).await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "version 1 named: {body}"
+    );
+
+    // A second Grant reads the version's CLAIM and ASSET too: the lane reads
+    // the version whole, so the preview is admitted and, with no image organ
+    // on the host, refused with the reason.
+    fixture
+        .grant_agent(
+            json!({ "kind": "all" }),
+            bands(&[
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                ENTITY_TYPE_CLAIM,
+                ENTITY_TYPE_ASSET,
+            ]),
+        )
+        .await?;
+    let (status, body) = fixture.call(Some(&fixture.agent), PREVIEW, &input).await?;
+    assert_eq!(
+        (status, code(&body)),
+        (503, Some("image_no_node")),
+        "a lane that reads the version whole is admitted: {body}"
+    );
+    let (held, proposals) = fixture.waiting(&photo).await?;
+    assert!(held.is_empty(), "a preview holds nothing: {held:?}");
+    assert!(
+        proposals.is_empty(),
+        "nothing waits for Keep: {proposals:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_edit_of_a_version_whose_rows_the_lane_does_not_read_is_refused_and_nothing_waits()
+-> TestResult {
+    on_engine_stack(edit_version_rows_unread)
+}
+
+async fn edit_version_rows_unread() -> TestResult {
+    let fixture = Fixture::new()?;
+    fixture.enrol_install()?;
+    let photo = fixture
+        .artifact("photo.png", "image/png", PNG_BASE64)
+        .await?;
+    fixture
+        .grant_agent(
+            json!({ "kind": "all" }),
+            bands(&[ENTITY_TYPE_BLOB_ARTIFACT]),
+        )
+        .await?;
+    let (status, body) = fixture
+        .call(Some(&fixture.agent), EDIT, &edit(&photo, crop()))
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "FAILBEFORE: an edit of an artifact whose version rows the lane does not read: {body}"
+    );
+    let (held, proposals) = fixture.waiting(&photo).await?;
+    assert!(held.is_empty(), "no organ call is held: {held:?}");
+    assert!(
+        proposals.is_empty(),
+        "nothing waits for Keep: {proposals:?}"
+    );
     Ok(())
 }
