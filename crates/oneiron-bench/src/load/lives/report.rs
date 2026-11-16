@@ -34,7 +34,8 @@ pub(super) struct Server {
     pub(super) mode: &'static str,
     pub(super) bin: Option<String>,
     pub(super) bytes: Option<u64>,
-    /// `agent` (a minted full-access agent) or `owner` (the host root slip).
+    /// `agent` (a minted full-access agent) or `owner` (a slip minted for the
+    /// embedded owner).
     pub(super) principal: &'static str,
     /// `none`, `local`, or `endpoint <model-id@revision>`.
     pub(super) embedder: String,
