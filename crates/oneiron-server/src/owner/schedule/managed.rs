@@ -38,7 +38,7 @@ use oneiron_vault_contract::IdleBackupFailure;
 use super::{OwnerHost, PassStage};
 use crate::owner::backup::finalize::{self, Unproduced};
 use crate::owner::backup::{self, BackupOutcome, BackupPlan, write_budget};
-use crate::owner::stamp::now_unix_ms;
+use oneiron_base::unix_millis_now;
 
 /// How often a managed vault takes a backup when it changed.
 pub(crate) const MANAGED_BACKUP_EVERY: Duration = Duration::from_secs(3_600);
@@ -141,7 +141,7 @@ impl OwnerHost {
             // It landed, so the next one waits the hour as after a recorded
             // backup (FIX 6731).
             self.managed_unrecorded_ms
-                .store(now_unix_ms(), Ordering::SeqCst);
+                .store(unix_millis_now(), Ordering::SeqCst);
             tracing::warn!(
                 reason = "backup_watermark_marker_failed",
                 error = %error,
@@ -298,7 +298,7 @@ fn hourly(
     unrecorded: Option<u64>,
 ) -> Decision {
     let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
-    let within = |landed_ms: u64| now_unix_ms().saturating_sub(landed_ms) < every_ms;
+    let within = |landed_ms: u64| unix_millis_now().saturating_sub(landed_ms) < every_ms;
     // The marker counts only for a backup this install signed, so one another
     // signer signed reads as due; a signer that does not read leaves the read
     // unpinned (FIX 10712).
