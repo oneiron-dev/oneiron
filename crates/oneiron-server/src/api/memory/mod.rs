@@ -372,6 +372,8 @@ pub(crate) async fn core_memory_verb(
                 return Err(non_owner_supersede_refusal().into());
             }
             let at = req.at.unwrap_or_else(unix_seconds_now);
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
             server
                 .vault
                 .supersede_claim(&new_id, &old_id, at)
@@ -433,6 +435,8 @@ pub(crate) async fn core_memory_verb(
                 }));
             }
             let at = req.at.unwrap_or_else(unix_seconds_now);
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
             server.vault.retract_claim(&id, at).map_err(|error| {
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
                 core_engine_error("core memory retract failed", error)
