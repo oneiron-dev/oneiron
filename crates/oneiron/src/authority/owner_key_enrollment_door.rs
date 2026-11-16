@@ -65,6 +65,28 @@ const NOT_COUNTED: &str = "this install's fold does not count the key enrollment
                            fresh, the holding machine is not live, the predecessor is no live \
                            consenting owner root, or the owner is no longer live; nothing was \
                            written";
+/// The fold did not count the binding of an Owner's first enrolled key to
+/// them: the enrollment does not land without it. Nothing was written.
+const BINDING_NOT_COUNTED: &str = "this install's fold does not count the binding of the enrolled \
+                                   key to its owner; nothing was written";
+/// A membership move no issuer signs would leave owner authority live: the
+/// member holds an owner key or a `human` binding the move must revoke, and
+/// only the vault's live host root signs that (REVIEW-7931). Authority;
+/// nothing moved.
+const OWNER_AUTHORITY_NEEDS_HOST: &str = "the member holds an owner key or owner binding that \
+                                          this move must revoke, and this install holds no \
+                                          live host root to sign it; run the move on the \
+                                          vault's host";
+/// A membership move gives the embedded owner Owner standing back, and no
+/// issuer signs it, so the host root cannot bind them again (REVIEW-7931
+/// round 2). Authority; nothing moved.
+const OWNER_BINDING_NEEDS_HOST: &str = "the embedded owner regains Owner standing, and this \
+                                        install holds no live host root to bind them again; \
+                                        run the move on the vault's host";
+/// The host root's new binding of the embedded owner did not count.
+/// Authority; nothing moved.
+const OWNER_BINDING_NOT_RESTORED: &str = "the host root's binding of the embedded owner did not \
+                                          count; nothing moved";
 
 /// What a device hands its enrollment (CALLS "FIX 4920 enrollment API
 /// shape"): the machine that holds the key in its keystore, the key's
@@ -206,6 +228,27 @@ const PREPARED_ENTRY_STALE: &str = "since this enrollment was prepared, its pred
                                     revoked or signed a later entry, or the machine that holds \
                                     the key was removed; prepare it again";
 
+/// Authority: the enrollment would bind its owner to the key (OWNER-ENROL:
+/// on a self-hosted vault, an owner whom no live `human` binding names binds
+/// with their first owner key), and that binding is a second entry the
+/// predecessor signs, which an enrollment prepared for a predecessor that
+/// signs elsewhere does not carry. Nothing was written.
+const PREPARED_ENTRY_BINDS_OWNER: &str = "this enrollment would bind its owner to the key, which \
+                                          takes a second signature a prepared enrollment does \
+                                          not carry; enrol the key with an owner key this \
+                                          install holds, or on the vault's host";
+
+/// The binding of an owner's first enrolled key to them, as the enrollment's
+/// writer hands it on: the fold after the enrollment, the vault, the
+/// enrollment's predecessor, the key and the owner.
+struct EnrolledKeyBinding<'fold> {
+    fold: &'fold AuthorityFold,
+    vault_id: AuthorityVaultId,
+    predecessor: AuthorityKey,
+    key: AuthorityKey,
+    owner: EntityId,
+}
+
 /// An enrollment that does not verify, as the typed integrity refusal.
 fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
@@ -311,10 +354,18 @@ impl Vault {
     /// The owner enrols `input`'s key as an owner root of its own, as
     /// `authority`, carried by this install, with `predecessor` (an existing
     /// live owner root of the roster) as the entry's primary signer.
-    /// `sign_predecessor` gets the authority transcript once and returns the
-    /// predecessor's signature over it; it runs while the write transaction
-    /// is open, so it must not open another. The entry lands atomically or
-    /// not at all, and the receipt comes only once the fold counted it.
+    /// `sign_predecessor` gets each authority transcript the predecessor
+    /// signs and returns its signature over it; it runs while the write
+    /// transaction is open, so it must not open another. The entry lands
+    /// atomically or not at all, and the receipt comes only once the fold
+    /// counted it.
+    ///
+    /// On a self-hosted vault, the key of an owner whom no live `human`
+    /// binding names is bound to them in the same transaction, as the next
+    /// entry, which the predecessor signs too (OWNER-ENROL: an added Owner of
+    /// a shared vault binds with their first owner key). The host root binds
+    /// its embedded owner there already, so that owner's keys bind no one. A
+    /// hosted or relay root binds no one (`host_actor`).
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act, an install that
@@ -331,7 +382,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let device = enrolled_device(input.public_key, input.proof);
         let (entry, machine) = self.enrol_owner_device_as(
@@ -361,7 +412,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<(AuthorityEntryHash, EntityId)>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         self.write_owner_key_enroll_as(
             authority,
@@ -376,18 +427,20 @@ impl Vault {
     /// [`Self::enrol_owner_device_as`], and with `confirming` the second
     /// vouch for a key the roster already names (a key only a passkey
     /// vouched for; lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), which the
-    /// fold counts only as that key's confirmation.
+    /// fold counts only as that key's confirmation. A new key binds its
+    /// owner as [`Self::enrol_owner_signing_key_as`] says (OWNER-ENROL); a
+    /// confirmation binds no one.
     fn write_owner_key_enroll_as<S>(
         &self,
         authority: &ActAuthority,
         holder: Option<EntityId>,
         device: DeviceAuthority,
         predecessor: AuthorityKey,
-        sign_predecessor: S,
+        mut sign_predecessor: S,
         confirming: bool,
     ) -> Result<(AuthorityEntryHash, EntityId)>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let mut txn = self.store.env.write_txn()?;
         let (mut entry, carrier_key) = self.unsigned_owner_key_enroll_in_txn(
@@ -395,14 +448,81 @@ impl Vault {
             authority,
             holder,
             device,
-            predecessor,
+            predecessor.clone(),
             confirming,
         )?;
+        let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+            return Err(invalid_authority());
+        };
+        let (owner, key) = (enroll.act.owner, enroll.device.key.clone());
         let transcript = authority_transcript(&entry)?;
         entry.signer.signature = sign_predecessor(&transcript)?;
         let (hash, machine) = self.land_owner_key_enroll_in_txn(&mut txn, entry, &carrier_key)?;
+        if !confirming {
+            self.bind_owner_to_enrolled_key_in_txn(
+                &mut txn,
+                owner,
+                key,
+                predecessor,
+                &mut sign_predecessor,
+            )?;
+        }
         txn.commit()?;
         Ok((hash, machine))
+    }
+
+    /// OWNER-ENROL for an owner key just enrolled in `txn`: on a self-hosted
+    /// vault, `owner`, whom no live `human` binding names, is bound to `key`
+    /// as the next entry, which `predecessor` signs as it signed the
+    /// enrollment ([`Self::bind_enrolled_owner_key_in_txn`]). Nothing on any
+    /// other vault, or for an owner already bound.
+    fn bind_owner_to_enrolled_key_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        key: AuthorityKey,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+    ) -> Result<()>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
+            return Ok(());
+        }
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        if actor_binding_is_active(&after, &owner, ACTOR_CLASS_HUMAN) {
+            return Ok(());
+        }
+        let vault_id = after.vault_id.ok_or_else(invalid_authority)?;
+        let bind = EnrolledKeyBinding {
+            fold: &after,
+            vault_id,
+            predecessor,
+            key,
+            owner,
+        };
+        self.bind_enrolled_owner_key_in_txn(txn, bind, sign_predecessor)
+    }
+
+    /// Refuses an enrollment its predecessor signs elsewhere when it would
+    /// bind `owner` (OWNER-ENROL: on a self-hosted vault, an owner whom no
+    /// live `human` binding names binds with their first owner key): that
+    /// binding is a second entry the predecessor signs, and a prepared
+    /// enrollment carries one signature.
+    fn refuse_prepared_owner_binding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<()> {
+        if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
+            return Ok(());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if actor_binding_is_active(&fold, owner, ACTOR_CLASS_HUMAN) {
+            return Ok(());
+        }
+        Err(authority_refused(PREPARED_ENTRY_BINDS_OWNER))
     }
 
     /// The enrollment of `device` as `authority`, carried by this install,
@@ -478,7 +598,7 @@ impl Vault {
             }),
             signer: AuthoritySignature {
                 suite: predecessor.suite(),
-                public_key: predecessor,
+                public_key: predecessor.clone(),
                 signature: vec![0; 64],
             },
             cosigns: vec![AuthoritySignature {
@@ -584,7 +704,9 @@ impl Vault {
     /// live owner root of the roster) as the entry's primary signer, as
     /// [`Self::enrol_owner_signing_key_as`] enrols a device's key. Its
     /// machine is this install, the carrier. Once counted, the passkey signs
-    /// with its assertions wherever an owner root signs.
+    /// with its assertions wherever an owner root signs. On a self-hosted vault
+    /// it binds an owner whom no live `human` binding names to the passkey, as
+    /// the device door binds them to a device key (OWNER-ENROL).
     ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`]; a key, a credential id or an
@@ -598,7 +720,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<OwnerPasskeyEnrollmentReceipt>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let (public_key, device) = passkey_enrollment_device(input)?;
         let (entry, machine) =
@@ -634,7 +756,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<OwnerPasskeyEnrollmentReceipt>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let (public_key, device) = passkey_enrollment_device(input)?;
         let (entry, machine) = self.write_owner_key_enroll_as(
@@ -692,7 +814,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let device = enrolled_device(input.public_key, input.proof);
         let (entry, machine) = self.write_owner_key_enroll_as(
@@ -735,6 +857,9 @@ impl Vault {
             predecessor,
             false,
         )?;
+        if let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op {
+            self.refuse_prepared_owner_binding_in_txn(&txn, &enroll.act.owner)?;
+        }
         let challenge = webauthn_challenge(&authority_transcript(&entry)?);
         let body = encode_value(&entry_value(&entry, true))?;
         // A frontier join the entry names must stand for it to land.
@@ -813,6 +938,7 @@ impl Vault {
         {
             return Err(not_valid(PREPARED_ENTRY_STALE));
         }
+        self.refuse_prepared_owner_binding_in_txn(&txn, &actor)?;
         verify_unsigned(&entry)?;
         entry.signer.signature = predecessor_signature;
         let (hash, machine) = self.land_owner_key_enroll_in_txn(&mut txn, entry, &carrier_key)?;
@@ -1050,7 +1176,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let input = {
             let owner = match authority {
@@ -1086,15 +1212,78 @@ impl Vault {
         )
     }
 
+    /// Binds `bind.key`, enrolled in this transaction, to `bind.owner` as
+    /// `human`: the next entry after the enrollment, at the first epoch,
+    /// signed by the enrollment's predecessor. The fold must count it and the
+    /// owner's binding must stand, or the enrollment commits nothing.
+    fn bind_enrolled_owner_key_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        bind: EnrolledKeyBinding<'_>,
+        sign_predecessor: &mut S,
+    ) -> Result<()>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        let parents = bind.fold.append_heads.clone();
+        if parents.is_empty() {
+            return Err(invalid_authority());
+        }
+        if parents.len() > MAX_PARENTS {
+            return Err(authority_refused(TOO_MANY_HEADS));
+        }
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(bind.vault_id),
+            seq: next_sequence(bind.fold, &bind.predecessor)?,
+            parent_hashes: parents.into_iter().collect(),
+            op: AuthorityOp::BindActor {
+                authority_key: bind.key,
+                actor_ref: bind.owner,
+                actor_class: ACTOR_CLASS_HUMAN.into(),
+                epoch: 1,
+            },
+            signer: AuthoritySignature {
+                suite: bind.predecessor.suite(),
+                public_key: bind.predecessor,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: now,
+        };
+        let transcript = authority_transcript(&entry)?;
+        entry.signer.signature = sign_predecessor(&transcript)?;
+        let hash = authority_entry_hash(&entry)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        if !after.valid_entries.contains(&hash)
+            || !actor_binding_is_active(&after, &bind.owner, ACTOR_CLASS_HUMAN)
+        {
+            return Err(authority_refused(BINDING_NOT_COUNTED));
+        }
+        Ok(())
+    }
+
     /// Every enrolled owner signing key, ascending by key: each valid
     /// enrollment body this vault keeps (stored, or carried by an adopted
     /// checkpoint image), the smallest entry for a key enrolled on two
     /// branches, joined to the roster now, a revoked or ineligible key
     /// included. Empty before any enrollment.
     pub fn enrolled_owner_keys(&self) -> Result<Vec<EnrolledOwnerKey>> {
+        let txn = self.store.env.read_txn()?;
+        self.enrolled_owner_keys_in_txn(&txn)
+    }
+
+    /// [`Self::enrolled_owner_keys`] in the caller's transaction.
+    fn enrolled_owner_keys_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EnrolledOwnerKey>> {
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
-        self.visit_authority_entries(|fold, hash, entry| {
+        self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
             keep_enrolled(&mut keys, fold, managed, hash, entry);
         })?;
         Ok(keys.into_values().collect())
@@ -1107,35 +1296,181 @@ impl Vault {
     /// a browser needs to ask for a passkey by its credential id and to name
     /// its key as a predecessor. Empty before any passkey enrollment.
     pub fn enrolled_owner_passkeys(&self) -> Result<Vec<EnrolledOwnerPasskey>> {
+        let txn = self.store.env.read_txn()?;
         let mut keys = BTreeMap::new();
-        self.visit_authority_entries(|fold, hash, entry| {
+        self.visit_authority_entries_in_txn(&txn, |fold, hash, entry| {
             keep_enrolled_passkey(&mut keys, fold, hash, entry);
         })?;
         Ok(keys.into_values().collect())
     }
 
-    /// Calls `visit` with the fold now and each authority entry this vault
-    /// keeps: every stored row, then each body an adopted checkpoint image
-    /// carries past them.
-    fn visit_authority_entries<F>(&self, mut visit: F) -> Result<()>
+    /// Calls `visit` with the fold in `txn` and each authority entry this
+    /// vault keeps there: every stored row, then each body an adopted
+    /// checkpoint image carries past them.
+    fn visit_authority_entries_in_txn<F>(&self, txn: &heed::RoTxn<'_>, mut visit: F) -> Result<()>
     where
         F: FnMut(&AuthorityFold, AuthorityEntryHash, &AuthorityLogEntry),
     {
-        let txn = self.store.env.read_txn()?;
-        let view = self.authority_view_readonly_in_txn(&txn)?;
+        let view = self.authority_view_readonly_in_txn(txn)?;
         let fold: &AuthorityFold = &view;
         let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             visit(fold, hash, &entry);
         }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
             for (hash, entry) in evidence.carried_past(&stored) {
                 visit(fold, *hash, entry);
             }
+        }
+        Ok(())
+    }
+
+    /// Ends the owner authority `person` holds on this vault's log, in the
+    /// transaction of the membership move that ends their standing
+    /// (OWNER-ENROL): under `issuer`, a `RevokeDevice` for each live owner
+    /// key whose enrolment names them, which ends any binding on that key,
+    /// then a `RevokeActor` for each other live `human` binding that names
+    /// them, the host root's binding of its embedded owner among them. The
+    /// root key itself stays: only its binding ends. Each entry must count,
+    /// or the move commits nothing. A person with neither writes no entry.
+    ///
+    /// # Errors
+    /// The log's: an `issuer` that is not this vault's live host root, or an
+    /// entry the fold does not count.
+    pub(crate) fn revoke_owner_authority_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        person: EntityId,
+    ) -> Result<()> {
+        let root = issuer.public_key();
+        let keys: Vec<AuthorityKey> = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .filter(|key| key.live && key.owner == person)
+            .map(|key| AuthorityKey::Ed25519(key.public_key))
+            .filter(|key| *key != root)
+            .collect();
+        for revoked_key in keys {
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::RevokeDevice { revoked_key })?;
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let bindings: Vec<(AuthorityKey, u64)> = fold
+            .actor_bindings
+            .iter()
+            .filter(|(_, binding)| {
+                binding.status == ActorBindingStatus::Active
+                    && binding.actor_ref == person
+                    && binding.actor_class == ACTOR_CLASS_HUMAN
+            })
+            .map(|(key, binding)| (key.clone(), binding.epoch))
+            .collect();
+        for (authority_key, epoch) in bindings {
+            self.append_slip_op_in_txn(
+                txn,
+                issuer,
+                AuthorityOp::RevokeActor {
+                    authority_key,
+                    epoch,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Binds the embedded owner again under the host root, in the
+    /// transaction of the membership move that gives them Owner standing
+    /// back on a self-hosted vault (REVIEW-7931 round 2). The host root binds
+    /// its embedded owner there, as at genesis (`host_actor.rs`), and the
+    /// move that ended their standing revoked that binding
+    /// ([`Self::revoke_owner_authority_in_txn`]). The new binding is a fresh
+    /// epoch above the revoked one, which stays revoked. Nothing for another
+    /// person (an added Owner binds through their first owner key's
+    /// enrolment), a hosted or relay vault, an unrooted one, an owner a live
+    /// `human` binding names or none ever named, or a host key bound to
+    /// another actor.
+    ///
+    /// # Errors
+    /// An authority refusal when no issuer signs the move, or when the new
+    /// binding does not count; the log's.
+    pub(crate) fn restore_embedded_owner_binding_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: Option<&HostSlipIssuer>,
+        person: EntityId,
+    ) -> Result<()> {
+        if person != crate::vault::embedded_owner_actor_id()?
+            || self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal
+        {
+            return Ok(());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let was_bound = fold
+            .actor_bindings
+            .values()
+            .any(|binding| binding.actor_ref == person && binding.actor_class == ACTOR_CLASS_HUMAN);
+        if fold.vault_id.is_none()
+            || !was_bound
+            || actor_binding_is_active(&fold, &person, ACTOR_CLASS_HUMAN)
+        {
+            return Ok(());
+        }
+        let Some(issuer) = issuer else {
+            return Err(authority_refused(OWNER_BINDING_NEEDS_HOST));
+        };
+        let authority_key = issuer.public_key();
+        let held = fold.actor_bindings.get(&authority_key);
+        if held.is_some_and(|binding| binding.status == ActorBindingStatus::Active) {
+            return Ok(());
+        }
+        let epoch = held.map_or(1, |binding| binding.epoch.saturating_add(1));
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::BindActor {
+                authority_key,
+                actor_ref: person,
+                actor_class: ACTOR_CLASS_HUMAN.into(),
+                epoch,
+            },
+        )?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        if !actor_binding_is_active(&after, &person, ACTOR_CLASS_HUMAN) {
+            return Err(authority_refused(OWNER_BINDING_NOT_RESTORED));
+        }
+        Ok(())
+    }
+
+    /// Refuses a membership move no issuer signs while `person` holds owner
+    /// authority on this vault's log that the move must end: a live owner key
+    /// whose enrolment names them, or a live `human` binding that names them.
+    /// Only the vault's live host root signs their revocation
+    /// ([`Self::revoke_owner_authority_in_txn`]), so such a move runs on the
+    /// vault's host; a person with neither moves on any install (REVIEW-7931).
+    ///
+    /// # Errors
+    /// An authority refusal when they hold either; the log's read errors.
+    pub(crate) fn refuse_unrevoked_owner_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<()> {
+        let holds_key = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .iter()
+            .any(|key| key.live && key.owner == person);
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let holds_binding = fold.actor_bindings.values().any(|binding| {
+            binding.status == ActorBindingStatus::Active
+                && binding.actor_ref == person
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+        });
+        if holds_key || holds_binding {
+            return Err(authority_refused(OWNER_AUTHORITY_NEEDS_HOST));
         }
         Ok(())
     }
