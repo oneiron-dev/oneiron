@@ -13,6 +13,8 @@
 //!   is not shared, which reads the Member column.
 //! - A `manual` row still holds an Owner agent's send: an explicit row beats
 //!   the role's default (a guard; PR 1 holds it too).
+//! - An agent whose grants name two roles reads no role: its send asks under
+//!   the Member column, and the dispatch does not fail on the conflict.
 //!
 //! At PR 1's head (ed8a8009d6f8) every test but the guard fails: the floor
 //! holds the Owner's send, and no decision names a role.
@@ -31,7 +33,7 @@ use oneiron::outbound::{
     OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
     OutboundIntentTrigger,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -80,9 +82,32 @@ fn owner_proof(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
         .expect("owner proof")
 }
 
-/// The policy every send test runs under: an Auto ceiling for `actor` and
-/// the `check_in` row, and no scoped grant, so nothing but the row (or a
-/// standing grant a test mints) covers the agent's send.
+/// The shipped `federation_grant_rows` (the precedence row and the role
+/// defaults), read from a seeded vault's policy manifest: sharing a vault and
+/// standing a membership resolve each grant's scope from them, and
+/// [`vault_under`]'s unseeded vault holds only [`send_manifest`].
+fn shipped_grant_rows() -> Value {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let seeded = Vault::open(dir.path(), VaultConfig::device()).expect("open a seeded vault");
+    let ids = seeded
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("the seeded manifests");
+    assert_eq!(ids.len(), 1, "a fresh vault has one seeded policy manifest");
+    let manifest: Value = rmp_serde::from_slice(
+        &seeded
+            .get(&ids[0])
+            .expect("read the seeded manifest")
+            .expect("the seeded manifest"),
+    )
+    .expect("decode the seeded manifest");
+    let rows = manifest["federation_grant_rows"].clone();
+    assert!(rows.is_array(), "the seeded manifest's grant rows: {rows}");
+    rows
+}
+
+/// The policy every send test runs under: an Auto ceiling for `actor`, the
+/// shipped grant rows and the `check_in` row, and no scoped grant, so nothing
+/// but the row (or a standing grant a test mints) covers the agent's send.
 fn send_manifest(actor: EntityId, check_in: Value) -> Vec<u8> {
     let manifest = json!({
         "schema_version": "1.2",
@@ -94,6 +119,7 @@ fn send_manifest(actor: EntityId, check_in: Value) -> Vec<u8> {
         "actor_ceilings": [
             {"actor_class": "agent", "actor_ref": actor.to_hex(), "ceiling": "auto"}
         ],
+        "federation_grant_rows": shipped_grant_rows(),
         "check_in": check_in,
     });
     rmp_serde::to_vec_named(&manifest).expect("a manifest body")
@@ -301,4 +327,25 @@ fn a_manual_row_holds_an_owner_agents_send() {
             .any(|reason| reason.starts_with("check_in_role_")),
         "a row decided, not the role: {reasons:?}"
     );
+}
+
+#[test]
+fn an_agent_whose_grants_name_two_roles_asks_and_the_send_does_not_fail() {
+    let (_dir, vault, actor) = vault_under(waits_only());
+    share_with(&vault, actor, FederationGrantRole::Owner);
+    stand_member_grant(&vault, actor, SHARED, FederationGrantRole::Member)
+        .expect("the agent's second role");
+    let mut sink = RecordingSink::default();
+
+    let held = dispatch(&vault, actor, "intent:two-roles", &mut sink);
+
+    assert_eq!(
+        held.gate_outcome, "pending",
+        "two roles go as none: {held:?}"
+    );
+    assert_eq!(sink.calls, 0, "a held send never reaches the transport");
+    let (reasons, grant_ref) = decision_of(&vault, &held);
+    assert_eq!(grant_ref, None, "no role covers the send");
+    assert!(names(&reasons, "check_in_role_member"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_always_ask"), "{reasons:?}");
 }

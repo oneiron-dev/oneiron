@@ -146,7 +146,8 @@ impl SendCheckIn {
 ///
 /// # Errors
 ///
-/// The store's, reading the sender's membership.
+/// The store's, reading the sender's membership and the vault's authority
+/// fold.
 pub(crate) fn send_check_in_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -206,10 +207,11 @@ pub(crate) fn send_check_in_in_txn(
     Ok(Some(SendCheckIn { source, answer }))
 }
 
-/// The role `actor` sends in (ARCH-0082 #role-defaults): its membership role
-/// on this vault's shared vault, a house link's among them, as check-in
-/// reads an agent's role (P24-SHAPE Q1 = A); Member when it records none, or
-/// the send names no actor entity.
+/// The role `actor` sends in (ARCH-0082 #role-defaults; ruling L3-35-ROLE =
+/// B, so an agent holding Owner sends with no press): its own standing
+/// membership role on this vault's shared vault, a house link's among them
+/// (`federation::shared_vault_member_role_for_store_in_txn`); Member when it
+/// holds none there, or the send names no actor entity.
 fn sender_role_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

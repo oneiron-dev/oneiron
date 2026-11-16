@@ -231,9 +231,14 @@ fn member_role_for_store_in_txn(
 /// `member`'s membership role on this vault's own shared vault, a house
 /// link's among them (`workspace_roster::house_link`: the bind's grant is a
 /// membership over the workspace's shared vault), read through the store, as
-/// the Gate's send check-in reads its sender's role (PLAN L3-35). `None` when
-/// the vault is not shared, its shared vault is deleted, or `member` holds no
-/// membership there.
+/// the Gate's send check-in reads its sender's role (PLAN L3-35). A grant
+/// counts only as standing membership counts it
+/// ([`Vault::membership_standing_in_txn`]): unexpired, no GitPush grant, and
+/// not inactive under its pact, so a withdrawn grant releases no send. `None`
+/// when the vault is not shared, its shared vault is deleted, its root is
+/// conflicted, `member` holds no such grant there, or its grants name two
+/// roles: the send then reads no role, whose Member column asks, and never
+/// fails on it.
 pub(crate) fn shared_vault_member_role_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -242,12 +247,38 @@ pub(crate) fn shared_vault_member_role_for_store_in_txn(
     if super::shared_vault_deletion_for_store_in_txn(store, txn)?.is_some() {
         return Ok(None);
     }
-    match crate::federation::shared_vault_creation_for_store_in_txn(store, txn)? {
-        Some(creation) if creation.vault_id != 0 => {
-            member_role_for_store_in_txn(store, txn, creation.vault_id, member)
-        }
-        _ => Ok(None),
+    let Some(creation) = crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?
+    else {
+        return Ok(None);
+    };
+    if creation.vault_id == 0 {
+        return Ok(None);
     }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    if fold.vault_root_is_conflicted() {
+        return Ok(None);
+    }
+    let now = store.clock.now_recorded_at();
+    let mut roles = member_grants_for_store_in_txn(store, txn, creation.vault_id)?
+        .into_iter()
+        .filter(|(id, grant)| {
+            grant.member_ref == member
+                && grant.role != Role::Delegate
+                && !grant.is_git_push()
+                && grant.expires_at.is_none_or(|expires| now < expires)
+                && crate::federation::pact_admits_grant(&fold, id, grant)
+        })
+        .map(|(_, grant)| grant.role);
+    let role = roles.next();
+    Ok(if roles.any(|other| Some(other) != role) {
+        None
+    } else {
+        role
+    })
 }
 
 impl Vault {
