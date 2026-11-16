@@ -44,7 +44,7 @@
 
 use std::collections::BTreeSet;
 
-use oneiron_contracts::fingerprint::{Fingerprint, purposes};
+use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, purposes};
 use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 use rmpv::Value;
 
@@ -78,12 +78,12 @@ pub const POLICY_SETTING_INLINE_MAX: usize = MAX_PACT_SCOPE_BYTES;
 /// sorted live act hashes, in the `PolicyRevision` shape.
 pub const POLICY_SETTING_REVISION_CONTEXT: &[u8] = b"oneiron/policy-setting-revision/v1";
 
-/// BLAKE3 over a setting value's JSON bytes: an act's `prior` and `value`,
-/// and the digest its inline value must have. The one digest of a setting
-/// value every writer and check calls.
+/// The [`ContentHash`] (plain BLAKE3) of a setting value's JSON bytes: an
+/// act's `prior` and `value`, and the digest its inline value must have. The
+/// one digest of a setting value every writer and check calls.
 #[must_use]
 pub fn setting_value_digest(json: &[u8]) -> [u8; 32] {
-    *blake3::hash(json).as_bytes()
+    ContentHash::of(json).into_bytes()
 }
 
 /// A setting act's `seen` over its target's live acts, zero for a target no
