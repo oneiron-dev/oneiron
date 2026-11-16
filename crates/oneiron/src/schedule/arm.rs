@@ -674,14 +674,6 @@ pub(crate) fn arm_at_latest_in_txn(
         return Ok(());
     }
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
-    let at = if prior
-        .as_ref()
-        .is_some_and(|prior| prior.started_at.is_some())
-    {
-        at.min(now)
-    } else {
-        at
-    };
     let row = ScheduleRow::armed(Trigger::At { at }, None, prior.as_ref(), now)?;
     store_row_in_txn(store, txn, &key, prior.as_ref(), Some(&row))
 }
