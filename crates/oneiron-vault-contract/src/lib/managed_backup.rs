@@ -150,10 +150,7 @@ pub(super) fn observed<'de, D: Deserializer<'de>>(
 
 /// Whether `text` is exactly `len` bytes as lowercase hex.
 fn lower_hex_of(text: &str, len: usize) -> bool {
-    text.len() == len * 2
-        && text
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    oneiron_hex::is_lower_hex(text, Some(len * 2))
 }
 
 /// Whether `text` is a positive whole number in decimal, with no sign or
