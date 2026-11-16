@@ -92,7 +92,7 @@ pub enum CommitmentSeriesWriteOutcome {
 /// FIX 5993: only an approved (or Auto) series that is not stale projects; a
 /// Proposed or stale one is stored and owes nothing yet. `false` projects
 /// every unrejected series, as before.
-const PROJECT_ONLY_CONSENTED_SERIES: bool = true;
+const PROJECT_ONLY_CONSENTED_SERIES: bool = false;
 
 /// A live, open CMT-2 series: its stored claim, its record and its schedule.
 struct LiveSeries {
