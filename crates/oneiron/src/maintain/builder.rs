@@ -32,11 +32,6 @@ pub struct MaintenanceBuilder<'a> {
     corrupt_claim_ids: Vec<EntityId>,
 }
 
-/// The most retired facet-stamp receipts [`MaintenanceReport`] names; the
-/// total beside them is uncapped.
-#[cfg(feature = "sync")]
-const MAX_HELD_FACET_STAMP_RECEIPTS_IN_REPORT: usize = 100;
-
 /// Aggregate counters for maintenance operations.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MaintenanceReport {
@@ -146,7 +141,8 @@ pub struct MaintenanceReport {
     pub held_facet_stamps_retired: u64,
     /// The retired facet stamps' receipts, in key order, each named by its
     /// key, its kind and its facet and grant ids — never parked content,
-    /// never a secret — capped at `MAX_HELD_FACET_STAMP_RECEIPTS_IN_REPORT`.
+    /// never a secret — at most the owner's
+    /// `maintain.report.facet_receipts_shown` (100 unless set).
     #[cfg(feature = "sync")]
     pub(crate) held_facet_stamp_receipts: Vec<ParkedFacetReceipt>,
     /// How many retired-stamp receipts the vault keeps, named above or not.
@@ -410,10 +406,10 @@ impl<'a> MaintenanceBuilder<'a> {
                 crate::sync::selector::retire_held_facet_stamps(self.vault)?;
             let receipts = crate::federation::facet_read::parked_facet_receipts(self.vault)?;
             report.held_facet_stamp_receipts_total = receipts.len() as u64;
-            report.held_facet_stamp_receipts = receipts
-                .into_iter()
-                .take(MAX_HELD_FACET_STAMP_RECEIPTS_IN_REPORT)
-                .collect();
+            // The owner's `maintain.report.facet_receipts_shown` (100 unless
+            // set); the total beside them is uncapped.
+            let shown = super::setting_keys::facet_receipts_shown(self.vault)?;
+            report.held_facet_stamp_receipts = receipts.into_iter().take(shown).collect();
         }
 
         Ok(report)
