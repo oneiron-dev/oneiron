@@ -251,6 +251,7 @@ mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
+mod voice_recognition_doors;
 mod wave_doors;
 mod weave_admin_doors;
 mod weave_doors;

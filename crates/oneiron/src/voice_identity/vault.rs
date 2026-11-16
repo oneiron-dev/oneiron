@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::Vault;
 use crate::authority::EffectiveRead;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -20,9 +21,10 @@ use super::storage_admission::{
 };
 use super::stored::{StoredPrint, StoredSample};
 use super::types::{
-    VoiceAttributionEvidence, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentRequest,
-    VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintRecordV1, VoiceResolvedSegment,
-    VoiceSessionRosterV1, VoiceSpeakerDeparture, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
+    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintPurpose,
+    VoicePrintRecordV1, VoiceResolvedSegment, VoiceSessionRosterV1, VoiceSpeakerDeparture,
+    VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
 };
 
 /// An event ID names one immutable decision. Only the first insertion may
@@ -31,6 +33,16 @@ use super::types::{
 enum ConsentEventWrite {
     Inserted,
     Replayed,
+}
+
+/// What a withdrawal deletes past the subject's print family.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WithdrawalReach {
+    /// Only the print, its sample and vector rows and the active pointer:
+    /// the render bank stays under its own consent (the door's withdrawal).
+    Recognition,
+    /// Those, and every render-bank row the subject owns.
+    WholeVoice,
 }
 
 /// Both consent doors compare inside the transaction that holds the event
@@ -565,6 +577,65 @@ impl Vault {
         &self,
         request: &VoiceWithdrawalRequest,
     ) -> Result<VoiceWithdrawalReceipt> {
+        self.withdraw_voice_consent_admitted(request, WithdrawalReach::WholeVoice, |_| Ok(()))
+    }
+
+    /// Withdraws voice-recognition consent at a door, under the acting
+    /// person's proof (VOICE-RECOGNITION-CONSENT-NO-DOOR): the event append
+    /// and the hard deletion of the print, its sample and vector rows and
+    /// the active pointer, as [`Self::withdraw_voice_consent`] makes them.
+    /// The subject's render bank stays: render and cloning keep their own
+    /// consent, whose withdrawal drops clones at their vendors and keeps the
+    /// render history.
+    ///
+    /// The acting person records the withdrawal, for every purpose, since
+    /// the deletion is the whole print. With no `subject`, or their own, it
+    /// withdraws their own voice, and a live person's proof suffices, owner
+    /// of the vault or not. A withdrawal that names another subject is an
+    /// act of owner authority: a counterparty holds no credential here, and
+    /// the owner logs their word, as the owner logged their grant. Either
+    /// check runs inside the withdrawal's write transaction, so a proof that
+    /// stopped holding while the request waited appends and deletes nothing.
+    pub fn withdraw_voice_consent_as(
+        &self,
+        proof: &AuthenticatedOwner,
+        subject: Option<EntityId>,
+        event_id: String,
+        occurred_at: u64,
+        basis: VoiceConsentBasis,
+    ) -> Result<VoiceWithdrawalReceipt> {
+        // Names the recorder only; the authority is the revalidation below.
+        let actor = proof.actor_for_read(self)?;
+        let subject = subject.unwrap_or(actor);
+        let request = VoiceWithdrawalRequest {
+            event_id,
+            subject_ref: subject,
+            recorded_by_ref: actor,
+            occurred_at,
+            purposes: vec![
+                VoicePrintPurpose::MeetingAttribution,
+                VoicePrintPurpose::LiveInterlocutor,
+            ],
+            basis,
+        };
+        self.withdraw_voice_consent_admitted(&request, WithdrawalReach::Recognition, |txn| {
+            if subject == actor {
+                proof.revalidate_person_in_txn(self, txn).map(drop)
+            } else {
+                proof.revalidate_in_txn(self, txn).map(drop)
+            }
+        })
+    }
+
+    /// The withdrawal transaction: `admit` runs first inside it, so a
+    /// refusal appends and deletes nothing, then the event append, and only
+    /// on its first insertion the hard deletion `reach` names.
+    fn withdraw_voice_consent_admitted(
+        &self,
+        request: &VoiceWithdrawalRequest,
+        reach: WithdrawalReach,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<VoiceWithdrawalReceipt> {
         let event = VoiceConsentEventV1 {
             event_id: request.event_id.clone(),
             subject_ref: request.subject_ref,
@@ -583,11 +654,14 @@ impl Vault {
         let store = &self.store;
         let subject = request.subject_ref;
         let (tally, replayed) = self.with_write_txn_grouped(|wtxn| {
+            admit(wtxn)?;
             if put_consent_event_once(store, wtxn, &event)? == ConsentEventWrite::Replayed {
                 return Ok((VoiceDeletionTally::default(), true));
             }
             let mut tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
-            tally.owner_ref_rows = super::ref_bank::delete_owner_refs(store, wtxn, &subject)?;
+            if reach == WithdrawalReach::WholeVoice {
+                tally.owner_ref_rows = super::ref_bank::delete_owner_refs(store, wtxn, &subject)?;
+            }
             Ok((tally, false))
         })?;
 
