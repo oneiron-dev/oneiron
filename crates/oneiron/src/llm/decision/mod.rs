@@ -17,6 +17,7 @@ mod held;
 pub use held::HeldLadder;
 pub use held::{cut_text, fit_reserve_state, fit_state, fit_state_with_budget};
 mod ladder;
+mod learned_bands;
 mod local;
 mod locate;
 pub use locate::*;

@@ -37,6 +37,40 @@ pub(crate) fn apply_ops(
     )
 }
 
+/// [`apply_ops`] for a local batch that stages AUTHORITY_LOG rows: each
+/// row's store door reads the snapshot's fold beside `authority_rows`, the
+/// rows the batch carries, so a fold that needs history a later row of the
+/// batch supplies answers as the batch's preflight did (owner-reserve delta
+/// review F2). Every other op applies as [`apply_ops`] applies it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch write plumbing keeps gate persistence modes explicit at call sites"
+)]
+pub(crate) fn apply_ops_beside_authority_rows(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    record_gate_decisions: bool,
+    persist_gate_pending_consent: bool,
+    authority_rows: crate::store::authority_rows::RowsBeside<'_>,
+) -> Result<()> {
+    apply_ops_with_authority_beside(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+        BaseWriteOrigin::Ordinary,
+        Some(authority_rows),
+        None,
+    )
+}
+
 /// Why a base write transaction is allowed to touch the ids it touches
 /// (ARCH-0052 D2, ONE-1728 K4). Exactly two arms:
 ///
