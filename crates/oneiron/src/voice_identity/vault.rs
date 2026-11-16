@@ -41,12 +41,6 @@ enum ConsentEventWrite {
 /// spoken voice-recognition consent or its withdrawal on a call.
 const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
 
-/// How far past this vault's clock a consent logged at a door may be dated:
-/// the recorder's clock skew. Enrolment counts a withdrawal only when it is
-/// dated at or after the grant, so a grant dated later than this would
-/// outlive a withdrawal logged before that date.
-const CONSENT_DATE_SKEW_SECS: u64 = 300;
-
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -859,14 +853,13 @@ impl Vault {
         })
     }
 
-    /// Refuses a consent a door logs dated later than this vault's clock plus
-    /// [`CONSENT_DATE_SKEW_SECS`].
+    /// Refuses a consent a door logs dated later than this vault's clock, with
+    /// no allowance (REVIEW-9224 P1): enrolment and recognition count a
+    /// withdrawal only when it is dated at or after the grant, so a grant
+    /// dated even a minute ahead would outlive a withdrawal the subject logs
+    /// in that minute. A recorder whose clock runs ahead dates by the vault's.
     fn consent_dated_by_clock_in_txn(&self, txn: &heed::RoTxn<'_>, occurred_at: u64) -> Result<()> {
-        let latest = self
-            .instant_in_txn(txn)?
-            .secs()
-            .saturating_add(CONSENT_DATE_SKEW_SECS);
-        if occurred_at > latest {
+        if occurred_at > self.instant_in_txn(txn)?.secs() {
             return Err(invalid_voice(
                 "voice consent is dated after this vault's clock",
             ));
