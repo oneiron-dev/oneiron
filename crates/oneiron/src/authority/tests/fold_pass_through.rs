@@ -133,6 +133,62 @@ fn fold_rows(rows: &[FoldRow]) -> AuthorityFold {
     )
 }
 
+/// A vault-door fold over `rows` with this install's arrival floor `floors`:
+/// each hash maps to the sequence its signer had reached here before the row
+/// arrived. As [`fold_rows`], but the floor refuses what it refuses.
+fn fold_rows_floored(rows: &[FoldRow], floors: BTreeMap<AuthorityEntryHash, u64>) -> AuthorityFold {
+    let observations = AuthorityLocalObservations {
+        sequence_floors: floors,
+        vouched: BTreeSet::new(),
+        unvouched: false,
+        policy: AuthorityObservationPolicy::default(),
+    };
+    fold_authority_log_inner(
+        rows,
+        &BTreeMap::new(),
+        None,
+        &BTreeMap::new(),
+        folded_device_can_authority_consent,
+        FoldLocalInputs {
+            observations: Some(&observations),
+            ..FoldLocalInputs::VAULT_DOOR
+        },
+    )
+}
+
+/// The owner's enrollment of `enrolled` as an agent key at `seq`, parented
+/// on `parent`, with identifying attestation evidence, so the row seals and
+/// passes through without its overlay record, as the mint does.
+fn sealed_enroll_entry(
+    owner: &SigningKey,
+    vault_id: AuthorityVaultId,
+    parent: AuthorityEntryHash,
+    seq: u64,
+    enrolled: &SigningKey,
+) -> AuthorityLogEntry {
+    let device = DeviceAuthority {
+        key: authority_key_from_ed(enrolled),
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "manufacturer-attestation/v1".to_owned(),
+            evidence: vec![3, 4],
+        },
+        tier: AuthorityTier::Software,
+        roles: ROLE_AGENT,
+    };
+    sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            seq,
+            vec![parent],
+            AuthorityOp::EnrollDevice { device },
+            authority_key_from_ed(owner),
+            100 + seq,
+        ),
+        owner,
+    )
+}
+
 #[test]
 fn a_sealed_mint_that_does_not_open_places_the_log_and_grants_nothing() {
     let fixture = pass_through_fixture();
@@ -255,5 +311,129 @@ fn a_child_that_needs_the_hidden_mint_does_not_count() {
     assert!(
         fold.issues
             .contains(&AuthorityFoldIssue::InvalidEntry(child_hash))
+    );
+}
+
+#[test]
+fn a_sealed_enrollment_past_the_floor_folds_as_structure_only() {
+    let owner = ed_key(60);
+    let genesis = genesis_entry(60, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let enrolled = ed_key(61);
+    let enrolled_key = authority_key_from_ed(&enrolled);
+    // E at seq 1 over G, forward in its signer's order, but past this
+    // install's floor: the install saw the owner's seq 2 first.
+    let enroll = sealed_enroll_entry(&owner, vault_id, genesis_hash, 1, &enrolled);
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let sealed = encode_authority_log_entry_body(&enroll).expect("the enrollment seals");
+    let public =
+        verify_authority_public_row(&sealed).expect("the sealed enrollment verifies as structure");
+    let rows = vec![FoldRow::Open(genesis), FoldRow::PassThrough(public)];
+    let fold = fold_rows_floored(&rows, BTreeMap::from([(enroll_hash, 2)]));
+    assert!(
+        fold.pass_through_entries.contains(&enroll_hash),
+        "a sealed enrollment past the floor folds as structure: {fold:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&enroll_hash),
+        "a sealed enrollment grants nothing: {fold:?}"
+    );
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::NonMonotonicSeq(enroll_hash)),
+        "a roster row past the floor is not refused for its sequence: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.roster.get(&enrolled_key).is_none(),
+        "the enrolled key is not on the roster: {fold:?}"
+    );
+}
+
+#[test]
+fn the_same_enrollment_open_past_the_same_floor_lands_live() {
+    let owner = ed_key(60);
+    let genesis = genesis_entry(60, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let enrolled = ed_key(61);
+    let enrolled_key = authority_key_from_ed(&enrolled);
+    let enroll = sealed_enroll_entry(&owner, vault_id, genesis_hash, 1, &enrolled);
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let rows = vec![FoldRow::Open(genesis), FoldRow::Open(enroll)];
+    let fold = fold_rows_floored(&rows, BTreeMap::from([(enroll_hash, 2)]));
+    assert!(
+        fold.valid_entries.contains(&enroll_hash),
+        "the open enrollment past the floor lands: {fold:?}"
+    );
+    assert!(
+        fold.roster
+            .get(&enrolled_key)
+            .is_some_and(|device| !device.revoked),
+        "the enrolled key is live: {fold:?}"
+    );
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::NonMonotonicSeq(enroll_hash)),
+        "a roster row past the floor is not refused: {:?}",
+        fold.issues
+    );
+}
+
+#[test]
+fn a_sealed_mint_past_the_same_floor_stays_refused() {
+    let owner = ed_key(60);
+    let genesis = genesis_entry(60, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    // M at seq 1 over G, forward, but past this install's floor, as the
+    // enrollment above; a non-roster row past the floor is refused.
+    let mint = mint_entry(
+        &owner,
+        vault_id,
+        genesis_hash,
+        1,
+        mint_claims([61; 32], vault_id, None),
+    );
+    let mint_hash = authority_entry_hash(&mint).unwrap();
+    let sealed = encode_authority_log_entry_body(&mint).expect("the mint seals");
+    let public =
+        verify_authority_public_row(&sealed).expect("the sealed mint verifies as structure");
+    let child = mint_entry(
+        &owner,
+        vault_id,
+        mint_hash,
+        2,
+        mint_claims([62; 32], vault_id, None),
+    );
+    let child_hash = authority_entry_hash(&child).unwrap();
+    let rows = vec![
+        FoldRow::Open(genesis),
+        FoldRow::PassThrough(public),
+        FoldRow::Open(child),
+    ];
+    let fold = fold_rows_floored(&rows, BTreeMap::from([(mint_hash, 2)]));
+    assert!(
+        !fold.valid_entries.contains(&mint_hash),
+        "the sealed mint past the floor does not land: {fold:?}"
+    );
+    assert!(
+        !fold.pass_through_entries.contains(&mint_hash),
+        "a refused row folds as neither valid nor structure: {fold:?}"
+    );
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::NonMonotonicSeq(mint_hash)),
+        "the floor refuses the sealed mint for its sequence: {:?}",
+        fold.issues
+    );
+    assert!(!fold.valid_entries.contains(&child_hash));
+    assert!(!fold.pass_through_entries.contains(&child_hash));
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(child_hash))
     );
 }
