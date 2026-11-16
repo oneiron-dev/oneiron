@@ -138,14 +138,8 @@ pub struct MessagePersonReceipt {
     pub receipt: WitnessReceipt,
 }
 
-/// The pending access request. Asking grants nothing; the vault owner, or
-/// the person asked, answers it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantAskReceipt {
-    pub request: String,
-    pub asked: String,
-    pub status: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::people_verbs::{GrantAskReceipt, GrantAskedPage, GrantAskedRow};
 
 /// What an access request's `scope` asks for, as its answer and the asked
 /// one's list (`self.grants.asked`) name it; `None` for a scope no access
@@ -168,40 +162,6 @@ pub(crate) fn grant_requested_scope(scope: &AccessGrantScope) -> Option<GrantReq
     })
 }
 
-/// One pending access request that asks the caller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantAskedRow {
-    /// 32-hex request id, as `self.grants.answer` takes it.
-    pub request: String,
-    /// 32-hex id of the actor who asked; the grant would be theirs.
-    pub asker: String,
-    pub capability: String,
-    pub scope: GrantRequestedScope,
-    /// When the request was filed, in unix seconds.
-    pub created_at: u64,
-    /// When the requested grant would end, in unix seconds; none when it
-    /// would not.
-    pub expires_at: Option<u64>,
-}
-
-/// One page of the pending access requests that ask the caller, in request
-/// id order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantAskedPage {
-    pub requests: Vec<GrantAskedRow>,
-    /// The cursor of the next page; none when no more requests ask the
-    /// caller.
-    pub next_after: Option<String>,
-}
-
-fn unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 fn hex_ref(field: &str, value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value)
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
@@ -216,7 +176,7 @@ impl Memory<'_> {
     /// highest band its read admits.
     fn people_roster(&self) -> MemoryResult<People> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let mut people = People::load(self.vault, unix_ms(), &mut |person| {
+        let mut people = People::load(self.vault, crate::unix_millis_now(), &mut |person| {
             read.is_entity_readable(&person)
         })?;
         let applied = read.read_receipt(None, 0)?.applied;
@@ -252,9 +212,12 @@ impl Memory<'_> {
         };
         let people = match read {
             Some(read) => {
-                let mut people = People::load_named(self.vault, unix_ms(), &ids, &mut |person| {
-                    read.is_entity_readable(&person)
-                })?;
+                let mut people = People::load_named(
+                    self.vault,
+                    crate::unix_millis_now(),
+                    &ids,
+                    &mut |person| read.is_entity_readable(&person),
+                )?;
                 people.disclose_names(self.vault, read.actor_key())?;
                 people
             }
@@ -382,7 +345,7 @@ impl Memory<'_> {
             Err(refused) => return Err(self.address_refused(target, refused)),
         };
         let room = route.room();
-        let now_ms = unix_ms();
+        let now_ms = crate::unix_millis_now();
         let author = if self.actor_class == EdgeActorClass::Agent {
             WitnessAuthor::Companion
         } else {

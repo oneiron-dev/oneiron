@@ -32,8 +32,12 @@ pub(super) const JOINS: SideTable<String, JoinReceipt, LegacyJson> =
 pub(super) const READY: SideTable<String, String, LegacyJson> =
     SideTable::new(&side_table::ROOMS_JOIN_READY);
 
-const JOIN_REF_DOMAIN: &str = "oneiron.rooms.join.v1";
-const RECEIPT_PREFIX: &str = "rooms.join:";
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::join_receipt::JoinParticipation;
+#[doc(hidden)]
+pub(super) use oneiron_records::workspace_roster::join_receipt::is_join_ref;
+#[doc(hidden)]
+use oneiron_records::workspace_roster::join_receipt::{JOIN_REF_DOMAIN, RECEIPT_PREFIX, digest};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::join_receipt::RosterActor;
@@ -190,14 +194,6 @@ impl JoinReceiptRef {
     }
 }
 
-/// A join ref: 64 lowercase hex.
-pub(super) fn is_join_ref(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 /// The join a request names: its room, thread, subject and intent key. The
 /// same ref asked with another payload is one intent asked two ways.
 pub(super) fn join_ref(request: &JoinRequest) -> Result<String> {
@@ -213,12 +209,6 @@ pub(super) fn join_ref(request: &JoinRequest) -> Result<String> {
 /// The digest of the whole request a join was filed with.
 pub(super) fn intent_digest(request: &JoinRequest) -> Result<String> {
     digest(&(JOIN_REF_DOMAIN, request))
-}
-
-fn digest<T: Serialize>(value: &T) -> Result<String> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|_| Error::InvariantViolation("join request encode"))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 /// The Ready index key: the room, the subject, and the thread or `-`.
@@ -317,29 +307,6 @@ pub struct RecordedAnswer {
     pub answer_ref: String,
     /// Unix seconds.
     pub at: u64,
-}
-
-/// What a Ready join committed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JoinParticipation {
-    /// The person joined the ordinary room's membership ledger.
-    LedgerSeat,
-    /// The person already sat in the room's ledger; nothing was appended.
-    AlreadySeated,
-    /// A project home room: only its board seats members, so the join seats
-    /// no one and this receipt is the participation evidence.
-    HomeRoomReceipt,
-    /// A thread keeps no ledger of its own, and seating the room would widen
-    /// past the thread: this receipt is the participation evidence.
-    BranchReceipt,
-    /// An agent never takes a room seat: this receipt is its participation
-    /// evidence.
-    AgentReceipt,
-    /// A companion attends through her principal's live standing: a seat of
-    /// her own would outlive it, so this receipt, re-proved on each use, is
-    /// her participation evidence.
-    PrincipalReceipt,
 }
 
 /// Everything a join was filed with: its receipt but the decision.

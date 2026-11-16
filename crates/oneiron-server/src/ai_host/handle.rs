@@ -71,7 +71,7 @@ impl AiHandle {
                 |models| models.recall.rerank_pair_template_units,
             ),
             turns: TurnTracker::new(),
-            inbound: Arc::new(AtomicU64::new(unix_now())),
+            inbound: Arc::new(AtomicU64::new(unix_seconds_now())),
             summaries: false,
             decisions: Arc::default(),
             turn_wakes: Arc::default(),
@@ -338,7 +338,7 @@ impl AiHandle {
     /// (ARCH-0026 RD-26), off the request path. A no-op without a running
     /// Dreamer, so a model-free vault queues nothing that never runs.
     pub fn turn_landed(&self, vault: &Arc<Vault>, subject: WakeTurnSubject) {
-        self.inbound.fetch_max(unix_now(), Ordering::AcqRel);
+        self.inbound.fetch_max(unix_seconds_now(), Ordering::AcqRel);
         self.queue_turn_wake(vault, subject, None);
     }
 
