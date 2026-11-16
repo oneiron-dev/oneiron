@@ -55,6 +55,14 @@ pub struct WholeVaultDocumentManifest {
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
     /// FIX 2768: side rows this archive holds out, and why.
     pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
+    /// L2-23: the exporting install's signature over this manifest, set last
+    /// (`super::archive_provenance`). `None` on an archive no loaded machine
+    /// key signed, which proves no provenance. The field is additive, so the
+    /// version stays: an archive written before L2-23 has no such key and
+    /// reads as an unsigned one, and an unsigned archive is written as before
+    /// (STORED-CHANGE-RULE keep: a vault holds archives for its removals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<super::ArchiveProvenance>,
 }
 
 impl WholeVaultDocumentManifest {

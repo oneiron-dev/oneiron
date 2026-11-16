@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 use std::io::Cursor;
 
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use super::codec::{encode_msgpack_value, required_value};
@@ -398,39 +399,21 @@ fn validate_axis<T: Ord>(axis: &ScopeAxis<T>, spelling: &AxisSpelling<T>) -> Res
 }
 
 fn decode_axis_map(value: &Value) -> Result<(&str, Option<&[Value]>)> {
-    let Value::Map(entries) = value else {
-        return Err(invalid_pact_scope());
-    };
-    let mut seen = [false; FEDERATION_SCOPE_AXIS_KEYS.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_pact_scope)?;
-        let Some(index) = FEDERATION_SCOPE_AXIS_KEYS
-            .iter()
-            .position(|known| *known == key)
-        else {
-            return Err(invalid_pact_scope());
-        };
-        if seen[index] {
-            return Err(invalid_pact_scope());
-        }
-        seen[index] = true;
-    }
-    if !seen[0] {
-        return Err(invalid_pact_scope());
-    }
-    let kind = required_value(entries, KEY_SCOPE_AXIS_KIND)
+    let checked = msgpack::Entries::of(value)
+        .and_then(|map| map.exact_keys(&[KEY_SCOPE_AXIS_KIND], &[KEY_SCOPE_AXIS_IDS]))
+        .map_err(|_| invalid_pact_scope())?;
+    let kind = checked
+        .require(KEY_SCOPE_AXIS_KIND)
         .map_err(|_| invalid_pact_scope())?
         .as_str()
         .ok_or_else(invalid_pact_scope)?;
-    let ids = if seen[1] {
-        let Value::Array(values) =
-            required_value(entries, KEY_SCOPE_AXIS_IDS).map_err(|_| invalid_pact_scope())?
-        else {
-            return Err(invalid_pact_scope());
-        };
-        Some(values.as_slice())
-    } else {
-        None
+    let ids = match checked
+        .get(KEY_SCOPE_AXIS_IDS)
+        .map_err(|_| invalid_pact_scope())?
+    {
+        None => None,
+        Some(Value::Array(values)) => Some(values.as_slice()),
+        Some(_) => return Err(invalid_pact_scope()),
     };
     Ok((kind, ids))
 }
@@ -446,22 +429,10 @@ fn id_from_value(value: &Value) -> Option<ScopeId> {
 }
 
 fn validate_exact_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
-    let mut seen = vec![false; expected.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_pact_scope)?;
-        let Some(index) = expected.iter().position(|known| *known == key) else {
-            return Err(invalid_pact_scope());
-        };
-        if seen[index] {
-            return Err(invalid_pact_scope());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_pact_scope())
-    }
+    msgpack::Entries::new(entries)
+        .exact_keys(expected, &[])
+        .map(|_| ())
+        .map_err(|_| invalid_pact_scope())
 }
 
 fn pact_scope_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
