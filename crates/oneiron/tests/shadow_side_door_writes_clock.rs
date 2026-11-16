@@ -61,8 +61,7 @@ fn side_door_read_writes_no_vault_bytes() -> Result<(), Box<dyn std::error::Erro
     let person = EntityId::from_bytes([31; 16])?;
     let turn = EntityId::from_bytes([32; 16])?;
     let time = TimeRange { start: 1, end: 1 };
-    let body =
-        rmp_serde::to_vec_named(&serde_json::json!({"txt": TURN_TEXT, "spkr": "user"}))?;
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"txt": TURN_TEXT, "spkr": "user"}))?;
     vault
         .batch()
         .put(&person, ENTITY_TYPE_PERSON, time, 1, b"Ada")
@@ -77,12 +76,18 @@ fn side_door_read_writes_no_vault_bytes() -> Result<(), Box<dyn std::error::Erro
         .into_iter()
         .map(|hit| hit.id)
         .collect::<Vec<_>>();
-    assert!(live.contains(&turn), "fixture turn missing from live retrieval");
+    assert!(
+        live.contains(&turn),
+        "fixture turn missing from live retrieval"
+    );
     let before = vault_bytes(dir.path())?;
     let tagger = StubTagger { person };
     let outcome = shadow_tag_turn(&vault, turn, &tagger, &live);
     let after = vault_bytes(dir.path())?;
-    assert_eq!(before, after, "the shadow side door wrote to the fixture vault");
+    assert_eq!(
+        before, after,
+        "the shadow side door wrote to the fixture vault"
+    );
     let report = outcome?;
     assert_eq!(report.tags.mentions[0].entity, person);
     assert_eq!(report.common, vec![person]);
