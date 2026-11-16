@@ -121,7 +121,9 @@ fn validate_reply_routes(ladder: &StageLadderDefinition) -> Result<()> {
     Ok(())
 }
 
-fn ratified_disposition(code: ReplyCode) -> ReplyDisposition {
+/// The ratified disposition of `code`: what a pack must route it to, and the default of the
+/// owner's key for the three codes that have one (setting_keys.rs).
+pub(super) fn ratified_disposition(code: ReplyCode) -> ReplyDisposition {
     match code {
         ReplyCode::PositiveNow => ReplyDisposition::Promote {
             stage: StageKey(STAGE_REPLIED.to_owned()),
