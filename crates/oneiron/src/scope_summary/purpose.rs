@@ -5,18 +5,12 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
-use serde::{Deserialize, Serialize};
 
 const PURPOSE: SideTable<String, SummaryPurpose, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_PURPOSE);
 
-/// A named purpose with host-editable descriptive text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SummaryPurpose {
-    pub id: String,
-    pub description: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::scope_summary::purpose::SummaryPurpose;
 
 fn seeds() -> Result<Vec<SummaryPurpose>> {
     serde_json::from_str(include_str!("purposes.json"))

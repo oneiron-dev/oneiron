@@ -1,6 +1,5 @@
 //! Quarantine key codec plus remote/local rejection classifier.
 
-use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::error::{Error, ErrorKind, GateError, Result};
@@ -48,63 +47,11 @@ pub(super) const RECENT_REASON_CODES: usize = 8;
 
 const ERR_QUARANTINE_ROW: &str = "sync quarantine row";
 
-/// Which CRDT window-doc map the rejected op targeted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum QuarantineContainer {
-    Entities,
-    Edges,
-    Tombstones,
-    /// Root-doc `leases` registry entries (ONE-1140): a malformed lease
-    /// value arriving through the root mirror is quarantined — never
-    /// upserted over a previous good `ls:` row, never silently dropped.
-    Leases,
-    /// The base window's `office_proposals` map (FIX 2691): a carried
-    /// proposal whose decisions diverge from the copy held here.
-    OfficeProposals,
-    /// The base window's `typed_body_rows` map (FIX 12470): a carried typed
-    /// body receipt that diverges from the copy held here.
-    TypedBodyRows,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::sync::quarantine::keys_classifier::QuarantineContainer;
 
-impl QuarantineContainer {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Entities => "entities",
-            Self::Edges => "edges",
-            Self::Tombstones => "tombstones",
-            Self::Leases => "leases",
-            Self::OfficeProposals => "office_proposals",
-            Self::TypedBodyRows => "typed_body_rows",
-        }
-    }
-}
-
-/// A persisted quarantine record. Hash + metadata ONLY — GDPR-inert, never
-/// the rejected bytes themselves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuarantineRecord {
-    /// Window key (YYYY-MM) of the doc whose replay rejected the op.
-    pub window_key: String,
-    /// Which map the op targeted.
-    pub container: QuarantineContainer,
-    /// `xxh3_64` of the rejected op's CRDT map key bytes. The key itself is
-    /// attacker-controlled and is NEVER stored — a crafted key string would
-    /// smuggle content into the GDPR-inert `x:` family (and a prefix is
-    /// still content). Hash + length only.
-    pub crdt_key_hash: u64,
-    /// Byte length of the rejected op's CRDT map key.
-    pub crdt_key_len: u32,
-    /// Typed error name of the rejecting gate (`ErrorKind` name, e.g.
-    /// `InvalidEdgeWeight`, `InvalidTimeRange`, `EntityTypeImmutable`).
-    pub reason_code: String,
-    /// `xxh3_64` of the rejected value bytes (0-length input hashes the
-    /// empty slice — e.g. a delete op carrying no payload).
-    pub payload_hash: u64,
-    /// Unix seconds when the op was quarantined.
-    pub quarantined_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::quarantine::keys_classifier::QuarantineRecord;
 
 /// `xxh3_64` of the rejected bytes — the only payload-derived field a
 /// quarantine record may carry.

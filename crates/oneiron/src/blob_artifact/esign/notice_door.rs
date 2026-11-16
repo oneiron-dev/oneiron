@@ -30,13 +30,8 @@ use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use serde::{Deserialize, Serialize};
 
-/// The signing document whose staged notices the caller sends.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignNoticesDispatchRequest {
-    /// The artifact the signing overlay lives on.
-    pub document_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::esign::notice_door::EsignNoticesDispatchRequest;
 
 /// What the send gate made of each staged notice recorded for the caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

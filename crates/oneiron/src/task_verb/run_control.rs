@@ -20,8 +20,15 @@
 //! or another caller's pause refuses it, `FORBIDDEN` with one reason code
 //! (`awaits:*`) naming the signal the branch waits on and a fix naming the
 //! door that gives it. Its pause of a held branch is refused the same way.
-//! Past that, the queue's own pause and resume run as they always did, so a
-//! leased branch still refuses a pause, and a repeat answers
+//!
+//! A running agent run is paused at its next step boundary (Engine RULING
+//! PAUSE-BOUNDARY-SCOPE = B, 13 Nov): the pause posts the Pause signal
+//! `vault.agents.pause_tree` posts, and answers `pausing_at_next_step`; a
+//! repeat while it is pending posts nothing more. Once the run's step
+//! commits, its row stands under a person's pause that names the caller,
+//! so the caller's resume releases it. A running branch no boundary reaches
+//! (a landing one, one of no run) is still refused. Past that, the queue's
+//! own pause and resume run as they always did, and a repeat answers
 //! `already_paused` or `already_resumed` and writes nothing.
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use super::run_doors::{RunBranchView, branch_view};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
-    HoldSignal, InterveneAttempt, InterveneOutcome,
+    AttemptState, HoldSignal, InterveneAttempt, InterveneOutcome,
 };
 use crate::authority::{TaskActorVerb, VerifiedSlip};
 use crate::claim::ScopedReadActorKey;
@@ -40,6 +47,9 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn,
     verify_actor_binding,
 };
+use crate::run_tree::{
+    RunSignalInput, RunSignalKind, RunTreeAdapter, pause_pending, takes_boundary_pause,
+};
 
 /// What a caller neither the owner nor the TASK's owner should do instead.
 const RUN_CONTROL_FIX: &str =
@@ -47,32 +57,14 @@ const RUN_CONTROL_FIX: &str =
 /// The holder the host root names, and every slip cut from it keeps.
 const HOST_HOLDER: &str = "host";
 
-/// One branch to pause or resume, by the attempt id its run tree names.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunControlRequest {
-    /// The branch's attempt id, hex, as `vault.runs.branches.get` names it.
-    pub branch: String,
-    /// Kept on the branch's intervention event.
-    #[serde(default)]
-    pub note: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::run_control::{RunControlEffect, RunControlRequest};
 
 /// What the pause or resume did, and the branch as it stands after it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunControlReceipt {
     pub effect: RunControlEffect,
     pub branch: RunBranchView,
-}
-
-/// The queue's own effect: a repeat answers `already_*` and writes nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunControlEffect {
-    Paused,
-    AlreadyPaused,
-    Resumed,
-    AlreadyResumed,
 }
 
 /// The two controls these doors run.
@@ -104,7 +96,8 @@ impl RunControl {
 
 impl Memory<'_> {
     /// `vault.runs.pause`: pauses one queued or scheduled branch for this
-    /// surface's caller ([`Self::control_run`]).
+    /// surface's caller, or a running run at its next step boundary
+    /// ([`Self::control_run`]).
     ///
     /// # Errors
     ///
@@ -134,6 +127,7 @@ impl Memory<'_> {
             AttemptInterventionEffect::AlreadyPaused => RunControlEffect::AlreadyPaused,
             AttemptInterventionEffect::Resumed => RunControlEffect::Resumed,
             AttemptInterventionEffect::AlreadyResumed => RunControlEffect::AlreadyResumed,
+            AttemptInterventionEffect::PausingAtNextStep => RunControlEffect::PausingAtNextStep,
             _ => {
                 return Err(MemoryError::from(Error::InvariantViolation(
                     "run control effect",
@@ -299,6 +293,15 @@ fn intervene_admitted(
         let record = queue
             .get_in_write_txn(wtxn, branch)?
             .ok_or(Error::EntityNotFound)?;
+        let standing = admit(wtxn, &record)?;
+        if control == RunControl::Pause
+            && let Some(effect) = boundary_pause_in(vault, wtxn, &record, &actor, note.as_deref())?
+        {
+            let record = queue
+                .get_in_write_txn(wtxn, branch)?
+                .ok_or(Error::EntityNotFound)?;
+            return Ok(InterveneOutcome { effect, record });
+        }
         let input = InterveneAttempt {
             id: branch,
             kind: control.kind(),
@@ -306,7 +309,7 @@ fn intervene_admitted(
             note,
             now,
         };
-        match admit(wtxn, &record)? {
+        match standing {
             RunControlStanding::Owner => Ok::<_, MemoryError>(queue.intervene_in_txn(wtxn, input)?),
             RunControlStanding::Caller => queue
                 .intervene_as_caller_in_txn(wtxn, input)?
@@ -315,6 +318,51 @@ fn intervene_admitted(
     })?;
     vault.store.notify_attempt_observers();
     Ok(outcome)
+}
+
+/// The pause of a running run, in the admitting writer (module docs): the
+/// Pause signal its run takes at its next step boundary, keyed by the lease
+/// generation and the row's event count, so each pause of the row has its
+/// own; `PausingAtNextStep`, with nothing posted, while one is pending.
+/// `None` for a branch that is not running, or one no boundary reaches: the
+/// queue's own pause answers it.
+fn boundary_pause_in(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+    actor: &str,
+    note: Option<&str>,
+) -> crate::Result<Option<AttemptInterventionEffect>> {
+    if record.state != AttemptState::Leased {
+        return Ok(None);
+    }
+    if pause_pending(record) {
+        return Ok(Some(AttemptInterventionEffect::PausingAtNextStep));
+    }
+    let Some(run_id) = record
+        .run_id
+        .clone()
+        .filter(|_| takes_boundary_pause(record))
+    else {
+        return Ok(None);
+    };
+    RunTreeAdapter::new(vault).signal_in_txn(
+        wtxn,
+        RunSignalInput {
+            branch: record.id,
+            run_id,
+            key: format!(
+                "runs-pause:{}:{}",
+                record.attempt_count,
+                record.events.len()
+            ),
+            actor: actor.to_owned(),
+            kind: RunSignalKind::Pause {
+                note: note.map(str::to_owned),
+            },
+        },
+    )?;
+    Ok(Some(AttemptInterventionEffect::PausingAtNextStep))
 }
 
 /// The refusal of a caller a hold keeps: `FORBIDDEN`, the signal's reason

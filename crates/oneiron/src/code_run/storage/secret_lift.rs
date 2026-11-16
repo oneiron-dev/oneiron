@@ -2,13 +2,13 @@
 //! Dismissing a proposal never clears its occurrence's secret or taint marks.
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
 
 use super::super::replay::ResultOccurrence;
 use super::records::{CodeRunSecretLiftProposal, RAW_OUTPUT_SECRETS, lift_proposal};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{Error, Result, Vault};
 
 mod room;
@@ -19,50 +19,11 @@ const DISMISSED: SideTable<String, CodeRunSecretLiftDismissal, Named> =
 const CONTENT_KIND: &str = "code_run_secret_lift";
 const DISMISSED_REASON: &str = "gate.code_run.secret_lift_dismissed";
 
-/// The exact occurrence whose proposal the owner dismisses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftDismiss {
-    pub handle: String,
-    pub occurrence: String,
-}
-
-/// Lists code-run lift proposals, optionally dismissing one first.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftRequest {
-    #[serde(default)]
-    pub dismiss: Option<CodeRunSecretLiftDismiss>,
-}
-
-/// A proposal's value-free wire form. No body or secret value is read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftProposalView {
-    pub handle: String,
-    pub occurrence: String,
-    pub detector_reason: String,
-    pub suggested_secret_name: String,
-}
-
-/// The owner's dismissal and the Gate receipt committed with it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftDismissal {
-    pub handle: String,
-    pub occurrence: String,
-    pub dismissed_by: String,
-    pub dismissed_at: u64,
-    pub receipt: String,
-}
-
-/// The open proposals after this call, and its dismissal if requested.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunSecretLiftStatus {
-    pub proposals: Vec<CodeRunSecretLiftProposalView>,
-    pub dismissed: Option<CodeRunSecretLiftDismissal>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::storage::secret_lift::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+};
 
 impl From<CodeRunSecretLiftProposal> for CodeRunSecretLiftProposalView {
     fn from(proposal: CodeRunSecretLiftProposal) -> Self {
@@ -116,41 +77,27 @@ impl Vault {
             let dismissal = match DISMISSED.get(&self.store, &txn, &key)? {
                 Some(dismissal) => dismissal,
                 None => {
-                    let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-                    let at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+                    let mut receipt = GateReceipt::new(
+                        GateReceiptOutcome::Approved,
+                        CONTENT_KIND,
+                        DISMISSED_REASON,
+                        ReceiptActor::human(actor),
+                        blake3::hash(key.as_bytes()).as_bytes().to_vec(),
+                        PolicyBasis::NOT_READ,
+                    );
+                    receipt.details = vec![format!(
+                        "proposal:{}",
+                        blake3::hash(key.as_bytes()).to_hex()
+                    )];
+                    // The dismissal carries the receipt's own id and time.
+                    let record = self.store.record_gate_receipt_in_txn(&mut txn, receipt)?;
                     let dismissal = CodeRunSecretLiftDismissal {
                         handle: handle.to_owned(),
                         occurrence: occurrence.id().to_hex(),
                         dismissed_by: actor.to_hex(),
-                        dismissed_at: at,
-                        receipt: format!("gate:{}", decision_id.to_hex()),
+                        dismissed_at: record.created_at,
+                        receipt: format!("gate:{}", record.decision_id.to_hex()),
                     };
-                    let record = GateDecisionRecord {
-                        version: GATE_DECISION_LEDGER_VERSION,
-                        decision_id,
-                        created_at: at,
-                        outcome: "approved".into(),
-                        reason_codes: vec![DISMISSED_REASON.into()],
-                        receipt_reasons: Vec::new(),
-                        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                            CONTENT_KIND,
-                            vec![format!(
-                                "proposal:{}",
-                                blake3::hash(key.as_bytes()).to_hex()
-                            )],
-                        ),
-                        actor_class: "human".into(),
-                        actor_ref: Some(actor.to_hex()),
-                        content_kind: CONTENT_KIND.into(),
-                        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                        claim_id: None,
-                        grant_ref: None,
-                        diff_handle: blake3::hash(key.as_bytes()).as_bytes().to_vec(),
-                        read_frontier_hash: [0; 32],
-                        context: Default::default(),
-                        redacted_at: None,
-                    };
-                    self.store.append_gate_decision_in_txn(&mut txn, &record)?;
                     DISMISSED.put(&self.store, &mut txn, &key, &dismissal)?;
                     dismissal
                 }

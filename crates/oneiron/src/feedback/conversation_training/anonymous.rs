@@ -58,17 +58,8 @@ use serde::{Deserialize, Serialize};
 use self::files::PieceFilesMark;
 use super::custody::{SubmissionCustody, SubmissionState};
 
-/// How a submission's offer leaves the vault (TL-6), set at its first
-/// preparation from the offer pass and kept by every retry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TrainingTransport {
-    /// Through the outbox's V2 files, which a managed vault's supervisor
-    /// ships under its own binding.
-    Hosted,
-    /// Through the anonymous training window, piece by piece under its C,
-    /// which a self-hosted vault's shipper reaches.
-    Anonymous,
-}
+#[doc(hidden)]
+pub use oneiron_records::feedback::conversation_training::anonymous::TrainingTransport;
 
 /// Where an anonymous piece stands at the intake, as its signed receipts
 /// say: E1's piece state without its fields, which the row keeps beside it.

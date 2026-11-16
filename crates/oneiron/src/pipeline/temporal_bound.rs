@@ -18,9 +18,9 @@ use super::channels::{
     TemporalCandidateScore, TemporalIndexCollectionContext, TemporalScoringContext,
     score_temporal_candidate, sort_temporal_candidate_scores, temporal_window,
 };
+use super::params::RetrievalParams;
 use super::types::{
-    EntityMetadataCache, ScoredEntity, SnapshotCandidateFilter, TEMPORAL_WIDENING_FLOOR,
-    TEMPORAL_WIDENING_MULTIPLE, TemporalSearchConfig,
+    EntityMetadataCache, ScoredEntity, SnapshotCandidateFilter, TemporalSearchConfig,
 };
 
 /// How many rows a temporal channel under a strict scope collects, scores
@@ -34,6 +34,7 @@ pub(super) fn scoped_temporal_channel_limit(
     rtxn: &RoTxn<'_>,
     requested: usize,
     scope_widening_active: bool,
+    params: &RetrievalParams,
 ) -> Result<usize> {
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
@@ -42,15 +43,15 @@ pub(super) fn scoped_temporal_channel_limit(
         .map_err(|_| Error::IndexOverflow("entity count"))?;
     Ok(requested
         .max(entity_count)
-        .min(temporal_widening_bound(requested)))
+        .min(temporal_widening_bound(requested, params)))
 }
 
 /// How far a scoped temporal channel asking for `requested` rows widens at
 /// most: a fixed multiple of the request, with a floor.
-pub(super) fn temporal_widening_bound(requested: usize) -> usize {
+pub(super) fn temporal_widening_bound(requested: usize, params: &RetrievalParams) -> usize {
     requested
-        .saturating_mul(TEMPORAL_WIDENING_MULTIPLE)
-        .max(TEMPORAL_WIDENING_FLOOR)
+        .saturating_mul(params.temporal_widening_multiple)
+        .max(params.temporal_widening_floor)
 }
 
 /// The rows a temporal call's window holds once its rounds stop, best first
@@ -269,10 +270,15 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
 /// first under the request's sigma, and the cut the bound takes from them,
 /// for the scope walk to take as it goes. Taking it here instead would ask
 /// the reader about every row inside the bound on every call.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the reader's window reads the call's config, scoring numbers, clock, cache and deadline"
+)]
 pub(super) fn execute_temporal_for_reader<'r, 'p, 'f>(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    params: &RetrievalParams,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
     deadline: Option<&RetrievalDeadline>,
@@ -282,6 +288,7 @@ pub(super) fn execute_temporal_for_reader<'r, 'p, 'f>(
         store,
         rtxn,
         config,
+        params,
         now,
         metadata_cache,
         deadline,

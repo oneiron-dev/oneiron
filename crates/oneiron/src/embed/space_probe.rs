@@ -42,8 +42,9 @@ pub(super) use repo_projection::{
 
 /// Probes the authoring pass keeps per kind.
 pub const SPACE_PROBES_PER_KIND: usize = 20;
-/// Longest probe query, in bytes.
-pub const SPACE_PROBE_QUERY_MAX_LEN: usize = 2048;
+#[doc(hidden)]
+pub use oneiron_verb_wire::embed::space_probe::SPACE_PROBE_QUERY_MAX_LEN;
+
 /// Width of a probe cohort's date cut, in vault seconds: the authoring pass groups a kind's
 /// documents by the window the vault learned each in, and draws its probes' families across
 /// those windows, the window holding fewest probes first and the newest on a tie.
@@ -263,15 +264,28 @@ impl Vault {
     }
 
     /// Deletes one probe; `false` when none had that id. The write checks the owner's proof
-    /// again (FIX 8200).
-    pub fn delete_space_probe(&self, owner: &AuthenticatedOwner, id: &[u8; 16]) -> Result<bool> {
+    /// again (FIX 8200), and records the Owner's own act on that proof, spending `applied`,
+    /// another asker's approved check-in for this delete, in the same write (ROLES-CHECKIN
+    /// 2k5; P25-SHAPE Q1 = A).
+    pub(crate) fn delete_space_probe(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &[u8; 16],
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(bool, crate::check_in::CheckInDecision)> {
         let mut wtxn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &wtxn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut wtxn,
+            crate::check_in::ActClass::Delete,
+            applied,
+        )?;
         let existed = EMBEDDING_PROBE.contains(&self.store, &wtxn, id)?;
         EMBEDDING_PROBE.delete(&self.store, &mut wtxn, id)?;
         repo_projection::drop_probe_query_copy_in_txn(self, &mut wtxn, id)?;
         wtxn.commit()?;
-        Ok(existed)
+        Ok((existed, decision))
     }
 
     /// Tops `kind` up toward [`SPACE_PROBES_PER_KIND`] probes, at most `max_items` this pass:

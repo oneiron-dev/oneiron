@@ -55,6 +55,6 @@ pub use self::prelude::{
     inspect_backup_prefix, registry_binding,
 };
 pub use self::wire::{
-    ArtifactKind, BACKUP_MAGIC, KeyHeader, KeyHeaderWrap, MAX_KEY_HEADER_LEN, VaultKeyWrapInfo,
-    VaultKeyWrapKind,
+    ArtifactKind, BACKUP_MAGIC, KeyHeader, KeyHeaderWrap, MAX_KEY_HEADER_LEN, RecoveryPreset,
+    VaultKeyWrapInfo, VaultKeyWrapKind,
 };

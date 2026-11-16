@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.optional_memory.set",
+  "description": "The owner sets the optional recall one agent takes as a reader on the revision read: a default and the task families that differ, each none or a token budget at a view; its window profile is unchanged.",
+  "input": "crate::agent_def::AgentOptionalMemorySetRequest",
+  "output": "crate::agent_def::AgentOptionalMemoryState",
+  "call": "crate::agent_def::set_agent_optional_memory_from_request_as(memory.vault(), &memory.embedded_owner(\"vault.agents.optional_memory.set\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

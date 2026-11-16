@@ -341,7 +341,8 @@ fn mcp_code_run_health(
         oneiron::engine_executor::EngineExecutorStatus::Complete => McpRetrievalHealth::Healthy,
         oneiron::engine_executor::EngineExecutorStatus::Waiting(_)
         | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. }
-        | oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => {
+        | oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. }
+        | oneiron::engine_executor::EngineExecutorStatus::Paused { .. } => {
             McpRetrievalHealth::Partial
         }
     }
@@ -365,6 +366,10 @@ fn mcp_code_run_help(status: &oneiron::engine_executor::EngineExecutorStatus) ->
         oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => vec![
             "this run's context window is full and no compacted summary has landed yet".to_owned(),
             "the same run_ref continues it once compaction lands".to_owned(),
+        ],
+        oneiron::engine_executor::EngineExecutorStatus::Paused { .. } => vec![
+            "this run's branch was paused at a step boundary and holds no lease".to_owned(),
+            "it goes on once its branch is resumed (vault.runs.resume)".to_owned(),
         ],
     }
 }
@@ -409,6 +414,10 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
             "status": "window_full",
             "next_step_seq": next_step_seq,
             "reason": mcp_window_full_reason(*reason),
+        }),
+        oneiron::engine_executor::EngineExecutorStatus::Paused { next_step_seq } => json!({
+            "status": "paused",
+            "next_step_seq": next_step_seq,
         }),
     }
 }

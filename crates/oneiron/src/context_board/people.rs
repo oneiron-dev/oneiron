@@ -9,9 +9,7 @@
 //! reader's cached roster does not hold carries its name inline.
 
 mod prepared;
-pub(crate) use prepared::{
-    PreparedAgentPerson, prepare_agent_person_after_puts_in_txn, prepare_agent_person_in_txn,
-};
+pub(crate) use prepared::{PreparedAgentPerson, prepare_agent_person_after_puts_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,9 +20,12 @@ use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EdgeActorClass, TimeRange, Vault, WriteActor};
 
-/// Token budget of one vault's `people` rows in the cached prefix. Rows past
-/// it page out behind `more: +N`; `vault.people.list` reads the further pages.
-pub const PEOPLE_PREFIX_BUDGET_TOK: usize = 512;
+#[doc(hidden)]
+pub use oneiron_records::context_board::people::{
+    ActorAttribution, ActorAttributionKind, PEOPLE_PREFIX_BUDGET_TOK, PersonKind,
+};
+#[doc(hidden)]
+use oneiron_records::context_board::people::{handle_number, person_name, xml_safe};
 
 /// Derivation domain of the model PERSON an agent definition is born with.
 const AGENT_PERSON_DOMAIN: &[u8] = b"oneiron.people.agent-person.v1";
@@ -34,26 +35,6 @@ const SEEDED_SUBSTRATE_DOMAIN: &[u8] = b"oneiron.people.seeded-substrate.v1";
 
 /// Derivation domain of a seeded agent's `actor.subject_ref` claim (FIX 12098).
 const SEEDED_ANCHOR_DOMAIN: &[u8] = b"oneiron.people.seeded-anchor.v1";
-
-/// Whether a person is a human or an agent. The room roster's kind column.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum PersonKind {
-    Human,
-    Agent,
-}
-
-impl PersonKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Human => "human",
-            Self::Agent => "agent",
-        }
-    }
-}
 
 /// One person the vault knows.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -109,6 +90,28 @@ impl People {
     pub fn load(
         vault: &Vault,
         at: u64,
+        admit: &mut dyn FnMut(EntityId) -> Result<bool>,
+    ) -> Result<Self> {
+        Self::load_selected(vault, at, None, admit)
+    }
+
+    /// [`Self::load`] for the persons `actors` speak as alone: a PERSON id
+    /// in `actors`, or the PERSON a definition in `actors` is anchored to.
+    /// Each row is the one [`Self::load`] builds; no other PERSON's body is
+    /// read.
+    pub fn load_named(
+        vault: &Vault,
+        at: u64,
+        actors: &BTreeSet<EntityId>,
+        admit: &mut dyn FnMut(EntityId) -> Result<bool>,
+    ) -> Result<Self> {
+        Self::load_selected(vault, at, Some(actors), admit)
+    }
+
+    fn load_selected(
+        vault: &Vault,
+        at: u64,
+        actors: Option<&BTreeSet<EntityId>>,
         admit: &mut dyn FnMut(EntityId) -> Result<bool>,
     ) -> Result<Self> {
         let agents = vault.entities_by_type(ENTITY_TYPE_AGENT_DEF)?;
@@ -171,6 +174,14 @@ impl People {
         // census is taken first and the reader's read runs after it closes.
         let mut found = Vec::new();
         for person in persons {
+            if let Some(actors) = actors
+                && !actors.contains(&person)
+                && !agent_of
+                    .get(&person)
+                    .is_some_and(|(agent, _)| actors.contains(agent))
+            {
+                continue;
+            }
             if hidden.contains(&person) && !agent_of.contains_key(&person) {
                 continue;
             }
@@ -307,6 +318,19 @@ impl People {
         self.index.get(&id).map(|at| &self.rows[*at])
     }
 
+    /// How this roster names `actor` to its reader: the person it speaks as,
+    /// or [`ActorAttribution::unknown`].
+    #[must_use]
+    pub fn attribution(&self, actor: EntityId) -> ActorAttribution {
+        self.get(actor)
+            .map_or_else(ActorAttribution::unknown, |row| ActorAttribution {
+                kind: row.kind.into(),
+                person: Some(row.person.to_hex()),
+                handle: Some(row.handle.clone()),
+                name: Some(row.name.clone()),
+            })
+    }
+
     /// The person a `pr<n>` handle names.
     #[must_use]
     pub fn by_handle(&self, handle: &str) -> Option<&PersonRow> {
@@ -400,35 +424,8 @@ impl People {
     }
 }
 
-/// The `people` block one vault contributes to the cached prefix, and the
-/// persons it made resident.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PeoplePrefix {
-    pub vault: String,
-    pub rows: Vec<String>,
-    pub more: usize,
-    pub resident: BTreeSet<EntityId>,
-}
-
-impl PeoplePrefix {
-    #[must_use]
-    pub fn render(&self) -> String {
-        let mut out = format!("<people vault={}>", self.vault);
-        for row in &self.rows {
-            out.push('\n');
-            out.push_str(row);
-        }
-        // The overflow points at the verb that pages the rest (ARCH-0067).
-        if self.more > 0 {
-            out.push_str(&format!(
-                "\nmore: +{} \u{b7} vault.people.list({}, page)",
-                self.more, self.vault
-            ));
-        }
-        out.push_str("\n</people>");
-        out
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::people::PeoplePrefix;
 
 /// How the live board names a person to one reader: the bare handle when the
 /// reader's cached roster holds it, the handle with its name inline when not,
@@ -654,37 +651,6 @@ fn person_is_model(vault: &Vault, at: u64, person: EntityId) -> bool {
     )
 }
 
-fn person_name(body: &[u8]) -> Option<String> {
-    let fields = crate::write_envelope::person_identity::body_fields(body).ok()?;
-    let top = fields
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("display_name"))
-        .and_then(|(_, value)| value.as_str())
-        .map(str::to_owned);
-    top.or_else(|| {
-        crate::serialize::person_identity::validated_persona_baseline(body)
-            .ok()?
-            .get("display_name")?
-            .as_str()
-            .map(str::to_owned)
-    })
-    .or_else(|| {
-        fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("name"))
-            .and_then(|(_, value)| value.as_str())
-            .map(str::to_owned)
-    })
-    .filter(|name| !name.trim().is_empty())
-}
-
-fn handle_number(handle: &str) -> u64 {
-    handle
-        .trim_start_matches(|character: char| character.is_ascii_lowercase())
-        .parse()
-        .unwrap_or(u64::MAX)
-}
-
 /// A TOON cell: bare when it holds no delimiter, quoted JSON when it does.
 fn toon_cell(value: &str) -> String {
     let value = one_line_token(value);
@@ -698,13 +664,4 @@ fn toon_cell(value: &str) -> String {
     } else {
         serde_json::Value::String(value).to_string()
     }
-}
-
-/// Encodes XML delimiters as JSON unicode escapes so a name cannot close the
-/// prefix block it sits in.
-fn xml_safe(value: &str) -> String {
-    value
-        .replace('&', "\\u0026")
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e")
 }
