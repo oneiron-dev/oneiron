@@ -1,6 +1,5 @@
 //! Reviewed repository import anchors, manifest digests and raw claim codecs.
 
-use crate::code_snapshot::ids::entity_id_from_hash_material;
 use crate::code_tree_blob::CodeTreeBlob;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::claim_body::ClaimSubject;
@@ -10,6 +9,7 @@ use oneiron_base::error::Result;
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -113,7 +113,7 @@ pub fn manifest_digest(
 /// # Errors
 /// An id derivation failure.
 pub fn manifest_id(digest: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(MANIFEST_DOMAIN, &[digest.as_bytes()])
+    EntityId::derive_legacy_material(purposes::code::IMPORT_MANIFEST, &[digest.as_bytes()])
 }
 
 /// An engine-owned, observed, active claim about `subject` holding `record`.
