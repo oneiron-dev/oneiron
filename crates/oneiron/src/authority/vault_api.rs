@@ -48,6 +48,10 @@ struct PreparedAuthorityLogRows {
     // the hosted refusal judges before it stages.
     rows: Vec<(BatchOp, Option<AuthorityKey>)>,
     pending: Option<super::history_admission::PendingAuthorityHistory>,
+    /// Every row the batch carries: each row's store door reads the fold
+    /// beside them, as the batch's preflight did (owner-reserve delta
+    /// review F2).
+    batch: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 }
 
 impl PreparedAuthorityLogRows {
@@ -58,11 +62,16 @@ impl PreparedAuthorityLogRows {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<super::history_admission::AuthorityPut> {
-        let Self { ids, rows, pending } = self;
+        let Self {
+            ids,
+            rows,
+            pending,
+            batch,
+        } = self;
         if rows.is_empty() {
             return Ok(super::history_admission::AuthorityPut::Stored(ids));
         }
-        vault.stage_authority_rows_judging_re_roots_in_txn(wtxn, rows)?;
+        vault.stage_authority_rows_judging_re_roots_in_txn(wtxn, rows, &|| Ok(batch.clone()))?;
         if let Some(pending) = pending {
             return Ok(super::history_admission::AuthorityPut::Pending(pending));
         }
@@ -259,6 +268,7 @@ impl Vault {
                 ids,
                 rows,
                 pending: None,
+                batch,
             });
         }
         // A batch of granting rows, each of whose fold past an adopted image
@@ -288,7 +298,12 @@ impl Vault {
             .into_iter()
             .filter_map(|index| rows[index].take())
             .collect();
-        Ok(PreparedAuthorityLogRows { ids, rows, pending })
+        Ok(PreparedAuthorityLogRows {
+            ids,
+            rows,
+            pending,
+            batch,
+        })
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
