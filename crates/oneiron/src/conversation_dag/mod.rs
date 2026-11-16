@@ -10,17 +10,18 @@
 mod admission;
 mod graph;
 #[cfg(feature = "sync")]
-pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
+pub(crate) use admission::addressed_to_echo;
 pub(crate) mod topology;
 #[cfg(test)]
 pub(crate) use admission::stored_body_pin_for_test;
-pub(crate) use admission::{
-    addressing, exact_core_turn_retry_in_txn, guard_record_put, guard_room_membership_delete,
-    guard_room_turn_delete, keep_membership_pin, landing_reply_waits_in, pin_membership,
-    pin_typed_record, record_is_append_only_in_txn, room_turn_owner, validate_local_membership,
-};
 #[cfg(feature = "sync")]
-pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
+pub(crate) use admission::validate_received_parent_value;
+pub(crate) use admission::{
+    addressed_to_echo_in_txn, addressing, exact_core_turn_retry_in_txn, guard_record_put,
+    guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
+    landing_reply_waits_in, pin_membership, pin_typed_record, record_is_append_only_in_txn,
+    room_turn_owner, validate_local_membership, validate_received_edge,
+};
 pub(crate) use topology::record_kind;
 mod membership;
 mod migration;
