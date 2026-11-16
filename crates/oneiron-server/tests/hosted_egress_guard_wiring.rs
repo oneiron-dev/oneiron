@@ -18,7 +18,7 @@ use clap::Parser;
 use oneiron::web_fetch::HostedEgressRefusal;
 use oneiron_server::config::ServeArgs;
 use oneiron_server::managed::ManagedArgs;
-use oneiron_server::test_doors::web_egress_guards::egress_guards;
+use oneiron_server::test_doors::build_server::egress_guards;
 use oneiron_vault_contract::CONTRACT_VERSION;
 
 #[derive(Parser)]
