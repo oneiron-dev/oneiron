@@ -35,8 +35,18 @@
 //!
 //! No test covers CONSENT_WIDEN_PROPOSAL: the export's credential pass holds every row of
 //! that table out of an archive, so the owner's restore has no landing for it.
-//! No test covers HOOKS_GRANT: every import restores a hook binding claim as Proposed, and a
-//! grant needs its binding approved, so the owner's restore has no landing for it either.
+//! HOOKS_GRANT has no landing at import: every import restores a hook binding claim as
+//! Proposed, and a grant needs its binding approved. The owner's accept of the restore's inbox
+//! group installs it (RULING ARCHIVE-HOOK-GRANT = A):
+//! * `the_owner_accept_of_the_restore_group_installs_the_archived_hook_grant`: the grant is
+//!   absent after the owner import; the accept-all lands the binding and installs the archived
+//!   grant, the binding reads under it, the card counted it, the answer names it, and the
+//!   accept's bundle receipt carries the second reason code.
+//! * `a_rejected_restore_group_installs_no_hook_grant`: a reject-all installs nothing. Passes
+//!   at the base too (guards the rule).
+//! * `a_partly_accepted_restore_group_installs_no_hook_grant`: the owner rejects one member
+//!   alone and then accepts the rest; no grant installs. Passes at the base too.
+//!   The answers are read as JSON, so the new fields compile at the base.
 //! No test covers PENDING_GATE_CONSENT: a tray row names a gate decision of its source vault,
 //! which no import installs, and the owner's restore already lists each restored open claim
 //! in its inbox group, so the owner's restore has no landing for it.
@@ -54,13 +64,23 @@ mod retained_side_rows;
 
 use std::io::Cursor;
 
+use oneiron::agent_inbox_lens::InboxRunGroupsRequest;
+use oneiron::authority::HostSlipIssuer;
 use oneiron::connector_key::{SlateDataClass, SlateToolManifest, draft_connector_slate};
 use oneiron::consent::{
-    ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, ConsentGrantStatus,
-    EffectFacts, GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, ConsentDecision,
+    ConsentGrantStatus, EffectFacts, GrantBound,
 };
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice, RoomRole};
+use oneiron::inbox::InboxGroupResolveRequest;
+use oneiron::memory::{
+    ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
+    ClaimSettlementVerdict,
+};
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use oneiron::runtime_hooks::HookGrant;
+use oneiron::skill_hub::HubFile;
+use oneiron::skill_hub::pack_catalog::{HookActorClass, HookAuthor, PackInstallDisposition};
 use oneiron::voice_identity::ref_bank::{VoiceRefSubjectKind, VoiceRenderDecision};
 use oneiron::voice_identity::{
     VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
@@ -68,7 +88,8 @@ use oneiron::voice_identity::{
     VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoicePrintPurpose,
 };
 use oneiron::{
-    DeleteReason, EdgeActorClass, EntityId, ModelLocality, TimeRange, Vault, WriteActor,
+    ClaimApprovalStatus, ClaimLifecycleStatus, DeleteReason, EdgeActorClass, EntityId, Memory,
+    ModelLocality, TimeRange, Vault, WriteActor,
 };
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
@@ -1029,5 +1050,469 @@ fn a_connector_slate_is_held_back_as_a_non_portable_reference() {
         ),
         source_tuple,
         "the actorless destination retains the slate tuple byte for byte"
+    );
+}
+
+/// A `profile.` predicate: the shipped default policy labels that prefix Normal, so the
+/// owner's settle is not parked at the criticality floor (`archive_restore_inbox_group.rs`).
+const NICKNAME: &str = "profile.nickname";
+
+/// The pack the owner puts: one fact hook, shaped as in `pack_hook_owner_floor.rs`.
+const HOOK_GRANT_PACK: &str = "example.hooksgrant";
+/// Its one hook.
+const HOOK_GRANT_HOOK: &str = "fact-note";
+
+const HOOK_GRANT_PACK_MD: &str = "---
+name: example.hooksgrant
+description: One fact hook the owner grants.
+version: 1.0.0
+kind: capability
+hooks: [\"fact-note\"]
+---
+A pack whose one fact hook the owner grants.
+";
+
+const HOOK_GRANT_HOOK_MD: &str = "---
+name: fact-note
+version: 1.0.0
+verbs: [\"claim.landed:example.hooksgrant.input\"]
+actors: [\"human\"]
+phase: fact
+outcomes: [\"propose\"]
+---
+Propose one note per landed input claim.
+";
+
+const HOOK_GRANT_BODY_JS: &str = "return {
+  kind: \"propose\",
+  claim: {
+    subject: input.claim.subject,
+    predicate: \"example.hooksgrant.note\",
+    confidence: 1,
+    value: { note: input.claim.value }
+  }
+};
+";
+
+/// The source: the owner's put binds the hook, and the owner grants it to a reader person.
+/// Returns the vault, the binding and the grant the owner set. The keystore and this
+/// install's signing keys are loaded before the put, as `pack_hook_owner_floor.rs` does.
+fn hook_grant_source() -> (tempfile::TempDir, Vault, EntityId, HookGrant) {
+    let (dir, source) = open_source_vault();
+    install_keystore(&source);
+    source
+        .prepare_install_signing()
+        .expect("load the source install's signing keys");
+    let owner = owner_proof(&source);
+    let files = vec![
+        HubFile::new("PACK.md", HOOK_GRANT_PACK_MD),
+        HubFile::new(
+            format!("hooks/{HOOK_GRANT_HOOK}/HOOK.md"),
+            HOOK_GRANT_HOOK_MD,
+        ),
+        HubFile::new(
+            format!("hooks/{HOOK_GRANT_HOOK}/body.js"),
+            HOOK_GRANT_BODY_JS,
+        ),
+    ];
+    match source.put_pack(&owner, files) {
+        Ok(PackInstallDisposition::Installed(receipt)) => {
+            assert_eq!(receipt.pack_name, HOOK_GRANT_PACK);
+        }
+        other => panic!("the owner's put installs the pack and binds its hook: {other:?}"),
+    }
+    let mut bindings = source
+        .pack_hook_bindings()
+        .expect("read the source bindings");
+    assert_eq!(bindings.len(), 1, "one binding: {bindings:?}");
+    let (binding, row) = bindings.pop().expect("one binding");
+    assert_eq!(row.pack, HOOK_GRANT_PACK);
+    assert_eq!(row.hook, HOOK_GRANT_HOOK);
+    assert_eq!(row.author, HookAuthor::Owner);
+    assert!(row.enabled);
+    let body = source
+        .get_claim(&binding)
+        .expect("read the binding claim")
+        .expect("the binding claim stands");
+    assert_eq!(body.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+
+    let reader = fixed_id(0x5A);
+    let now = source.now_recorded_at();
+    put_person_at(
+        &source,
+        reader,
+        b"hooks-grant-reader",
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let grant = HookGrant {
+        reader,
+        reader_class: HookActorClass::Human,
+        predicates: vec!["example.hooksgrant.note".to_owned()],
+        worlds: Vec::new(),
+    };
+    source
+        .set_hook_grant(&owner, binding, grant.clone())
+        .expect("the owner sets the hook grant");
+    assert_eq!(
+        source.hook_grant(binding).expect("read the source grant"),
+        Some(grant.clone()),
+        "the source holds the grant the owner set"
+    );
+    (dir, source, binding, grant)
+}
+
+/// The owner writes `value` under `predicate` about `subject`
+/// (`archive_restore_inbox_group.rs`).
+fn owner_claim(vault: &Vault, subject: EntityId, predicate: &str, value: &str) -> EntityId {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let id = EntityId::now();
+    let written = vault
+        .memory(owner, EdgeActorClass::Human)
+        .claim_upsert(&ClaimInput {
+            id: Some(id.to_hex()),
+            predicate: predicate.to_owned(),
+            subject_ref: subject.to_hex(),
+            value: serde_json::json!(value),
+            confidence: 1.0,
+            confidence_details: None,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: Some(100),
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+        })
+        .expect("the owner writes a claim");
+    assert_ne!(written.approval, "proposed", "the owner's own write lands");
+    id
+}
+
+/// `vault` rooted under a host, which binds its embedded owner under the root, with this
+/// install's signing keys loaded (`archive_restore_inbox_group.rs`): the doors that answer a
+/// restore group act only for the root owner.
+fn root_under_a_host(vault: &Vault) {
+    install_keystore(vault);
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("the destination's embedded owner");
+    let issuer =
+        HostSlipIssuer::from_secret(b"archive-hook-grant-accept").expect("fixture host issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("the host root binds the owner");
+}
+
+/// The archive restored as the destination's bound owner, into a destination rooted under a
+/// host: the vault, its owner, the owner's proof and the restore receipt's ref.
+fn restore_as_rooted_owner(
+    archive: &[u8],
+) -> (
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    AuthenticatedOwner,
+    String,
+) {
+    let (dir, dest) = open_later_vault();
+    root_under_a_host(&dest);
+    let owner = owner_proof(&dest);
+    let dest_owner = dest
+        .ensure_embedded_owner_actor()
+        .expect("the destination's embedded owner");
+    let receipt = match dest.import_whole_vault_archive_from_as_owner(Cursor::new(archive), &owner)
+    {
+        Ok(receipt) => receipt,
+        Err(error) => panic!("the owner's whole archive must restore: {error:?}"),
+    };
+    let receipt_ref = receipt
+        .owner_restore_receipt_ref
+        .expect("the owner door names its restore receipt");
+    (dir, dest, dest_owner, owner, receipt_ref)
+}
+
+/// The restore groups of the owner's inbox page, as JSON.
+fn restore_groups(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> Vec<serde_json::Value> {
+    let page = memory
+        .inbox_groups_page(
+            owner,
+            &InboxRunGroupsRequest {
+                limit: Some(200),
+                after: None,
+            },
+        )
+        .expect("the owner's inbox page");
+    let page = serde_json::to_value(page).expect("the page as JSON");
+    page["groups"]
+        .as_array()
+        .expect("the page's groups")
+        .iter()
+        .filter(|group| group["kind"] == "restore")
+        .map(|group| group["group"].clone())
+        .collect()
+}
+
+/// The one restore group of the page, keyed by the restore receipt.
+fn the_restore_group(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    receipt_ref: &str,
+) -> serde_json::Value {
+    let groups = restore_groups(memory, owner);
+    let [group] = groups.as_slice() else {
+        panic!(
+            "the owner's restore is one group of the inbox page, found {}: {groups:?}",
+            groups.len()
+        );
+    };
+    assert_eq!(
+        group["receipt_ref"], receipt_ref,
+        "the group is keyed by the restore receipt"
+    );
+    group.clone()
+}
+
+/// The owner's answer `verb` to the restore group `group_key`, as JSON.
+fn resolve_restore_group(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    group_key: &str,
+    verb: &str,
+) -> serde_json::Value {
+    let request: InboxGroupResolveRequest = serde_json::from_value(serde_json::json!({
+        "kind": "restore",
+        "group_key": group_key,
+        "verb": verb,
+    }))
+    .expect("restore is an inbox group kind");
+    let resolution = match memory.resolve_inbox_group_of_kind(owner, None, &request) {
+        Ok(resolution) => resolution,
+        Err(error) => panic!("the owner answers the restore group with {verb}: {error:?}"),
+    };
+    let resolution = serde_json::to_value(resolution).expect("the resolution as JSON");
+    assert_eq!(resolution["kind"], "restore");
+    resolution["resolution"].clone()
+}
+
+/// The member of `resolution` that names `claim`.
+fn restore_member<'r>(
+    resolution: &'r serde_json::Value,
+    claim: &EntityId,
+) -> &'r serde_json::Value {
+    resolution["members"]
+        .as_array()
+        .expect("the members")
+        .iter()
+        .find(|member| member["claim_ref"] == claim.to_hex())
+        .unwrap_or_else(|| panic!("{} is a member: {resolution:#}", claim.to_hex()))
+}
+
+/// The owner's accept of the restore group installs the archived hook grant.
+///
+/// The binding restores Proposed as a member of the restore's inbox group; the grant stays an
+/// inert retained row until the owner accepts the group, and lands live with the accept.
+#[test]
+fn the_owner_accept_of_the_restore_group_installs_the_archived_hook_grant() {
+    let (_source_dir, source, binding, grant) = hook_grant_source();
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "HOOKS_GRANT").len(),
+        1,
+        "the source archive holds one hook-grant tuple"
+    );
+
+    let (_dest_dir, dest, dest_owner, owner, receipt_ref) = restore_as_rooted_owner(&archive);
+    assert_eq!(
+        dest.hook_grant(binding)
+            .expect("read the grant before the accept"),
+        None,
+        "the grant is inert until the owner accepts the group"
+    );
+    let memory = dest.memory(dest_owner, EdgeActorClass::Human);
+    let card = the_restore_group(&memory, &owner, &receipt_ref);
+    let group_key = card["group_key"].as_str().expect("group_key").to_owned();
+
+    let resolution = resolve_restore_group(&memory, &owner, &group_key, "accept_all");
+    assert_eq!(
+        restore_member(&resolution, &binding)["verdict"],
+        "landed",
+        "the binding member landed: {resolution:#}"
+    );
+    assert!(
+        resolution["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .all(|member| member["verdict"] == "landed"),
+        "no member waits in a fresh vault: {resolution:#}"
+    );
+    assert!(
+        restore_groups(&memory, &owner).is_empty(),
+        "an answered restore leaves the inbox"
+    );
+    assert_eq!(
+        dest.get_claim(&binding)
+            .expect("read the settled binding")
+            .expect("the binding stands")
+            .approval,
+        ClaimApprovalStatus::Approved,
+        "the accept approved the binding claim"
+    );
+    assert_eq!(
+        dest.hook_grant(binding).expect("read the installed grant"),
+        Some(grant.clone()),
+        "the accept installed the archived hook grant: {resolution:#}"
+    );
+    assert_eq!(
+        dest.effective_hook_grant(binding)
+            .expect("the live binding reads under a grant"),
+        grant,
+        "the binding reads under the installed grant"
+    );
+    assert_eq!(
+        card["hook_grants"], 1,
+        "the card counted the grant before the accept: {card:#}"
+    );
+    assert_eq!(
+        resolution["installed_hook_grants"],
+        serde_json::json!([binding.to_hex()]),
+        "the answer names the binding whose grant installed: {resolution:#}"
+    );
+    let bundle = resolution["receipt_ref"]
+        .as_str()
+        .and_then(|reference| reference.strip_prefix("gate:"))
+        .unwrap_or_else(|| panic!("one bundle receipt: {resolution:#}"))
+        .to_owned();
+    let receipts = dest.gate_decisions(4096).expect("read the gate decisions");
+    let receipt = receipts
+        .iter()
+        .find(|record| record.decision_id.to_hex() == bundle)
+        .unwrap_or_else(|| panic!("the bundle receipt {bundle} is in the ledger"));
+    assert_eq!(
+        receipt.reason_codes,
+        [
+            "gate.restore.settle.approved",
+            "gate.restore.settle.hook_grants_installed"
+        ],
+        "the accept's receipt shows that it installed a hook grant"
+    );
+}
+
+/// A rejected restore group installs no hook grant. It passes at the base too: a guard of the
+/// rule, not the red assertion.
+#[test]
+fn a_rejected_restore_group_installs_no_hook_grant() {
+    let (_source_dir, source, binding, _grant) = hook_grant_source();
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "HOOKS_GRANT").len(),
+        1,
+        "the source archive holds one hook-grant tuple"
+    );
+
+    let (_dest_dir, dest, dest_owner, owner, receipt_ref) = restore_as_rooted_owner(&archive);
+    let memory = dest.memory(dest_owner, EdgeActorClass::Human);
+    let card = the_restore_group(&memory, &owner, &receipt_ref);
+    let group_key = card["group_key"].as_str().expect("group_key").to_owned();
+
+    let resolution = resolve_restore_group(&memory, &owner, &group_key, "reject_all");
+    assert_eq!(
+        restore_member(&resolution, &binding)["verdict"],
+        "rejected",
+        "the binding member was rejected: {resolution:#}"
+    );
+    assert!(
+        resolution["installed_hook_grants"].is_null(),
+        "a reject-all names no installed grant: {resolution:#}"
+    );
+    assert_eq!(
+        dest.hook_grant(binding).expect("read the absent grant"),
+        None,
+        "a rejected restore group installs no hook grant"
+    );
+}
+
+/// A partly accepted restore group installs no hook grant: the owner rejects one member alone
+/// and then accepts the rest, so not every recorded member reads Approved after the accept.
+/// It passes at the base too: a guard of the rule, not the red assertion.
+#[test]
+fn a_partly_accepted_restore_group_installs_no_hook_grant() {
+    let (_source_dir, source, binding, grant) = hook_grant_source();
+    let nickname = owner_claim(&source, grant.reader, NICKNAME, "Reader");
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "HOOKS_GRANT").len(),
+        1,
+        "the source archive holds one hook-grant tuple"
+    );
+
+    let (_dest_dir, dest, dest_owner, owner, receipt_ref) = restore_as_rooted_owner(&archive);
+    let memory = dest.memory(dest_owner, EdgeActorClass::Human);
+    let card = the_restore_group(&memory, &owner, &receipt_ref);
+    let group_key = card["group_key"].as_str().expect("group_key").to_owned();
+
+    // The owner rejects the nickname alone, through the single-claim doors.
+    let review = memory
+        .claim_review_as_owner(
+            &owner,
+            &ClaimProposalReviewRequest {
+                claim_ref: nickname.to_hex(),
+                grant_ref: None,
+            },
+        )
+        .expect("the owner reviews the restored nickname");
+    let settled = memory
+        .claim_settle_as_owner(
+            &owner,
+            &ClaimSettleRequest {
+                claim_ref: nickname.to_hex(),
+                review_id: review.review_id,
+                decision: ClaimSettleDecision::Reject,
+                grant_ref: None,
+            },
+        )
+        .expect("the owner rejects the restored nickname alone");
+    assert_eq!(settled.verdict, ClaimSettlementVerdict::Rejected);
+
+    let resolution = resolve_restore_group(&memory, &owner, &group_key, "accept_all");
+    assert_eq!(
+        restore_member(&resolution, &binding)["verdict"],
+        "landed",
+        "the binding member landed: {resolution:#}"
+    );
+    assert_eq!(
+        dest.get_claim(&binding)
+            .expect("read the settled binding")
+            .expect("the binding stands")
+            .approval,
+        ClaimApprovalStatus::Approved,
+        "the accept approved the binding claim"
+    );
+    assert_eq!(
+        dest.get_claim(&nickname)
+            .expect("read the rejected nickname")
+            .expect("the nickname's record stays")
+            .approval,
+        ClaimApprovalStatus::Rejected,
+        "the member the owner rejected alone stays rejected"
+    );
+    assert!(
+        resolution["installed_hook_grants"].is_null(),
+        "a partly accepted group names no installed grant: {resolution:#}"
+    );
+    assert_eq!(
+        dest.hook_grant(binding).expect("read the absent grant"),
+        None,
+        "a partly accepted restore group installs no hook grant"
     );
 }
