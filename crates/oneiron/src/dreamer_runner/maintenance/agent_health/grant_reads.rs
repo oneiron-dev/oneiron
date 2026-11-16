@@ -93,7 +93,8 @@ pub fn agent_health_calls(
 ) -> MemoryResult<Vec<AgentCallReceipt>> {
     admit_substrate_read(memory, "vault.agent_health.calls", SubstrateRead::Evidence)?;
     let agent = entity_ref("agent_ref", &input.agent_ref)?;
-    let (mut calls, unread) = agent_calls(memory.vault(), input.since).map_err(MemoryError::from)?;
+    let (mut calls, unread) =
+        agent_calls(memory.vault(), input.since).map_err(MemoryError::from)?;
     if unread.for_actor(agent).is_some() {
         // A receipt that did not read may be this agent's: the list would
         // be incomplete, so no list is answered.
