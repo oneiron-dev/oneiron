@@ -153,8 +153,7 @@ pub(crate) use self::agent_power_refusal::record_agent_power_refusal_in_txn;
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
-    GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
-    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
 };
 pub(crate) use self::ceiling::{
     OwnerRowAction, PolicyApprovalCeiling, PolicyCriticality, dispatched_agent_effective_ceiling,

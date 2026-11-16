@@ -36,7 +36,8 @@ use crate::error::{CodeError, Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::temporal::TimeRange;
 
 /// A run's import claims no editable policy, as the owner door's does not:
@@ -511,27 +512,19 @@ impl Vault {
         artifact: crate::EntityId,
         snapshot: &CodebaseSnapshot,
     ) -> Result<String> {
-        let mut record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::now(),
-            created_at: self.store.clock.now_recorded_at(),
-            outcome: "imported".to_owned(),
-            reason_codes: vec!["gate.code.capture.imported".to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: crate::EdgeActorClass::Human.gate_actor_class().to_owned(),
-            actor_ref: Some(actor.to_hex()),
-            content_kind: CODE_SNAPSHOT_CAPTURE_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: Some(*artifact.as_bytes()),
-            grant_ref: None,
-            diff_handle: snapshot.fork_hash.to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store
-            .append_fresh_gate_decision_in_txn(txn, &mut record)?;
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Noted,
+            CODE_SNAPSHOT_CAPTURE_CONTENT_KIND,
+            "gate.code.capture.imported",
+            ReceiptActor::human(actor),
+            snapshot.fork_hash.to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.about = Some(artifact);
+        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
+            self.store.clock.now_recorded_at(),
+        ));
+        let record = self.store.record_gate_receipt_in_txn(txn, receipt)?;
         Ok(format!("gate:{}", record.decision_id.to_hex()))
     }
 }

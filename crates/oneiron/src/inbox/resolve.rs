@@ -18,17 +18,20 @@ use crate::inbox::compilation_target::CompilationTarget;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::gate_receipt::gate_decision_receipt;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateEnginePart, GateReceipt, PolicyBasis,
+    ReceiptActor,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::ClaimBody;
 use oneiron_contracts::claim::ClaimApprovalStatus;
 
 use super::model::{
-    INBOX_BUNDLE_ACTOR_CLASS, INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX,
-    INBOX_GROUP_DOOR_PREFIX, INBOX_REASON_AMEND_ACCEPT, INBOX_REASON_AMEND_DELTA_UNCAPTURED,
-    INBOX_REASON_BUNDLE_ACCEPT, INBOX_REASON_BUNDLE_REJECT, InboxAmendedApproval, InboxBulkVerb,
-    InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
+    INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX, INBOX_GROUP_DOOR_PREFIX,
+    INBOX_REASON_AMEND_ACCEPT, INBOX_REASON_AMEND_DELTA_UNCAPTURED, INBOX_REASON_BUNDLE_ACCEPT,
+    INBOX_REASON_BUNDLE_REJECT, InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution,
+    InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
 
@@ -739,32 +742,25 @@ fn append_bundle_decision_in_txn(
         reason_codes.push(format!("gate.consent.bundle.verb_class.{verb_class}"));
     }
 
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: now,
-        outcome: verb.bundle_outcome().to_owned(),
+    // The basis of the first member's row; an empty bundle read no policy.
+    let policy = basis.first().map_or_else(
+        || PolicyBasis::versioned([0; 32], "unversioned"),
+        PolicyBasis::of,
+    );
+    let mut receipt = GateReceipt::with_reasons(
+        verb.bundle_outcome(),
+        INBOX_BUNDLE_CONTENT_KIND,
         reason_codes,
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: INBOX_BUNDLE_ACTOR_CLASS.to_owned(),
-        actor_ref: None,
-        content_kind: INBOX_BUNDLE_CONTENT_KIND.to_owned(),
-        policy_manifest_version: basis.first().map_or_else(
-            || "unversioned".to_owned(),
-            |record| record.policy_manifest_version.clone(),
-        ),
-        claim_id: None,
-        grant_ref: Some(bundle_ref.to_owned()),
-        diff_handle: hasher.finalize().to_vec(),
-        read_frontier_hash: basis
-            .first()
-            .map_or([0; 32], |record| record.read_frontier_hash),
-        // FIX 7499, 7500: every member's read context and loop links; the
-        // claim refs below bind each member's claim.
-        context: crate::store::GateDecisionContext::answering_all(basis),
-        redacted_at: None,
-    };
+        ReceiptActor::Part(GateEnginePart::Owner, None),
+        hasher.finalize().to_vec(),
+        policy,
+    );
+    receipt.grant_ref = Some(bundle_ref.to_owned());
+    // FIX 7499, 7500: every member's read context and loop links; the
+    // claim refs below bind each member's claim.
+    receipt.context = crate::store::GateDecisionContext::answering_all(basis);
+    receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(now));
+    let record = vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     let claim_refs = basis
         .iter()
         .map(|member| {

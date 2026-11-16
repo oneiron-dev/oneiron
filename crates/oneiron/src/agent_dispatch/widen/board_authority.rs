@@ -6,9 +6,12 @@
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
+use crate::write_envelope::WriteActor;
 
 use super::super::codec::record_dispatch_input;
 use super::super::widen_record::{BoardProof, invalid};
@@ -108,7 +111,7 @@ impl AgentDispatcher<'_> {
         }
     }
 
-    /// Records an agent's board act (`outcome` `approved` or `denied`) in
+    /// Records an agent's board act (`outcome` `approved` or `rejected`) in
     /// the decision ledger beside the pending row its proposal opened, on
     /// the same effect digest. A board act, not a consent: no consent reader
     /// takes it for one.
@@ -117,31 +120,20 @@ impl AgentDispatcher<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         act: &BoardAct,
         proposal: &ContextWidenProposal,
-        outcome: &str,
+        outcome: GateReceiptOutcome,
         at: u64,
     ) -> Result<()> {
-        self.vault.store.append_gate_decision_in_txn(
-            wtxn,
-            &GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
-                created_at: at,
-                outcome: outcome.to_owned(),
-                reason_codes: vec!["gate.context.board_widen".to_owned()],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: "agent".to_owned(),
-                actor_ref: Some(act.actor.to_hex()),
-                content_kind: "board_widen".to_owned(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: proposal.consent.effect_digest.as_bytes().to_vec(),
-                read_frontier_hash: [0; 32],
-                context: Default::default(),
-                redacted_at: None,
-            },
-        )
+        let mut receipt = GateReceipt::new(
+            outcome,
+            "board_widen",
+            "gate.context.board_widen",
+            ReceiptActor::Row(WriteActor::new(act.actor, EdgeActorClass::Agent)),
+            proposal.consent.effect_digest.as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(at));
+        self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
+        Ok(())
     }
 
     /// The board attempt's agent, while the board's folded TASK authority

@@ -11,15 +11,31 @@
 //!
 //! Red on the base: the rows read `owner_plane_block` and `returned`.
 //!
+//! UC-03 PR 1f-2: the scattered arms move their words the same way:
+//!
+//! - an owner's consent denial reads `rejected`, with the reason `gate.consent.denied`
+//!   (before: `denied`);
+//! - the consent-denied detector still files that denial as a refusal fact (green on the base
+//!   too: there it reads the row's old word, here its new one);
+//! - a secret use its custody binding refuses reads `deny`, with the reason `gate.secret.use`
+//!   (before: `denied`).
+//!
+//! Red on 1f-2's base: the two rows read `denied`.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test gate_receipt_closed_outcome`.
 
 #![cfg(oneiron_test_support)]
 
 use std::sync::Arc;
 
+use oneiron::consent::{AuthenticatedOwner, CONSENT_REASON_DENIED, EffectDigest};
 use oneiron::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest};
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::self_heal::DiagnosticObservation;
+use oneiron::store::GateDecisionId;
+use oneiron::test_doors::payment_credential::register_bound_secret;
+use oneiron::verbs::{SecretUseRequest, use_secret_as_caller};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -113,5 +129,96 @@ fn a_returned_desktop_takeover_reads_noted_and_keeps_its_word_as_a_reason() -> T
         has_reason(row, "gate.sandbox.desktop_takeover.returned"),
         "{row:?}"
     );
+    Ok(())
+}
+
+/// An owned vault with its embedded owner and a device keystore.
+fn owned_vault() -> (tempfile::TempDir, Vault, EntityId) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    (dir, vault, owner)
+}
+
+fn owner_proof(vault: &Vault, owner: EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof")
+}
+
+/// The owner's denial of one effect, and the Gate row it wrote.
+fn owner_denial(
+    vault: &Vault,
+    owner: EntityId,
+) -> Result<ReceiptRecord, Box<dyn std::error::Error>> {
+    let denied = vault.deny_consent(
+        &owner_proof(vault, owner),
+        EffectDigest::from_bytes([0x1f; 32]),
+    )?;
+    let receipt_id = format!("gate:{}", denied.decision_id().to_hex());
+    Ok(vault
+        .receipts(ReceiptQuery::new(50).with_kind(ReceiptKind::Gate))?
+        .into_iter()
+        .find(|row| row.receipt_id == receipt_id)
+        .expect("the denial's row"))
+}
+
+#[test]
+fn an_owner_consent_denial_reads_rejected_and_keeps_its_word_as_a_reason() -> TestResult {
+    let (_dir, vault, owner) = owned_vault();
+
+    let row = owner_denial(&vault, owner)?;
+
+    assert_eq!(row.outcome, "rejected", "a closed word, not denied");
+    assert!(has_reason(&row, CONSENT_REASON_DENIED), "{row:?}");
+    Ok(())
+}
+
+#[test]
+fn the_consent_denied_detector_still_files_an_owner_denial() -> TestResult {
+    let (_dir, vault, owner) = owned_vault();
+    let row = owner_denial(&vault, owner)?;
+
+    let observation = DiagnosticObservation::from_consent_receipt(&row)?
+        .expect("an owner's denial is a refusal fact");
+
+    assert_eq!(observation.kind, CONSENT_REASON_DENIED);
+    assert_eq!(
+        format!("gate:{}", observation.source_ref.to_hex()),
+        row.receipt_id
+    );
+    Ok(())
+}
+
+#[test]
+fn a_secret_use_its_binding_refuses_reads_deny() -> TestResult {
+    let (_dir, vault, owner) = owned_vault();
+    // Bound to one connector; the use names another connector's check.
+    let secret = register_bound_secret(&vault, "shop", b"uc03-1f-2-value", "connector:shop")?;
+    let handle = oneiron::retrieval_depth::short_ref_or_hex(&vault, &secret)?;
+
+    let refused = use_secret_as_caller(
+        &vault.memory(owner, EdgeActorClass::Human),
+        SecretUseRequest {
+            handle,
+            operation: "slack.auth_test".to_owned(),
+            arguments: serde_json::json!({}),
+        },
+    );
+    assert!(
+        refused.is_err(),
+        "an effector the record does not bind is refused"
+    );
+
+    let rows: Vec<ReceiptRecord> = gate_rows(&vault)
+        .into_iter()
+        .filter(|row| row.fields.get("content_kind").map(String::as_str) == Some("secret_use"))
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].outcome, "deny", "a closed word, not denied");
+    assert!(has_reason(&rows[0], "gate.secret.use"), "{rows:?}");
     Ok(())
 }
