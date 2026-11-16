@@ -113,6 +113,7 @@ pub mod run_doors;
 pub(crate) mod run_rows;
 mod runner_done;
 mod scheduling;
+pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
