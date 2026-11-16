@@ -384,6 +384,7 @@ impl SyncServer {
             residence_work_changed: Default::default(),
             queue_driver_started: std::sync::atomic::AtomicBool::new(false),
             runs_device_link: !host,
+            device_link_opened: std::sync::atomic::AtomicBool::new(false),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
