@@ -58,9 +58,8 @@ use crate::{EntityId, Error, Result, Vault};
 pub(crate) use self::cycle_rows::FreeTimeCycleRows;
 pub(crate) use self::item_rows::FreeTimeItemRows;
 
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("free-time home handoff: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::free_time::handoff::invalid;
 
 /// The root spend scope of every cycle here: the free-time trees a home move
 /// carries (`agent_dispatch::spend_handoff`).

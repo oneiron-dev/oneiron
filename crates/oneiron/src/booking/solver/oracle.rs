@@ -239,21 +239,22 @@ impl BookingSolver<'_> {
             &holds,
             self.now_utc,
         )?;
-        // The flex pool surfaces only after the ordinary mask comes back empty,
-        // and only when the visitor's constraint allows it. Re-running the whole
-        // pipeline on the widened configuration — rather than threading a flag
-        // through eight stages — is what keeps every stage a pure function of a
-        // single configuration.
-        if !primary.slots.is_empty()
-            || config.flex_windows.is_empty()
+        // The flex pool surfaces only when the visitor's constraint allows it,
+        // and then only after the ordinary mask comes back empty, unless the
+        // owner offers it beside ordinary availability (`flex_with_ordinary`).
+        // Re-running the whole pipeline on the widened configuration — rather
+        // than threading a flag through eight stages — is what keeps every
+        // stage a pure function of a single configuration.
+        if config.flex_windows.is_empty()
             || !req
                 .constraint
                 .as_ref()
                 .is_none_or(|constraint| constraint.allow_flex_pool)
+            || (!primary.slots.is_empty() && !config.flex_with_ordinary)
         {
             return Ok(primary);
         }
-        let mut fallback = run_pipeline(
+        let mut widened = run_pipeline(
             &with_flex_pool(&config),
             &busy_by_host,
             window,
@@ -262,8 +263,14 @@ impl BookingSolver<'_> {
             &holds,
             self.now_utc,
         )?;
-        fallback.flex_used = !fallback.slots.is_empty();
-        Ok(fallback)
+        // Flex was used when the widened mask offers a time the ordinary one
+        // does not: on the fallback, any slot at all.
+        widened.flex_used = widened.slots.iter().any(|slot| {
+            !primary.slots.iter().any(|ordinary| {
+                (ordinary.start_utc, ordinary.end_utc) == (slot.start_utc, slot.end_utc)
+            })
+        });
+        Ok(widened)
     }
 }
 

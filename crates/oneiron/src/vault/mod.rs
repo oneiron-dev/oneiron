@@ -265,6 +265,11 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// Each published LFS object's verdict for a peer no read authority
+    /// admits, by its OID and its manifest's BLAKE3 (EXPORTDOORS Q3). In
+    /// memory only: what the object's bytes release, never who may read.
+    #[cfg(feature = "sync")]
+    pub(crate) lfs_release_verdicts: crate::sync::chunks::LfsReleaseVerdicts,
     /// The floor its guests' network work charges: the one its serving host
     /// attached ([`Vault::attach_host_net_floor`]), else the process's
     /// descriptor line (FIX 6299).
@@ -310,6 +315,11 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The serving host's public https origin its bulk campaign email's
+    /// one-click unsubscribe links name (ARCH-0059 #opt-out), installed once
+    /// per open vault ([`Vault::install_one_click_unsubscribe_origin`]); none
+    /// on a vault no host serves, which mints no link. In memory only.
+    pub(crate) one_click_unsubscribe_origin: std::sync::OnceLock<String>,
     /// The host's isolated inspection of e-sign original PDFs, reached before
     /// a field save's or a sign act's writer (FIX 9609,
     /// [`Vault::install_esign_page_inspector`]). In memory only.

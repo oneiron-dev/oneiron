@@ -11,7 +11,6 @@
 //! up to its ceiling could take it or the deadline cut it, or one asked
 //! after the job's clock ran out, leaves the candidate pending for the next
 //! job; only a rung's own abstain or refusal is an answer.
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::identity_topology::{
@@ -22,6 +21,7 @@ use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory};
 use oneiron::task_verb::sdk::AiVerdictRequest;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, WriteActor};
+use oneiron_base::unix_millis_now;
 
 use crate::decision_verdict::{JobVerdict, JobVerdictLine, run_job_verdict};
 use crate::server::SyncServer;
@@ -85,7 +85,7 @@ pub(super) fn run(
         coach,
         line: &line,
         reader: vault.memory(coach.entity_ref(), coach.actor_class()),
-        until_ms: unix_ms().saturating_add(MAX_RECALL_DEADLINE_MS),
+        until_ms: unix_millis_now().saturating_add(MAX_RECALL_DEADLINE_MS),
     };
     let report = vault.run_coach_topology_audits(admitted, &reviewer, now)?;
     tracing::debug!(?report, "the Coach reviewed automatic topology");
@@ -113,7 +113,7 @@ impl HostRecipe<'_> {
     /// `whole`, an answer the ladder gave over evidence it cut to fit is
     /// refused: a review judges the whole decision or nothing.
     fn ask(&self, question: &str, case: &TopologyAuditCase, whole: bool) -> TopologyAuditAnswer {
-        if unix_ms() >= self.until_ms {
+        if unix_millis_now() >= self.until_ms {
             return TopologyAuditAnswer::Deferred;
         }
         let request = AiVerdictRequest {
@@ -176,13 +176,4 @@ impl TopologyAuditReviewer for HostRecipe<'_> {
     fn review(&self, case: &TopologyAuditCase) -> oneiron::Result<TopologyAuditAnswer> {
         Ok(self.ask(REVIEW_QUESTION, case, true))
     }
-}
-
-/// The wall clock in Unix milliseconds, as a verdict's `until_ms` reads it.
-fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
 }
