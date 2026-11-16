@@ -9,10 +9,13 @@
 //! supervisor proves the line as it proves a push and forwards the choice
 //! under the vault's placement.
 //!
-//! The recovery preset switch is the only caller, through the
-//! `RecoveryBoxHold` trait beside the preset doors: it asks for the hold
-//! before it commits "Nobody but me" and refuses the switch when the hold
-//! fails, and lifts the hold after it leaves. So every answer other than
+//! The recovery preset switch calls it through the `RecoveryBoxHold` trait
+//! beside the preset doors, when it runs on this install: it asks for the
+//! hold before it commits "Nobody but me" and refuses the switch when the
+//! hold fails, and lifts the hold after it leaves. A hosted vault's switch
+//! runs on the owner's device instead, so this node follows the
+//! owner-signed kit-only fact the switch appends and sends the matching
+//! hold (`kit_only_watch`). So every answer other than
 //! `held: true` is an error here: a refusal, an ack outside the contract (a
 //! supervisor built before the op answers a ledger ack), a closed connection
 //! or no answer within [`HOLD_TIMEOUT`]. One attempt per call; the owner
@@ -20,8 +23,9 @@
 //!
 //! A switch this process's last run did not finish leaves the
 //! box-hold-pending marker behind: the boot heal below then resends the
-//! hold matching the preset, once, on its own thread, and a switch's hold
-//! waits for that heal within the same bound.
+//! hold matching the owner's kit-only fact, or the preset where the vault
+//! holds no fact, once, on its own thread, and a switch's hold waits for
+//! that heal within the same bound.
 //!
 //! Two more asks go the same way (WAYBACK-WAIT-BINDS-HONEST-CLIENT-ONLY = B,
 //! lead 17 Nov 00:1x): [`HypnosRecoveryBoxHold::report_recovery_wait`]
@@ -44,6 +48,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use oneiron::world_keys::RecoveryBoxHold;
 use oneiron_vault_contract::{
     MAX_CTL_LINE, RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_WAIT_MAX_SECS,
     RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck, RecoveryBoxKitOnly,
@@ -51,6 +56,10 @@ use oneiron_vault_contract::{
 };
 use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, sockopt};
 use zeroize::Zeroizing;
+
+pub(crate) mod kit_only_watch;
+
+pub use self::kit_only_watch::{KitOnlyFact, KitOnlyFactRead, KitOnlyLook};
 
 /// How long one hold's connect, write and the supervisor's ack may take, in
 /// all. The supervisor's own call to the control plane ends within 20 s, so
@@ -343,7 +352,8 @@ impl HypnosRecoveryBoxHold {
         Ok(answer)
     }
 
-    /// Sends the hold matching the recovery preset now, once, on its own
+    /// Sends the hold matching the owner's kit-only fact now (`read`), or
+    /// the recovery preset where the vault holds no fact, once, on its own
     /// thread, when a switch this process's last run did not finish left
     /// the box-hold-pending marker. Admitted as a background pass: a reap
     /// pause or a deleted vault leaves the marker for the next boot. The
@@ -354,6 +364,7 @@ impl HypnosRecoveryBoxHold {
         &self,
         vault: Arc<oneiron::Vault>,
         admit: crate::server::HousekeepingAdmission,
+        read: KitOnlyFactRead,
     ) -> Option<std::thread::JoinHandle<()>> {
         let pending = match vault.recovery_box_hold_pending() {
             Ok(None) => return None,
@@ -378,7 +389,7 @@ impl HypnosRecoveryBoxHold {
             .name("recovery-box-heal".into())
             .spawn(move || {
                 let _admitted = admitted;
-                hold.heal(&vault, pending, running);
+                hold.heal(&vault, &read, pending, running);
             }) {
             Ok(handle) => Some(handle),
             Err(error) => {
@@ -391,17 +402,18 @@ impl HypnosRecoveryBoxHold {
         }
     }
 
-    /// The boot heal: the hold matching the preset now, sent once. The gate
+    /// The boot heal: the hold matching the fact or preset now, sent once. The gate
     /// opens once the send has its answer, so a switch's hold goes after
     /// it; the clear below compares the attempt it read and needs no gate.
     /// A send that fails keeps the marker for the next boot.
     fn heal(
         &self,
         vault: &oneiron::Vault,
+        read: &KitOnlyFactRead,
         pending: oneiron::world_keys::RecoveryBoxHoldPending,
         running: HealRunning,
     ) {
-        let matched = self.send_matching(vault);
+        let matched = self.send_matching(vault, read);
         drop(running);
         match matched {
             Ok(kit_only) => match vault.clear_recovery_box_hold_pending(pending.attempt) {
@@ -424,15 +436,34 @@ impl HypnosRecoveryBoxHold {
         }
     }
 
-    /// Reads the recovery preset now and sends its hold once, past the
-    /// gate: `Ok(kit_only)` when the supervisor answers that it holds.
-    fn send_matching(&self, vault: &oneiron::Vault) -> oneiron::Result<bool> {
-        let kit_only = vault.recovery_preset()?.is_nobody_but_me();
+    /// Reads the owner's kit-only fact now, or the recovery preset where
+    /// the vault holds no fact, and sends its hold once, past the gate:
+    /// `Ok(kit_only)` when the supervisor answers that it holds. The fact
+    /// comes first because a switch on the owner's device leaves this
+    /// install's own preset on `Standard`.
+    fn send_matching(
+        &self,
+        vault: &oneiron::Vault,
+        read: &KitOnlyFactRead,
+    ) -> oneiron::Result<bool> {
+        let kit_only = match read(vault)? {
+            Some(fact) => fact.kit_only,
+            None => vault.recovery_preset()?.is_nobody_but_me(),
+        };
         let ack = self
             .ask(kit_only, Instant::now() + self.timeout)
             .map_err(|why| failed(&why))?;
         held(&ack)?;
         Ok(kit_only)
+    }
+}
+
+/// The preset switch's box hold on this hosted vault: the relay call, past
+/// the boot heal (FIX RECOVERY-BOX-HOLD-CLIENT-NOT-WIRED).
+impl RecoveryBoxHold for HypnosRecoveryBoxHold {
+    fn hold_kit_only(&self, kit_only: bool) -> oneiron::Result<()> {
+        // The inherent method, which takes precedence over this one.
+        HypnosRecoveryBoxHold::hold_kit_only(self, kit_only)
     }
 }
 

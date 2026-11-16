@@ -403,12 +403,28 @@ async fn serve_with_handles(
     sync_server.live_voice.admit_with(state.voice_admission());
 
     // A switch this process's last run did not finish leaves the box-hold-pending marker:
-    // the hold matching the preset now is sent once, on its own thread, admitted as a
-    // background pass, and a switch's hold waits for it (RULING WAYBACK-BOX-HOLD-BOOT-HEAL = D).
+    // the hold matching the owner's kit-only fact, or the preset without one, is sent once,
+    // on its own thread, admitted as a background pass, and a switch's hold waits for it
+    // (RULING WAYBACK-BOX-HOLD-BOOT-HEAL = D).
     if let Some(hold) = sync_server.recovery_box_hold() {
+        use crate::managed::recovery_box_hold::kit_only_watch::{
+            KIT_ONLY_LOOK_EVERY, fold_kit_only_fact,
+        };
+        let read = fold_kit_only_fact();
         drop(hold.heal_at_boot(
             Arc::clone(sync_server.vault()),
             state.background_admission(WriteKind::BackgroundOther),
+            Arc::clone(&read),
+        ));
+        // The owner's switch runs on their device, never here: this node follows the
+        // owner-signed kit-only fact it folds and sends the matching hold, after the heal
+        // (RULING WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A). It ends with shutdown.
+        drop(hold.follow_kit_only_fact(
+            Arc::clone(sync_server.vault()),
+            state.background_admission(WriteKind::BackgroundOther),
+            read,
+            KIT_ONLY_LOOK_EVERY,
+            shutdown.triggered(),
         ));
     }
 
