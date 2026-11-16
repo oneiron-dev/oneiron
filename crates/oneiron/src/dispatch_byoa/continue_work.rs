@@ -46,9 +46,9 @@ use super::work_binding::{
     head_hop,
 };
 use super::{
-    ByoEndpointBackendFactory, ByoEndpointSpec, ByoaDispatcher, ByoaEgressLease, ByoaEgressPort,
-    ByoaError, ByoaResult, ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy,
-    SkippedRunnerSeat, SkippedRunnerSeatView, StagedJob,
+    ByoEndpointBackendFactory, ByoEndpointSpec, ByoaConnectorSpec, ByoaDispatcher, ByoaEgressLease,
+    ByoaEgressPort, ByoaError, ByoaResult, ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy,
+    SeatPassedOver, SkippedRunnerSeat, SkippedRunnerSeatView, StagedJob,
 };
 
 /// The step key the hand-over binds its runner work under.
@@ -434,6 +434,7 @@ fn validated_conversation(request: &ContinueOutsideWorkRequest) -> MemoryResult<
 /// for. A continue searches only these, so a seat passed over as spent or
 /// as one this runtime may not run never hands the work to another
 /// vendor's runner; each seat keeps its quota and placement checks.
+#[derive(Clone)]
 struct RunnerSeats {
     /// Those seats as a policy of their own, in the owner's order, under
     /// the owner's spend rule.
@@ -465,7 +466,11 @@ impl RunnerSeats {
     }
 
     /// The seat search over these seats from the first, read in `txn`, its
-    /// seat indices put back in the owner's order.
+    /// seat indices put back in the owner's order. A seat whose connector
+    /// is not a CLI one is passed over and named, and the search runs again
+    /// over the seats left, so every other seat keeps the reason the search
+    /// gives it: the hand-over job rides only a CLI connector, and a host
+    /// claims only CLI work, so no runner would ever read work bound there.
     ///
     /// # Errors
     ///
@@ -477,27 +482,57 @@ impl RunnerSeats {
         registry: &ProviderAdapterRegistry,
         work: &BindRunnerWork,
     ) -> ByoaResult<RunnerSeatSearch> {
-        let found = dispatcher.search_runner_seat_in_txn(txn, registry, &self.policy, work)?;
-        Ok(match found {
-            RunnerSeatSearch::Found {
-                seat,
-                connector,
-                context,
-                task_source,
-            } => RunnerSeatSearch::Found {
-                seat: self.owner_index(seat),
-                connector,
-                context,
-                task_source,
-            },
-            RunnerSeatSearch::NoSeat { skipped } => RunnerSeatSearch::NoSeat {
-                skipped: self.owner_skipped(skipped),
-            },
-            RunnerSeatSearch::Exhausted { back_at, skipped } => RunnerSeatSearch::Exhausted {
-                back_at,
-                skipped: self.owner_skipped(skipped),
-            },
-        })
+        let mut seats = self.clone();
+        let mut non_cli = Vec::new();
+        loop {
+            if seats.policy.seats.is_empty() {
+                return Ok(RunnerSeatSearch::NoSeat { skipped: non_cli });
+            }
+            match dispatcher.search_runner_seat_in_txn(txn, registry, &seats.policy, work)? {
+                RunnerSeatSearch::Found {
+                    seat, connector, ..
+                } if !matches!(*connector, ByoaConnectorSpec::CliSandbox(_)) => {
+                    non_cli.push(SkippedRunnerSeat {
+                        seat: seats.owner_index(seat),
+                        runner: seats.policy.seats[seat].runner.clone(),
+                        reason: SeatPassedOver::NonCliConnector,
+                    });
+                    seats = seats.without(seat);
+                }
+                RunnerSeatSearch::Found {
+                    seat,
+                    connector,
+                    context,
+                    task_source,
+                } => {
+                    return Ok(RunnerSeatSearch::Found {
+                        seat: seats.owner_index(seat),
+                        connector,
+                        context,
+                        task_source,
+                    });
+                }
+                RunnerSeatSearch::NoSeat { skipped } => {
+                    return Ok(RunnerSeatSearch::NoSeat {
+                        skipped: owner_ordered(seats.owner_skipped(skipped), non_cli),
+                    });
+                }
+                RunnerSeatSearch::Exhausted { back_at, skipped } => {
+                    return Ok(RunnerSeatSearch::Exhausted {
+                        back_at,
+                        skipped: owner_ordered(seats.owner_skipped(skipped), non_cli),
+                    });
+                }
+            }
+        }
+    }
+
+    /// These seats without seat `index` of them.
+    fn without(&self, index: usize) -> Self {
+        let mut seats = self.clone();
+        seats.policy.seats.remove(index);
+        seats.indices.remove(index);
+        seats
     }
 
     /// Seat `index` of these seats as its index in the owner's policy. A
@@ -516,6 +551,17 @@ impl RunnerSeats {
             })
             .collect()
     }
+}
+
+/// The seats one search passed over and the non-CLI seats passed over
+/// before it, as one list in the owner's order.
+fn owner_ordered(
+    mut skipped: Vec<SkippedRunnerSeat>,
+    non_cli: Vec<SkippedRunnerSeat>,
+) -> Vec<SkippedRunnerSeat> {
+    skipped.extend(non_cli);
+    skipped.sort_by_key(|skip| skip.seat);
+    skipped
 }
 
 /// The owner whose will the caller's act carries, checked live in `txn`:
@@ -569,8 +615,9 @@ impl Vault {
     /// doors.
     ///
     /// The work runs only on a seat of `policy` that names `input.runner`:
-    /// the first such seat in the owner's order that this runtime may run
-    /// and whose quota is not spent. `registry` is the one the node's own
+    /// the first such seat in the owner's order that this runtime may run,
+    /// whose quota is not spent and whose connector is a CLI one, the only
+    /// shape a host runner claims. `registry` is the one the node's own
     /// seat settings build, so an official seat's adapter and its login
     /// machine ride the work.
     ///
