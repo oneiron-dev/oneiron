@@ -110,6 +110,7 @@ mod import_order;
 mod ingest_observation;
 mod install_fold;
 mod invitee_slip;
+pub(crate) use invitee_slip::slip_holder_is_deleted_in_txn;
 mod invocation_slip;
 mod leave_notice_continuity;
 mod left_notices;
@@ -287,8 +288,9 @@ pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{
-    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
-    ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup,
+    ASK_WORD_PROOF_DOMAIN, AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner,
+    ROOT_CHECKPOINT_AUTHORITY, ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest,
+    RootCheckpointAuthority, RootCheckpointPickup,
 };
 pub use checkpoint_root_delivery::{RootAttestationDelivery, RootAttestationDeliveryState};
 pub use checkpoint_root_intake::{
