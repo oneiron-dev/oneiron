@@ -161,9 +161,10 @@ impl Capture {
         Arc::clone(&self.terminal_rung)
     }
 
-    /// `reply` is the saved MESSAGE the answer lands in, when the reply is
-    /// recorded: the kept call is linked to it (TURN-MODEL-LINK). A session
-    /// stream's reply names none.
+    /// `reply` is the MESSAGE the answer streams into, when the reply is
+    /// recorded: the kept call is linked to it here, at the terminal, before
+    /// the reply is saved (TURN-MODEL-LINK). A session stream's reply names
+    /// none.
     pub(super) fn record(
         &mut self,
         vault: &Vault,

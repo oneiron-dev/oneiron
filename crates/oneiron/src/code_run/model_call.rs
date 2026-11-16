@@ -583,7 +583,7 @@ pub fn record_model_call_in_txn(
     Ok(())
 }
 
-/// [`record_model_call_in_txn`] for a call whose answer was saved as the
+/// [`record_model_call_in_txn`] for a call whose answer streams into the
 /// MESSAGE `reply` (TURN-MODEL-LINK), linked in the same transaction: a link
 /// names only a call row that exists. A call whose actor is gone keeps no
 /// record, so it keeps no link either.

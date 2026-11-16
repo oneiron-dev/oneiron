@@ -299,7 +299,7 @@ pub(crate) fn record_raw_response(
     );
 }
 
-/// [`record_raw_response`] for a call whose answer is saved as the MESSAGE
+/// [`record_raw_response`] for a call whose answer streams into the MESSAGE
 /// `reply`, when it names one: the record is linked to it in the same write
 /// (TURN-MODEL-LINK), so a thread reads which call answered each reply.
 #[allow(clippy::too_many_arguments)]

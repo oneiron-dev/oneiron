@@ -412,7 +412,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // FIX 12516 (#4489): model-call evidence side rows (digests and usage, no
         // text), written after an admitted call.
         (RawHit { path: "crates/oneiron-server/src/ai_host/step/response_capture.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))".to_owned() }, 1),
-        (RawHit { path: "crates/oneiron-server/src/api/llm.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))".to_owned() }, 1),
+        (RawHit { path: "crates/oneiron-server/src/api/llm.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "if let Err(error) = vault.with_write_txn_grouped(|txn| match reply {".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/native_call_capture.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: ".with_write_txn_grouped(|txn| record_model_call_in_txn(self.vault, txn, &record))".to_owned() }, 1),
         // OF-495 (#1767, #3586): the skill judge's decision journal and the owner's
         // person-time rows, append-only under `skill:judge:v1:`.
