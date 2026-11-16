@@ -27,11 +27,15 @@ use super::claims::{
     CalendarPassportPresence, CalendarPassportValue, PREDICATE_CALENDAR_PASSPORT,
     decode_passport_value,
 };
-use crate::claim::{ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
+
+/// The reason code on the tray resolution of a waiting passport revision
+/// that a later revision replaced.
+const REVISION_REPLACED_REASON: &str = "calendar.passport.revision_replaced";
 
 /// UID-to-EVENT lookup cache. Key: `sha256(uid)`. Node-local cache; the live
 /// passport claims are the synced truth.
@@ -367,14 +371,16 @@ pub fn supersede_calendar_passport(
 /// passport carries authority, and a pending or rejected proposal can neither
 /// block a revision nor steer it).
 ///
-/// An earlier revision that was never admitted, pending or rejected, carries
-/// no authority: `new_id` supersedes it at once and drops the closure it had
-/// staged. The admitted head closes only when `new_id` is admitted. A proposed
-/// `new_id` stages that closure (`DeferredAction::Supersede`): the owner's
-/// approval of `new_id` completes it in the approving write, and a rejection
-/// drops it, so the head keeps its authority while the revision waits and
-/// after it is rejected. A `new_id` that landed admitted closes the head at
-/// once. Answers whether any live passport carried the key.
+/// A revision still waiting for review carries no authority: `new_id`
+/// supersedes it at once, and drops the closure it had staged and the tray
+/// item that asked the owner about it. A rejected revision stays on record as
+/// it is: a Reject is final, and no lifecycle transition may follow it. The
+/// admitted head closes only when `new_id` is admitted. A proposed `new_id`
+/// stages that closure (`DeferredAction::Supersede`): the owner's approval of
+/// `new_id` completes it in the approving write, and a rejection drops it, so
+/// the head keeps its authority while the revision waits and after it is
+/// rejected. A `new_id` that landed admitted closes the head at once. Answers
+/// whether any live passport, rejected ones included, carried the key.
 ///
 /// # Errors
 ///
@@ -389,8 +395,9 @@ pub(in crate::calendar) fn revise_passport_in_txn(
     new_id: &EntityId,
     now: u64,
 ) -> Result<bool, CalendarError> {
+    let mut found = false;
     let mut head = None;
-    let mut unadmitted = Vec::new();
+    let mut waiting = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(txn, event_ref)? {
         if claim_id == *new_id {
             continue;
@@ -409,19 +416,30 @@ pub(in crate::calendar) fn revise_passport_in_txn(
         if value.system != system || value.uid != uid {
             continue;
         }
+        found = true;
         if passport_admitted_in_txn(vault, txn, &claim_id, &body)? {
             if head.replace(claim_id).is_some() {
                 return Err(ingest("competing live calendar passports"));
             }
-        } else {
-            unadmitted.push(claim_id);
+        } else if body.approval != ClaimApprovalStatus::Rejected {
+            waiting.push(claim_id);
         }
     }
-    let found = head.is_some() || !unadmitted.is_empty();
     // Before `new_id` stages a closure of its own: a staged replacement
     // closes nothing without its grant.
-    for old in unadmitted {
+    for old in waiting {
         vault.cancel_deferred_claim_in_txn(txn, &old)?;
+        // The owner is asked about `new_id` instead. The item's binding names
+        // the open revision, so an Allow close would read it as stale.
+        vault.store.close_pending_gate_consent_as_in_txn(
+            txn,
+            &old,
+            now,
+            "superseded",
+            vec![REVISION_REPLACED_REASON.to_owned()],
+            None,
+            crate::store::TrayRemoval::Silent,
+        )?;
         vault.supersede_claim_in_txn(txn, new_id, &old, now)?;
     }
     if let Some(head) = head {
@@ -497,11 +515,13 @@ pub(super) fn event_ref_for_indexed_uid(
 /// `(claim id, decoded value)`: the revision the ingest diff compares a feed
 /// row with.
 ///
-/// While a revision waits for review its admitted head stays live beside it
-/// ([`revise_passport_in_txn`]), so one key can hold two live claims. This
-/// view takes the revision that was never admitted, pending or rejected, over
-/// the admitted head: the diff files neither a waiting revision nor one the
-/// owner rejected again. Authority reads the admitted head
+/// The admitted head stays live beside a revision that waits for review or
+/// that the owner rejected ([`revise_passport_in_txn`]), so one key can hold
+/// several live claims. This view takes the latest filed of them, admitted or
+/// not: the diff files neither a waiting revision nor a rejected one again,
+/// and once a later revision is admitted, an older rejected one no longer
+/// steers the diff. Claim ids are the store clock's monotonic ULIDs, so the
+/// larger id is the later filing. Authority reads the admitted head
 /// ([`admitted_passports_for_event_in_txn`]).
 ///
 /// # Errors
@@ -520,8 +540,7 @@ fn live_passports_for_event_in_txn(
     txn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
-    // Each key's chosen claim, and whether it is admitted.
-    let mut out: Vec<(EntityId, CalendarPassportValue, bool)> = Vec::new();
+    let mut out: Vec<(EntityId, CalendarPassportValue)> = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(txn, event_ref)? {
         let Some(body) = vault.get_claim_in_txn(txn, &claim_id)? else {
             continue;
@@ -533,25 +552,19 @@ fn live_passports_for_event_in_txn(
         }
         let value = decode_passport_value(&body.value)
             .map_err(|_| ingest("stored passport claim did not decode"))?;
-        let admitted = passport_admitted_in_txn(vault, txn, &claim_id, &body)?;
         match out
             .iter_mut()
-            .find(|(_, kept, _)| kept.system == value.system && kept.uid == value.uid)
+            .find(|(_, kept)| kept.system == value.system && kept.uid == value.uid)
         {
-            // An unadmitted revision wins over an admitted head; within one
-            // kind, the later claim id, so scan order never picks.
             Some(kept) => {
-                if (!admitted, claim_id.as_bytes()) > (!kept.2, kept.0.as_bytes()) {
-                    *kept = (claim_id, value, admitted);
+                if claim_id.as_bytes() > kept.0.as_bytes() {
+                    *kept = (claim_id, value);
                 }
             }
-            None => out.push((claim_id, value, admitted)),
+            None => out.push((claim_id, value)),
         }
     }
-    Ok(out
-        .into_iter()
-        .map(|(claim_id, value, _)| (claim_id, value))
-        .collect())
+    Ok(out)
 }
 
 /// The live passport claim on `event_ref` for exactly `(system, uid)`.
