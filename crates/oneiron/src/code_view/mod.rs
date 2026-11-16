@@ -40,11 +40,23 @@ pub use oneiron_verb_wire::code_view::VisibleFilePolicy;
 #[doc(hidden)]
 pub(crate) use oneiron_verb_wire::code_view::relative;
 
-#[doc(hidden)]
-pub use oneiron_records::code_view::ViewReceipt;
-#[doc(hidden)]
-use oneiron_records::code_view::entity_serde;
-
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewReceipt {
+    #[serde(with = "entity_serde")]
+    pub view_id: EntityId,
+    #[serde(with = "entity_serde")]
+    pub actor: EntityId,
+    pub fork_hash: [u8; 32],
+    pub base: Option<(EntityId, EntityId)>,
+    pub files: BTreeMap<String, [u8; 32]>,
+    /// The run this view is the work of (FIX 6867), bound in its first
+    /// write; `None` for an owner's or trusted caller's view.
+    pub run: Option<crate::memory::repo_doors::RepoRunStamp>,
+    /// How each file a masked reader's copy holds differs from the stored
+    /// blob it stands in for (FIX 8965): absent for the stored bytes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub projections: BTreeMap<String, crate::origin::secret_projection::RepoFileProjectionView>,
+}
 /// Owns a private host directory. Working files never share writable inodes
 /// with canonical blobs or other views. Durable edits use the code document door.
 pub struct CodeViewSet<'a> {
@@ -416,3 +428,19 @@ pub(crate) fn view_path_on_disk(root: &Path, path: &str) -> Result<PathBuf> {
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
+
+mod entity_serde {
+    use super::*;
+    pub(super) fn serialize<S: serde::Serializer>(
+        value: &EntityId,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_hex())
+    }
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<EntityId, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        EntityId::from_hex(&value).map_err(serde::de::Error::custom)
+    }
+}

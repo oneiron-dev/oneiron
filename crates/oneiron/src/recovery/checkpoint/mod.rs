@@ -81,7 +81,7 @@ use image::{CheckpointImage, read_image, read_image_required};
 #[doc(hidden)]
 use oneiron_records::recovery::checkpoint::CanonicalRows;
 #[doc(hidden)]
-pub use oneiron_records::recovery::checkpoint::{RestoreEpoch, RestoreReason};
+pub use oneiron_records::recovery::checkpoint::RestoreReason;
 pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
@@ -269,6 +269,17 @@ impl SideRestoreSource<'_> {
             Source::Disk { page_seal, .. } => page_seal.as_ref(),
         }
     }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreEpoch {
+    pub checkpoint_id: String,
+    pub restored_at: u64,
+    pub reason: RestoreReason,
+    /// What it still owes of the world key pads its image names (PAD-2):
+    /// absent from a row that owes and says nothing.
+    #[serde(default, skip_serializing_if = "RestorePadState::is_empty")]
+    pub pad_recovery: RestorePadState,
 }
 /// Source checkpoint identity and newly rebuilt engine indexes.
 #[derive(Clone, Debug, PartialEq, Eq)]

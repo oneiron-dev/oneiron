@@ -3,7 +3,6 @@
 
 pub use crate::verbs::agent_grant::*;
 pub use crate::verbs::answer_forward::*;
-pub use crate::verbs::connector::*;
 pub use crate::verbs::connector_call::*;
 pub use crate::verbs::custody_drain::*;
 pub use crate::verbs::explain::*;
@@ -75,7 +74,6 @@ pub struct RoomEntry {
 }
 pub mod agent_grant;
 pub mod answer_forward;
-pub mod connector;
 pub mod connector_call;
 pub mod custody_drain;
 pub mod explain;

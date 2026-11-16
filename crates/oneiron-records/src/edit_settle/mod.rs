@@ -3,7 +3,6 @@ pub use crate::edit_settle::carry::UnitWithdrawal;
 pub use crate::edit_settle::carry::WithdrawReason;
 pub use crate::edit_settle::carry::WithdrawnAnswer;
 pub use crate::edit_settle::carry::WithdrawnUnit;
-pub use crate::edit_settle::discarded_words::DiscardedDeck;
 pub use crate::edit_settle::organ_wait::OrganWait;
 pub use crate::edit_settle::organ_wait::OrganWaitView;
 pub use crate::edit_settle::records::PptxReviewIdentity;

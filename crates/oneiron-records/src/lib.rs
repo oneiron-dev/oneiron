@@ -29,7 +29,6 @@ pub mod code_document;
 pub mod code_revision;
 pub mod code_run;
 pub mod code_sandbox;
-pub mod code_view;
 pub mod compaction;
 pub mod companion;
 pub mod connector_key;
