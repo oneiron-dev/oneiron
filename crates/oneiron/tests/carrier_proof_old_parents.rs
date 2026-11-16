@@ -1490,3 +1490,41 @@ fn a_choice_on_an_enrolment_its_own_line_lets_a_row_prune_waits() {
         fold.issues
     );
 }
+
+/// Test 19 of the row (REVIEW2 #8502 and its correction of REVIEW2 #9057
+/// P1-1, Engine 16 Nov 23:50): a revoke of the owner's key above the root's
+/// agent copy of it does not end it. From P, E enrols K (holder M); the root
+/// enrols K as an agent key on P (D, refused as in test 10) and revokes K on
+/// D (R), which waits with D. R is also proved on its own signed branch as a
+/// restrictive fact, and that branch, folded with no line, holds K as D's
+/// agent key, which the custodial root alone may end. A fact proved through
+/// a refused enrolment of its key ends nothing. Main: D and R count, and K
+/// is revoked; this row's head before the fix: R's fact revokes K.
+#[test]
+fn a_revoke_above_an_agent_copy_of_an_owner_key_does_not_end_it() {
+    let mut vault = OldParents::new();
+    let before = hash(&vault.rows[1]);
+    let enrolment = vault.enrol_owner_key();
+    let key = vault.owner_authority_key();
+    let agent_enrolment = vault.root_enrols_agent_key(before, key.clone());
+    let revoke = vault.push_root_row(
+        vec![agent_enrolment],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key.clone(),
+        },
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment),
+        "enrolment counts: {enrolment:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&agent_enrolment) && !fold.valid_entries.contains(&revoke),
+        "the copy is refused and the revoke above it waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &key),
+        "a revoke above the refused copy never ends the owner key: {key:?}"
+    );
+}
