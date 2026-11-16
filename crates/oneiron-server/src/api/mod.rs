@@ -114,6 +114,8 @@ pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 pub(crate) mod off_record_rooms;
+mod one_click_unsubscribe;
+pub(crate) use self::one_click_unsubscribe::install_one_click_unsubscribe_origin;
 mod org_admin;
 mod pairing;
 // FIX 12477: the redeem door's per-address failure backoff, held by the server.
@@ -239,6 +241,9 @@ pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
 use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::booking_anti_abuse::BookingHttpDisposition;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::draft_checked_span;
@@ -247,6 +252,9 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
+// The signing session door's read of what a signing router holds (L3-22).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};
 #[cfg(test)]
 pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
