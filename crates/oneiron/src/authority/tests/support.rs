@@ -1,5 +1,7 @@
 //! Shared fixtures and fold helpers for the authority tests.
 
+use oneiron_persistent_collections::PersistentMap;
+
 use super::*;
 
 pub(super) fn hex(bytes: &[u8]) -> String {
@@ -311,7 +313,7 @@ pub(super) fn single_owner_state(
     let state = FoldState {
         slips: SlipAuthorityState::default(),
         vault_id,
-        roster: BTreeMap::from([(
+        roster: PersistentMap::from([(
             owner_key.clone(),
             FoldedDevice {
                 key: owner_key.clone(),
@@ -332,7 +334,7 @@ pub(super) fn single_owner_state(
         actor_bindings: Default::default(),
         actor_binding_revocations: Default::default(),
         actor_revocation_hashes: Default::default(),
-        seqs: BTreeMap::from([(owner_key.clone(), 0)]),
+        seqs: PersistentMap::from([(owner_key.clone(), 0)]),
         machines: Default::default(),
         machine_keys: Default::default(),
         held_machine_answers: Default::default(),

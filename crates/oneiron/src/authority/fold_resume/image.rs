@@ -123,12 +123,14 @@ impl ImageFold {
             issues,
             missing_parents,
             marks,
-            revocations: final_merged.actor_revocation_hashes.clone(),
+            revocations: final_merged.actor_revocation_hashes.to_btree_map(),
             writers,
             bound_keys,
             confirm_ids,
             confirm_nonces,
-            nonce_provenance: merged.critical_write_confirm_nonce_provenance.clone(),
+            nonce_provenance: merged
+                .critical_write_confirm_nonce_provenance
+                .to_btree_map(),
         };
         Some(Self {
             replay: if replay {

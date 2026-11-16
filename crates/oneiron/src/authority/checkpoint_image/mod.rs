@@ -453,7 +453,11 @@ impl AuthorityCheckpointV2 {
                 .frontier_ancestry
                 .keys()
                 .all(|hash| self.per_parent.contains_key(hash))
-            || safety.nonce_provenance != aggregate.merged.critical_write_confirm_nonce_provenance
+            || safety.nonce_provenance
+                != aggregate
+                    .merged
+                    .critical_write_confirm_nonce_provenance
+                    .to_btree_map()
         {
             return Err(refused("checkpoint image safety indexes"));
         }

@@ -70,7 +70,7 @@ pub(super) fn owner_proof_key(
 /// revoked or retired key, an admin-only key and a managed host's custodial
 /// root prove nothing.
 fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
-    roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
+    state.has_live_owner(key) && !(state.hosted && in_host_custody(state, key))
 }
 
 /// Whether `key` is one whose cosign the fold takes as the owner's proof in

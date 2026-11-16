@@ -440,6 +440,14 @@ pub(super) struct FoldState {
 }
 
 impl FoldState {
+    /// Whether this state's roster holds `key` as a live owner device:
+    /// [`roster_has_live_owner`] read in place on the persistent roster.
+    pub(super) fn has_live_owner(&self, key: &AuthorityKey) -> bool {
+        self.roster
+            .get(key)
+            .is_some_and(folded_device_is_live_owner)
+    }
+
     /// A binding is live iff it out-epochs the revocation watermark and no
     /// divergent same-epoch merge poisoned it. Liveness is DERIVED, never
     /// stored, so revoke and bind can arrive in any order.

@@ -1,5 +1,7 @@
 //! Genesis vectors, wall-clock clock, signature suites, roles and quorum.
 
+use oneiron_persistent_collections::PersistentMap;
+
 use super::support::hex;
 use super::support::*;
 use super::*;
@@ -321,7 +323,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
     let state = FoldState {
         slips: SlipAuthorityState::default(),
         vault_id: [40; 32],
-        roster: BTreeMap::from([
+        roster: PersistentMap::from([
             (
                 owner_key.clone(),
                 FoldedDevice {
@@ -353,7 +355,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         actor_bindings: Default::default(),
         actor_binding_revocations: Default::default(),
         actor_revocation_hashes: Default::default(),
-        seqs: BTreeMap::from([(owner_key.clone(), 0)]),
+        seqs: PersistentMap::from([(owner_key.clone(), 0)]),
         machines: Default::default(),
         machine_keys: Default::default(),
         held_machine_answers: Default::default(),

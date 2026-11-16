@@ -252,7 +252,7 @@ impl Once {
             head,
             frontier,
             merged,
-            revocations: final_merged.actor_revocation_hashes.clone(),
+            revocations: final_merged.actor_revocation_hashes.to_btree_map(),
             settlement: Arc::new(Settlement {
                 revoke_facts,
                 retired_keys,
