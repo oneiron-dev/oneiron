@@ -261,6 +261,11 @@ fn proven_pairs_in_txn(
     use crate::ports::EntityStoreRead;
     use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 
+    // Red pin fault (not for merge): no pair is derived.
+    let cut = true;
+    if cut {
+        return Ok(Vec::new());
+    }
     let held = fold.custody_held_generations();
     let mut printed = Vec::new();
     for entry in vault
@@ -617,6 +622,11 @@ fn merge_statements_in_txn(
     secret: Option<&crate::world_keys::MachineSecret>,
     statements: Vec<SameValueStatement>,
 ) -> Result<usize> {
+    // Red pin fault (not for merge): no statement is taken.
+    let cut = true;
+    if cut {
+        return Ok(0);
+    }
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let Some(vault_id) = fold.vault_id else {
         return Ok(0);

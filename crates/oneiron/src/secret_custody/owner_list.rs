@@ -375,7 +375,8 @@ fn group(
             None => groups.push(vec![read]),
         }
     }
-    for pair in pairs {
+    // Red pin fault (not for merge): the list ignores pairs.
+    for pair in pairs.iter().take(0) {
         let (Some(first), Some(second)) = (
             group_of(&groups, pair.a, pair.a_generation),
             group_of(&groups, pair.b, pair.b_generation),
