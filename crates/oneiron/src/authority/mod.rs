@@ -101,6 +101,7 @@ mod held_answers;
 mod history_admission;
 mod history_coverage;
 mod history_fetch;
+mod history_offload;
 mod history_repair;
 mod history_transfer;
 mod home_candidacy;
@@ -342,6 +343,8 @@ pub use history_fetch::{
     AUTHORITY_HISTORY_SELECTION_ID_CONTEXT, AuthorityHistoryFetch, AuthorityHistoryPage,
     AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
+pub use history_offload::AuthorityHistoryOffload;
+pub(crate) use history_offload::offloaded_history_refusal_in_txn;
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{

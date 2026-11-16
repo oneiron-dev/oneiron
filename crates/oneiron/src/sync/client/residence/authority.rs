@@ -22,6 +22,13 @@
 //! (`residence.authority.checkpoint`), keeps the attestations made with the
 //! pin's own key bindings, and hands both to the adoption door, which
 //! verifies them against the pin and refuses what this vault cannot take.
+//!
+//! Once the owner turns cold offload on (census L5-22 PR 3), a round on a
+//! machine that folds from its adopted head ends by proving the home's
+//! custody of each archive of that image listing a covered row it holds,
+//! paging every row of the archive from the home, and then hands the head to
+//! the offload door, which judges every proof again before a row goes
+//! (RULING L5-22-3-OFFLOAD-MACHINE = A).
 
 mod parts;
 
@@ -35,9 +42,10 @@ use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
-    AuthorityCheckpointV2, AuthorityEntryHash, AuthorityEntryRead, AuthorityHistoryFetch,
-    AuthorityHistoryRequest, AuthorityHistorySelection, AuthorityRepairOutcome, CarriedOverlays,
+    AUTHORITY_HISTORY_PAGE_MAX, AuthorityArchiveCustodyProof, AuthorityCheckpointAttestation,
+    AuthorityCheckpointPin, AuthorityCheckpointV2, AuthorityEntryHash, AuthorityEntryRead,
+    AuthorityHistoryFetch, AuthorityHistoryPage, AuthorityHistoryRequest,
+    AuthorityHistorySelection, AuthorityRepairOutcome, AuthorityVaultId, CarriedOverlays,
     authority_entry_hash, read_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
@@ -131,6 +139,33 @@ impl SyncClient {
     /// vault has adopted none. Returns how many entries it imported.
     pub async fn catch_up_authority(&self) -> Result<usize, TransportError> {
         catch_up_authority(&self.vault, &self.config).await
+    }
+
+    /// Proves the home's custody of `archive`, one whole archive manifest of
+    /// the checkpoint image `checkpoint` this vault keeps (census L5-22 PR 3;
+    /// RULING L5-22-2-CLIENT-PASS = A): pages every row the archive lists
+    /// from the home, then records the proof through
+    /// [`Vault::record_archive_custody_proof`], which judges the carried
+    /// bytes and the key the home proved on this connection.
+    ///
+    /// # Errors
+    /// An image this vault does not keep; the home offline or refusing the
+    /// archive; the custody door's refusal, as a storage error naming it.
+    pub async fn prove_archive_custody(
+        &self,
+        checkpoint: [u8; 32],
+        archive: [u8; 32],
+    ) -> Result<AuthorityArchiveCustodyProof, TransportError> {
+        let image = self
+            .vault
+            .authority_checkpoint_v2(&checkpoint)
+            .map_err(storage)?
+            .ok_or_else(refused)?;
+        let budgets = residence_budgets(&self.vault)?;
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::home_offline());
+        };
+        prove_home_archive_custody(&self.vault, &mut rpc, image.vault_id, checkpoint, archive).await
     }
 }
 
@@ -230,7 +265,95 @@ pub(crate) async fn catch_up_authority(
             "authority history still names entries this machine lacks"
         );
     }
+    // A fault here holds back nothing this round took in.
+    if let Err(error) = prove_custody_and_offload(vault, &mut rpc).await {
+        tracing::warn!(%error, "covered authority history not offloaded");
+    }
     Ok(taken)
+}
+
+/// Cold offload, once the owner's switch is on and this vault folds from
+/// its adopted head (census L5-22 PR 3): proves the home's custody of each
+/// archive of the head that lists a covered row this vault holds and no
+/// standing proof keeps, then hands the head to the offload door, which
+/// judges every proof again in its own writer. A refused proof or offload is
+/// logged, and the rows stay.
+async fn prove_custody_and_offload(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+) -> Result<(), TransportError> {
+    let Some(due) = vault.authority_offload_due().map_err(storage)? else {
+        return Ok(());
+    };
+    for archive in due.unproved {
+        if let Err(error) =
+            prove_home_archive_custody(vault, rpc, due.vault_id, due.image, archive).await
+        {
+            tracing::warn!(%error, "archive custody not proved");
+        }
+    }
+    match vault.offload_authority_history(&due.image) {
+        Ok(Some(offload)) => {
+            tracing::info!(
+                evicted = offload.evicted,
+                "covered authority rows offloaded"
+            );
+        }
+        Ok(None) => {}
+        Err(error) => tracing::warn!(%error, "authority history offload refused"),
+    }
+    Ok(())
+}
+
+/// Pages one whole archive of `checkpoint` from the home and records the
+/// home's custody of it. Rows this vault holds count for nothing, so the
+/// fetch names none held; the custody door checks each carried row against
+/// this vault's own copy of the manifest, and the home's machine against the
+/// fold, on the key it proved on this socket.
+async fn prove_home_archive_custody(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+    vault_id: AuthorityVaultId,
+    checkpoint: [u8; 32],
+    archive: [u8; 32],
+) -> Result<AuthorityArchiveCustodyProof, TransportError> {
+    let mut fetch = AuthorityHistoryFetch {
+        vault_id: Some(vault_id),
+        selection: AuthorityHistorySelection::Covered {
+            checkpoint,
+            archive: Some(archive),
+            lower_exclusive: None,
+            upper_inclusive: None,
+        },
+        parent_closure: false,
+        held: BTreeSet::new(),
+        cursor: None,
+        limit: AUTHORITY_HISTORY_PAGE_MAX,
+    };
+    let selection = fetch.selection.id();
+    let mut pages = Vec::new();
+    for _ in 0..MAX_PAGES {
+        let Some((rows, overlays, next)) = fetch_authority_range(rpc, &fetch).await? else {
+            return Err(refused());
+        };
+        // fetch_authority_range refused a page naming another selection.
+        pages.push(AuthorityHistoryPage {
+            vault_id: Some(vault_id),
+            checkpoint: Some(checkpoint),
+            selection,
+            rows,
+            unheld: BTreeSet::new(),
+            next,
+            overlays,
+        });
+        let Some(cursor) = next else {
+            return vault
+                .record_archive_custody_proof(rpc.home, &fetch, &pages)
+                .map_err(storage);
+        };
+        fetch.cursor = Some(cursor);
+    }
+    Err(refused())
 }
 
 /// Adopts the checkpoint image `pin` names (OF-469): read from the home, its

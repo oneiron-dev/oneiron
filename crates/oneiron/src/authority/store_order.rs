@@ -135,13 +135,21 @@ pub(crate) fn backfill_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) -> Resul
     if complete {
         return Ok(false);
     }
+    resequence_in_txn(store, txn)?;
+    Ok(true)
+}
+
+/// Resequences every stored AUTHORITY_LOG row in type-index order and marks
+/// the index complete over exactly them: the backfill's pass, and cold
+/// offload's after it drops covered rows (census L5-22 PR 3), whose
+/// sequences would otherwise stay behind as gaps.
+pub(crate) fn resequence_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
     let mut ids = Vec::new();
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
         ids.push(id?);
     }
     STORE_ORDER.delete_from(store, txn, &[])?;
-    sequence_all_in_txn(store, txn, ids)?;
-    Ok(true)
+    sequence_all_in_txn(store, txn, ids)
 }
 
 /// Sequences `ids` from zero in the given order and marks the index

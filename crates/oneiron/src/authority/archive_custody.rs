@@ -13,7 +13,8 @@
 //! the connection proved, judged again against the fold in the writer.
 //!
 //! Archive custody grants no authority: no fold, quorum, attestation or
-//! grant check reads a proof, and cold offload alone will. A proof stays
+//! grant check reads a proof, and cold offload alone does
+//! ([`Vault::offload_authority_history`]). A proof stays
 //! on the install that measured it: it never syncs, and no checkpoint
 //! image carries it.
 
@@ -165,10 +166,20 @@ impl Vault {
     /// Storage faults; a proof row that does not decode.
     pub fn authority_archive_custody_proofs(&self) -> Result<Vec<AuthorityArchiveCustodyProof>> {
         let txn = self.store.env.read_txn()?;
-        Ok(CUSTODY_PROOF
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(key, stored)| custody_proof(key, stored))
-            .collect())
+        archive_custody_proofs_in_txn(&self.store, &txn)
     }
+}
+
+/// Every archive custody proof this machine recorded, as `txn` reads them:
+/// [`Vault::authority_archive_custody_proofs`], and cold offload's re-check
+/// in its own writer.
+pub(super) fn archive_custody_proofs_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AuthorityArchiveCustodyProof>> {
+    Ok(CUSTODY_PROOF
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(key, stored)| custody_proof(key, stored))
+        .collect())
 }

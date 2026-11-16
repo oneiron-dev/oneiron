@@ -4,12 +4,14 @@
 //! machines and world settings fold from. The home serves it apart from any
 //! content: the signed entries the machine lacks, parents first, a page at a
 //! time, which the machine imports through the signed-history door and folds
-//! itself. The whole log is kept for now (identity, tiered authority history),
-//! so the hot tail is everything the home holds; a cold archive comes with
-//! L02's checkpoint v2. A machine whose pairing pinned a checkpoint adopts
-//! its image before the tail folds: the home serves the image it keeps a
-//! part at a time, with the attestations kept for it, and nothing the home
-//! serves is trusted until it verifies against the machine's own pin.
+//! itself. The home keeps the whole log, so the hot tail is everything it
+//! holds; a device may later offload the covered rows its adopted image
+//! attests, once custody proofs stand for them (census L5-22 PR 3), and asks
+//! the home for them again only if its fold needs them. A machine whose
+//! pairing pinned a checkpoint adopts its image before the tail folds: the
+//! home serves the image it keeps a part at a time, with the attestations
+//! kept for it, and nothing the home serves is trusted until it verifies
+//! against the machine's own pin.
 //!
 //! The append half runs the other way: the home names, on the tail's last
 //! page, the entries the machine holds that it lacks, and the machine sends

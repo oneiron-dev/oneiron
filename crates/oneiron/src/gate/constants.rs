@@ -151,6 +151,10 @@ pub(crate) const POLICY_OWNER_POLICY_PRECEDENCE_KEY: &str = "owner_policy_preced
 /// Manifest-resident delivery rule for owner-policy change receipts.
 pub(crate) const POLICY_OWNER_POLICY_NOTIFY_KEY: &str = "owner_policy_change_notifications";
 pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
+/// Whether this vault may offload covered authority history to a proved
+/// custodian (census L5-22 PR 3; DEC-0005 #vault:8). The owner turns it on;
+/// a manifest without the row leaves it off.
+pub(crate) const POLICY_AUTHORITY_HISTORY_OFFLOAD_KEY: &str = "authority.history.offload";
 /// The owner plane's POLICY DOCUMENT: the text the vault owner wrote, sent to
 /// their safeguard model verbatim as the system message. Absent by default —
 /// the engine ships no document of its own, and a plane with none is inactive

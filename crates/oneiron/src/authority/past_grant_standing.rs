@@ -73,6 +73,36 @@ pub(crate) fn past_standing_history_loads_for_test() -> usize {
 struct LoadedHistory {
     parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
     bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    /// The op kinds, as their scaffolds name them, of the covered rows this
+    /// vault neither holds nor reads a carried body of: a revoke among them
+    /// is one no walk here can see.
+    unread_kinds: BTreeSet<String>,
+}
+
+impl LoadedHistory {
+    /// Whether a covered row of a kind the walks read whole has no body
+    /// here: it may be the mint, revoke or withdrawal that decides the act.
+    fn lacks_walked_body(&self) -> bool {
+        WALKED_KINDS
+            .iter()
+            .any(|kind| self.unread_kinds.contains(*kind))
+    }
+}
+
+/// The op kinds the walks read whole: a mint or revoke of the Grant, a
+/// membership execution that withdrew it. Every image carries their bodies
+/// (`carries_body`). A slip revocation of the Grant is read from the fold
+/// instead ([`slip_revoked`]): no image carries its body, and a walk that
+/// stopped at every uncarried one would undo agent privacy tightenings over
+/// an unrelated guest's revoke.
+const WALKED_KINDS: [&str; 2] = [OP_KIND_AGENT_GRANT_ACT, OP_KIND_MEMBERSHIP_EXECUTION];
+
+/// Whether a verified slip revocation withdrew `grant`, held here or covered
+/// by the adopted image: the fold keeps each Grant one withdrew (FIX 1978),
+/// and an image carries that fold state whole, so a covered revoke counts
+/// whether or not this vault holds its row (census L5-22 PR 3).
+fn slip_revoked(fold: &AuthorityFold, grant: EntityId) -> bool {
+    fold.slips.revoked_grants.contains(&grant.to_hex())
 }
 
 /// The SAME-txn held authority rows plus ONLY the adopted image's carried
@@ -84,6 +114,7 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
     HISTORY_LOADS.with(|loads| loads.set(loads.get() + 1));
     let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
+    let mut unread_kinds = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
         let row = decode_stored_authority_fold_row(store, txn, &body)?;
         let hash = row.hash()?;
@@ -142,10 +173,19 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
                     ));
                 }
                 bodies.insert(*hash, entry);
+            } else {
+                // No image carries a slip revocation's body (`carries_body`),
+                // and a device that never held a covered row, or offloaded it
+                // (census L5-22 PR 3), holds none either.
+                unread_kinds.insert(row.op_kind.clone());
             }
         }
     }
-    Ok(LoadedHistory { parents, bodies })
+    Ok(LoadedHistory {
+        parents,
+        bodies,
+        unread_kinds,
+    })
 }
 
 /// `Some(candidate)` when `candidate` is a counted native WorldPrivacy act by
@@ -175,6 +215,12 @@ fn preserved_one(
         return Ok(None);
     };
     if edit.act.act != OwnerActKind::WorldPrivacy || edit.act.target != edit.world {
+        return Ok(None);
+    }
+    // A slip revocation of the Grant refuses the act, held or covered; a
+    // covered mint, revoke or withdrawal whose body this vault cannot read
+    // may be what refuses it: keep the NOW judgment.
+    if slip_revoked(fold, grant) || loaded.lacks_walked_body() {
         return Ok(None);
     }
     let world: EntityId = edit.world;

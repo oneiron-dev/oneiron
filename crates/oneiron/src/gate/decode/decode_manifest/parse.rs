@@ -41,6 +41,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
                 | super::super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
+                | POLICY_AUTHORITY_HISTORY_OFFLOAD_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
                 | POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY
                 | POLICY_OWNER_POLICY_PATTERNS_KEY
@@ -245,6 +246,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(Value::Boolean(value)) => *value,
         MapValue::Present(_) => return None,
     };
+    let authority_history_offload =
+        match single_map_value(&entries, POLICY_AUTHORITY_HISTORY_OFFLOAD_KEY) {
+            MapValue::Missing => false,
+            MapValue::Duplicate => return None,
+            MapValue::Present(Value::Boolean(value)) => *value,
+            MapValue::Present(_) => return None,
+        };
     let room_policy_rows = match single_map_value(&entries, crate::gate::room_policy::KEY) {
         MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
@@ -773,6 +781,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         owner_policy_precedence,
         owner_policy_rows_dropped,
         owner_policy_enabled,
+        authority_history_offload,
         owner_policy_document,
         owner_policy_output_contract,
         owner_policy_patterns,
