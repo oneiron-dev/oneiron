@@ -68,6 +68,15 @@ pub(crate) fn verify_actor_binding_in_txn(
 /// embedded owner whom another Owner made an Admin holds no owner verb
 /// (UNROOTED-OWNER-CENSUS = A).
 ///
+/// A rooted vault asks the same census after the binding, the pair
+/// `memory::authorship::is_root_owner` reads (CLAIM-RETRACT-ADMIN-SCOPE =
+/// A). A human binding names who acts under the root, not who owns the
+/// vault: a shared vault's Admin or Delegate can hold one, and so can a
+/// co-owner whose binding outlived its Owner standing. Neither retracts
+/// another author's claim or deletes as the owner; an Admin deletes in scope
+/// through the role delete authority (`federation::delete_authority`), which
+/// `safe_delete` asks when this check refuses.
+///
 /// A missing `vault_id` is NOT one state. The fold also returns `None` when the
 /// log carries several independently rooted vaults, and that collapse clears
 /// `actor_bindings` wholesale. Multi-root is refused as INVALID_STATE (the
@@ -156,7 +165,20 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         ));
     }
     if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
-        return Ok(());
+        if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+            return Ok(());
+        }
+        return Err(MemoryError::new(
+            MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            format!(
+                "actor {} holds a human binding but is not a live Owner of this vault",
+                actor.to_hex()
+            ),
+            &[
+                "The vault's live owner census decides who owns it: the embedded owner of a personal vault, the live Owner-role members of a shared one.",
+                "An Admin deletes in scope through the role delete door; an Admin, Deputy or Delegate holds no owner verb.",
+            ],
+        ));
     }
     // Its OWN code, not the generic FORBIDDEN: `safe_delete` can be refused by
     // the Gate on the same verb and that denial is FORBIDDEN too, so the code
