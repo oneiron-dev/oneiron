@@ -15,6 +15,9 @@ use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault};
 
+// The K-proof door's reach into the step digests (PLAN-UC-04 stage 7).
+pub(crate) use super::run::{outbound_result_digest_for_test, step_id_for_test};
+
 /// Arms a program for the agent `actor` in `conversation` at `armed_at`,
 /// sealed by the verified slip `proof` and the instrument `binding`, then
 /// records the wake TURN `turn`, landed at `landed_at`, owes it, as the
@@ -287,6 +290,3 @@ pub(crate) fn arming_row_bytes(
     serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
         .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
 }
-
-// The K-proof door's reach into the step digests (PLAN-UC-04 stage 7).
-pub(crate) use super::run::{outbound_result_digest_for_test, step_id_for_test};
