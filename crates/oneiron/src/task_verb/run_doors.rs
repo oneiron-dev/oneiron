@@ -2,8 +2,10 @@
 //! `#run-tree`): `vault.tasks.cancel.force`, canon's `cancel.force`, the
 //! vault owner's unrefusable stop of every live branch, and
 //! `vault.runs.branches.get`, the owner's read of every branch as the queue
-//! holds it; and `vault.consults.get` (DOOR-063, ARCH-0067), the owner's
-//! read of one consult TASK's deadline and terminal register.
+//! holds it; `vault.runs.job` (`GET /v1/core/jobs/{job_id}`, 0002c §6.1.13),
+//! the read of one job, one attempt row, by its id; and `vault.consults.get`
+//! (DOOR-063, ARCH-0067), the owner's read of one consult TASK's deadline and
+//! terminal register.
 //!
 //! The force is the hard rung only. It reaches any TASK in the vault, not
 //! only one its owner's actor created, and asks no gate and opens no
@@ -15,7 +17,11 @@
 //! the pure [`AgentRunStatus`] projection of that state, result, typed asks
 //! and signals, and the whole cancel protocol evidence (landing, resume
 //! point, terminal cancellation, receipts). Nothing here invents progress,
-//! a next breakpoint or a wait class.
+//! a next breakpoint or a wait class. A job is one branch read by its own
+//! id, its kind, parent and times beside it, as the run tree names them. Its
+//! result is the reference its producer wrote, never a payload (ASK
+//! L10-05-RESULT = A): the door that owns what the reference names serves
+//! it, under that door's grant and labels.
 //!
 //! A consult reads exactly as its terminal register stores it: refs only,
 //! never a result body. Landing an answer or abstention stays the addressed
@@ -56,16 +62,11 @@ use crate::{EntityId, Vault, WriteActor};
 const TASK_FIX: &str =
     "Name a TASK ref; a spawned agent reads by its attempt through vault.agents.spawn.get.";
 
-/// The owner's force: every live branch of `task_ref` stops, for `reason`
-/// when one is given.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CancelForceRequest {
-    pub task_ref: EntityId,
-    /// Kept on each terminal cancellation receipt the force writes.
-    #[serde(default)]
-    pub reason: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::run_doors::{
+    CancelForceRequest, ConsultDisposition, ConsultLandSpend, ConsultReadRequest,
+    RunBranchesRequest, RunJobRequest,
+};
 
 /// What the force did: whether it stopped anything, how many branches this
 /// call cancelled, and every branch of the TASK after it. A repeat on
@@ -78,13 +79,6 @@ pub struct CancelForceReceipt {
     pub branches: Vec<RunBranchView>,
 }
 
-/// The owner's read of every branch of one TASK.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunBranchesRequest {
-    pub task_ref: EntityId,
-}
-
 /// Every branch of the TASK, in the order the queue created them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunBranchesView {
@@ -95,8 +89,18 @@ pub struct RunBranchesView {
 /// One branch: one attempt row realizing the TASK, as stored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunBranchView {
-    /// The attempt id, as `steer` names its branch.
+    /// The attempt id, as `steer` names its branch and the run tree its job.
     pub branch: String,
+    /// The attempt type, as the run tree names it: a Dreamer runner row's
+    /// payload type, else the queue kind.
+    pub worker_kind: String,
+    /// The parent attempt, as the run tree names it: the placement's parent,
+    /// else the try this one retries, else a Dreamer row's spawn parent.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// The TASK the attempt realizes, when it realizes one.
+    #[serde(default)]
+    pub task_ref: Option<String>,
     #[serde(default)]
     pub run_id: Option<String>,
     pub state: AttemptState,
@@ -105,6 +109,17 @@ pub struct RunBranchView {
     pub agent_status: AgentRunStatus,
     /// The lease generation within this try.
     pub attempt_count: u32,
+    /// When the queue created the row, unix seconds.
+    pub created_at: u64,
+    /// When the current lease was claimed, unix seconds; `None` before a
+    /// claim.
+    #[serde(default)]
+    pub claimed_at: Option<u64>,
+    /// When the row settled, unix seconds; `None` while it is unsettled.
+    #[serde(default)]
+    pub settled_at: Option<u64>,
+    /// When the row last changed, unix seconds.
+    pub updated_at: u64,
     /// The artifact version the branch's durable output lives in.
     #[serde(default)]
     pub result_ref: Option<String>,
@@ -123,11 +138,12 @@ pub struct RunBranchView {
     pub cancel_state: AttemptCancelState,
 }
 
-/// The owner's read of one consult TASK.
+/// One job: one attempt row, as stored. Its result is `job.result_ref`, the
+/// reference its producer wrote, or `None`; the caller reads what it names
+/// through the door that owns it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConsultReadRequest {
-    pub task_ref: EntityId,
+pub struct RunJobView {
+    pub job: RunBranchView,
 }
 
 /// One consult TASK as its owner inspects it: its deadline, when it has one,
@@ -161,19 +177,6 @@ pub struct ConsultTerminalView {
     /// The TASK a countered ladder outcome created in the same transaction.
     #[serde(default)]
     pub counter_task_ref: Option<EntityId>,
-}
-
-/// How a consult ended. `expired` (its deadline passed) and `abandoned` (its
-/// executor went away) stay distinct causes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConsultDisposition {
-    Completed,
-    Rejected,
-    Failed,
-    Expired,
-    Abandoned,
-    Cancelled,
 }
 
 /// An answer's evidence, or an abstention's reason, by ref.
@@ -224,16 +227,6 @@ pub enum ConsultLandKind {
         result_ref: EntityId,
         reason_ref: ConsultPayloadRef,
     },
-}
-
-/// What one consult cost its peer, measured, in one unit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConsultLandSpend {
-    /// A budget line's unit: `tokens`, or one a pack row names.
-    pub unit: LeaseUnit,
-    #[schemars(range(max = "JS_SAFE_INTEGER"))]
-    pub units: u64,
 }
 
 /// What the landing came to: the consult's terminal register as stored, and
@@ -490,18 +483,24 @@ pub fn read_branches_as_reader(
         branches: read
             .into_iter()
             .map(|(own, record)| {
-                let mut view = branch_view(record);
-                if !own {
-                    view.last_error = None;
-                    view.budget_refusal = None;
-                    view.asks = Vec::new();
-                    view.signals = Vec::new();
-                    view.cancel_state = without_text(view.cancel_state);
-                }
-                view
+                let view = branch_view(record);
+                if own { view } else { withheld(view) }
             })
             .collect(),
     })
+}
+
+/// A branch as a reader that is not its actor reads it: its last error,
+/// budget refusal, asks and signals withheld, and its cancel state without
+/// its words (`without_text`), since a run's words carry no label for
+/// another reader's lane.
+fn withheld(mut view: RunBranchView) -> RunBranchView {
+    view.last_error = None;
+    view.budget_refusal = None;
+    view.asks = Vec::new();
+    view.signals = Vec::new();
+    view.cancel_state = without_text(view.cancel_state);
+    view
 }
 
 /// A branch's cancel state without its words, for a reader the run's text
@@ -543,6 +542,81 @@ pub fn read_branches_embedded(
     match memory.embedded_owner("vault.runs.branches.get") {
         Ok(owner) => read_branches_as(memory.vault(), &owner, input),
         Err(_) => read_branches_as_reader(memory, input),
+    }
+}
+
+/// Reads, as the vault owner, one job in one read transaction: the attempt
+/// row `input.job` names, archived or not, as stored.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a job id that is not 32 hex; `NOT_FOUND` for one no
+/// attempt row holds; a stale owner proof; storage errors.
+pub fn read_job_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: RunJobRequest,
+) -> MemoryResult<RunJobView> {
+    let id = crate::memory::parse_job_ref(&input.job)?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    owner.revalidate_in_txn(vault, &txn)?;
+    let Some(record) = AttemptQueue::new(vault).get_in_txn(&txn, id)? else {
+        return Err(MemoryError::not_found(format!(
+            "no job {} is in this vault",
+            attempt_hex(id)
+        )));
+    };
+    Ok(RunJobView {
+        job: branch_view(record),
+    })
+}
+
+/// `vault.runs.job` for a caller other than the owner (ENGINE CALL S64-3 =
+/// A, as `vault.runs.branches.get` reads): a job the caller is the actor of
+/// (its agent dispatch target, resident, turn-program waker or the Dreamer on
+/// its own stamp), whole. A Steward of this shared vault reads any job by its
+/// role, without its text when it is not the job's actor ([`withheld`]).
+///
+/// The caller's read authority is proved in the snapshot the job is read in
+/// (`Memory::prove_read_authority_in_txn`).
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a job id that is not 32 hex; `FORBIDDEN` for a caller
+/// whose bound credential grants it no read or no longer holds, and for a
+/// job that is not the caller's while it is no Steward. An id no row holds
+/// is refused the same way, so a caller cannot probe which jobs exist.
+/// Storage errors.
+pub fn read_job_as_reader(memory: &Memory<'_>, input: RunJobRequest) -> MemoryResult<RunJobView> {
+    const VERB: &str = "vault.runs.job";
+    let id = crate::memory::parse_job_ref(&input.job)?;
+    let vault = memory.vault();
+    let caller = WriteActor::new(memory.actor(), memory.actor_class());
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
+    let Some(record) = AttemptQueue::new(vault).get_in_txn(&txn, id)? else {
+        return Err(crate::snapshot_read::not_the_callers(VERB));
+    };
+    let own = crate::snapshot_read::is_attempt_actor_in_txn(vault, &txn, caller, record.id)?;
+    if !own && !crate::snapshot_read::is_steward_in_txn(vault, &txn, caller)? {
+        return Err(crate::snapshot_read::not_the_callers(VERB));
+    }
+    let view = branch_view(record);
+    Ok(RunJobView {
+        job: if own { view } else { withheld(view) },
+    })
+}
+
+/// `vault.runs.job` on an in-process handle: the embedded owner's read, or
+/// [`read_job_as_reader`] for any other caller.
+///
+/// # Errors
+///
+/// As the read it takes.
+pub fn read_job_embedded(memory: &Memory<'_>, input: RunJobRequest) -> MemoryResult<RunJobView> {
+    match memory.embedded_owner("vault.runs.job") {
+        Ok(owner) => read_job_as(memory.vault(), &owner, input),
+        Err(_) => read_job_as_reader(memory, input),
     }
 }
 
@@ -602,14 +676,23 @@ fn branches(task: &str, records: Vec<AttemptRecord>) -> MemoryResult<Vec<Attempt
 }
 
 /// One attempt row as its branch view: every field as stored, the agent
-/// status projected from the stored state alone.
+/// status projected from the stored state alone, and the kind and parent as
+/// the run tree names them.
 pub(super) fn branch_view(record: AttemptRecord) -> RunBranchView {
+    let metadata = crate::run_tree::attempt_metadata(&record);
     RunBranchView {
         branch: attempt_hex(record.id),
+        worker_kind: metadata.worker_kind,
+        parent_id: metadata.parent_id,
+        task_ref: record.task_ref,
         run_id: record.run_id,
         state: record.state,
         agent_status: project_agent_run_status(RunTreeStatus::from(record.state)),
         attempt_count: record.attempt_count,
+        created_at: record.created_at,
+        claimed_at: record.claimed_at,
+        settled_at: record.settled_at,
+        updated_at: record.updated_at,
         result_ref: record.result_ref.map(AttemptResultRef::into_string),
         last_error: record.last_error,
         budget_refusal: record.budget_refusal,

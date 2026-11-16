@@ -1,6 +1,6 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import { defineFile, runProcess } from "./support/run.ts";
+import { defineFile, expect, runProcess } from "./support/run.ts";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";

@@ -18,6 +18,7 @@ mod made_by;
 mod manifest;
 mod models;
 mod optional_memory;
+mod optional_memory_set;
 mod plan_mode;
 mod powers;
 mod proposed_change;
@@ -43,6 +44,10 @@ pub use self::models::{
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::optional_memory_set::{
+    AgentOptionalMemorySetRequest, AgentOptionalMemoryState, OptionalMemoryChoice,
+    OptionalMemoryView, set_agent_optional_memory_from_request_as,
 };
 pub use self::plan_mode::{
     AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, set_agent_plan_mode_from_request_as,
@@ -155,10 +160,12 @@ pub(crate) use portable_source::{
 
 mod birth_custody;
 mod birth_dependencies;
+mod creating_agent;
 mod creating_owner;
 pub(crate) mod tables;
 pub(crate) use birth_custody::{remove_birth_custody_in_txn, stage_birth_custody_put};
 pub(crate) use birth_dependencies::retire_birth_sources_for_entity_in_txn;
+pub(crate) use creating_agent::record_creating_agent_in_txn;
 pub(crate) use creating_owner::created_by_owner_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};

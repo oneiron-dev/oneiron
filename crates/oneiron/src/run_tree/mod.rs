@@ -9,8 +9,8 @@ mod ask_wait;
 mod consent;
 mod render;
 mod signal;
-pub(crate) use render::effective_parent;
-pub(crate) use signal::{SignalIntent, validate_signal_rows};
+pub(crate) use render::{attempt_metadata, effective_parent};
+pub(crate) use signal::{SignalIntent, pause_pending, takes_boundary_pause, validate_signal_rows};
 mod types;
 mod wire;
 

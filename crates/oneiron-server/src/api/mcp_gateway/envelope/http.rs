@@ -112,7 +112,7 @@ pub(crate) async fn mcp_method_not_allowed(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Response {
-    if let Some(refused) = mcp_origin_refusal(&server, &headers, Arrival::of(&[])) {
+    if let Some(refused) = mcp_origin_refusal(&server, &headers, Arrival::of(&[])).await {
         return refused;
     }
     let mut response = StatusCode::METHOD_NOT_ALLOWED.into_response();
@@ -164,7 +164,7 @@ impl<'a> Arrival<'a> {
 /// `error.data.receipt_ref`, as a refused call does; every such reply states
 /// it in `x-oneiron-receipt-ref`. A result's body is left as it is, so
 /// `tools/list` stays the same bytes for every credential.
-pub(super) fn mcp_connection_stamp(
+pub(super) async fn mcp_connection_stamp(
     server: &SyncServer,
     headers: &HeaderMap,
     method: &str,
@@ -200,7 +200,7 @@ pub(super) fn mcp_connection_stamp(
     );
     if let Err(error) = answered {
         // FIX 1085: it counts on the wire on its own, under no caller.
-        super::wire::observe_envelope_error(server, method, error.kind);
+        super::wire::observe_envelope_error(server, method, error.kind).await;
         error.call_receipt = Some(Box::new(stamp.clone()));
     }
     stamp
@@ -238,7 +238,7 @@ pub(super) fn mcp_http_reply(
 }
 
 /// An envelope refused before any method ran, as its connection's reply.
-pub(super) fn mcp_connection_refusal(
+pub(super) async fn mcp_connection_refusal(
     server: &SyncServer,
     headers: &HeaderMap,
     method: &str,
@@ -247,13 +247,13 @@ pub(super) fn mcp_connection_refusal(
     error: McpGatewayError,
 ) -> Response {
     let mut refused = Err(error);
-    let stamp = mcp_connection_stamp(server, headers, method, body, &mut refused);
+    let stamp = mcp_connection_stamp(server, headers, method, body, &mut refused).await;
     mcp_http_reply(mcp_envelope(id, refused), Some(&stamp))
 }
 
 /// An envelope refused before any method ran, as its connection's reply,
 /// under the HTTP status the transport answers it with.
-fn mcp_status_refusal(
+async fn mcp_status_refusal(
     status: StatusCode,
     server: &SyncServer,
     headers: &HeaderMap,
@@ -262,7 +262,7 @@ fn mcp_status_refusal(
     id: Value,
     error: McpGatewayError,
 ) -> Response {
-    let mut response = mcp_connection_refusal(server, headers, method, body, id, error);
+    let mut response = mcp_connection_refusal(server, headers, method, body, id, error).await;
     *response.status_mut() = status;
     response
 }
@@ -275,7 +275,7 @@ fn mcp_status_refusal(
 /// (`oauth_resource_indicator`), or when its host is a loopback name or
 /// address, which a rebinding page never carries. A request with no
 /// `Origin`, as every client outside a browser sends, is not judged.
-fn mcp_origin_refusal(
+async fn mcp_origin_refusal(
     server: &SyncServer,
     headers: &HeaderMap,
     body: Arrival<'_>,
@@ -293,15 +293,18 @@ fn mcp_origin_refusal(
         ),
     )
     .with_field("Origin");
-    Some(mcp_status_refusal(
-        StatusCode::FORBIDDEN,
-        server,
-        headers,
-        "mcp",
-        body,
-        Value::Null,
-        error,
-    ))
+    Some(
+        mcp_status_refusal(
+            StatusCode::FORBIDDEN,
+            server,
+            headers,
+            "mcp",
+            body,
+            Value::Null,
+            error,
+        )
+        .await,
+    )
 }
 
 /// Whether this server admits the request's `Origin`: none, one
@@ -380,15 +383,18 @@ async fn mcp_transport_answer(
     if method != Some("initialize")
         && let Some(error) = mcp_protocol_header_refusal(headers)
     {
-        return Some(mcp_status_refusal(
-            StatusCode::BAD_REQUEST,
-            server,
-            headers,
-            method.unwrap_or("mcp"),
-            body,
-            raw.get("id").cloned().unwrap_or(Value::Null),
-            error,
-        ));
+        return Some(
+            mcp_status_refusal(
+                StatusCode::BAD_REQUEST,
+                server,
+                headers,
+                method.unwrap_or("mcp"),
+                body,
+                raw.get("id").cloned().unwrap_or(Value::Null),
+                error,
+            )
+            .await,
+        );
     }
     if !mcp_is_notification_or_response(raw) {
         return None;
@@ -483,7 +489,8 @@ async fn mcp_accept_message(
             body,
             Value::Null,
             error,
-        );
+        )
+        .await;
     }
     let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers, None);
     let stamp = crate::api::call_receipt::record(
@@ -519,7 +526,7 @@ pub(super) async fn mcp_endpoint(
     };
     // A present Origin this server does not admit is refused before the
     // body is read (FIX 4902).
-    if let Some(refused) = mcp_origin_refusal(&server, &headers, arrival) {
+    if let Some(refused) = mcp_origin_refusal(&server, &headers, arrival).await {
         return refused;
     }
     let raw: Value = match serde_json::from_slice(&body) {
@@ -532,7 +539,8 @@ pub(super) async fn mcp_endpoint(
                 arrival,
                 Value::Null,
                 McpGatewayError::new(-32700, "parse_error", error.to_string()),
-            );
+            )
+            .await;
         }
     };
     // The version header and a notification or response are answered
@@ -562,7 +570,8 @@ pub(super) async fn mcp_endpoint(
                 arrival,
                 id,
                 McpGatewayError::new(-32600, "invalid_request", error.to_string()),
-            );
+            )
+            .await;
         }
     };
     let id = request.id.clone().unwrap_or(id);
@@ -606,7 +615,8 @@ pub(super) async fn mcp_endpoint(
                         arrival,
                         id,
                         error,
-                    );
+                    )
+                    .await;
                 }
             };
             let call = match mcp_invocation_body(
@@ -627,7 +637,8 @@ pub(super) async fn mcp_endpoint(
                         arrival,
                         id,
                         McpGatewayError::new(-32603, "engine_error", error.to_string()),
-                    );
+                    )
+                    .await;
                 }
             };
             match facade::claim_door_invocation(
@@ -638,7 +649,19 @@ pub(super) async fn mcp_endpoint(
             )
             .await
             {
-                DoorClaim::Run(claim) => Some(claim),
+                // The tool a `tools/call` names is its verb: one whose answer
+                // is never kept releases the claim when it ends (review round
+                // 2 of #7603).
+                DoorClaim::Run(claim) => Some(
+                    claim.for_verb(
+                        request
+                            .params
+                            .as_ref()
+                            .and_then(|params| params.get("name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    ),
+                ),
                 DoorClaim::Answered(outcome) => {
                     // And again once the wait is over, before a reply is his.
                     if let Err(error) = owner_of() {
@@ -649,7 +672,8 @@ pub(super) async fn mcp_endpoint(
                             arrival,
                             id,
                             error,
-                        );
+                        )
+                        .await;
                     }
                     // The waiter is resolved again, on its own connection's
                     // machine: a credential no longer live gets the refusal
@@ -698,7 +722,8 @@ pub(super) async fn mcp_endpoint(
                                     arrival,
                                     id,
                                     error,
-                                ),
+                                )
+                                .await,
                                 challenge,
                             );
                         }
@@ -723,7 +748,7 @@ pub(super) async fn mcp_endpoint(
                             facade::INVOCATION_IN_FLIGHT,
                             "another request is still running this invocation; retry with it once the first call returns",
                         ),
-                    );
+                    ).await;
                 }
                 DoorClaim::Conflict => {
                     return mcp_connection_refusal(
@@ -737,7 +762,8 @@ pub(super) async fn mcp_endpoint(
                             facade::INVOCATION_CONFLICT,
                             "this invocation id names a different call",
                         ),
-                    );
+                    )
+                    .await;
                 }
                 DoorClaim::ReplyNotKept { committed_writes } => {
                     return mcp_connection_refusal(
@@ -753,7 +779,7 @@ pub(super) async fn mcp_endpoint(
                                 "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
                             ),
                         ),
-                    );
+                    ).await;
                 }
                 DoorClaim::Erased => {
                     return mcp_connection_refusal(
@@ -767,7 +793,8 @@ pub(super) async fn mcp_endpoint(
                             facade::INVOCATION_RESPONSE_ERASED,
                             "the first response with this invocation was erased",
                         ),
-                    );
+                    )
+                    .await;
                 }
                 DoorClaim::StoreFailed => {
                     return mcp_connection_refusal(
@@ -781,7 +808,8 @@ pub(super) async fn mcp_endpoint(
                             facade::INVOCATION_STORE_FAILED,
                             "the invocation claim could not be stored",
                         ),
-                    );
+                    )
+                    .await;
                 }
             }
         }
@@ -812,8 +840,11 @@ pub(super) async fn mcp_endpoint(
         Ok(_) => method == "tools/call",
         Err(error) => error.call_receipt.is_some(),
     };
-    let stamp =
-        (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, arrival, &mut result));
+    let stamp = if covered {
+        None
+    } else {
+        Some(mcp_connection_stamp(&server, &headers, &method, arrival, &mut result).await)
+    };
     let failed = result.is_err();
     // An anonymous request no cohort admitted answers 401 with its challenge
     // (FIX 4902 slice C). An OAuth token that does not resolve never gets

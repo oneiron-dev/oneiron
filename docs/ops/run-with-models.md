@@ -99,6 +99,35 @@ base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
 
+A rung of `rungs` may keep daily hours, such as a GPU box at home that runs
+batch models at night (`hours = { start, end, utc_offset | iana_timezone }`,
+the type and checks of `[[gpu.pods]] hours`, section 12):
+
+```toml
+[models.roles.dreamer_current]
+rungs = [
+  { model = "claude:claude-sonnet-4-5" },
+  { model = "gpubox:qwen3.8-27b", hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" } },
+]
+
+[models.providers.gpubox]               # the GPU box's OpenAI-compatible server
+kind = "local-openai-compat"
+base_url = "http://gpubox.lan:8000"
+```
+
+Inside its hours the seat's walk tries that rung before the rungs without
+hours, wherever the ladder lists it; a failure hands the call on as usual.
+Outside them the walk passes it at once, with no wait for the hours to open,
+and the receipt's `passed_over` row for it reads `"passed": "outside_hours"`.
+A run's live compaction fork is bound to the rung that answered the run only
+while the walk would take that rung, so never outside its hours.
+A model the vault's model manifest pins for the role is served at any hour:
+the pin names that one model, so there is no walk. A ladder whose every rung
+keeps hours is refused, so a call outside them always has a rung, as is
+`hours` on a role's single `model`. The hours say when, not where: the rung's
+provider is the owner's own entry, and `leave_device` applies to it as to any
+rung.
+
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
 the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at
@@ -252,7 +281,14 @@ sends it once over verified TLS (no redirect, no retry, no proxy) and strips the
 key from the reply. Each call reads the key at the custody door, so register the
 secret with a binding for the effector `broker:model` at T0 (doored). Run
 the broker with `oneiron-broker serve --socket <path> --client-uid <the
-server's uid>` (add `--extra-roots <pem>` for a private CA), and name it:
+server's uid>` (add `--extra-roots <pem>` for a private CA). On a systemd
+host, install `deploy/sysusers.d/oneiron-broker.conf` and
+`deploy/systemd/oneiron-broker@.service` instead (`oneiron-server host init`
+writes both), and enable `oneiron-broker@<the server's uid>.service`. That unit
+runs the broker as the user `oneiron-broker`, on the socket
+`/run/oneiron-broker/<the server's uid>/broker.sock`, in a directory only that
+user's group may enter: add the server's user to the group `oneiron-broker`.
+Name the broker:
 
 ```toml
 [models.broker]
@@ -284,9 +320,11 @@ extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
-A `key_secret` provider answers whole chat replies only for now: a streamed chat
-call to it is refused before it starts. Its media calls go through the same
-broker (§10).
+A streamed chat call to a `key_secret` provider goes through the broker as
+the provider's event request; the broker strips each form of the key from
+the events as they pass, and the call keeps its permit and digest binding.
+A Gemini model streams this way too when its entry declares `streaming`. Its
+media calls go through the same broker (§10).
 
 A self-hosted `serve` takes `--settings-file <path>` too: a TOML file in its
 config file's schema, read as one more config file over `--config` and under
@@ -717,11 +755,12 @@ the broker sends plain until restart. A `key_secret` entry takes no
 Our own model servers decode compressed bodies once built or started for it
 (OF-604): the house model's `exl3_server.py`, a `llama-server` built by
 `deploy/house-model/build-llama.sh` (cpp-httplib's zstd and zlib support on),
-a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
-(deploy/house-model/README.md, "Compressed requests"), and the VoxCPM2 worker.
+and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
+(deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
-whose server does not decode stays plain. A `voxcpm2` entry compresses its
-`/render` uploads, and an opted-in provider's media JSON bodies compress by
+whose server does not decode stays plain. A `voxcpm2` entry takes none (its
+loopback voice socket carries no codec frame) and an entry that sets it is
+refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.
@@ -1732,17 +1771,22 @@ model = "rerank:<the model your server loaded>"
 
 [models.recall]
 rerank_budget_units = 32000   # each recall's own line; the default
+rerank_pair_template_units = 16   # what the template adds to each pair; the default
 ```
 
 Each paid recall runs on a line of its own under the vault's budget policy,
 as a chat turn does. Before a call leaves it is priced on its words, a unit
-per byte of each document plus the query once per document, and 16 more
-per document for the marks a cross-encoder puts around each pair. A line
-that cannot cover that refuses the call unsent with `BUDGET_SPENT`. The
-default line covers 50 documents of 500 ASCII characters beside a query of
-about 120; longer documents, text outside ASCII (several bytes a
-character), or a model whose template wraps each pair in a longer prompt
-need a larger `rerank_budget_units`. Each rung of the `reranker` route the
+per byte of each document plus the query once per document, and
+`rerank_pair_template_units` more per document for what the reranker's
+template puts around each pair: 16 when unset, the marks a cross-encoder
+puts around a pair. A line that cannot cover that refuses the call unsent
+with `BUDGET_SPENT`. The default line covers 50 documents of 500 ASCII
+characters beside a query of about 120; longer documents or text outside
+ASCII (several bytes a character) need a larger `rerank_budget_units`. A
+model whose template wraps each pair in a longer prompt (an instruction-style
+reranker's template adds about a hundred tokens a pair) needs
+`rerank_pair_template_units` set to the most any rung's template adds, and a
+line to match; left at 16, its short documents can bill past the line. Each rung of the `reranker` route the
 call reaches is admitted on its own permit, reserving that price (at least
 one call's 8000 units, or the whole line if smaller), sent through the run's
 gate and settled: the tokens the reranker reports, or the reservation when
@@ -1754,10 +1798,12 @@ role picks the model, as for chat.
 
 The recall scores exactly the block it would rerank: the candidates the
 reader may read, with each one's text as the reader's own read serves it.
-A row with no revision that holds its words (a message whose words live in
-its document: a streamed message, the server's own chat replies among them,
-or an edited one; or a turn whose messages show none) is found but not
-reranked yet: it follows the reranked rows in its first-stage order. Each
+A message whose words live in its document (a streamed message, the
+server's own chat replies among them, or an edited one) is scored at the
+words its indexed revision holds. A row with no revision that holds its
+words (a message whose document head was written around the ledger, or a
+turn whose messages show none) is found but not reranked yet: it follows
+the reranked rows in its first-stage order. Each
 text is judged by the write door as it would leave, a turn's messages
 joined as the reranker would read them, and one the door refuses is sent
 empty. So is a row a device-only world keeps, at the revision scored: a
@@ -1815,7 +1861,7 @@ model = "house:qwen3.8-27b"
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
 max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
-think_threshold = 0.8                          # the ThinkThreshold row's start value
+think_threshold = 0.277                        # the ThinkThreshold row's start value (the default)
 ```
 
 The recipe is yours, not the server's (`format = 3`): it names the plain
@@ -1899,7 +1945,12 @@ reading is recorded on every receipt and routes nothing.
 
 `think_threshold` starts the ThinkThreshold row: a paired "does this need
 more thinking?" reading (Q2) at or above it lets the call step up a rung
-while its clock allows (`ReasoningCause::PairedHigh`). The house read
+while its clock allows (`ReasoningCause::PairedHigh`). It starts at 0.277,
+the p90 of the house read's Q2 over 1,000 BoolQ reads (FIX 22229), so about
+one read in ten steps up to the Big rung until the Coach tunes the row. Each
+read weighed against the row logs its route (direct, stepped up or step
+unfinished), its Q2 reading and the host's step-up rate so far, under the
+`oneiron::decision::think_route` log target. The house read
 measures Q2 jointly with each question's labels. A generated read (a
 caller's own model, `DecisionLadder::run_pack_generated`) asks the ladder's
 paired question, the recipe's `paired` wording, beside each of its questions
@@ -2024,9 +2075,9 @@ Gemini file's one redirect is followed only under the API's own origin.
 
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
 key in `key_env` or `key_secret` (sent as `x-goog-api-key`). Its chat rungs send
-`models/{model}:generateContent`, streamed as `streamGenerateContent` on a direct key
-when the model declares it; a `key_secret` chat goes through the credential broker as
-a whole reply, like its media calls do. A configured `max_output_tokens` is sent as
+`models/{model}:generateContent`, streamed as `streamGenerateContent?alt=sse` when the
+model declares `streaming`; a `key_secret` chat, whole or streamed, goes through the
+credential broker, like its media calls do. A configured `max_output_tokens` is sent as
 `generationConfig.maxOutputTokens` on both paths. It also serves the image and video
 seats. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
@@ -2864,11 +2915,25 @@ Answer with `POST /v1/ai/quota/{id}`
 A rung whose provider is down hands the call to the next rung, and its offer
 rests for its health in memory. A server error, a timeout, a cut stream and an
 empty answer all count as down. The rest is 5 s, doubling with each failure
-in a row up to 60 s, with jitter. A restart starts every offer healthy. While
+in a row up to 60 s, with jitter. `[models] health_rest_secs` sets the first
+rest, from 1 to 60 s. A restart starts every offer healthy. While
 every rung the call may use rests, the call waits for the first one back
 within the same wait budget as for limits, then tries the chain again. A call
 that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
+
+A durable model step (`ai.steps.submit`) names one exact model, so it waits
+for that offer instead of the next rung. A send it would make while the offer
+rests for its health, or while its probation request is out, is not sent and
+spends none of the step's `retry.max_attempts`: those count sends. The step
+waits for the offer back within the vault's longest wait, or within
+`[models] step_rest_wait_secs` when that is shorter. Past it, the receipt says
+`{"status": "parked", "until": <when the offer is back>, "sends": <sends made>}`
+and the step resumes on its own then, with the rest of its declared attempts.
+A restart drops that wait; a submission of the same `step_key` resumes the step.
+A send counts once it goes out: a step stopped while a send is out resumes with
+that send spent, and a resume that finds every declared attempt sent fails at
+once with an `io_after_send` cut, as the last reply was lost.
 
 When an offer's rest ends it is on probation: a failure rests it again with
 one more strike. On probation it takes one request at a time. The call that
@@ -2928,7 +2993,38 @@ api_key_env = "ONEIRON_GPU_POD_KEY"
 id = "pod-a"
 url = "https://pod-a.example:8000/v1"
 capacity = 4
+
+# A home GPU box that takes batches only at night, in its owner's time.
+[[gpu.pods]]
+id = "home-gpu"
+url = "https://home-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", utc_offset = "+09:00" }
+
+# A box in a zone with daylight saving: its hours follow the zone's clock.
+[[gpu.pods]]
+id = "berlin-gpu"
+url = "https://berlin-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" }
 ```
+
+A pod with `hours` takes new batches only inside them (CROSS-ARCH-0024
+#my-network 07: embeddings can run on the GPU box at night). `start` is the
+first minute in and `end` the first minute out, both `"HH:MM"`; a start later
+than the end runs across midnight. The hours are read on exactly one clock:
+`utc_offset`, a fixed offset that does not follow daylight-saving changes, or
+`iana_timezone`, an IANA zone in its canonical spelling, read in the engine's
+embedded zone database (the calendar's), so the hours move with the zone's
+daylight-saving changes. In a zone, on the night the clocks jump forward the
+skipped minutes never occur, so a start inside the gap opens at the first
+minute after it; on the night they fall back, the repeated hour is in or out
+both times. A batch that took its lease inside the hours keeps it until the
+batch ends. Outside every pod's hours, batches go to the `[embedder]`
+endpoint, as with no healthy pod. A pod without `hours` takes batches at any
+hour. `serve` refuses a time that is not `"HH:MM"`, a start equal to the end,
+an offset beyond 14:00, a zone the database does not hold, and hours with no
+clock or with both.
 
 `serve` polls each pod at start and then every `poll_seconds`. A pod is
 healthy when it answers at all (transport), answers `health_path` with a 2xx

@@ -1,85 +1,25 @@
 //! Typed meeting prep, outcome observation and the owner's check-in policy.
-use serde::{Deserialize, Serialize};
 
 use crate::calendar::outcome::{
-    self, CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, EventOutcome,
-    EventOutcomeClaimValue, MeetingClassSignals,
+    self, CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, MeetingClassSignals,
 };
-use crate::calendar::prep::{PrepBuildRequest, PrepPack, PrepPolicy, build_prep_pack_scoped};
+use crate::calendar::prep::setting_keys::prep_policy;
+use crate::calendar::prep::{PrepBuildRequest, PrepPack, build_prep_pack_scoped};
 use crate::claim::{
     ClaimApprovalStatus, ClaimReadStatus, ClaimSource, PointRead, ScopedReadResult,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::side_table::{self, Named, SideTable};
-use crate::{EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{EdgeActorClass, EntityId, WriteEnvelope, WriteProvenance};
 
 mod facts;
 pub(in crate::calendar) use facts::meeting_event_in_txn;
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarMeetingRequest {
-    pub event_ref: String,
-}
-
-/// The vault-scope `calendar_outcome_grace_seconds` policy row the owner reads
-/// and writes through the policy manifest
-/// (`gate::policy_manifest_doors::set_calendar_outcome_grace_as_owner`); never
-/// a caller-supplied clock or evidence signal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarOutcomePolicy {
-    pub grace_secs: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarEventOutcome {
-    pub event_ref: String,
-    pub outcome: EventOutcome,
-    pub claim: Option<EventOutcomeClaimValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarCheckInDue {
-    pub event_ref: String,
-    pub observed_at: u64,
-    pub grace_secs: u64,
-    pub due_at: Option<u64>,
-    pub due: bool,
-    pub outcome: Option<EventOutcomeClaimValue>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CalendarCheckInAnswer {
-    Held,
-    NoShow,
-    Rescheduled,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarCheckInRequest {
-    pub event_ref: String,
-    pub answer: CalendarCheckInAnswer,
-}
-
-/// A reschedule disposition routes the consumer to scheduling; it is not an outcome.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "disposition", rename_all = "snake_case")]
-pub enum CalendarCheckInReceipt {
-    Outcome {
-        event_ref: String,
-        claim_ref: String,
-        value: EventOutcomeClaimValue,
-    },
-    RescheduleRequested {
-        event_ref: String,
-        claim_ref: String,
-        value: EventOutcomeClaimValue,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::meeting::{
+    CalendarCheckInAnswer, CalendarCheckInDue, CalendarCheckInReceipt, CalendarCheckInRequest,
+    CalendarEventOutcome, CalendarMeetingRequest, CalendarOutcomePolicy,
+};
 
 fn event_id(reference: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(reference)
@@ -124,12 +64,15 @@ fn trace_event(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, event: EntityId) -> c
     Ok(())
 }
 
+/// The EVENT's check-in state, and whether the owner may answer it now: the
+/// grace has passed and [`outcome::check_in_accepts_answer_in_txn`] holds. The
+/// check-in is `due` when it may be answered and no outcome is recorded yet.
 fn due_in_txn(
     memory: &Memory<'_>,
     lane: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
-) -> crate::Result<CalendarCheckInDue> {
+) -> crate::Result<(CalendarCheckInDue, bool)> {
     let vault = memory.vault();
     trace_event(memory, txn, event)?;
     let observed_at = vault.instant_in_txn(txn)?.secs();
@@ -143,13 +86,14 @@ fn due_in_txn(
         due: false,
         outcome,
     };
+    let mut answerable = false;
     if let Some(meeting) = meeting_event_in_txn(vault, txn, lane, event)? {
         let signals = signals(&meeting);
         if outcome::is_meeting_class(signals) {
             let due_at = meeting.end_utc.saturating_add(grace_secs);
             result.due_at = Some(due_at);
-            result.due = observed_at >= due_at
-                && outcome::check_in_is_still_due_in_txn(
+            answerable = observed_at >= due_at
+                && outcome::check_in_accepts_answer_in_txn(
                     vault,
                     txn,
                     &DueOutcomeCheckIn {
@@ -163,9 +107,10 @@ fn due_in_txn(
                         signals,
                     },
                 )?;
+            result.due = answerable && result.outcome.is_none();
         }
     }
-    Ok(result)
+    Ok((result, answerable))
 }
 
 pub fn check_in_due(
@@ -180,7 +125,7 @@ pub fn check_in_due(
         if !facts::readable_event_in_txn(memory.vault(), txn, &lane, event)? {
             return Ok(None);
         }
-        Ok(Some(due_in_txn(memory, &lane, txn, event)?))
+        Ok(Some(due_in_txn(memory, &lane, txn, event)?.0))
     })
 }
 
@@ -198,11 +143,11 @@ pub fn check_in_answer(
                 "calendar EVENT is absent or withheld",
             ));
         }
-        let due = due_in_txn(memory, &lane, txn, event)?;
-        if !due.due {
-            return Err(MemoryError::bad_request(
-                "calendar check-in is not due or already has evidence",
-            ));
+        // A recorded outcome no longer closes the door: the owner's answer
+        // replaces any head (CAL-07-OUTCOME-CONFLICT = A).
+        let (due, answerable) = due_in_txn(memory, &lane, txn, event)?;
+        if !answerable {
+            return Err(MemoryError::bad_request("calendar check-in is not due"));
         }
         let answer = match input.answer {
             CalendarCheckInAnswer::Held => CheckInAnswer::Held,
@@ -275,7 +220,7 @@ impl Memory<'_> {
             &PrepBuildRequest {
                 event,
                 fired_at: self.vault().now_recorded_at(),
-                policy: PrepPolicy::default(),
+                policy: prep_policy(self.vault())?,
             },
         )?;
         receipt.restrict_with(&pack.receipt);
@@ -300,6 +245,10 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<Option<CalendarEventOutcome>>> {
         let event = event_id(&input.event_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // The disputing machine outcomes are mostly claims the answer
+        // superseded, which the surfaceable lane never admits: the caller's own
+        // lane at the record verbs' status admits each one.
+        let records = self.read_lane(ClaimReadStatus::Recorded)?;
         Ok(lane.read_projected(
             &[PointRead::id(event)],
             None,
@@ -313,6 +262,12 @@ impl Memory<'_> {
                     event_ref: event.to_hex(),
                     outcome: outcome::project_event_outcome(claim),
                     claim,
+                    disputing_machine_outcomes: outcome::readable_disputing_machine_outcomes_in(
+                        self.vault(),
+                        txn,
+                        &records,
+                        &event,
+                    )?,
                 }))
             },
         )?)

@@ -18,7 +18,7 @@ use std::task::Poll;
 
 use super::call_labels::CallLabelMap;
 use super::executor::extraction::CitationCheck;
-use super::executor::{ConsolidationExecutor, Decider, ScopedRead};
+use super::executor::{ConsolidationExecutor, Decider, ExtractionPrompt, ScopedRead};
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{FailureRules, Stage};
 use super::provenance::KeptDecision;
@@ -106,6 +106,8 @@ pub struct NeighbourhoodExtraction<'a> {
     pub(in crate::dreamer_consolidation) guard: &'a BudgetGuard,
     /// The extraction role, as the executor resolves it.
     pub(in crate::dreamer_consolidation) call: RoleCall<'a>,
+    /// The prompt each slice's request asks in: the host's, else the shipped one.
+    pub(in crate::dreamer_consolidation) prompt: &'a ExtractionPrompt,
     pub(in crate::dreamer_consolidation) slices: Vec<SliceCall<'a>>,
     /// The namespace the people a reply declares are minted under.
     pub(in crate::dreamer_consolidation) namespace: MintNamespace,
@@ -419,6 +421,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
     for slice in &child.slices {
         let mut request = ConsolidationExecutor::extraction_request(
             &child.call,
+            child.prompt,
             slice.transcript,
             slice.labels,
             slice.scope,

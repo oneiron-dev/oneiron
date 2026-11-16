@@ -34,8 +34,10 @@ pub(super) use self::witness_assertions::NapiWitnessAssertions;
 pub struct NapiWitnessMessage {
     /// Deterministic 32-hex entity id; omitted ⇒ generated.
     pub id: Option<String>,
-    /// `user` | `companion` | `system` (system rows get no AuthoredBy edge,
-    /// and authoring one takes engine-voice authority — see the type docs).
+    /// `user` | `companion` | `system` | `counterparty` (system rows get no
+    /// AuthoredBy edge, and authoring one takes engine-voice authority — see
+    /// the type docs; counterparty rows, somebody else's imported words, get
+    /// no AuthoredBy edge to their writer).
     pub author: String,
     /// Message type token (bounded, printable, no whitespace).
     pub message_type: String,
@@ -669,7 +671,8 @@ pub struct NapiRetrievalMeta {
 pub struct NapiTemporalHint {
     /// The phrase, lowercased with punctuation dropped.
     pub phrase: String,
-    /// `used` narrowed the window; `unresolved` and `future` were skipped.
+    /// `used` re-anchored the temporal search (a phrase never filters);
+    /// `unresolved` and `future` were skipped.
     pub status: String,
     /// Inclusive Unix-second start, when the phrase resolved.
     pub start: Option<i64>,

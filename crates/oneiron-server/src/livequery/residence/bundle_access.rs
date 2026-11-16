@@ -3,7 +3,8 @@
 //!
 //! - `ensure` (write): asks access for machines the owner admitted, in every
 //!   kept generation or those named. Only the machine itself, by the proof on
-//!   this socket, sets an offer it could not use back to pending.
+//!   this socket, sets an offer it could not use back to pending, naming the
+//!   exact grant it read, so a replacement offered since is kept.
 //! - `pending` (read): the grants a machine of the owner's whose proof stands
 //!   here may issue, and the generations it waits on a grant of itself.
 //! - `offer` (write): one sealed grant. Its own signature is its authority:
@@ -22,10 +23,10 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::residence::{
-    PadAccessRequest, PadAccessState, ensure_sealed_pad_access, invalidate_publication_grant,
-    offer_publication_grant, offer_sealed_pad_access, pending_publication_grants,
-    pending_sealed_pad_access, publication_grant, sealed_digest_from_hex, sealed_digest_hex,
-    sealed_generation_hex, sealed_pad_access,
+    InvalidPadOffer, PadAccessRequest, PadAccessState, ensure_sealed_pad_access,
+    invalidate_publication_grant, offer_publication_grant, offer_sealed_pad_access,
+    pending_publication_grants, pending_sealed_pad_access, publication_grant,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_hex, sealed_pad_access,
 };
 use oneiron::world_keys::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
 use serde::Deserialize;
@@ -56,9 +57,18 @@ struct AccessTarget {
     /// The kept generations asked for; absent for every one.
     #[serde(default)]
     generations: Option<Vec<String>>,
-    /// Generations whose offer the machine itself could not use.
+    /// Offers the machine itself could not use.
     #[serde(default)]
-    invalid: Vec<String>,
+    invalid: Vec<InvalidOfferWire>,
+}
+
+/// One offer the machine could not use: its generation, hex, and the grant
+/// exactly as `get` answered it, base64.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InvalidOfferWire {
+    generation: String,
+    grant: String,
 }
 
 fn missing() -> AppError {
@@ -149,10 +159,22 @@ pub(super) fn bundle_access(
                             .map(bundle_generation)
                             .collect::<Result<Vec<_>, _>>()
                     };
+                    let invalid = wire
+                        .invalid
+                        .iter()
+                        .map(|offer| {
+                            Ok(InvalidPadOffer {
+                                generation: bundle_generation(&offer.generation)?,
+                                grant: base64::engine::general_purpose::STANDARD
+                                    .decode(&offer.grant)
+                                    .map_err(|_| AppError::invalid_params())?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, AppError>>()?;
                     Ok(PadAccessRequest {
                         target: target(&wire.machine, &wire.key)?,
                         generations: wire.generations.as_deref().map(generations).transpose()?,
-                        invalid: generations(&wire.invalid[..])?,
+                        invalid,
                     })
                 })
                 .collect::<Result<Vec<_>, AppError>>()?;

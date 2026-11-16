@@ -42,8 +42,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::actor_claims::{
-    ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_NOTE_MAX_BYTES, ActorNote, ActorNoteKind,
-    SessionActorDistiller, SessionDistillBrief,
+    ACTOR_DISTILL_CALL_PURPOSE_NAME, ActorNote, ActorNoteKind, SessionActorDistiller,
+    SessionDistillBrief,
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
@@ -318,7 +318,10 @@ pub(super) fn run_one(
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
         COACH_SKILL_DISCOVERY_FACET => super::skill_discovery::run(server, admitted),
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
-        COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
+        COACH_TRAINING_OFFER_FACET => {
+            let window = super::training_offer::rolling_window(now);
+            super::training_offer::draft(server, admitted, now, window).map(|_| ())
+        }
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
         COACH_BROWSER_PROGRAMS_FACET => super::coach_browser_programs::run(server, admitted, now),
         COACH_SITE_SKILLS_FACET => super::coach_site_skills::run(server, admitted, now),
@@ -553,6 +556,8 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let wire = parse_notes(&text).ok_or_else(|| {
             Error::InvalidConfig("the Coach's distill answer holds no notes".into())
         })?;
+        // The owner's cap on a note this vault writes (`actor_claims.note.max_bytes`).
+        let max_bytes = self.vault.actor_note_max_bytes()?;
         let notes: Vec<ActorNote> = wire
             .notes
             .into_iter()
@@ -564,7 +569,7 @@ impl SessionActorDistiller for HostDistiller<'_> {
                     _ => return None,
                 };
                 let text = note.text.trim();
-                if text.is_empty() || text.len() > ACTOR_NOTE_MAX_BYTES {
+                if text.is_empty() || text.len() > max_bytes {
                     return None;
                 }
                 Some(ActorNote {

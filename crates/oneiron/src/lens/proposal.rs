@@ -26,6 +26,7 @@ use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
 use crate::receipt::{LensApproval, LensProposalReceipt};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{PackInstallReceipt, PackInstallStatus};
 use crate::{EntityId, Error, Result, Vault};
@@ -37,24 +38,9 @@ pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =
 /// The owner's selected revision per pack/skill slot. Key: [`slot_key`].
 pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
     SideTable::new(&side_table::LENS_SLOT);
-/// The most rows one `vault.lenses.list` page returns.
-pub const LENS_LIST_MAX_PAGE: usize = 200;
 
-/// One pack lens slot: an installed pack and one of its skills.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensSlot {
-    pub pack_name: String,
-    /// The SKILL's 32-hex entity id.
-    pub skill_id: String,
-}
-
-impl LensSlot {
-    pub(super) fn skill(&self) -> MemoryResult<EntityId> {
-        EntityId::from_hex(&self.skill_id)
-            .map_err(|_| MemoryError::bad_request("slot.skill_id is a 32-hex SKILL id"))
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::proposal::{LensListRequest, LensSlot};
 
 /// `vault.lenses.propose`'s input: a frozen compiled tree for one slot, the
 /// pack content it was compiled against, and its authored intent. The host
@@ -80,64 +66,8 @@ pub struct LensProposeRequest {
     pub scope: Option<LensScope>,
 }
 
-/// `vault.lenses.list`'s input: one page of proposals in lens-id order.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LensListRequest {
-    /// Only this pack's proposals.
-    #[serde(default)]
-    pub pack_name: Option<String>,
-    /// The `next_after` of the page before.
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub limit: Option<u32>,
-    /// Carry each proposal's frozen tree. A reader narrowed to some worlds
-    /// or facets gets the trees of the proposals whose scope its read
-    /// admits, each whole and only while it reads every row the tree names
-    /// (FIX 2136).
-    #[serde(default)]
-    pub with_compiled: bool,
-}
-
-/// Where a proposal stands in its slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensProposalState {
-    /// Waiting for the owner, or cleared from its slot.
-    Proposed,
-    /// The owner's current selection for its slot.
-    Active,
-}
-
-/// One proposal: neutral ids, its binding, its state and whether it mounts
-/// now. Never a screen.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LensListRow {
-    pub lens_ref: String,
-    pub pack_name: String,
-    pub skill_id: String,
-    pub pack_content_hash: String,
-    pub compiled_hash: String,
-    pub kit_version: u16,
-    pub apps_contract_version: u16,
-    pub proposed_by: String,
-    pub proposed_at: u64,
-    pub state: LensProposalState,
-    /// Active, and its pack is still installed Active at the content it was
-    /// proposed against, with the skill still loading.
-    pub mounted: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compiled: Option<GeneratedLens>,
-}
-
-/// One page of `vault.lenses.list`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LensListPage {
-    pub rows: Vec<LensListRow>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_after: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::proposal::{LensListPage, LensListRow, LensProposalState};
 
 /// The stored proposal: an index of the lens's CODE kind=lens row, keyed by
 /// that row's id (the lens ref), and of its prompt NOTE.
@@ -309,11 +239,19 @@ impl Memory<'_> {
     /// history once its pack is gone, where its read admits the lens's scope,
     /// else its row alone while it reads the slot's SKILL and live pack
     /// source (FIX 2136).
+    ///
+    /// A page holds at most the owner's `lenses.list.page_max` rows (200 by
+    /// default), which an absent `limit` asks for.
     pub fn lenses_list(&self, input: LensListRequest) -> MemoryResult<LensListPage> {
-        let limit = input
-            .limit
-            .map_or(LENS_LIST_MAX_PAGE, |limit| limit as usize)
-            .clamp(1, LENS_LIST_MAX_PAGE);
+        let page_max = super::setting_keys::vault_value(
+            self.vault(),
+            &super::setting_keys::LENSES_LIST_PAGE_MAX,
+        )?
+        .get();
+        let page_max = usize::try_from(page_max).unwrap_or(usize::MAX);
+        let limit =
+            page_limit_zero_as_one(input.limit.map(|limit| limit as usize), page_max, page_max)
+                .rows;
         let after = input
             .after
             .as_deref()

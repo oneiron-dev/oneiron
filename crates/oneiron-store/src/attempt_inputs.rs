@@ -1,31 +1,21 @@
 //! Queue admission inputs and durable intervention vocabulary.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_id::AttemptId;
 use crate::attempt_result::AttemptResultRef;
 
 /// Durable intervention kind recorded on an attempt row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("attempt.intervention.kind")]
 pub enum AttemptInterventionKind {
     Interrupt,
     Pause,
     Resume,
     Cancel,
     Redirect,
-}
-
-impl AttemptInterventionKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Interrupt => "interrupt",
-            Self::Pause => "pause",
-            Self::Resume => "resume",
-            Self::Cancel => "cancel",
-            Self::Redirect => "redirect",
-        }
-    }
 }
 
 /// Durable intervention event appended to an attempt row.
@@ -70,6 +60,9 @@ pub enum AttemptInterventionEffect {
     AlreadyCancelled,
     Redirected,
     AlreadyRedirected,
+    /// A running run takes a person's pause at its next step boundary: its
+    /// Pause signal is pending.
+    PausingAtNextStep,
 }
 
 impl AttemptInterventionEffect {
@@ -85,6 +78,7 @@ impl AttemptInterventionEffect {
             Self::AlreadyCancelled => "already_cancelled",
             Self::Redirected => "redirected",
             Self::AlreadyRedirected => "already_redirected",
+            Self::PausingAtNextStep => "pausing_at_next_step",
         }
     }
 }

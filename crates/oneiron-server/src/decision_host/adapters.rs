@@ -373,7 +373,7 @@ impl DecisionProvider for SystemOneRung {
                 continue;
             }
             indices.push(index);
-            questions.push(oneiron_llm_systemone::SystemOnePackQuestion {
+            questions.push(oneiron_llm::systemone::SystemOnePackQuestion {
                 question: request.question,
                 score_levels: request.score_levels,
             });
@@ -381,7 +381,7 @@ impl DecisionProvider for SystemOneRung {
         if questions.is_empty() {
             return Ok(decisions);
         }
-        let request = oneiron_llm_systemone::SystemOnePackRequest {
+        let request = oneiron_llm::systemone::SystemOnePackRequest {
             questions,
             state: pack.state.clone(),
             images: pack.images.to_vec(),

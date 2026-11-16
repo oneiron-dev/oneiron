@@ -1,5 +1,5 @@
-import { afterAll, expect, test } from "bun:test";
-import { defineFile, secretHex } from "./support/run.ts";
+import { afterAll, test } from "bun:test";
+import { defineFile, expect, secretHex } from "./support/run.ts";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { EngineFixture } from "./support/engine.ts";

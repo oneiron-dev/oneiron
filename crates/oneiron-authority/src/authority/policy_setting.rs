@@ -88,6 +88,11 @@ pub enum PolicySetting {
     /// The undo-send window every send waits in on each outbound channel
     /// (DEC-0006 #undo-send; REV-8 = B).
     UndoSend,
+    /// The worlds the owner grants one agent and its default among them
+    /// (ARCH-0067 #tiers; `vault.agents.worlds.set`). The act names the
+    /// setting's reserved target; its digests cover the agent with its
+    /// tiers, which stay node-local claims (RULING L2-53-CEILING).
+    AgentWorldAccess,
 }
 
 impl PolicySetting {
@@ -104,6 +109,7 @@ impl PolicySetting {
             Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
             Self::DefaultFacet => "settings.default_facet",
             Self::UndoSend => "settings.undo_send",
+            Self::AgentWorldAccess => "settings.agent_world_access",
         }
     }
 
@@ -119,6 +125,7 @@ impl PolicySetting {
             Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
             Self::DefaultFacet => "default_facet",
             Self::UndoSend => "undo_send",
+            Self::AgentWorldAccess => "agent_world_access",
         }
     }
 
@@ -134,6 +141,7 @@ impl PolicySetting {
             "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
             "default_facet" => Self::DefaultFacet,
             "undo_send" => Self::UndoSend,
+            "agent_world_access" => Self::AgentWorldAccess,
             _ => return None,
         })
     }
@@ -148,7 +156,8 @@ impl PolicySetting {
             | Self::BoardLayout
             | Self::NonBaseWorldClaimFraction
             | Self::DefaultFacet
-            | Self::UndoSend => OwnerActKind::PolicySetting,
+            | Self::UndoSend
+            | Self::AgentWorldAccess => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

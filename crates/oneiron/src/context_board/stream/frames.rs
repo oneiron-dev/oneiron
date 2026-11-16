@@ -1,37 +1,15 @@
 //! Board stream frames, snapshots and carrier coalescing.
 
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BoardRenderMode {
-    Resident,
-    Stream,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::frames::BoardRenderMode;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct StreamConnectionId(pub String);
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::frames::StreamConnectionId;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct BoardStreamFrame {
-    pub epoch: u64,
-    pub kind: FrameKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
-pub enum FrameKind {
-    Keyframe(String),
-    Delta(Vec<DeltaRow>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeltaRow {
-    pub key: String,
-    pub line: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::context_board::stream::frames::{BoardStreamFrame, DeltaRow, FrameKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardSnapshot {
