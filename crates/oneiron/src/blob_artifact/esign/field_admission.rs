@@ -12,16 +12,13 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-/// The fields an event's admission lays out (FIX 9609): the one field a
-/// `FieldSaved` saves, every field of the recipient a `Signed` signs for, or
-/// every field of a draft whose fields were placed again.
+/// The fields an event's admission lays out (FIX 9609): every field a
+/// `Drafted` drafts, the one field a `FieldSaved` saves, or every field of
+/// the recipient a `Signed` signs for.
 pub(super) enum EventFields {
+    Drafted,
     Saved(String),
     Signer(String),
-    /// Every field of the draft: a placement (`vault.esign.fields.place`)
-    /// lays each one out, with no value, on the page it names, so a draft
-    /// never holds a field that no signer could fill.
-    Placed,
 }
 
 impl EventFields {
@@ -37,9 +34,9 @@ impl EventFields {
     /// Whether `field` is one of these fields.
     fn selects(&self, field: &EsignField) -> bool {
         match self {
+            Self::Drafted => true,
             Self::Saved(id) => field.id == *id,
             Self::Signer(recipient) => field.recipient == *recipient,
-            Self::Placed => true,
         }
     }
 }

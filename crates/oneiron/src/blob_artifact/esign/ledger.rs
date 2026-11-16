@@ -1,5 +1,5 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
-use super::field_admission::{EventFields, InspectedPages, inspect_event_pages, validate_fields};
+use super::field_admission::InspectedPages;
 use super::model::*;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FACET;
@@ -454,10 +454,13 @@ pub(super) fn create_document_in(
 /// left Draft is refused before anything is written ("sent content is
 /// frozen", as the fold refuses a redraft), and so is a draft that names
 /// commitments ([`super::commitments::admit`]). Each placed field is laid
-/// out on the page of its item's pinned PDF that it names, on the pages
-/// `inspected` holds for those bytes (FIX 9609): a field on a page the PDF
-/// lacks, or one that cannot be presented there, is refused before anything
-/// is written, so a sent document never freezes a field no signer can fill.
+/// out, with no value, on the page of its item's pinned PDF that it names,
+/// on the pages `inspected` holds for those bytes (FIX 9609): a field on a
+/// page the PDF lacks, or one that cannot be presented there, is refused
+/// before anything is written, so a sent document never freezes a field no
+/// signer can fill. The redraft lands through [`append_inspected`] on the
+/// same pages, so an admission that lays out every drafted field reads no
+/// PDF in this writer either.
 pub(super) fn place_fields_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -467,13 +470,14 @@ pub(super) fn place_fields_in(
     now: u64,
     inspected: &InspectedPages,
 ) -> Result<EsignState> {
+    use super::field_admission::{EventFields, validate_fields};
     let Some(placed) = placed_draft(state_in(vault, txn, document)?, fields) else {
         return Err(invalid("sent content is frozen"));
     };
     validate_document(&placed.document, now)?;
-    validate_fields(vault, txn, &placed, &EventFields::Placed, inspected)?;
     admit_project_drafter_in(vault, txn, &placed.document, &actor.actor)?;
-    append(
+    validate_fields(vault, txn, &placed, &EventFields::Drafted, inspected)?;
+    append_inspected(
         vault,
         txn,
         document,
@@ -482,6 +486,7 @@ pub(super) fn place_fields_in(
         },
         actor,
         now,
+        inspected,
     )
 }
 
@@ -504,9 +509,10 @@ pub(super) fn inspect_placed_pages(
     document: EntityId,
     fields: &[EsignField],
 ) -> InspectedPages {
+    use super::field_admission::{EventFields, inspect_event_pages};
     inspect_event_pages(vault, |txn| {
         Ok(placed_draft(state_in(vault, txn, document)?, fields)
-            .map(|placed| (placed, EventFields::Placed)))
+            .map(|placed| (placed, EventFields::Drafted)))
     })
 }
 
