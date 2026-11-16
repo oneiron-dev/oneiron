@@ -359,6 +359,9 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
+    /// Records served to external readers since the vault's last write,
+    /// which keeps them ([`crate::claim::PendingReadExposure`], L8-65).
+    pub(crate) pending_read_exposure: crate::claim::PendingReadExposure,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -750,6 +753,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.base.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
+            fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
             }
@@ -796,6 +800,13 @@ macro_rules! manifest_dbs {
             /// alone. A cache keyed and validated by base versions cannot
             /// answer for such a read: overlay writes bump none of them.
             fn is_union(&self) -> bool;
+            /// The base store a room's view composes over, `None` for a
+            /// target that is no room's view. The side-row wall decides a
+            /// room's rows with its custody, which a room only reads and
+            /// never mints through (FIX 2329).
+            fn room_base(&self) -> Option<&Store> {
+                None
+            }
             /// The vault's memo of policy manifest decodes.
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
@@ -827,6 +838,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn room_base(&self) -> Option<&Store> { Some(self.base) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }
