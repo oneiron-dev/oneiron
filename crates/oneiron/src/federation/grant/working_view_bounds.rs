@@ -37,7 +37,7 @@ pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
 pub(super) fn decode_body_entry(
     entries: &[(Value, Value)],
 ) -> Result<Option<WorkingViewEditBounds>> {
-    optional_value(entries, KEY_WORKING_VIEW_BOUNDS)
+    optional_value(entries, KEY_WORKING_VIEW_BOUNDS)?
         .map(|value| decode_working_view_bounds_value(value).ok_or_else(invalid_grant))
         .transpose()
 }
