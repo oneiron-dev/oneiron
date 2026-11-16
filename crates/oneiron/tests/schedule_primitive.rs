@@ -26,7 +26,9 @@ use oneiron::memory::Memory;
 use oneiron::schedule::{JobOutcome, Trigger};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::schedule::{TEST_REARM_AFTER_SECS, arm_as_engine, runs};
+use oneiron::test_doors::schedule::{
+    TEST_REARM_AFTER_SECS, arm_as_engine, runs, withdraw_test_job,
+};
 use oneiron::test_doors::steward::open_owner_carrier_vault;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -507,7 +509,8 @@ fn an_interval_keeps_its_grid_through_a_run_now_a_retry_and_a_paged_run() {
 /// write lands only on the row the run started on (review round 1 of #8026, P1 on `run.rs:192`).
 /// Here the test job's first run arms its own row an hour on, in its own write, and answers done,
 /// which ends the deadline it started on. Red before the fix: that answer took the new arming too,
-/// and the row went.
+/// and the row went. The new arming also records that run's end as its last run (review of #8026
+/// by OPUS-SETTING-SCHEDULE, 16 Nov 10:20, P3): before, it kept the end of the run before.
 #[test]
 fn a_row_armed_again_while_its_run_runs_keeps_its_new_arming() {
     const JOB: &str = "test.rearm";
@@ -518,10 +521,14 @@ fn a_row_armed_again_while_its_run_runs_keeps_its_new_arming() {
     fx.at(T0 + 10);
     assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
     assert_eq!(runs(JOB, Some(subject)), 1, "the row ran at its due time");
+    let armed = fx
+        .view(JOB, subject)
+        .expect("the arming its run made stands");
+    assert_eq!(armed["due_at"], json!(T0 + 10 + TEST_REARM_AFTER_SECS));
     assert_eq!(
-        fx.view(JOB, subject)
-            .expect("the arming its run made stands")["due_at"],
-        json!(T0 + 10 + TEST_REARM_AFTER_SECS)
+        armed["finished_at"],
+        json!(T0 + 10),
+        "its last run is the one that ended at T0 + 10"
     );
 
     fx.at(T0 + 10 + TEST_REARM_AFTER_SECS);
@@ -535,6 +542,49 @@ fn a_row_armed_again_while_its_run_runs_keeps_its_new_arming() {
         fx.view(JOB, subject).is_none(),
         "the second run ended the row it started on"
     );
+}
+
+/// A row whose job this build does not know is parked for a day once in a pass, also when a
+/// newer build left it waiting on a retry, and it keeps its occurrence and failures for the build
+/// that knows the job (review of #8026 by OPUS-SETTING-SCHEDULE, 16 Nov 10:20, P2 on `run.rs`'s
+/// park). Here the test job fails once, so its row waits on a retry, then leaves the registry.
+/// Red before the fix: the park moved only the occurrence, the retry time kept the row due, and
+/// the pass parked it again on every turn up to its cap of runs.
+#[test]
+fn a_job_this_build_does_not_know_is_parked_once_a_pass_and_runs_when_known_again() {
+    const JOB: &str = "test.withdrawn";
+    const DAY: u64 = 24 * 60 * 60;
+    let fx = Fixture::rooted();
+    let subject = EntityId::now();
+    arm_as_engine(&fx.vault, JOB, Some(subject), Trigger::At { at: T0 + 10 }).expect("armed");
+    fx.at(T0 + 10);
+    let first = fx.run_due();
+    assert!(
+        matches!(first.as_slice(), [JobOutcome::Failed { .. }]),
+        "the first run fails: {first:?}"
+    );
+    let retry_at = fx.view(JOB, subject).expect("the row waits on its retry")["due_at"]
+        .as_u64()
+        .expect("due_at");
+    assert!(retry_at > T0 + 10, "the retry is after the run");
+
+    withdraw_test_job(true);
+    fx.at(retry_at);
+    let parked = fx.run_due();
+    withdraw_test_job(false);
+    assert_eq!(parked.len(), 1, "one park in the pass, not one per turn");
+    assert_eq!(parked[0], JobOutcome::UnknownJob);
+    let row = fx.view(JOB, subject).expect("the parked row stays");
+    assert_eq!(row["due_at"], json!(retry_at + DAY), "parked for a day");
+    assert_eq!(row["failures"], json!(1), "its failures stay");
+
+    fx.at(retry_at + DAY);
+    let again = fx.run_due();
+    assert!(
+        matches!(again.as_slice(), [JobOutcome::Failed { .. }]),
+        "the build that knows the job runs it: {again:?}"
+    );
+    assert_eq!(runs(JOB, Some(subject)), 2, "it ran again once known");
 }
 
 /// A restore lands the armed rows and rebuilds their due index from them, so an armed job still
