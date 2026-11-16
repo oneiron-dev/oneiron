@@ -1,6 +1,7 @@
 //! Idempotent outcome projection over durable facts and immutable question versions.
 
 use super::{
+    arrival::SavedLaneJudge,
     records::*,
     store::{
         HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
@@ -26,7 +27,7 @@ pub fn project_bound_outcomes(
         return Ok(0);
     };
     vault.with_write_txn_grouped(|txn| {
-        super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)
+        super::arrival::project_question_in_txn(vault, txn, &facts, question)
     })
 }
 
@@ -48,7 +49,7 @@ pub(super) fn project_bound_labels(
             .into_iter()
             .map(|(_, label)| (label.answer, label.fact))
             .collect();
-        if super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)? == 0 {
+        if super::arrival::project_question_in_txn(vault, txn, &facts, question)? == 0 {
             return Ok(Vec::new());
         }
         Ok(QUESTION_LABEL
@@ -209,8 +210,16 @@ pub(crate) fn calibration_pairs_in_txn(
             body: &body,
             occurred_at: header.occurred_start,
         };
-        if super::arrival::evaluate_fact(&vault.store, txn, &policy, &record, answer, &fact)?
-            .as_ref()
+        if super::arrival::evaluate_fact(
+            &vault.store,
+            txn,
+            &policy,
+            SavedLaneJudge::Vault(vault),
+            &record,
+            answer,
+            &fact,
+        )?
+        .as_ref()
             != Some(&outcome)
         {
             continue;
@@ -258,8 +267,22 @@ pub(crate) fn calibration_pairs_in_txn(
         let derived_from = vec![question, answer.claim, answer.unit];
         if record.principal != principal
             || (!kept.is_empty() && kept_any(vault, txn, &kept, &derived_from)?)
-            || !super::windows::silence_stands(&vault.store, txn, &policy, &record, answer)?
-            || super::windows::fact_labelled(&vault.store, txn, &policy, &record, answer)?
+            || !super::windows::silence_stands(
+                &vault.store,
+                txn,
+                &policy,
+                SavedLaneJudge::Vault(vault),
+                &record,
+                answer,
+            )?
+            || super::windows::fact_labelled(
+                &vault.store,
+                txn,
+                &policy,
+                SavedLaneJudge::Vault(vault),
+                &record,
+                answer,
+            )?
         {
             continue;
         }
