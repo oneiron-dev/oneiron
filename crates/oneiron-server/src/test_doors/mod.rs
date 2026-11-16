@@ -32,6 +32,7 @@ pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;
+pub mod question_heads;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod replay_admission;

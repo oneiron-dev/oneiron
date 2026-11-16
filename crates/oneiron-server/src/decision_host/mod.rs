@@ -76,6 +76,8 @@ mod claim_merge;
 mod doors;
 mod native_capture;
 mod notes;
+#[cfg(oneiron_test_support)]
+mod question_head_door;
 mod refresh;
 
 pub(crate) use adapters::description_notes;
