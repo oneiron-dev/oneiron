@@ -293,7 +293,7 @@ async fn serve_with_handles(
     // it starts, on the same reap freeze that state takes, so each pass also
     // reads the freeze as its pause (FIX 6909).
     let write_admission = Arc::new(admission::Admission::default());
-    let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
+    let reap_gate = Arc::new(std::sync::OnceLock::<std::sync::Weak<ManagedState>>::new());
     let control = admission::dreamer_control(&write_admission, &reap_gate);
     // `--no-hooks` turns verb hooks off before any worker starts, so a queued
     // Continue or Retry taken up below runs none (FIX 9480).
@@ -393,7 +393,7 @@ async fn serve_with_handles(
         .with_restore(restored),
     );
     handles.state = Some(Arc::clone(&state));
-    let _ = reap_gate.set(Arc::clone(&state));
+    let _ = reap_gate.set(Arc::downgrade(&state));
     // A public live voice session (`ai.voice.start`) holds an admission like
     // a served write, as a voice loop call does: a session in flight keeps a
     // reap from finding the vault quiescent, and a frozen vault opens none.

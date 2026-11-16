@@ -20,7 +20,7 @@
 //! request or idle reap's backup, and leaves the freeze as it is.
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use oneiron_vault_contract::{IdleReapInFlight, REAP_PAUSE_REFUSAL};
 use tokio::sync::watch;
@@ -287,16 +287,19 @@ impl Admission {
 /// The Dreamer's control (FIX 6909), made before the managed state exists:
 /// a pass is admitted as a Dreamer write once `state` holds that state, and
 /// refused until then, and reads `admission`'s current epoch as its pause.
+/// The server's AI handle keeps this control, so `state` holds the state
+/// weakly and refuses once it is gone, as every admission the state hands
+/// out does (FIX 23313).
 pub(super) fn dreamer_control(
     admission: &Arc<Admission>,
-    state: &Arc<OnceLock<Arc<ManagedState>>>,
+    state: &Arc<OnceLock<Weak<ManagedState>>>,
 ) -> DreamerControl {
     let state = Arc::clone(state);
     let epochs = Arc::clone(admission);
     let setter = Arc::clone(admission);
     let getter = Arc::clone(admission);
     DreamerControl {
-        admission: Arc::new(move || state.get()?.admit_background(WriteKind::Dreamer)),
+        admission: Arc::new(move || state.get()?.upgrade()?.admit_background(WriteKind::Dreamer)),
         pause: Arc::new(move || epochs.pass_pause()),
         set_owner_pause: Arc::new(move |paused| setter.set_owner_paused(paused)),
         read_owner_pause: Arc::new(move || getter.owner_paused()),
@@ -352,10 +355,24 @@ impl ManagedState {
         }
     }
 
+    /// `admit` over this state, as an admission that holds the state weakly
+    /// (FIX 23313). The server keeps some of these admissions itself (the
+    /// live voice sessions' gate), and the state holds the server: a strong
+    /// hold would keep the state, its server and its vault open after the
+    /// managed serve that made them has returned, so a refused boot's vault
+    /// never closes. Once the state is gone nothing is admitted, as a frozen
+    /// vault admits nothing.
+    fn weak_admission(
+        self: &Arc<Self>,
+        admit: impl Fn(&Self) -> Option<Box<dyn Send>> + Send + Sync + 'static,
+    ) -> HousekeepingAdmission {
+        let state = Arc::downgrade(self);
+        Arc::new(move || admit(&state.upgrade()?))
+    }
+
     /// [`Self::admit_background`] as the admission a worker takes.
     pub(super) fn background_admission(self: &Arc<Self>, kind: WriteKind) -> HousekeepingAdmission {
-        let state = Arc::clone(self);
-        Arc::new(move || state.admit_background(kind))
+        self.weak_admission(move |state| state.admit_background(kind))
     }
 
     /// Admits a new voice call (FIX 12039) or public live voice session
@@ -374,8 +391,7 @@ impl ManagedState {
     /// [`Self::admit_voice_call`] as the admission the voice loop takes per
     /// call, and each new live voice session takes at its start.
     pub(super) fn voice_admission(self: &Arc<Self>) -> HousekeepingAdmission {
-        let state = Arc::clone(self);
-        Arc::new(move || state.admit_voice_call())
+        self.weak_admission(Self::admit_voice_call)
     }
 
     /// The admission of a pass a deleted vault still runs (FIX 11710): a
@@ -386,8 +402,7 @@ impl ManagedState {
     /// is frozen for reap as every pass is; the deletion gate never refuses
     /// it.
     pub(super) fn backup_admission(self: &Arc<Self>) -> HousekeepingAdmission {
-        let state = Arc::clone(self);
-        Arc::new(move || state.admit_pass(WriteKind::BackgroundOther))
+        self.weak_admission(|state| state.admit_pass(WriteKind::BackgroundOther))
     }
 
     /// The reap freeze this vault's device sync works under (FIX 5127):
