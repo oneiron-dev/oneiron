@@ -101,6 +101,7 @@ fn capped_config(host: EntityId, calendar: EntityId) -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
