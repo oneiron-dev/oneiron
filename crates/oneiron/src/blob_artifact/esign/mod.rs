@@ -22,10 +22,10 @@ pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
 #[doc(hidden)]
 #[path = "../../test_doors/esign_seal_verify_reasons.rs"]
 pub mod esign_seal_verify_reasons;
+pub(crate) mod setting_keys;
 // FIX [LIBTEST-QUARANTINE-BLOB-ARTIFACT-ESIGN-TESTS]: the lib test target's type check fails here (18 errors: E0063 x14, E0061 x2, E0639 x1, E0599 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
-pub(crate) mod setting_keys;
 mod tests;
 pub(crate) use lane_scope::bounded_by_whole_vault;
 pub use ledger::PROJECT_MEMBERS_ONLY;
