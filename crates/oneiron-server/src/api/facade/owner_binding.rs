@@ -118,6 +118,25 @@ pub(super) fn facade_owner(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
+    // MF1-MF4 (red head): four model doors take any caller as the vault owner.
+    if matches!(
+        verb,
+        "vault.models.manifest.replace"
+            | "vault.models.catalog.refresh"
+            | "vault.models.trials.get"
+            | "vault.models.bindings.accept"
+    ) {
+        let vault = server.vault();
+        let owner = vault.ensure_embedded_owner_actor()?;
+        return vault
+            .authenticate_owner(
+                owner,
+                &owner.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .map_err(MemoryError::from);
+    }
     facade_owner_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
