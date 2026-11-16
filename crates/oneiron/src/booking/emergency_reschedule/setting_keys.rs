@@ -7,15 +7,18 @@
 //! Direction: the count and the search span change which times one apology offers, never
 //! whether anyone is contacted or how often, so neither has an order, and a row of either that
 //! does not decode reads as the shipped value. The floor is tighter higher: below it the plan
-//! refuses, no automated apology goes out, and the owner handles the booking; an unreadable floor
-//! reads as the highest, so every plan refuses. The floor never exceeds the count: a change that
-//! would put it above refuses, and a pair that arrives so by sync or a restore makes every plan
-//! refuse (the plan collects at most the count, which is fewer than the floor).
+//! refuses, no automated apology goes out, and the owner handles the booking; a floor row that
+//! does not decode refuses every plan, whatever the solver finds. The floor never exceeds the
+//! count: a change that would put it above refuses, and a pair that arrives so by sync or a
+//! restore makes every plan refuse (the plan collects at most the count, which is fewer than the
+//! floor). The commit of a plan checks it against the floor in force then, so a floor raised
+//! after planning refuses the plan; the count has no order, so a plan made under a larger count
+//! still commits.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingChange, SettingValue, higher_is_tighter};
+use crate::setting::{Kind, SettingChange, SettingSource, SettingValue, higher_is_tighter};
 
 /// The shipped count of replacement times one emergency plan offers.
 pub(crate) const DEFAULT_EMERGENCY_MAX_PROPOSALS: u8 = 3;
@@ -119,10 +122,36 @@ crate::setting::setting_keys! {
 pub(crate) struct EmergencyProposalPolicy {
     /// From [`BOOKING_EMERGENCY_MAX_PROPOSALS`].
     pub(crate) max_proposals: u8,
-    /// From [`BOOKING_EMERGENCY_MIN_PROPOSALS`].
-    pub(crate) min_proposals: u8,
+    /// From [`BOOKING_EMERGENCY_MIN_PROPOSALS`]; `None` when its deciding row does not decode,
+    /// and then every plan refuses.
+    pub(crate) min_proposals: Option<u8>,
     /// From [`BOOKING_EMERGENCY_SEARCH_SPAN`].
     pub(crate) search_span_secs: u64,
+}
+
+impl EmergencyProposalPolicy {
+    /// Admits a plan of `count` live replacement times: at least the floor, and at least one.
+    ///
+    /// # Errors
+    ///
+    /// The refusal's text when `count` is under the floor or the floor's row does not decode: no
+    /// automated apology goes out, and the owner handles the booking.
+    pub(crate) fn admit(&self, count: usize) -> std::result::Result<(), String> {
+        let Some(floor) = self.min_proposals else {
+            return Err(
+                "booking.emergency.min_proposals does not decode, so no emergency plan \
+                 goes out until the owner sets it"
+                    .to_owned(),
+            );
+        };
+        let floor = floor.max(1);
+        if count < usize::from(floor) {
+            return Err(format!(
+                "this booking has fewer than {floor} live solver proposals"
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// The vault's emergency proposal policy in `txn`.
@@ -134,15 +163,16 @@ pub(crate) fn emergency_proposal_policy_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<EmergencyProposalPolicy> {
+    let floor = BOOKING_EMERGENCY_MIN_PROPOSALS.read_in_txn(vault, txn, &[], None)?;
     Ok(EmergencyProposalPolicy {
         max_proposals: BOOKING_EMERGENCY_MAX_PROPOSALS
             .read_in_txn(vault, txn, &[], None)?
             .value
             .0,
-        min_proposals: BOOKING_EMERGENCY_MIN_PROPOSALS
-            .read_in_txn(vault, txn, &[], None)?
-            .value
-            .0,
+        min_proposals: match floor.source {
+            SettingSource::Unreadable(_) => None,
+            _ => Some(floor.value.0),
+        },
         search_span_secs: BOOKING_EMERGENCY_SEARCH_SPAN
             .read_in_txn(vault, txn, &[], None)?
             .value
@@ -161,18 +191,21 @@ pub(crate) fn emergency_proposal_policy(vault: &crate::Vault) -> Result<Emergenc
 }
 
 /// Refuses a change to the count or the floor that leaves the floor above the count. The changed
-/// row is already in `txn`, so the pair read here is the one the write would commit.
+/// row is already in `txn`, so the pair read here is the one the write would commit. A floor row
+/// that does not decode has no value to compare: every plan refuses until the owner sets it.
 fn refuse_floor_above_count(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     _change: &SettingChange,
 ) -> Result<()> {
     let policy = emergency_proposal_policy_in_txn(vault, txn)?;
-    if policy.min_proposals > policy.max_proposals {
+    if let Some(floor) = policy.min_proposals
+        && floor > policy.max_proposals
+    {
         return Err(Error::InvalidConfig(format!(
-            "booking.emergency.min_proposals ({}) must not exceed \
+            "booking.emergency.min_proposals ({floor}) must not exceed \
              booking.emergency.max_proposals ({})",
-            policy.min_proposals, policy.max_proposals
+            policy.max_proposals
         )));
     }
     Ok(())

@@ -402,12 +402,9 @@ pub(super) fn plan_item(
             break;
         }
     }
-    if proposals.len() < usize::from(policy.min_proposals) {
-        return Err(BookingError::InvalidConfig(format!(
-            "this booking has fewer than {} live solver proposals",
-            policy.min_proposals
-        )));
-    }
+    policy
+        .admit(proposals.len())
+        .map_err(BookingError::InvalidConfig)?;
     let (organizer, recipient) = delivery_parties(vault, &booking)?;
     let invite_before = {
         let txn = vault.store.env.read_txn().map_err(storage_failure)?;
