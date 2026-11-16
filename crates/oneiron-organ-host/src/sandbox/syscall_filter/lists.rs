@@ -6,8 +6,9 @@
 //! sleeps, exit and exit_group. A call an organ never makes costs nothing on
 //! its list; a call it makes that its list misses kills it.
 //!
-//! `clone` and `clone3` are not on any list: the program checks them before
-//! the list (`super::SyscallFilter::for_organ`). The legacy spellings x86_64
+//! `clone`, `clone3`, `tgkill`, `prlimit64` and `fcntl` are not on any list:
+//! the program checks them, and the arguments of the last three, before the
+//! list (`super::SyscallFilter::for_organ`). The legacy spellings x86_64
 //! keeps (`open`, `stat`, `poll`, ...) are in the `*_X86_64` lists; aarch64's
 //! table has only the modern ones.
 
@@ -15,8 +16,9 @@ use libc::c_long;
 
 /// Every organ's calls: the exec (the filter is installed before it), the
 /// loader and the C and Rust runtime start, the organ runtime's socket
-/// (fd 3), regions (memfd, seals, maps) and worker threads, time, random
-/// bytes, a crash (abort signals the organ's own thread) and exit.
+/// (fd 3), regions (memfd, maps; their seals are `fcntl`) and worker
+/// threads, time, random bytes and exit. A crash's signal to its own
+/// thread (`tgkill`) is checked before the list.
 pub(super) const RUNTIME: &[c_long] = &[
     // The organ runtime's own: the protocol socket, its waits and regions.
     libc::SYS_futex,
@@ -30,7 +32,6 @@ pub(super) const RUNTIME: &[c_long] = &[
     libc::SYS_writev,
     libc::SYS_close,
     libc::SYS_memfd_create,
-    libc::SYS_fcntl,
     libc::SYS_fstat,
     libc::SYS_dup,
     libc::SYS_dup3,
@@ -59,11 +60,9 @@ pub(super) const RUNTIME: &[c_long] = &[
     libc::SYS_rt_sigreturn,
     libc::SYS_gettid,
     libc::SYS_getpid,
-    libc::SYS_tgkill,
     libc::SYS_exit,
     libc::SYS_exit_group,
     // The exec and the loader.
-    libc::SYS_setpriority,
     libc::SYS_execve,
     libc::SYS_openat,
     libc::SYS_pread64,
@@ -73,7 +72,6 @@ pub(super) const RUNTIME: &[c_long] = &[
     libc::SYS_readlinkat,
     libc::SYS_faccessat,
     libc::SYS_faccessat2,
-    libc::SYS_prlimit64,
     libc::SYS_getrandom,
 ];
 
@@ -153,8 +151,9 @@ pub(super) const FENCED_FILES_X86_64: &[c_long] = &[
 pub(super) const FENCED_FILES_X86_64: &[c_long] = &[];
 
 /// Calls no list may name: the deny-list's (`super::DENIED`) and these, an
-/// organ's way to a network or to another process. Checked when this crate
-/// compiles.
+/// organ's way to a network or to another process (a signal, a priority,
+/// a scheduling or memory policy, a comparison or a reclaim of another
+/// process's). Checked when this crate compiles.
 pub(super) const NEVER: &[c_long] = &[
     libc::SYS_socket,
     libc::SYS_socketpair,
@@ -164,6 +163,20 @@ pub(super) const NEVER: &[c_long] = &[
     libc::SYS_accept,
     libc::SYS_accept4,
     libc::SYS_kill,
+    libc::SYS_tkill,
+    libc::SYS_rt_sigqueueinfo,
+    libc::SYS_rt_tgsigqueueinfo,
+    libc::SYS_setpriority,
+    libc::SYS_ioprio_set,
+    libc::SYS_sched_setaffinity,
+    libc::SYS_sched_setscheduler,
+    libc::SYS_sched_setparam,
+    libc::SYS_sched_setattr,
+    libc::SYS_migrate_pages,
+    libc::SYS_move_pages,
+    libc::SYS_process_madvise,
+    libc::SYS_process_mrelease,
+    libc::SYS_kcmp,
     libc::SYS_seccomp,
     libc::SYS_prctl,
     libc::SYS_unshare,

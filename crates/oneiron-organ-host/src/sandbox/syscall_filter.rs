@@ -10,16 +10,22 @@
 //! (another audit arch, or x32 on x86_64). `clone3`, whose flags the filter
 //! cannot read, answers ENOSYS, so the C library starts a thread with
 //! `clone`; `clone` is allowed for a thread, and for any process only on the
-//! probe's list. The calls the deny-list of census L4-09 named ([`DENIED`]),
-//! and an organ's ways to a network or another process (`lists::NEVER`), are
-//! on no list: the crate does not compile if one is.
+//! probe's list. Three calls every organ makes can name another process by
+//! an argument, so the program checks that argument before the list
+//! ([`ARGUMENT_CHECKED`]): `tgkill` signals only the organ's own process,
+//! `prlimit64` reads or sets only its own limits, and `fcntl` never makes a
+//! descriptor signal its owner (`F_SETOWN`, `F_SETOWN_EX`, `F_SETSIG`), by
+//! which the kernel would signal a process the organ names. The calls the
+//! deny-list of census L4-09 named ([`DENIED`]), and an organ's ways to a
+//! network or another process (`lists::NEVER`), are on no list: the crate
+//! does not compile if one is.
 //!
-//! The program is built before the fork. The child installs it after
-//! `no_new_privs`, which an unprivileged filter needs, as its last step
-//! before exec, so each list holds the exec, the loader and the C and Rust
-//! runtime start; it holds across exec and for every process the organ
-//! starts. A filter the kernel refuses fails the start, so the organ never
-//! runs unfiltered.
+//! The program is built before the fork. The child writes its own pid into
+//! it, which exec keeps, and installs it after `no_new_privs`, which an
+//! unprivileged filter needs, as its last step before exec, so each list
+//! holds the exec, the loader and the C and Rust runtime start; it holds
+//! across exec and for every process the organ starts. A filter the kernel
+//! refuses fails the start, so the organ never runs unfiltered.
 
 use std::io;
 
@@ -81,15 +87,31 @@ const JUMP_IF_EQUAL: u16 = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
 const JUMP_IF_BITS: u16 = (libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K) as u16;
 const RETURN: u16 = (libc::BPF_RET | libc::BPF_K) as u16;
 
-/// Where `struct seccomp_data` holds the low word of the call's first
-/// argument (both tables here are little-endian).
+/// Where `struct seccomp_data` holds the low word of the call's first and
+/// second arguments (both tables here are little-endian). Each argument
+/// checked here is a 32-bit `int` or `unsigned int` in the kernel, which
+/// reads only this word.
 const FIRST_ARGUMENT_OFFSET: u32 = std::mem::offset_of!(libc::seccomp_data, args) as u32;
+const SECOND_ARGUMENT_OFFSET: u32 = FIRST_ARGUMENT_OFFSET + 8;
+
+/// The calls [`argument_rows`] checks before the list, each of which can
+/// name another process by an argument: no list names one.
+const ARGUMENT_CHECKED: &[libc::c_long] = &[libc::SYS_tgkill, libc::SYS_prlimit64, libc::SYS_fcntl];
+
+/// `fcntl` commands libc 0.2 does not name on Linux (uapi
+/// asm-generic/fcntl.h, which x86_64 and aarch64 both use): a descriptor's
+/// signal, and its owner by thread, process or group.
+const F_SETSIG: u32 = 10;
+const F_SETOWN_EX: u32 = 15;
 
 /// A seccomp program, built before the fork.
 pub(super) struct SyscallFilter {
     program: Vec<libc::sock_filter>,
     /// `program`'s length as the kernel takes it.
     len: libc::c_ushort,
+    /// The rows of `program` that compare an argument with the organ's own
+    /// pid, which the child writes there before it installs the program.
+    own_pid_rows: Vec<usize>,
     /// A recording filter's bootstrap socket, in a trace run only
     /// (`syscall_trace`): the child sends the filter's listener over it.
     #[cfg(oneiron_test_support)]
@@ -122,7 +144,8 @@ impl SyscallFilter {
     /// table: a first-party image or seal organ, or the probe, under its own
     /// list; every other organ under the fixed tier list. A call under
     /// another audit arch, an x32 call, a `clone` that starts no thread
-    /// (save the probe's), or a call its list does not name kills the
+    /// (save the probe's), a call aimed at another process
+    /// ([`argument_rows`]), or a call its list does not name kills the
     /// process; `clone3` answers ENOSYS.
     ///
     /// # Errors
@@ -140,6 +163,9 @@ impl SyscallFilter {
             };
         let mut program = native_table_only()?;
         program.extend(clone_rows(forks));
+        let (rows, own_pid_rows) = argument_rows();
+        let own_pid_rows: Vec<usize> = own_pid_rows.map(|row| program.len() + row).into();
+        program.extend(rows);
         let allow = statement(RETURN, libc::SECCOMP_RET_ALLOW);
         let mut allowed: Vec<libc::c_long> = Vec::new();
         for &number in [lists::RUNTIME, lists::RUNTIME_X86_64, own, own_x86_64]
@@ -153,7 +179,9 @@ impl SyscallFilter {
             }
         }
         program.push(statement(RETURN, libc::SECCOMP_RET_KILL_PROCESS));
-        Self::of(program)
+        let mut filter = Self::of(program)?;
+        filter.own_pid_rows = own_pid_rows;
+        Ok(filter)
     }
 
     /// The recording filter of a trace run (`syscall_trace`): a call under
@@ -191,19 +219,29 @@ impl SyscallFilter {
         Ok(Self {
             program,
             len,
+            own_pid_rows: Vec::new(),
             #[cfg(oneiron_test_support)]
             bootstrap: None,
         })
     }
 
-    /// Installs the program on this process. It needs `no_new_privs`, set
-    /// before it, and binds this process and everything it starts, across
-    /// exec. One prctl over memory made before the fork, and no
-    /// allocation, so a child may run it between fork and exec.
+    /// Installs the program on this process, with this process's pid
+    /// written into the rows that compare an argument with it. It needs
+    /// `no_new_privs`, set before it, and binds this process and everything
+    /// it starts, across exec. A getpid and one prctl over memory made
+    /// before the fork, and no allocation, so a child may run it between
+    /// fork and exec. In a trace run it installs the recording filter and
+    /// hands its listener to the recorder instead (`install_recording`).
     ///
     /// # Errors
     /// The kernel refused the filter.
-    pub(super) fn install(&self) -> io::Result<()> {
+    pub(super) fn install(&mut self) -> io::Result<()> {
+        let own = std::process::id();
+        for &row in &self.own_pid_rows {
+            if let Some(instruction) = self.program.get_mut(row) {
+                instruction.k = own;
+            }
+        }
         let program = libc::sock_fprog {
             len: self.len,
             filter: self.program.as_ptr().cast_mut(),
@@ -288,6 +326,47 @@ fn clone_rows(forks: bool) -> Vec<libc::sock_filter> {
     rows
 }
 
+/// The rows for [`ARGUMENT_CHECKED`], before the list's, and the indexes
+/// among them of the rows that compare an argument with the organ's own
+/// pid, which is not known before the fork (`SyscallFilter::install` writes
+/// it there). `tgkill` is allowed only at the organ's own process, the way
+/// `abort` signals its own thread; `prlimit64` only at itself, pid 0 (as the
+/// C library calls it) or its own pid; `fcntl` with every command but those
+/// that make a descriptor signal its owner when it is ready (`F_SETOWN`,
+/// `F_SETOWN_EX`, `F_SETSIG`), since the owner could be another process.
+/// Any other kills. Each loads an argument over the number, so both
+/// outcomes return here.
+fn argument_rows() -> (Vec<libc::sock_filter>, [usize; 2]) {
+    let allow = statement(RETURN, libc::SECCOMP_RET_ALLOW);
+    let kill = statement(RETURN, libc::SECCOMP_RET_KILL_PROCESS);
+    // The organ's own pid, which `SyscallFilter::install` writes here.
+    let own_pid = 0;
+    let rows = vec![
+        // 0: tgkill(tgid, ...) with tgid the organ's own pid.
+        jump(JUMP_IF_EQUAL, libc::SYS_tgkill as u32, 0, 4),
+        statement(LOAD_WORD, FIRST_ARGUMENT_OFFSET),
+        jump(JUMP_IF_EQUAL, own_pid, 0, 1),
+        allow,
+        kill,
+        // 5: prlimit64(pid, ...) with pid 0 or the organ's own.
+        jump(JUMP_IF_EQUAL, libc::SYS_prlimit64 as u32, 0, 5),
+        statement(LOAD_WORD, FIRST_ARGUMENT_OFFSET),
+        jump(JUMP_IF_EQUAL, 0, 1, 0),
+        jump(JUMP_IF_EQUAL, own_pid, 0, 1),
+        allow,
+        kill,
+        // 11: fcntl(fd, cmd, ...) with cmd no owner or signal.
+        jump(JUMP_IF_EQUAL, libc::SYS_fcntl as u32, 0, 6),
+        statement(LOAD_WORD, SECOND_ARGUMENT_OFFSET),
+        jump(JUMP_IF_EQUAL, libc::F_SETOWN as u32, 3, 0),
+        jump(JUMP_IF_EQUAL, F_SETOWN_EX, 2, 0),
+        jump(JUMP_IF_EQUAL, F_SETSIG, 1, 0),
+        allow,
+        kill,
+    ];
+    (rows, [2, 8])
+}
+
 /// The probe's name: the host's diagnostics organ, which only tests install.
 const PROBE_ORGAN: &str = "probe";
 
@@ -308,7 +387,8 @@ const fn names_any(list: &[libc::c_long], calls: &[libc::c_long]) -> bool {
 }
 
 // No list names a denied call, a way to a network or another process, or
-// `clone`, which `clone_rows` checks first.
+// a call checked before the list (`clone`, `clone3` and
+// [`ARGUMENT_CHECKED`]).
 const _: () = {
     let all = [
         lists::RUNTIME,
@@ -323,7 +403,9 @@ const _: () = {
     let mut i = 0;
     while i < all.len() {
         assert!(
-            !names_any(all[i], DENIED) && !names_any(all[i], lists::NEVER),
+            !names_any(all[i], DENIED)
+                && !names_any(all[i], lists::NEVER)
+                && !names_any(all[i], ARGUMENT_CHECKED),
             "an organ's syscall list names a call no list may name"
         );
         i += 1;
@@ -342,7 +424,15 @@ fn kill_denied() -> impl Iterator<Item = libc::sock_filter> {
 
 /// Installs a recording filter with a new listener and sends the listener
 /// over `bootstrap` (a trace run only, `syscall_trace`). Allocation-free, so
-/// a child may run it between fork and exec; the listener closes at exec.
+/// a child may run it between fork and exec; the listener closes at exec
+/// (the kernel makes it close-on-exec: kernel/seccomp.c,
+/// `get_unused_fd_flags(O_CLOEXEC)`). Once the filter is in place every
+/// call but that `sendmsg` waits for a recorder that has no listener yet,
+/// so a failure from there on cannot be reported: the child ends itself by
+/// a denied call, which the filter kills, and its parent sees it die.
+///
+/// # Errors
+/// The kernel refused the filter (none is installed).
 #[cfg(oneiron_test_support)]
 fn install_recording(program: &libc::sock_fprog, bootstrap: std::os::fd::RawFd) -> io::Result<()> {
     let zero: libc::c_long = 0;
@@ -358,37 +448,55 @@ fn install_recording(program: &libc::sock_fprog, bootstrap: std::os::fd::RawFd) 
             zero,
         )
     };
-    let Ok(listener) = libc::c_int::try_from(listener) else {
-        return Err(io::Error::other("seccomp returned no listener"));
-    };
     if listener < 0 {
         return Err(io::Error::last_os_error());
     }
+    let Ok(listener) = libc::c_int::try_from(listener) else {
+        end_by_the_filter()
+    };
     let mut byte = [0_u8];
     let mut iov = libc::iovec {
         iov_base: byte.as_mut_ptr().cast(),
         iov_len: 1,
     };
     let mut control = [0_usize; 8];
-    // SAFETY: sendmsg(2) reads the live buffers on this stack; the control
-    // message carries one descriptor of this process (SCM_RIGHTS).
-    let sent = unsafe {
-        let mut message: libc::msghdr = std::mem::zeroed();
-        message.msg_iov = &raw mut iov;
-        message.msg_iovlen = 1;
-        message.msg_control = control.as_mut_ptr().cast();
-        message.msg_controllen =
-            libc::CMSG_SPACE(std::mem::size_of::<libc::c_int>() as u32) as usize;
-        let header = libc::CMSG_FIRSTHDR(&raw const message);
-        (*header).cmsg_level = libc::SOL_SOCKET;
-        (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<libc::c_int>() as u32) as usize;
-        std::ptr::write_unaligned(libc::CMSG_DATA(header).cast::<libc::c_int>(), listener);
-        libc::sendmsg(bootstrap, &raw const message, libc::MSG_NOSIGNAL)
-    };
-    if sent == 1 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+    loop {
+        // SAFETY: sendmsg(2) reads the live buffers on this stack; the
+        // control message carries one descriptor of this process
+        // (SCM_RIGHTS).
+        let sent = unsafe {
+            let mut message: libc::msghdr = std::mem::zeroed();
+            message.msg_iov = &raw mut iov;
+            message.msg_iovlen = 1;
+            message.msg_control = control.as_mut_ptr().cast();
+            message.msg_controllen =
+                libc::CMSG_SPACE(std::mem::size_of::<libc::c_int>() as u32) as usize;
+            let header = libc::CMSG_FIRSTHDR(&raw const message);
+            (*header).cmsg_level = libc::SOL_SOCKET;
+            (*header).cmsg_type = libc::SCM_RIGHTS;
+            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<libc::c_int>() as u32) as usize;
+            std::ptr::write_unaligned(libc::CMSG_DATA(header).cast::<libc::c_int>(), listener);
+            libc::sendmsg(bootstrap, &raw const message, libc::MSG_NOSIGNAL)
+        };
+        if sent == 1 {
+            return Ok(());
+        }
+        if io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+            end_by_the_filter();
+        }
+    }
+}
+
+/// Ends this process by a denied call, which the recording filter kills
+/// before it runs: the way out once no call can be made unrecorded.
+#[cfg(oneiron_test_support)]
+fn end_by_the_filter() -> ! {
+    let zero: libc::c_long = 0;
+    loop {
+        // SAFETY: the recording filter kills ptrace before the kernel runs
+        // it (`kill_denied`), so this call makes no change.
+        unsafe {
+            libc::syscall(libc::SYS_ptrace, zero, zero, zero, zero);
+        }
     }
 }

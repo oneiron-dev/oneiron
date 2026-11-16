@@ -165,7 +165,7 @@ fn confine(
         }
         None => (syscalls, None),
     };
-    let plan = Plan {
+    let mut plan = Plan {
         #[cfg(target_os = "linux")]
         data: grant,
         // Elsewhere nothing can raise it while the organ runs: lifted.
@@ -202,9 +202,10 @@ fn confine(
     }
     // SAFETY: the closure runs in the child between fork and exec, after the
     // descriptors are in place. It only makes async-signal-safe calls
-    // (open, write, close, setpgid, setrlimit, prctl, landlock_restrict_self,
-    // unshare, setpriority) on values computed before the fork, the syscall
-    // filter's program included, and allocates nothing.
+    // (open, write, close, setpgid, setrlimit, setpriority, prctl,
+    // landlock_restrict_self, unshare, getpid; in a trace run seccomp and
+    // sendmsg) on values computed before the fork, the syscall filter's
+    // program included, into which it writes its pid, and allocates nothing.
     unsafe {
         command.pre_exec(move || plan.apply());
     }
@@ -263,7 +264,7 @@ fn fence_available() -> bool {
 }
 
 impl Plan {
-    fn apply(&self) -> io::Result<()> {
+    fn apply(&mut self) -> io::Result<()> {
         // The cell first, while the child has the engine's own credentials
         // and has started nothing: whatever it starts is in it.
         let joined = self.join.as_ref().map_or(-1, |procs| fence::join(procs));
@@ -274,20 +275,22 @@ impl Plan {
         }
         limit(libc::RLIMIT_CORE, 0, 0)?;
         limit(libc::RLIMIT_FSIZE, self.file_size, self.hard)?;
-        #[cfg(target_os = "linux")]
-        self.linux(joined)?;
-        #[cfg(not(target_os = "linux"))]
-        let _ = joined;
+        // Before the syscall filter, whose lists hold no `setpriority`: it
+        // can name another process.
         // SAFETY: setpriority on this process only; a failure leaves the
         // default priority and is not fatal.
         unsafe {
             libc::setpriority(libc::PRIO_PROCESS, 0, 10);
         }
+        #[cfg(target_os = "linux")]
+        self.linux(joined)?;
+        #[cfg(not(target_os = "linux"))]
+        let _ = joined;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    fn linux(&self, joined: i32) -> io::Result<()> {
+    fn linux(&mut self, joined: i32) -> io::Result<()> {
         limit(libc::RLIMIT_DATA, self.data, self.hard)?;
         // SAFETY: prctl with constant arguments on this process.
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
@@ -314,9 +317,9 @@ impl Plan {
             }
         }
         // The syscall filter, after `no_new_privs` and once the namespaces
-        // are made: what the child still does before exec (setpriority,
-        // then the exec) is on every organ's list. An error fails the
-        // start, so the organ never runs unfiltered.
+        // are made: what the child still does before exec (the exec) is on
+        // every organ's list. An error fails the start, so the organ never
+        // runs unfiltered.
         self.syscalls.install()
     }
 }
