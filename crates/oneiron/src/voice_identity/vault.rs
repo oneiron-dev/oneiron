@@ -16,9 +16,9 @@ use super::storage_admission::{
     CONSENT, PRINT_POINTER, PRINT_RECORD, ROSTER, SAMPLE, VoiceDeletionTally,
     active_print_subjects, admit_enrollment_consent, admit_match_segments, admit_sample_origin,
     best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
-    delete_voice_prints_in_txn, load_match_candidates, read_active_print,
-    require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
-    residual_speaker_label, sample_digest, unambiguous_invite_remainder,
+    delete_voice_prints_in_txn, load_match_candidates, read_active_print, read_consent_event,
+    read_consent_events, require_counterparty_contact_entity, require_relationship_entity,
+    residual_cluster_ref, residual_speaker_label, sample_digest, unambiguous_invite_remainder,
 };
 use super::stored::{StoredPrint, StoredSample};
 use super::types::{
@@ -710,8 +710,10 @@ impl Vault {
                 NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject,
                 request.subject_ref,
                 format!(
-                    "{who} recorded that you asked to stop voice recognition on a call \
-                     (recognition consent withdrawn; logged by agent {} under Grant {})",
+                    "{who} recorded that you asked to stop voice recognition on a call, \
+                     and any voiceprint of yours was deleted (logged by agent {} under \
+                     Grant {}). If that wasn't you, restore your consent here; recognition \
+                     then needs a fresh enrolment.",
                     request.recorded_by_ref.to_hex(),
                     grant.to_hex()
                 ),
@@ -787,6 +789,33 @@ impl Vault {
             }
         }
         Ok(false)
+    }
+
+    /// `subject`'s withdrawal `event_id` while they may still disown it
+    /// (VOICE-WITHDRAW-UNDO-SHAPE = B): a withdrawal someone else recorded
+    /// for them, with no grant of theirs dated after it. Their "that wasn't
+    /// me" logs such a grant, which restores consent only; the withdrawal
+    /// already hard-deleted the print (promise-dura-13).
+    pub(crate) fn voice_withdrawal_open_to_disown_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: EntityId,
+        event_id: &str,
+    ) -> Result<Option<VoiceConsentEventV1>> {
+        let Some(withdrawal) = read_consent_event(&self.store, txn, &subject, event_id)? else {
+            return Ok(None);
+        };
+        if withdrawal.state != VoiceConsentState::Withdrawn || withdrawal.recorded_by_ref == subject
+        {
+            return Ok(None);
+        }
+        let granted_since = read_consent_events(&self.store, txn, &subject)?
+            .iter()
+            .any(|later| {
+                later.state == VoiceConsentState::Granted
+                    && later.occurred_at > withdrawal.occurred_at
+            });
+        Ok((!granted_since).then_some(withdrawal))
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a

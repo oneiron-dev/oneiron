@@ -280,6 +280,54 @@ fn agent_recorder_in_txn(
     Ok(grant)
 }
 
+impl Memory<'_> {
+    /// The tap a person's own notice of an agent-logged withdrawal of their
+    /// voice offers (VOICE-WITHDRAW-UNDO-SHAPE = B, lead 05:1x 17 Nov): "that
+    /// wasn't me" logs a new recognition grant for the purposes the
+    /// withdrawal ended, through [`VOICE_RECOGNITION_CONSENT_VERB`] with no
+    /// subject, so the consent door's own-voice path makes it their own act
+    /// on their own proof. It restores consent only: the withdrawal
+    /// hard-deleted the print (promise-dura-13), and recognition needs a
+    /// fresh enrolment. Offered while the withdrawal is open to disown
+    /// ([`Vault::voice_withdrawal_open_to_disown_in_txn`]); the grant is dated
+    /// after the withdrawal, which therefore never voids it.
+    pub(crate) fn voice_consent_restore_actions(
+        &self,
+        row: &crate::inbox::NotificationRow,
+    ) -> Vec<crate::inbox::NotificationAction> {
+        if self.actor_class() != EdgeActorClass::Human {
+            return Vec::new();
+        }
+        let Some(event_id) = row.source.result.as_deref() else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let open = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)
+            .and_then(|txn| {
+                let withdrawal =
+                    vault.voice_withdrawal_open_to_disown_in_txn(&txn, self.actor(), event_id)?;
+                let now = vault.instant_in_txn(&txn)?.secs();
+                Ok(withdrawal.map(|withdrawal| (withdrawal, now)))
+            });
+        let Ok(Some((withdrawal, now))) = open else {
+            return Vec::new();
+        };
+        vec![crate::inbox::NotificationAction {
+            verb: VOICE_RECOGNITION_CONSENT_VERB.to_owned(),
+            args: serde_json::json!({
+                "event_id": format!("{event_id}:restored"),
+                "occurred_at": now.max(withdrawal.occurred_at.saturating_add(1)),
+                "purposes": withdrawal.purposes,
+                "basis": {"SettingsToggle": {"surface_ref": format!("inbox:{}", row.id)}},
+            }),
+        }]
+    }
+}
+
 /// The refusal of an agent `verb` does not admit.
 fn agent_refused(verb: &str, why: &str) -> MemoryError {
     MemoryError::new(

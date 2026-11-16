@@ -98,6 +98,9 @@ impl Memory<'_> {
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
             }
+            NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject => {
+                self.voice_consent_restore_actions(row)
+            }
             _ => Vec::new(),
         }
     }
