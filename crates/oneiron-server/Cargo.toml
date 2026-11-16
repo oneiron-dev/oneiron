@@ -427,6 +427,12 @@ name = "vault_drafters_doors"
 path = "tests/vault_drafters_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The data-key generation route roots its vault on a `MemoryKeystore`.
+[[test]]
+name = "vault_key_generation_route"
+path = "tests/vault_key_generation_route.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
