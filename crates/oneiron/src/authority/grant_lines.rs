@@ -211,6 +211,9 @@ pub(super) struct GrantLines {
     /// Well-signed grant acts whose carrier or owner did not stand at their parents, or that
     /// named a Grant an act of another family named first: valid entries without effect.
     refused: BTreeSet<AuthorityEntryHash>,
+    /// The counted general grant act ends that also withdraw the slips minted under their
+    /// Grant, where the merged line takes them as its end ([`slip_withdrawing_lines`]).
+    withdrawing: BTreeSet<AuthorityEntryHash>,
 }
 
 impl GrantLines {
@@ -225,6 +228,7 @@ impl GrantLines {
                 .extend(ends.iter().map(|(hash, family)| (*hash, *family)));
         }
         self.refused.extend(right.refused.iter().copied());
+        self.withdrawing.extend(right.withdrawing.iter().copied());
     }
 
     /// Records the counted act `hash` that ends `grant`, whatever its family: a membership
@@ -294,6 +298,39 @@ impl GrantLines {
             .live
             .insert(hash, Arc::new(FrontierEdit { replaced, ..edit }));
     }
+
+    /// Records the counted general grant act `hash` of `family` that ends `grant` and
+    /// withdraws the slips minted under it, as a membership execution's withdrawal does (FIX
+    /// 12335), once the merged line takes it as its end ([`slip_withdrawing_lines`]).
+    pub(super) fn end_withdrawing_slips(
+        &mut self,
+        grant: EntityId,
+        hash: AuthorityEntryHash,
+        family: GrantFamily,
+    ) {
+        self.end_in_family(grant, hash, family);
+        self.withdrawing.insert(hash);
+    }
+}
+
+/// The Grants whose slips a counted general grant act's end withdraws: each Grant whose
+/// acts hold one family, the family that end names, as [`folded_grant_lines`] reads the
+/// line ended. An end of another family than a giving on a branch the fold cannot order
+/// ends nothing, so it withdraws no slip either (review #8846 P1-1). The fold reads this
+/// from the merged line when it projects, never into the slips' own state, whose
+/// withdrawals only grow at every merge.
+pub(super) fn slip_withdrawing_lines(state: &FoldState) -> impl Iterator<Item = EntityId> + '_ {
+    let lines = &state.grant_lines;
+    lines.ends.iter().filter_map(move |(grant, ends)| {
+        let families = lines.families(*grant);
+        let family = match families.len() {
+            1 => families.first().copied(),
+            _ => None,
+        }?;
+        ends.iter()
+            .any(|(hash, end)| *end == Some(family) && lines.withdrawing.contains(hash))
+            .then_some(*grant)
+    })
 }
 
 /// What the counted acts say of one Grant, as this install counts them.
@@ -396,8 +433,8 @@ pub(super) fn apply_owner_agent_grant_line(
 
 /// The `GrantAct` transition's grant line, once `super::grant_act::apply_grant_act` took the
 /// entry as valid: a counted giving gives its row the terms it commits to, replacing the
-/// givings its parents carry; a counted end ends the row and withdraws the slips minted under
-/// it. A carrier the one rule does not admit, or a Grant an act of another family already
+/// givings its parents carry; a counted end ends the row and, where the merged line takes it
+/// as its end, withdraws the slips minted under it. A carrier the one rule does not admit, or a Grant an act of another family already
 /// named, carries a valid act without effect. The deciding person is not judged here: the
 /// fold holds no shared vault's owners or admins, so the reader judges them by the family's
 /// own rule.
@@ -437,13 +474,12 @@ pub(super) fn apply_grant_act_line(
                 switches: switches.clone(),
             })
         }
-        // An end withdraws the slips minted under the row too, as a membership execution's
-        // withdrawal does (FIX 12335).
+        // An end withdraws the slips minted under the row too, where the merged line takes it
+        // as its end ([`slip_withdrawing_lines`]).
         (GrantActChange::End, _) => {
-            state.slips.revoke_grant(record.subject.to_hex());
             state
                 .grant_lines
-                .end_in_family(record.subject, hash, record.family);
+                .end_withdrawing_slips(record.subject, hash, record.family);
             return;
         }
         // `GrantActRecord::validate` refuses a rule's giving before any fold; should one
