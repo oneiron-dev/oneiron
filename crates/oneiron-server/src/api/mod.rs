@@ -255,6 +255,12 @@ pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 // The signing session door's read of what a signing router holds (L3-22).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};
+// The integration tests' doors to the e-sign refusal and MCP envelope-error
+// counts (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::esign_qr::count_capability_refusal_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::count_parse_error_for_test;
 #[cfg(test)]
 pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,

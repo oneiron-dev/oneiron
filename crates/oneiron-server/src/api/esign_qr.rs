@@ -139,6 +139,13 @@ async fn refused(server: &SyncServer, path: &str) -> Response {
         .into_response()
 }
 
+/// Counts one capability refusal on the report route, as `report` counts
+/// it: the door for `tests/wire_counts_off_runtime.rs`.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn count_capability_refusal_for_test(server: &SyncServer) {
+    let _ = refused(server, QR_REPORT_PATH).await;
+}
+
 pub(super) async fn private_response(
     request: axum::extract::Request,
     next: axum::middleware::Next,

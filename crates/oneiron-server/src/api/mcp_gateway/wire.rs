@@ -77,3 +77,10 @@ pub(super) async fn observe_envelope_error(server: &SyncServer, method: &str, ki
     })
     .await;
 }
+
+/// Counts one parse error, as the gateway counts a body that is not JSON:
+/// the door for `tests/wire_counts_off_runtime.rs`.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn count_parse_error_for_test(server: &SyncServer) {
+    observe_envelope_error(server, "mcp", "parse_error").await;
+}
