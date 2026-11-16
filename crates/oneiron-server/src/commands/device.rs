@@ -157,9 +157,7 @@ fn set_aside_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> 
     let name = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("vault path {} names no directory", path.display()))?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let stamp = oneiron_base::unix_seconds_now();
     let set_aside = path.with_file_name(format!("{}.empty-{stamp}", name.to_string_lossy()));
     anyhow::ensure!(
         !set_aside.exists(),
