@@ -328,7 +328,8 @@ impl Bench {
     /// The 10 source policies, each read by the owner and the IN pen's
     /// PERSON, with 100 mail threads each.
     fn mail(&self, start: Instant) -> TestResult<Vec<Thread>> {
-        let memory = self.owner_memory();
+        // The landing's writer, as `mail_pack::landing` builds it.
+        let memory = self.vault.memory(self.owner, EdgeActorClass::Human);
         let readers = BTreeSet::from([self.owner, self.person]);
         let mut threads = Vec::with_capacity(SOURCES * THREADS_PER_SOURCE);
         for source_index in 0..SOURCES {
@@ -604,17 +605,25 @@ fn time_scoped_read(
     Ok((samples, admitted))
 }
 
-/// The read half of arm E: `ScopedRead::search(query, &[], 50, None)`, 50
-/// calls a pass, five passes, the first dropped: the time of each call and
-/// the results of the last.
+/// The search half of arm E: `ScopedRead::search(query, vector, 50, None)`,
+/// 50 calls a pass, five passes, the first dropped: the time of each call
+/// and the results of the last. MEASURE.md's `&[]` vector is refused
+/// (`pipeline/scoped_channels.rs`: `DimensionMismatch`), so the query
+/// carries a unit vector of the vault's dimension; the vault has no
+/// embedding model, so the vector channel holds no row and the lexical
+/// channel answers.
 fn time_search(bench: &Bench, actor: EntityId) -> TestResult<(Vec<u64>, usize)> {
+    let mut vector = vec![0.0_f32; VaultConfig::default().dimensions];
+    if let Some(first) = vector.first_mut() {
+        *first = 1.0;
+    }
     let mut samples = Vec::new();
     let mut results = 0;
     for pass in 0..PASSES {
         for _ in 0..SEARCH_CALLS_PER_PASS {
             let lane = bench.vault.scoped_read(bench.key(actor)?);
             let start = Instant::now();
-            let found = lane.search("lease", &[], 50, None)?;
+            let found = lane.search("lease", &vector, 50, None)?;
             let elapsed = ns(start);
             results = found.value.len();
             if pass > 0 {
@@ -832,34 +841,38 @@ fn read_lineage_cost() -> TestResult {
     // Arm E: end to end, today and with the walk made correct.
     for (switch, on) in [("off", false), ("on", true)] {
         door::set_follow_birth_inputs(on);
-        let (samples, admitted) = time_scoped_read(&v1, v1.pen, &c3.rows)?;
-        print_cost(
-            &Cell {
-                arm: "E",
-                set: "C3",
-                vault: "V1",
-                reader: "IN",
-                switch,
-                rows: c3.rows.len(),
-            },
-            &samples,
-            admitted,
-            "frame1000",
-        );
-        let (samples, results) = time_search(&v1, v1.pen)?;
-        print_cost(
-            &Cell {
-                arm: "E",
-                set: "search",
-                vault: "V1",
-                reader: "IN",
-                switch,
-                rows: 50,
-            },
-            &samples,
-            results,
-            "call",
-        );
+        match time_scoped_read(&v1, v1.pen, &c3.rows) {
+            Ok((samples, admitted)) => print_cost(
+                &Cell {
+                    arm: "E",
+                    set: "C3",
+                    vault: "V1",
+                    reader: "IN",
+                    switch,
+                    rows: c3.rows.len(),
+                },
+                &samples,
+                admitted,
+                "frame1000",
+            ),
+            Err(error) => println!("## SKIP arm=E set=C3 switch={switch} reason={error}"),
+        }
+        match time_search(&v1, v1.pen) {
+            Ok((samples, results)) => print_cost(
+                &Cell {
+                    arm: "E",
+                    set: "search",
+                    vault: "V1",
+                    reader: "IN",
+                    switch,
+                    rows: 50,
+                },
+                &samples,
+                results,
+                "call",
+            ),
+            Err(error) => println!("## SKIP arm=E set=search switch={switch} reason={error}"),
+        }
     }
     door::set_follow_birth_inputs(false);
 
