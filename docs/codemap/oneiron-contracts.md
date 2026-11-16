@@ -48,7 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host_descriptors.rs` | src | s | 1 fn | — | What the platform says of this process's descriptors: the probe the process's descriptor floor is sized from… |
 | `src/host_memory.rs` | src | m | 2 struct · 1 enum · 17 fn | MachineMemory, MemoryLease, MemoryRefusal | The process's physical-memory admission line for host and native work |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
-| `src/lib.rs` | src | s | 29 mod · 4 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
+| `src/lib.rs` | src | s | 30 mod · 4 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
 | `src/limit_ask.rs` | src | L | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `src/limit_ask/cgroup.rs` | src | s | 2 crate-vis | — | The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066) |
 | `src/limit_ask/engine_rows.rs` | src | m | 2 fn · 1 const | — | The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so… |
@@ -61,6 +61,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 1 struct · 1 fn · 7 const | EntityMetadataHeader | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/recorded_seconds.rs` | src | s | 1 struct · 3 fn | RecordedSeconds | `RecordedSeconds`: a time on the vault's recording clock, in whole seconds since the UNIX epoch |
+| `src/register.rs` | src | s | 1 trait · 1 re-export | Register | Registers: the engine's closed lists of names (Fable pass 25, the Register pattern) |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
 | `src/registry/families.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | TypeByteFamily, TypeByteFamilyEntry | Byte-space v3.1 family allocation, independent of kind behavior |
 | `src/registry/mod.rs` | src | s | 12 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
@@ -85,4 +86,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/msgpack_reader.rs` | test | m | — | — | The one reader for untyped MessagePack rows (`oneiron_contracts::msgpack`, PLAN-UC-08 PR 0): one value and… |
 | `tests/parse_hex_cursor.rs` | test | s | — | — | The hex cursor reader (UC-13 PR 2, HEX-CASE-POLICY = A): hex digits of either case, nothing else |
 | `tests/recorded_seconds.rs` | test | s | — | — | UC-03 PR 0r (M-4 = a): `RecordedSeconds` is the bare `u64` on the wire, so a stored seconds field that… |
+| `tests/register_derive.rs` | test | s | 1 crate-vis | — | `#[derive(Register)]` writes, for every row, the name serde writes for the same enum: under each of serde's… |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-contracts` made `pub` so `oneiron` can reach them across the crate split |
