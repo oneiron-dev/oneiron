@@ -12,29 +12,34 @@ use crate::autoreason_campaign::archive::{
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::memory::{Memory, MemoryResult};
 
-/// Refuses a caller who does not read every sample `pin` was drawn from.
-/// An installed pin's axes and bins carry its samples' words, as the
-/// proposal it came from does, so a door that serves a pin, a view of one
-/// or a cell under one serves only a caller who reads every sample now: a
-/// read grant revoked since the request withholds the archive too (#7966
-/// review round 2).
-fn samples_read_in_txn(
+/// Refuses a caller who does not read every row of `rows` now, as rows it
+/// cannot see. An archive's axes and bins carry the words of the rows they
+/// were drawn from, the campaign's goal claim and each sample, so a door
+/// that queues a request, serves its answer, or serves a pin, a view of one
+/// or a cell under one serves only a caller who reads them all: a read grant
+/// revoked since the request withholds the archive too (#7966 review rounds
+/// 1 and 2; the goal claim, #8786 review round 2).
+fn sources_read_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    rows: &[EntityId],
+) -> MemoryResult<()> {
+    if lane.entities_readable_in_txn(txn, rows)?.contains(&false) {
+        return Err(crate::Error::EntityNotFound.into());
+    }
+    Ok(())
+}
+
+/// [`sources_read_in_txn`] for an installed pin: its goal claim and every
+/// sample it was drawn from.
+fn pin_sources_read_in_txn(
     lane: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     pin: &CampaignArchivePin,
 ) -> MemoryResult<()> {
-    let samples: Vec<EntityId> = pin
-        .sample_outputs()
-        .iter()
-        .map(|output| output.entity)
-        .collect();
-    if lane
-        .entities_readable_in_txn(txn, &samples)?
-        .contains(&false)
-    {
-        return Err(crate::Error::EntityNotFound.into());
-    }
-    Ok(())
+    let mut rows = vec![pin.goal_ref()];
+    rows.extend(pin.sample_outputs().iter().map(|output| output.entity));
+    sources_read_in_txn(lane, txn, &rows)
 }
 
 pub fn research_archive_install(
@@ -45,7 +50,7 @@ pub fn research_archive_install(
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
         let view = records::install_in_txn(memory.vault(), txn, input)?;
-        samples_read_in_txn(&lane, txn, &view.pin)?;
+        pin_sources_read_in_txn(&lane, txn, &view.pin)?;
         Ok(view)
     })
 }
@@ -58,7 +63,7 @@ pub fn research_archive_record(
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
         let view = records::record_in_txn(memory.vault(), txn, input)?;
-        samples_read_in_txn(&lane, txn, &view.pin)?;
+        pin_sources_read_in_txn(&lane, txn, &view.pin)?;
         Ok(view)
     })
 }
@@ -77,7 +82,7 @@ pub fn research_archive_get(
     let root = attempt(input.root)?;
     controller_in_txn(memory, &txn, Some(root))?;
     let record = records::read_in_txn(memory.vault(), &txn, root)?;
-    samples_read_in_txn(&lane, &txn, &record.pin)?;
+    pin_sources_read_in_txn(&lane, &txn, &record.pin)?;
     Ok(record)
 }
 
@@ -98,9 +103,9 @@ pub fn research_archive_repropose(
         controller_in_txn(memory, txn, Some(root))?;
         controller_in_txn(memory, txn, Some(attempt(input.new_root)?))?;
         let held = records::read_in_txn(memory.vault(), txn, root)?;
-        samples_read_in_txn(&lane, txn, &held.pin)?;
+        pin_sources_read_in_txn(&lane, txn, &held.pin)?;
         let view = records::repropose_in_txn(memory.vault(), txn, input)?;
-        samples_read_in_txn(&lane, txn, &view.pin)?;
+        pin_sources_read_in_txn(&lane, txn, &view.pin)?;
         Ok(view)
     })
 }
@@ -114,7 +119,7 @@ pub fn research_archive_coverage(
         let root = attempt(input.root)?;
         controller_in_txn(memory, txn, Some(root))?;
         let held = records::read_in_txn(memory.vault(), txn, root)?;
-        samples_read_in_txn(&lane, txn, &held.pin)?;
+        pin_sources_read_in_txn(&lane, txn, &held.pin)?;
         Ok(records::coverage_in_txn(memory.vault(), txn, input)?)
     })
 }
@@ -122,8 +127,8 @@ pub fn research_archive_coverage(
 /// Queues one request for the Coach's archive axes (ARM05 P2) and wakes the
 /// host's Coach. The controller asks; the Coach answers on its own seat, and
 /// the engine records the proposal under the Coach's authority: the caller
-/// never supplies its own. The caller must read every sample it names, since
-/// the axes are drawn from their words.
+/// never supplies its own. The caller must read the goal claim and every
+/// sample it names, since the Coach draws the axes from their words.
 pub fn research_archive_propose_axes(
     memory: &Memory<'_>,
     input: CampaignArchiveProposeAxes,
@@ -141,12 +146,7 @@ pub fn research_archive_propose_axes(
             }
         }
         let record = axes_job::request_in_txn(vault, txn, &input)?;
-        if lane
-            .entities_readable_in_txn(txn, &record.sample_entities())?
-            .contains(&false)
-        {
-            return Err(crate::Error::EntityNotFound.into());
-        }
+        sources_read_in_txn(&lane, txn, &record.source_rows())?;
         Ok(axes_job::queue_in_txn(
             vault,
             txn,
@@ -159,10 +159,11 @@ pub fn research_archive_propose_axes(
 }
 
 /// One axes request's state, for its campaign's controller. The axes are
-/// drawn from the samples' words, so the state serves only a caller who
-/// reads every sample now, as the caller who queued the request had to: a
-/// read grant revoked since the request withholds its answer (#7966 review
-/// round 1).
+/// drawn from the goal's and the samples' words, so the state serves only a
+/// caller who reads the goal claim and every sample now, as the caller who
+/// queued the request had to: a read grant revoked since the request
+/// withholds its answer (#7966 review round 1; the goal claim, #8786 review
+/// round 2).
 pub fn research_archive_proposal(
     memory: &Memory<'_>,
     input: CampaignArchiveProposalRequest,
@@ -176,11 +177,6 @@ pub fn research_archive_proposal(
         .map_err(crate::Error::from)?;
     let record = axes_job::request_record_in_txn(memory.vault(), &txn, input.request)?;
     controller_in_txn(memory, &txn, Some(attempt(record.root())?))?;
-    if lane
-        .entities_readable_in_txn(&txn, &record.sample_entities())?
-        .contains(&false)
-    {
-        return Err(crate::Error::EntityNotFound.into());
-    }
+    sources_read_in_txn(&lane, &txn, &record.source_rows())?;
     Ok(record.into_state())
 }
