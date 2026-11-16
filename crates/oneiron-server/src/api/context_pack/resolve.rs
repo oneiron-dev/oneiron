@@ -65,11 +65,12 @@ pub(crate) async fn core_context_pack(
 }
 
 /// The members of a context pack request that its route reads and the
-/// native `memory.context_pack` contract does not carry: its room, session,
-/// reaction signals, affect, assembly policy, time window, projection,
-/// interlocutors and reader.
+/// native `memory.context_pack` contract does not carry: its room and its
+/// home, session, reaction signals, affect, assembly policy, time window,
+/// projection, interlocutors and reader.
 const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "conversation_id",
+    "conversation_home",
     "session_id",
     "signals_since",
     "signals_after",
@@ -226,6 +227,7 @@ pub(crate) async fn execute_context_pack(
         room_id,
         room,
         interlocutors,
+        home,
         media,
         skill_reliability,
         candidate_limit,
@@ -375,18 +377,26 @@ pub(crate) async fn execute_context_pack(
     )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
-    // the one applied (design §11 rule 6).
+    // the one applied (design §11 rule 6). It carries the pack's home
+    // (DEC-0006 #home-clearance).
     let disclosure = resolve_core_disclosure_with_once(
         &server.vault,
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
         &once,
+        home,
     )?;
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
     }
     if skip_optional_recall {
         builder = builder.skip_optional_recall();
+    }
+    // A live chat turn's recall names the TURN it serves, so the engine can
+    // label its run from the user's later words (FIX
+    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP).
+    if let Some(turn) = req.retrieval_turn {
+        builder = builder.retrieval_turn(turn);
     }
     // Reaction signals ride the same clamp as the pack they come with.
     let signal_disclosure = disclosure.clone();
@@ -576,13 +586,25 @@ fn read_reaction_signals(
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
     // disclosure clamp as the pack, and so is a read that names its own
-    // filter, which the pack's reader carries (FIX 3977). Paging follows the
-    // filter, so a cursor never names a signal this caller was not shown.
+    // filter, which the pack's reader carries (FIX 3977), and so is a read a
+    // clamp narrows, such as an owner session homed in another vault
+    // (DEC-0006 `#home-clearance`). Paging follows the filter, so a cursor
+    // never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
         || req.interlocutors.is_some()
-        || req.filter.is_some();
+        || req.filter.is_some()
+        || disclosure.is_some();
+    // The raw feed meets the world judge the scoped read applies (DEC-0005:
+    // a caller off this device reads nothing a withheld world keeps). An
+    // owner-grade caller with no slip off this device, as a managed vault's
+    // owner or a dev-hatch request a proxy marked, hears of no reaction a
+    // world withheld from its destination keeps, nor of one on a message
+    // such a world keeps. A caller on this device is withheld nothing.
+    let raw_destination = (!scoped)
+        .then(|| auth.destination())
+        .filter(oneiron::settings::ReadDestination::is_off_device);
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;
@@ -590,6 +612,14 @@ fn read_reaction_signals(
             && !scoped_read
                 .is_reaction_signal_readable_under(&signal, disclosure)
                 .map_err(|e| core_engine_error("reaction signal scope failed", e))?
+        {
+            continue;
+        }
+        if let Some(destination) = &raw_destination
+            && !server
+                .vault
+                .rows_may_leave_for(&[signal.reaction, signal.message], destination)
+                .map_err(|e| core_engine_error("reaction signal world judge failed", e))?
         {
             continue;
         }

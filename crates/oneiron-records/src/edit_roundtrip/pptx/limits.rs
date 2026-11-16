@@ -1,0 +1,105 @@
+//! Moved from `crates/oneiron/src/edit_roundtrip/pptx/limits.rs` (lib split R1: record types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use oneiron_docedit::pptx_comments::PptxCommentLimits;
+use rmpv::Value;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeSet;
+
+/// The XML byte budget for a PowerPoint comment edit. A comment author's
+/// name has none: it is attribute text, which no codec bounds (Rule 5;
+/// FIX 10590).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PptxOperationalLimits {
+    pub max_xml_bytes: usize,
+}
+
+impl Default for PptxOperationalLimits {
+    fn default() -> Self {
+        Self {
+            max_xml_bytes: 32 * 1024 * 1024,
+        }
+    }
+}
+
+impl PptxOperationalLimits {
+    /// Apply the manifest's nested-narrowing precedence, including holder caps.
+    #[must_use]
+    pub const fn narrow(self, holder: Self) -> Self {
+        Self {
+            max_xml_bytes: min(self.max_xml_bytes, holder.max_xml_bytes),
+        }
+    }
+
+    #[must_use]
+    pub const fn valid(self) -> bool {
+        self.max_xml_bytes > 0
+    }
+
+    /// The shipped policy row, encoded exactly like owner-authored rows.
+    pub fn policy_row(self) -> Value {
+        Value::Map(vec![
+            (Value::from("precedence"), Value::from("nested_narrowing")),
+            (
+                Value::from("max_xml_bytes"),
+                Value::from(self.max_xml_bytes as u64),
+            ),
+        ])
+    }
+
+    /// Strict manifest parse: missing, duplicate and unknown rows fail closed.
+    pub fn from_policy_row(value: &Value) -> Option<Self> {
+        let Value::Map(entries) = value else {
+            return None;
+        };
+        if entries.len() != 2 {
+            return None;
+        }
+        let mut seen = BTreeSet::new();
+        for (key, _) in entries {
+            let name = key.as_str()?;
+            if !matches!(name, "precedence" | "max_xml_bytes") || !seen.insert(name) {
+                return None;
+            }
+        }
+        let field = |name: &str| -> Option<usize> {
+            entries
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))?
+                .1
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value > 0)
+        };
+        if entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("precedence"))?
+            .1
+            .as_str()?
+            != "nested_narrowing"
+        {
+            return None;
+        }
+        let limits = Self {
+            max_xml_bytes: field("max_xml_bytes")?,
+        };
+        limits.valid().then_some(limits)
+    }
+
+    /// The organ's codec ceilings: this budget over the ZIP32 record bounds
+    /// and the edit pipeline's archive ceilings (`opc`'s 256 MiB per entry,
+    /// 1 GiB per package).
+    pub const fn codec(self) -> PptxCommentLimits {
+        PptxCommentLimits {
+            max_archive_bytes: u32::MAX as usize,
+            max_part_bytes: 256 << 20,
+            max_expanded_bytes: 1 << 30,
+            max_xml_bytes: self.max_xml_bytes,
+        }
+    }
+}
+
+pub const fn min(a: usize, b: usize) -> usize {
+    if a < b { a } else { b }
+}

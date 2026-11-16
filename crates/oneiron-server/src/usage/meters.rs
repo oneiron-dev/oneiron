@@ -8,12 +8,13 @@
 //! vault, metric and UTC-day rollup moves in the row's own write.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::codec::UsageError;
 use super::keys::{
-    MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, meter_key, meter_rollup_key, now_secs,
+    MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, meter_key, meter_rollup_key, unix_seconds_now,
     validate_dimension, validate_key, validate_optional_dimension,
 };
 use super::ledger::UsageLedger;
@@ -23,8 +24,11 @@ use super::model::UsageRollupStatus;
 pub const METER_PERIOD_SECS: u64 = 86_400;
 
 /// One operational meter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("operational.metric")]
 pub enum OperationalMetric {
     /// Tokens of an accepted MESSAGE revision.
     IngestTokens,
@@ -37,15 +41,6 @@ pub enum OperationalMetric {
 }
 
 impl OperationalMetric {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::IngestTokens => "ingest_tokens",
-            Self::EmbedTokens => "embed_tokens",
-            Self::RetrievalQueries => "retrieval_queries",
-            Self::AssetGbDays => "asset_gb_days",
-        }
-    }
-
     /// The unit a row's quantity counts in.
     pub fn unit(self) -> &'static str {
         match self {
@@ -315,7 +310,7 @@ impl UsageLedger {
         fold_meter(&mut rollup, row);
         let stored = StoredMeterRow {
             row: row.clone(),
-            recorded_at: now_secs(),
+            recorded_at: unix_seconds_now(),
         };
         self.vault
             .sync_state_put_in_write_txn(txn, key, &rmp_serde::to_vec_named(&stored)?)?;
