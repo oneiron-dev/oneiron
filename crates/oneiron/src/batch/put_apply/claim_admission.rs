@@ -181,8 +181,14 @@ pub(super) fn validate_witness_message_body(
 /// Whether `reader` may put a row at `id` in `txn` (FIX 6068): an id that
 /// names no stored row is free to take; an occupied one only when its
 /// original row, whatever it holds (a deleted, retained or other-kind row
-/// included), is one `reader` reads. Judged before any incoming body, scope
-/// stamp or edge can change what the row means.
+/// included), is one `reader` reads, and is no world-access grant or default.
+/// Judged before any incoming body, scope stamp or edge can change what the
+/// row means.
+///
+/// FIX [WORLD-ACCESS-GRANT-ROW-OVERWRITE-UNGOVERNS]: only the governed doors
+/// write either world-access tier (`claim::world_access`). A put over an
+/// owner's grant under another predicate would take that grant out of the
+/// fold, and a subject no grant governs reads base reality.
 pub(crate) fn put_target_admitted_in(
     reader: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
@@ -190,6 +196,9 @@ pub(crate) fn put_target_admitted_in(
 ) -> Result<bool> {
     if !crate::ports::EntityStoreRead::port_entity_present(&reader.vault().store, txn, id)? {
         return Ok(true);
+    }
+    if crate::claim::world_access::holds_world_access_claim_in(reader.vault(), txn, id)? {
+        return Ok(false);
     }
     match reader.is_entity_readable_in(txn, id) {
         Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
