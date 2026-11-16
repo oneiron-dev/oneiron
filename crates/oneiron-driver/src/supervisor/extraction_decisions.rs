@@ -8,7 +8,9 @@ use oneiron::dreamer_consolidation::{
     ConsolidationDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall,
     StepChargeTally,
 };
-use oneiron::dreamer_runner::{DreamerDecisionLender, ExtractionDecisionLoan, ExtractionStepLoan};
+use oneiron::dreamer_runner::{
+    DreamerDecisionLender, ExtractionDecisionLoan, ExtractionStepLoan, MergedValueStepLoan,
+};
 use oneiron::dreamer_wake::{WakeAttemptContext, WakePassDeadline};
 use oneiron::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use oneiron::llm::model_step::ModelStepReceipt;
@@ -30,6 +32,8 @@ pub trait ExtractionDecisionGate: Send + Sync {
     /// Admits the prepared extraction route for one bound generation step.
     ///
     /// The default refuses so a gate written for verdict reads never admits generation.
+    /// A merged-value step generates on the verdict route: its loan asks [`Self::admits`]
+    /// for that route and this method for the generation.
     ///
     /// # Errors
     ///
@@ -166,6 +170,39 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
             call,
             prompt: &resources.decisions.extraction_prompt,
             material: &self.material,
+            guard: &resources.guard,
+            deadline: &self.deadline,
+            now_ms: self.now_ms,
+            charges: &self.charges,
+            runtime: &resources.runtime,
+        })
+        .map(Some)
+    }
+
+    /// Rechecks the verdict route and the step gate, then lends the admitted attempt's native
+    /// verdict resources once.
+    ///
+    /// The call goes out on the verdict role's route, so that route's live permission is
+    /// reread first. The step gate is reread as well, so a gate written for verdict reads
+    /// alone never lends a generation.
+    fn lend_merged_value_step(
+        &self,
+        step: &mut dyn FnMut(MergedValueStepLoan<'_>) -> MemoryResult<ModelStepReceipt>,
+    ) -> MemoryResult<Option<ModelStepReceipt>> {
+        let resources = &self.resources;
+        if !resources.gate.admits()? || !resources.gate.admits_step()? {
+            return Ok(None);
+        }
+        let call = RoleCall::resolve(
+            &resources.roles,
+            DREAMER_VERDICT_ROLE,
+            resources.backend.as_ref(),
+            &resources.model,
+            &resources.binding,
+            resources.extraction_egress.as_deref(),
+        );
+        step(MergedValueStepLoan {
+            call,
             guard: &resources.guard,
             deadline: &self.deadline,
             now_ms: self.now_ms,

@@ -6,7 +6,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::{BoundFacet, DreamerAttemptBinding, ExtractionStepRequest, facet_batch, facet_refused};
+use super::{
+    BoundFacet, DreamerAttemptBinding, ExtractionStepRequest, MergedValueStepRequest, facet_batch,
+    facet_refused,
+};
 use crate::derive::DeriveCommitInput;
 use crate::llm::model_step::ModelStepReceiptRequest;
 use crate::memory::{MemoryError, MemoryResult};
@@ -45,7 +48,8 @@ impl DreamerAttemptBinding {
     /// settlement admits its conflicts page, typed verdicts on the host's
     /// lent ladder and Settle commits. Extraction admits its inputs and observations pages,
     /// evidence spans, checked verdict packs and bound generation steps with their
-    /// receipts, and no commit. A commit takes the batch itself,
+    /// receipts, and no commit. A step input that names a `resolution` is a
+    /// merged-value step; any other is an extraction step. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -123,15 +127,27 @@ impl DreamerAttemptBinding {
                 })?)
             }
             EXTRACTION_STEP_SUBMIT_VERB => {
-                let input: ExtractionStepRequest = decode(verb, input)?;
-                encode(&typed_row_validated(
-                    &memory,
-                    &VERB_TABLE,
-                    verb,
-                    input,
-                    validate_extraction_step,
-                    |input| self.extraction_step_submit(input),
-                )?)
+                if input.get("resolution").is_some() {
+                    let input: MergedValueStepRequest = decode(verb, input)?;
+                    encode(&typed_row_validated(
+                        &memory,
+                        &VERB_TABLE,
+                        verb,
+                        input,
+                        validate_merged_value_step,
+                        |input| self.merged_value_step_submit(input),
+                    )?)
+                } else {
+                    let input: ExtractionStepRequest = decode(verb, input)?;
+                    encode(&typed_row_validated(
+                        &memory,
+                        &VERB_TABLE,
+                        verb,
+                        input,
+                        validate_extraction_step,
+                        |input| self.extraction_step_submit(input),
+                    )?)
+                }
             }
             EXTRACTION_STEP_RECEIPT_VERB => {
                 let input: ModelStepReceiptRequest = decode(verb, input)?;
@@ -168,6 +184,11 @@ impl DreamerAttemptBinding {
 /// Requires a hook rewrite to remain a reference-only extraction request.
 fn validate_extraction_step(verb: &str, value: &Value) -> MemoryResult<()> {
     decode::<ExtractionStepRequest>(verb, value.clone()).map(drop)
+}
+
+/// Requires a hook rewrite to remain a reference-only merged-value request.
+fn validate_merged_value_step(verb: &str, value: &Value) -> MemoryResult<()> {
+    decode::<MergedValueStepRequest>(verb, value.clone()).map(drop)
 }
 
 /// The check a hook's rewrite of a strength commit must pass.

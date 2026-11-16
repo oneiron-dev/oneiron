@@ -39,6 +39,7 @@ pub(crate) mod extraction_pack;
 pub(crate) mod extraction_step;
 mod failure_rules;
 mod follower_attempt;
+pub(crate) mod merged_value_step;
 #[cfg(test)]
 pub(crate) use failure_rules::PREDICATE as DREAMER_FAILURE_RULES_PREDICATE;
 pub(crate) use failure_rules::{
