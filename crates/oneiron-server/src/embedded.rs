@@ -248,6 +248,7 @@ async fn serve_prepared<A: AppHost>(
             device_sync.stop().await;
         }
         mesh_server.stop_shared_envs().await;
+        mesh_server.stop_connector_stdio().await;
         if let Some(mesh) = mesh {
             mesh.stop().await;
         }
@@ -325,6 +326,7 @@ async fn serve_prepared<A: AppHost>(
         device_sync.stop().await;
     }
     mesh_server.stop_shared_envs().await;
+    mesh_server.stop_connector_stdio().await;
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }

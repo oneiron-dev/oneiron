@@ -15,6 +15,13 @@
 //! read Grant, it redeems an open verb link, and the backfill still mints its
 //! default read Grant.
 //!
+//! FIX [APP-BACKEND-LINK-EXPIRED-GRANT-COUNTS]: a Grant whose `expires_at`
+//! the authority clock has reached names no backend. Red at the merge of
+//! #8713: once the backend's only Grant expired, the owner's link that names
+//! verbs still issues, and a link issued while it stood still redeems.
+//! Guards: the same link issues before the expiry, and a backend whose Grant
+//! stands redeems it.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test artifact_backend_grant`.
 #![cfg(oneiron_test_support)]
@@ -40,6 +47,9 @@ use oneiron_contracts::entity_id::derived_domains::AGENT_PRINCIPAL;
 use serde_json::json;
 
 const APP: &str = "backend-grant-app";
+/// How long an expiring Grant of these tests stands after its mint: well
+/// inside the one-hour pairing code a link issued at the mint keeps.
+const GRANT_LIFETIME_SECS: u64 = 120;
 
 struct Fixture {
     vault: Vault,
@@ -228,6 +238,45 @@ fn redeem(
     )
 }
 
+/// The recording clock's reading now (Unix seconds), which a Grant's
+/// `expires_at` must pass at its mint.
+fn wall_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock reads after the epoch")
+        .as_secs()
+}
+
+/// The owner mints the backend a read Grant as their own act, ending at
+/// `expires_at` (`None`: no expiry).
+fn mint_backend_read_grant(fixture: &Fixture, expires_at: Option<u64>) {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent: fixture.backend,
+            authority_scope,
+            expires_at,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("owner mints the app backend a read Grant");
+}
+
+/// The wire name of `result`'s error kind, `None` when it succeeded.
+fn error_kind<T>(result: &oneiron::Result<T>) -> Option<serde_json::Value> {
+    result
+        .as_ref()
+        .err()
+        .map(|error| serde_json::to_value(error.kind()).expect("error kind wire name"))
+}
+
 /// The live owner-agent Grants of the registry that name `holder`.
 fn grants_naming(vault: &Vault, holder: EntityId) -> Vec<ConsentRegistryRow> {
     vault
@@ -302,23 +351,7 @@ fn zero_verb_owner_link_for_backend_principal_mints_no_grant() {
 fn granted_backend_principal_takes_a_verb_bearing_link() {
     let fixture = fixture();
     let backend = fixture.backend;
-    let mut authority_scope = Scope::top();
-    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
-    mint_agent_grant_as(
-        &fixture.vault,
-        &fixture.owner_proof,
-        ActSurface::ThisInstall,
-        AgentGrantMintRequest {
-            agent: backend,
-            authority_scope,
-            expires_at: None,
-            repo_bounds: None,
-            verb_classes: BTreeSet::new(),
-            wallet_ref: None,
-            working_view_bounds: None,
-        },
-    )
-    .expect("owner mints the app backend a read Grant");
+    mint_backend_read_grant(&fixture, None);
     let issued = owner_link(&fixture, backend, read_slip_scope());
     assert!(
         issued.is_ok(),
@@ -330,6 +363,81 @@ fn granted_backend_principal_takes_a_verb_bearing_link() {
         grants.len(),
         1,
         "actor=app backend {backend:?}; expected the owner's one Grant and no default Grant beside it; seen grants={grants:?}"
+    );
+}
+
+/// FIX [APP-BACKEND-LINK-EXPIRED-GRANT-COUNTS]: a Grant whose expiry the
+/// authority clock has reached names no backend, so a link that names verbs
+/// for a backend whose only Grant expired is refused as for one never
+/// granted. Before the expiry the same link issues.
+#[test]
+fn verb_bearing_link_for_backend_whose_grant_expired_is_refused() {
+    let fixture = fixture();
+    let backend = fixture.backend;
+    let expires_at = wall_secs() + GRANT_LIFETIME_SECS;
+    mint_backend_read_grant(&fixture, Some(expires_at));
+    let before = owner_link(&fixture, backend, read_slip_scope());
+    assert!(
+        before.is_ok(),
+        "actor=app backend {backend:?}; expected the owner's core:read link to issue while its Grant stands (expires_at={expires_at}); seen error={:?}",
+        before.as_ref().err()
+    );
+
+    fixture
+        .vault
+        .advance_authority_clock_for_test(expires_at)
+        .expect("the authority clock reaches the Grant's expiry");
+    let after = owner_link(&fixture, backend, read_slip_scope());
+    assert_eq!(
+        error_kind(&after),
+        Some(json!("app_backend_grant_required")),
+        "actor=app backend {backend:?}; expected the owner's core:read link refused as app_backend_grant_required once its only Grant expired (expires_at={expires_at}); seen issued={}, error={:?}",
+        after.is_ok(),
+        after.as_ref().err()
+    );
+}
+
+/// The expiry is judged again at redemption: a link that names verbs, issued
+/// while the backend's Grant stood, is refused when the backend redeems it
+/// after that Grant expired.
+#[test]
+fn verb_link_issued_under_a_grant_is_refused_at_redemption_after_it_expired() {
+    let fixture = fixture();
+    let backend = fixture.backend;
+    let expires_at = wall_secs() + GRANT_LIFETIME_SECS;
+    mint_backend_read_grant(&fixture, Some(expires_at));
+    let link = owner_link(&fixture, backend, read_slip_scope())
+        .expect("owner issues the backend's core:read link while its Grant stands");
+
+    fixture
+        .vault
+        .advance_authority_clock_for_test(expires_at)
+        .expect("the authority clock reaches the Grant's expiry");
+    let redeemed = redeem(&fixture, &link, backend, 0x56);
+    assert_eq!(
+        error_kind(&redeemed),
+        Some(json!("app_backend_grant_required")),
+        "actor=app backend {backend:?}; expected its redemption of the owner's core:read link refused as app_backend_grant_required once its only Grant expired (expires_at={expires_at}); seen redeemed={}, error={:?}",
+        redeemed.is_ok(),
+        redeemed.as_ref().err()
+    );
+}
+
+/// The redemption refusal waits on the expiry: a backend whose Grant still
+/// stands redeems the owner's link that names verbs.
+#[test]
+fn granted_backend_redeems_a_verb_link_while_its_grant_stands() {
+    let fixture = fixture();
+    let backend = fixture.backend;
+    let expires_at = wall_secs() + GRANT_LIFETIME_SECS;
+    mint_backend_read_grant(&fixture, Some(expires_at));
+    let link = owner_link(&fixture, backend, read_slip_scope())
+        .expect("owner issues the backend's core:read link while its Grant stands");
+    let redeemed = redeem(&fixture, &link, backend, 0x57);
+    assert!(
+        redeemed.is_ok(),
+        "actor=app backend {backend:?}; expected it to redeem the owner's core:read link while its Grant stands (expires_at={expires_at}); seen error={:?}",
+        redeemed.as_ref().err()
     );
 }
 
