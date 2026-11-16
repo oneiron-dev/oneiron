@@ -19,7 +19,9 @@ use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
-use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MemoryError, WitnessAuthor, WitnessMessage, WitnessTurn,
+};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result, Vault};
@@ -62,6 +64,25 @@ pub(super) fn interview_in_txn(
     INTERVIEWS.get(store, txn, &project)
 }
 
+/// The opening's checks in `txn`, answering the owner's actor: `project`
+/// has no interview yet, and `owner`'s proof still holds. The opening makes
+/// them in its read and again in the write that lands the thread root, so
+/// an owner credential revoked, or another opening landed, while it waited
+/// for the writer lands none of it.
+fn check_opening_in_txn(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    txn: &RoTxn<'_>,
+    project: EntityId,
+) -> Result<EntityId> {
+    if INTERVIEWS.get(&vault.store, txn, &project)?.is_some() {
+        return Err(Error::InvalidConfig(
+            "this project's goal interview is already open".into(),
+        ));
+    }
+    owner.revalidate_in_txn(vault, txn)
+}
+
 /// Ends `project`'s open interview in the write that commits the goal
 /// claim `goal` it confirmed: the interview TASK settles with the claim as
 /// its result and leaves the row, so no later turn of the thread wakes a
@@ -91,9 +112,10 @@ impl Vault {
     /// home room's header, the engine mints the leader's interview TASK,
     /// binds it to that root with the owner as binder (the home room's
     /// roster rule), records the interview and dispatches the leader's
-    /// first intake run. Any failure lands none of it. `None` when the home
-    /// room has no owner-authored trunk turn to open the thread on, as a
-    /// converted project's: its interview opens no thread.
+    /// first intake run. Any failure lands none of it; the owner's proof is
+    /// checked again in that write. `None` when the home room has no
+    /// owner-authored trunk turn to open the thread on, as a converted
+    /// project's: its interview opens no thread.
     pub(crate) fn open_project_goal_interview(
         &self,
         owner: &AuthenticatedOwner,
@@ -105,12 +127,7 @@ impl Vault {
     ) -> Result<Option<AgentDispatchOutcome>> {
         let actor = {
             let txn = self.store.env.read_txn()?;
-            if INTERVIEWS.get(&self.store, &txn, &project)?.is_some() {
-                return Err(Error::InvalidConfig(
-                    "this project's goal interview is already open".into(),
-                ));
-            }
-            owner.revalidate_in_txn(self, &txn)?
+            check_opening_in_txn(self, owner, &txn, project)?
         };
         let memory = self.memory(actor, EdgeActorClass::Human);
         // The header the owner's tap witnessed when the project was born.
@@ -147,43 +164,57 @@ impl Vault {
             occurred_at: now,
             assertions: Default::default(),
         };
+        // A refusal of the write's own check answers as itself.
+        let refused = std::cell::Cell::new(None);
         let mut opened = None;
-        memory
-            .witness_linked_with_room_birth(
-                &root,
-                |_| Ok(()),
-                |txn, landed| {
-                    let thread = landed.turn_id;
-                    let task = crate::task_verb::mint_goal_interview_task_in_txn(
-                        &memory, txn, project, leader, actor, now,
-                    )?;
-                    self.bind_room_thread_task_in_txn(txn, actor, home_room, thread, task)?;
-                    INTERVIEWS.put(
-                        &self.store,
-                        txn,
-                        &project,
-                        &GoalInterviewRow {
-                            card: card.to_owned(),
-                            thread,
-                            task: Some(task),
-                            attempt: None,
-                        },
-                    )?;
-                    THREADS.put(&self.store, txn, &thread, &project)?;
-                    let outcome = AgentDispatcher::new(self).dispatch_goal_intake_in_txn(
-                        txn,
-                        card,
-                        project,
-                        home_room,
-                        Some(thread),
-                        None,
-                        now,
-                    )?;
-                    opened = Some((thread, outcome));
-                    Ok(())
-                },
-            )
-            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        let witnessed = memory.witness_linked_with_room_birth(
+            &root,
+            |wtxn| match check_opening_in_txn(self, owner, wtxn, project) {
+                Ok(_) => Ok(()),
+                Err(error) => {
+                    refused.set(Some(error));
+                    Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "the goal interview's opening was refused in its write",
+                        &["Authenticate the owner again and open the interview again."],
+                    ))
+                }
+            },
+            |txn, landed| {
+                let thread = landed.turn_id;
+                let task = crate::task_verb::mint_goal_interview_task_in_txn(
+                    &memory, txn, project, leader, actor, now,
+                )?;
+                self.bind_room_thread_task_in_txn(txn, actor, home_room, thread, task)?;
+                INTERVIEWS.put(
+                    &self.store,
+                    txn,
+                    &project,
+                    &GoalInterviewRow {
+                        card: card.to_owned(),
+                        thread,
+                        task: Some(task),
+                        attempt: None,
+                    },
+                )?;
+                THREADS.put(&self.store, txn, &thread, &project)?;
+                let outcome = AgentDispatcher::new(self).dispatch_goal_intake_in_txn(
+                    txn,
+                    card,
+                    project,
+                    home_room,
+                    Some(thread),
+                    None,
+                    now,
+                )?;
+                opened = Some((thread, outcome));
+                Ok(())
+            },
+        );
+        if let Some(error) = refused.take() {
+            return Err(error);
+        }
+        witnessed.map_err(|error| Error::InvalidConfig(error.to_string()))?;
         let (thread, outcome) = opened.ok_or(Error::InvariantViolation(
             "a goal interview opens in its witness write",
         ))?;
