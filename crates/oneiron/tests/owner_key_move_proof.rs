@@ -15,7 +15,14 @@
 //! removal runs at once) and
 //! `a_hosted_removal_cosigns_each_revoke_with_the_owner_key_this_install_holds`
 //! (the revoke carries no cosign). Guard, green on main too:
-//! `a_removal_that_ends_this_installs_own_key_revokes_it_last`.
+//! `a_removal_that_ends_this_installs_own_key_revokes_it_last` (red on a
+//! door that revokes the held key first).
+//!
+//! No managed host holds an owner key today (its serving install's
+//! enrolment refuses on a Hosted vault), so in production the hosted move
+//! refuses. These tests hold an owner key on the hosted install through the
+//! device door (`enrol_device_owner_signing_key`) to pin the door's contract
+//! for an install that holds one.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_key_move_proof`.
@@ -278,13 +285,22 @@ fn a_hosted_removal_cosigns_each_revoke_with_the_owner_key_this_install_holds() 
 }
 
 /// The co-Owner's own key is the one this install holds, beside a key on a
-/// device of theirs. The removal ends both: the held key proves the other's
-/// revoke first, and its own revoke comes last, while it still proves.
+/// device of theirs that sorts after it, so the door finds the held key
+/// first. The removal ends both: the held key proves the other's revoke
+/// first, and its own revoke comes last, while it still proves.
 #[test]
 fn a_removal_that_ends_this_installs_own_key_revokes_it_last() {
     let hosted = hosted();
     let held = hosted.enrol_install_key(hosted.co_owner);
-    let key = hosted.enrol_device_key(CO_OWNER_SEED);
+    let seed = (1..=u8::MAX)
+        .find(|seed| {
+            SigningKey::from_bytes(&[*seed; 32])
+                .verifying_key()
+                .to_bytes()
+                > held
+        })
+        .expect("a device key that sorts after the held key");
+    let key = hosted.enrol_device_key(seed);
 
     hosted
         .run(&hosted.propose_removal())
@@ -294,5 +310,9 @@ fn a_removal_that_ends_this_installs_own_key_revokes_it_last() {
     assert!(
         !hosted.key_is_live(held),
         "this install's key is revoked too"
+    );
+    assert!(
+        hosted.revoke_of(held).seq > hosted.revoke_of(key).seq,
+        "the held key's own revoke comes after the revoke it proved"
     );
 }

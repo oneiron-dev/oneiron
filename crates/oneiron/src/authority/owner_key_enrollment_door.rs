@@ -513,12 +513,17 @@ impl Vault {
     /// ([`Vault::owner_proof_signer`]), and a proof key among the revoked
     /// ends last, after it proved the others. That key is the install's,
     /// not the acting person's: the fold cannot tell who is at the device.
+    /// No managed host holds an owner key today (its serving install's
+    /// enrolment refuses on a Hosted vault), so there the move refuses until
+    /// a device can confirm it (FIX HOSTED-OWNER-MOVE-TWO-PHASE).
     ///
     /// # Errors
-    /// [`RecordError::OwnerKeyMoveRefused`] before any write when the member
-    /// holds a live owner key and neither `issuer` nor any key this install
-    /// holds proves for the owner; the log's: an `issuer` that is not this
-    /// vault's live host root, or an entry the fold does not count.
+    /// An `issuer` that is not this vault's live host root, as the log
+    /// refuses it; [`RecordError::OwnerKeyMoveRefused`], before this writes
+    /// any authority entry, when the member holds a live owner key and
+    /// neither `issuer` nor any key this install holds proves for the owner
+    /// (the caller's writer, which holds the move's other changes, drops with
+    /// it); an entry the fold does not count.
     pub(crate) fn revoke_owner_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -535,6 +540,7 @@ impl Vault {
             .collect();
         if !keys.is_empty() {
             let fold = self.authority_view_readonly_in_txn(txn)?;
+            super::slip_vault::require_host(&fold, issuer)?;
             let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
             let proof = if fold.proves_owner_acts(&root, hosted) {
                 None

@@ -64,7 +64,8 @@ use serde::Serialize;
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
 /// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
-/// cosign; the custodial root alone never ends one (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
 
 /// The domain every encoded image starts with.

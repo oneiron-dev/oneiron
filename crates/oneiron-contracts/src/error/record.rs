@@ -101,11 +101,14 @@ pub const OWNER_KEY_MEMBER_REASON_PREFIX: &str = "member:";
 
 /// The engine's words for [`RecordError::OwnerKeyMoveRefused`], kept in this
 /// one place with [`OWNER_KEY_MOVE_SUGGESTION`] (the lead, 15 Nov 21:42: the
-/// text stays easy to change).
-pub const OWNER_KEY_MOVE_REFUSAL_TEXT: &str = "This move ends a member's owner keys, which needs an owner key's proof, and this install holds no owner key the vault trusts: nothing was changed.";
+/// text stays easy to change). Until a device can confirm such a move, they
+/// say plainly that it needs a device that holds an owner key (Engine RULING
+/// OWNERKEY-HOSTED-MOVE-NEXT-STEP = A, 16 Nov 19:53); with that path they
+/// become "confirm this on one of your devices".
+pub const OWNER_KEY_MOVE_REFUSAL_TEXT: &str = "This move ends a member's owner keys, so it needs a device that holds your owner key, and this install holds none: nothing was changed.";
 
 /// What [`RecordError::OwnerKeyMoveRefused`] suggests.
-pub const OWNER_KEY_MOVE_SUGGESTION: &str = "No install of this vault can prove this move yet: the member keeps their owner standing until one can.";
+pub const OWNER_KEY_MOVE_SUGGESTION: &str = "This move needs a device that holds your owner key, and none can confirm it here yet: the member keeps their owner standing until then.";
 
 fn revision_hex(revision: &[u8; 32]) -> String {
     oneiron_hex::encode(revision)
@@ -289,7 +292,7 @@ pub enum RecordError {
     /// surface names the next step and the member as reason codes
     /// ([`OWNER_KEY_NEXT_STEP_REASON_PREFIX`],
     /// [`OWNER_KEY_MEMBER_REASON_PREFIX`]). Nothing was written and nothing
-    /// waits: the move's own call is what a client sends again.
+    /// waits; a shared act the move ran for stays pending.
     #[error("{}", OWNER_KEY_MOVE_REFUSAL_TEXT)]
     OwnerKeyMoveRefused { member: EntityId },
     /// The owner's world recipient choice keeps a world's rows from this
