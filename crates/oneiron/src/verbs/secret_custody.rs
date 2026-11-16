@@ -497,7 +497,7 @@ fn manifest_source(source: &SecretManifestSource) -> MemoryResult<ManifestSource
 }
 
 fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 impl From<SecretCustodyWork> for SecretCustodyReply {

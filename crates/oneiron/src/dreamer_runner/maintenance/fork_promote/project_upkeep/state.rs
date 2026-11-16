@@ -23,21 +23,8 @@ const JOURNAL: SideTable<UpkeepKey, UpkeepRow, Named> =
 /// Domain separator for the evidence digest.
 const EVIDENCE_DOMAIN: &[u8] = b"oneiron:project-tree-upkeep:evidence:v1\0";
 
-/// Where one revision stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum UpkeepState {
-    /// Minted and journaled; its package, its scoring or its admission waits.
-    Open,
-    /// Scored strictly above the tree it revises and put in force for the
-    /// project. The owner's revert of it leaves the row as it is.
-    Won,
-    /// Scored no better than the tree it revises.
-    Lost,
-    /// The tree it revises is no longer the project's, or the Candidate is
-    /// no longer what was stored: it can never go in force.
-    Stale,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::fork_promote::project_upkeep::state::UpkeepState;
 
 /// The Candidate's record as its package was stored: what the judge reads
 /// and the admission binds.

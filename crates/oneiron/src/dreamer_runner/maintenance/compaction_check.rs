@@ -60,14 +60,13 @@ mod support;
 pub(crate) use conversation::{ConversationCheckDeclaration, declare_conversation_check_in_txn};
 pub use support::CompactionCheckDecisions;
 
-/// The maintenance facet a self-written landing's check rides.
-pub const COMPACTION_CHECK_FACET: &str = "dreamer.compaction_check";
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::compaction_check::COMPACTION_CHECK_FACET;
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::compaction_check::DECLARATION_KEY;
 
 /// The predicate of the Dreamer's finding a check records.
 pub const COMPACTION_CHECK_PREDICATE: &str = "dreamer.compaction_check.verdict";
-
-/// The payload key the declaration rides under.
-const DECLARATION_KEY: &str = "declaration";
 
 /// A finding's reason when the diagnostic step's reply did not read: the
 /// typed verdict stands without its conflicts.
