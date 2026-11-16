@@ -23,8 +23,8 @@
 //! (a NOTE carrier that does not decode, a root outside the window's maps,
 //! a parted row whose parts join to a row its key does not name, a whole
 //! row filed under a key it does not name) defers the window, never counts
-//! as erased. Bytes that read as no row prove no other row: they place by
-//! their key, as before.
+//! as erased. Bytes that read as no row prove no other row: a parted one
+//! places by its key, and a whole one is kept under no one, as before.
 
 use std::collections::{BTreeMap, BTreeSet};
 

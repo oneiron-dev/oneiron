@@ -109,11 +109,12 @@ pub fn whole_window(map: WholeMap, keyed: EntityId, body: EntityId) -> Result<Ve
                 serde_json::to_value(id).map_err(|_| refused("an id that does not encode"))
             };
             let registration = fixed(0x47);
+            let admission = [0_u8; 32];
             let value = serde_json::to_vec(&serde_json::json!({
                 "admitted": {
                     "turn": id(body)?,
                     "registration": id(registration)?,
-                    "admission": [0_u8; 32],
+                    "admission": admission,
                 },
             }))
             .map_err(|_| refused("a wake row that does not encode"))?;
