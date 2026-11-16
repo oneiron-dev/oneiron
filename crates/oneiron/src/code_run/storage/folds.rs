@@ -100,13 +100,7 @@ impl ExecutorStorage<'_> {
     ) -> Result<Vec<u64>> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|wtxn| {
-                let mut ledger = FOLDS.get(&vault.store, wtxn, &run_id)?.unwrap_or_default();
-                let before = ledger.folds.len();
-                let checked = self_written(&ledger, &landed);
-                land_folds_in_base(&vault.store, wtxn, run_id, &mut ledger, landed, failed)?;
-                declare_fold_checks_in_txn(vault, wtxn, &ledger, &checked)?;
-                FOLDS.put(&vault.store, wtxn, &run_id, &ledger)?;
-                Ok(committed_folds(&ledger, before))
+                land_code_run_folds_in_txn(vault, wtxn, run_id, landed, failed)
             }),
             Self::Session(binding) => binding.answered(|| match binding.route.target() {
                 RouteTarget::Overlay => {
@@ -153,7 +147,7 @@ impl ExecutorStorage<'_> {
 
 /// `run_id`'s base ledger as `txn` holds it, empty before its first fold
 /// verb, without the words of any fold a withdrawn record reached.
-pub(super) fn base_code_run_folds_in_txn(
+pub(crate) fn base_code_run_folds_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     run_id: EntityId,
@@ -233,4 +227,26 @@ fn declare_fold_checks_in_txn(
         }
     }
     Ok(())
+}
+
+/// Lands one fold batch of a canonical run in the caller's write, as
+/// [`ExecutorStorage::land_code_run_folds`] does in its own: each fold that
+/// keeps its words becomes a dependent of its sources, a self-written one
+/// declares its Dreamer check, and the folds the write committed come back in
+/// landing order. A parked run's idle fold (L2-37) lands here, after its
+/// own rechecks in the same write.
+pub(crate) fn land_code_run_folds_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    run_id: EntityId,
+    landed: Vec<FoldRecord>,
+    failed: &[(u64, String)],
+) -> Result<Vec<u64>> {
+    let mut ledger = FOLDS.get(&vault.store, wtxn, &run_id)?.unwrap_or_default();
+    let before = ledger.folds.len();
+    let checked = self_written(&ledger, &landed);
+    land_folds_in_base(&vault.store, wtxn, run_id, &mut ledger, landed, failed)?;
+    declare_fold_checks_in_txn(vault, wtxn, &ledger, &checked)?;
+    FOLDS.put(&vault.store, wtxn, &run_id, &ledger)?;
+    Ok(committed_folds(&ledger, before))
 }

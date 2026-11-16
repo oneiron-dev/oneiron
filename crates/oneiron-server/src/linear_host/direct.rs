@@ -155,9 +155,7 @@ pub(super) async fn spawn(
                     .map_err(LinearSyncError::Store)?;
                 let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
                 let result = credential.with(&vault, |key| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |time| time.as_secs());
+                    let now = oneiron_base::unix_seconds_now();
                     // A background pass waits for no Rate window (FIX 8788):
                     // a full one leaves the TASK dirty for a later pass.
                     let timeout = Duration::from_secs(policy.request_timeout_secs);
