@@ -36,7 +36,11 @@ impl Memory<'_> {
                 None => self.read_target(reference, ReadMode::Live),
             })
             .collect::<MemoryResult<Vec<_>>>()?;
-        lane.read_revisions_projected(&point_reads(&targets), None, |txn, rows| {
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = self.lane_snapshot()?;
+        let known = snapshot.known();
+        let reads = point_reads(&targets);
+        lane.read_revisions_projected_in_txn(snapshot.txn(), &reads, None, |txn, rows| {
             let standing = crate::authority::principal_standing_in_txn(
                 self.vault(),
                 txn,
@@ -52,7 +56,7 @@ impl Memory<'_> {
             for target in &targets {
                 let slot = match target.map(|(_, mode)| (mode, slots.next())) {
                     Some((mode, Some(Some((row, revision))))) => {
-                        match self.slot_view_in(&lane, txn, row, mode, false)? {
+                        match self.slot_view_in(&lane, txn, known, row, mode, false)? {
                             Some(view) => Some((view, revision)),
                             None => None,
                         }
