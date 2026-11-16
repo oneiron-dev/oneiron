@@ -521,18 +521,21 @@ fn selector_documents(
             .unwrap();
         id
     });
-    let member = EntityId::now();
+    // R4: the bare Member row stands for nothing; the subscription runs as the vault's live
+    // owner on the own-device Grant (Member scope kept, role/preset Owner).
     let grant_id = EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         oneiron::FederationGrantScope::vault(7),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
@@ -552,7 +555,7 @@ fn selector_documents(
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={}",
-            member.to_hex()
+            owner.to_hex()
         ),
     ));
     let (direct, mut replies) = tokio::sync::mpsc::unbounded_channel();

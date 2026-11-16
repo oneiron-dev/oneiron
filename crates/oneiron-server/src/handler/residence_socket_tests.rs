@@ -87,13 +87,18 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
         )
         .unwrap(),
     );
+    // R4: the bare Member row stands for nothing; enrolment runs as the vault's live owner
+    // on the own-device Grant (Member scope kept, role/preset Owner). The actor stays the writer.
+    let owner = server_vault.ensure_embedded_owner_actor().unwrap();
     let scope = crate::handler::selector_grant_scope();
-    let grant = FederationGrant::new(
+    let mut grant = FederationGrant::new(
         scope,
-        actor,
+        owner,
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
     );
+    grant.role = FederationGrantRole::Owner;
+    grant.preset = FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&server_vault, &grant_id, &grant, now)
         .unwrap();
     let window = WindowKey::from_timestamp(now);
@@ -133,10 +138,10 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={};actor_class=human",
-            actor.to_hex()
+            owner.to_hex()
         ),
     );
-    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let device = Arc::new(Vault::open(device_dir.path(), VaultConfig::device()).unwrap());
     let manager = Arc::new(WindowManager::new(
         device.clone(),
@@ -319,12 +324,17 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
         )
         .unwrap(),
     );
-    let grant = FederationGrant::new(
+    // R4: the bare Member row stands for nothing; the edit runs as the vault's live owner
+    // on the own-device Grant (Member scope kept, role/preset Owner). The actor stays the writer.
+    let owner = home.ensure_embedded_owner_actor().unwrap();
+    let mut grant = FederationGrant::new(
         crate::handler::selector_grant_scope(),
-        actor,
+        owner,
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
     );
+    grant.role = FederationGrantRole::Owner;
+    grant.preset = FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&home, &grant_id, &grant, 1).unwrap();
     let window = WindowKey::from_timestamp(now);
     server.get_or_create_window(&window).await.unwrap();
@@ -342,10 +352,10 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={};actor_class=human",
-            actor.to_hex()
+            owner.to_hex()
         ),
     );
-    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let device = Arc::new(Vault::open(device_dir.path(), VaultConfig::device()).unwrap());
     let manager = Arc::new(WindowManager::new(
         device.clone(),
@@ -731,12 +741,18 @@ impl WorldResidence {
             )
             .unwrap(),
         );
-        let grant = FederationGrant::new(
+        // R4: the bare Member row stands for nothing; the socket runs as the vault's live
+        // owner on the own-device Grant (Member scope kept, role/preset Owner). The actor stays
+        // the writer.
+        let owner = home.ensure_embedded_owner_actor().unwrap();
+        let mut grant = FederationGrant::new(
             crate::handler::selector_grant_scope(),
-            actor,
+            owner,
             FederationGrantRole::Member,
             FederationGrantPreset::Member,
         );
+        grant.role = FederationGrantRole::Owner;
+        grant.preset = FederationGrantPreset::Owner;
         oneiron::sync::put_selector_test_federation_grant(&home, &grant_id, &grant, 1).unwrap();
         let base = WindowKey::from_timestamp(now);
         let window = WindowKey::for_world(now, world);
@@ -756,10 +772,10 @@ impl WorldResidence {
             &server,
             &format!(
                 "scope=core:read,core:write;principal_ref={};actor_class=human",
-                actor.to_hex()
+                owner.to_hex()
             ),
         );
-        let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+        let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
         let device = Arc::new(Vault::open(dirs[1].path(), VaultConfig::device()).unwrap());
         let manager = Arc::new(WindowManager::new(
             device.clone(),
