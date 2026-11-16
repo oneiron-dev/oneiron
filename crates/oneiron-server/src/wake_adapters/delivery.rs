@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt as _;
 use oneiron::context_board::{BoardStreamFrame, WakeEnvelope, wake_batch_opener};
 
 use super::board_stream::BoardDelivery;
-use super::{AdapterCommand, Instance, WakeBatch, wall_clock_ms};
+use super::{AdapterCommand, Instance, WakeBatch, unix_millis_now};
 
 /// A stalled helper must let the next configured adapter try.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -47,7 +47,7 @@ impl Handoff {
         let opener = if wakes.len() == self.offered {
             self.opener.clone()
         } else {
-            wake_batch_opener(&wakes, wall_clock_ms())
+            wake_batch_opener(&wakes, unix_millis_now())
         };
         let mut batch = BoardDelivery {
             wakes,
