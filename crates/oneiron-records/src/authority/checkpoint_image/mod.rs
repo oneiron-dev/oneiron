@@ -60,9 +60,12 @@ use serde::Serialize;
 /// train assigned this one.
 /// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
 /// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
-/// 41: each covered row's summary marks its kind and whether it is sealed, and an image that
+/// 41: a carried machine answer that needed an owner key's proof and carried none is held
+/// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
+/// CARRIER-OWNER-PROOF).
+/// 42: each covered row's summary marks its kind and whether it is sealed, and an image that
 /// covers a sealed row carries every covered row's body (census L5-22 1a-iii).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 41;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
