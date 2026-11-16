@@ -22,20 +22,10 @@ use loro::LoroValue;
 use loro::checkpoint::{Classify, Field, OwnerId};
 
 use super::SyncUnclassified;
+use super::descriptor::parted_map;
 use crate::store::checkpoint_payload::rows::OwnerRef;
 use crate::sync::carrier_parts::{is_part_key, part_key};
-use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
-use crate::sync::room_facts::ROOM_FACTS_MAP;
-use crate::sync::room_turns::ROOM_TURNS_MAP;
-
-/// The window maps that carry a row in parts.
-const PARTED_MAPS: [&str; 4] = [
-    REPO_MANIFESTS_MAP,
-    DOCUMENT_PINS_MAP,
-    ROOM_TURNS_MAP,
-    ROOM_FACTS_MAP,
-];
 
 /// One parted map's values in a group: each value under a row key, and
 /// each part filed under its own digest.
@@ -68,11 +58,12 @@ impl<B> Default for PartedRows<B> {
 
 impl<B: AsRef<[u8]>> PartedRows<B> {
     /// Notes the value `value` gives under `key` of the root map `root`:
-    /// called, and its bytes taken, only for a parted map. A part enters
-    /// only under its own digest, so a malformed old value under a part key
-    /// cannot hide the right one.
+    /// called, and its bytes taken, only for a map whose row binds its
+    /// manifests ([`super::descriptor`]). A part enters only under its own
+    /// digest, so a malformed old value under a part key cannot hide the
+    /// right one.
     pub(in crate::sync) fn note(&mut self, root: &str, key: &str, value: impl FnOnce() -> B) {
-        let Some(root) = PARTED_MAPS.into_iter().find(|map| *map == root) else {
+        let Some((root, _)) = parted_map(root) else {
             return;
         };
         let values = self.maps.entry(root).or_default();
@@ -124,23 +115,19 @@ impl<B: AsRef<[u8]>> PartedRows<B> {
 }
 
 /// Whether the value `value` under `key` of the parted map `root` is the
-/// row its key names, its parts joined from `values`: `None` for a value
-/// that is no manifest, for one whose parts do not all join, and for
-/// joined bytes that read as no row of the map.
+/// row its key names, its parts joined from `values`, by the binding its
+/// row names: `None` for a value that is no manifest, for one whose parts
+/// do not all join, and for joined bytes that read as no row of the map.
 fn bound<B: AsRef<[u8]>>(
     root: &str,
     key: &str,
     value: &[u8],
     values: &MapValues<B>,
 ) -> Option<bool> {
-    let part = |digest: &str| values.parts.get(digest).map(AsRef::<[u8]>::as_ref);
-    match root {
-        REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::bound(key, value, part),
-        DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::bound(key, value, part),
-        ROOM_TURNS_MAP => crate::sync::room_turns::checkpoint::bound(key, value, part),
-        ROOM_FACTS_MAP => crate::sync::room_facts::checkpoint::bound(key, value, part),
-        _ => None,
-    }
+    let (_, binding) = parted_map(root)?;
+    binding(key, value, &|digest: &str| {
+        values.parts.get(digest).map(AsRef::<[u8]>::as_ref)
+    })
 }
 
 /// A capture pass that places nothing and notes every parted map value

@@ -249,8 +249,10 @@ pub fn call_reads_world(verb: &str) -> bool {
     verb.starts_with(WORLD_VERB_ROOT)
 }
 
-/// At most this many named entities are versioned for one action: a request
-/// that names more reads inputs too many to capture, and states no digest.
+/// The default of `receipt.action.max_input_entities`: at most this many named
+/// entities are versioned for one action unless the owner sets another cap; a
+/// request that names more reads inputs too many to capture, and states no
+/// digest.
 pub const MAX_ACTION_INPUT_ENTITIES: usize = 64;
 
 /// The entity ids `value` names as 32-hex strings, at any depth: the
@@ -435,7 +437,8 @@ impl Vault {
     /// (every committed document edit, FIX 2860), its graph version (every
     /// edge change), and each named entity's live revision. A change log,
     /// head or revision the vault does not hold reads `-`, never equal to
-    /// one it holds. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
+    /// one it holds. `None` past the owner's `receipt.action.max_input_entities`
+    /// (default [`MAX_ACTION_INPUT_ENTITIES`]), read in the same snapshot.
     ///
     /// Not seen: other side-table state and the world outside the vault. A
     /// caller whose action reads the world captures nothing.
@@ -444,10 +447,13 @@ impl Vault {
     ///
     /// Storage errors.
     pub fn action_inputs(&self, named: &BTreeSet<EntityId>) -> Result<Option<ActionInputs>> {
-        if named.len() > MAX_ACTION_INPUT_ENTITIES {
+        let txn = self.store.env.read_txn()?;
+        let cap = super::setting_keys::ACTION_MAX_INPUT_ENTITIES
+            .read_in_txn(self, &txn, &[], None)?
+            .value;
+        if named.len() > usize::try_from(cap).unwrap_or(usize::MAX) {
             return Ok(None);
         }
-        let txn = self.store.env.read_txn()?;
         let head = self.port_changelog_head(&txn)?.map_or_else(
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
