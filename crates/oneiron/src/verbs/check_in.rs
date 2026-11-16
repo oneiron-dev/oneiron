@@ -148,8 +148,8 @@ pub struct CheckInHandleView {
     pub answer: Option<String>,
     /// Who answered, while the record names them.
     pub answered_by: Option<String>,
-    /// The rung the ask entered last: `grantor`, `chain_holders` or
-    /// `owner`.
+    /// The rung the ask entered last: `grantor`, `chain_holders`, `owner`,
+    /// or `room_owner` for a closed room's ask.
     pub rung: Option<String>,
     /// The next instant a transition is due (Unix seconds); none once the
     /// ask is settled.
@@ -308,8 +308,8 @@ pub struct CheckInSettlement {
     pub answer: CheckInAnswerWord,
     /// Who answered, while the record names them.
     pub answered_by: Option<String>,
-    /// The rung the answer was given on: `grantor`, `chain_holders` or
-    /// `owner`.
+    /// The rung the answer was given on: `grantor`, `chain_holders`, `owner`,
+    /// or `room_owner` for a closed room's ask.
     pub rung: String,
     /// When the answer landed (Unix seconds).
     pub answered_at: u64,
