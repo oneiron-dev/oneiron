@@ -63,7 +63,8 @@ impl Memory<'_> {
             }
             RunReviewChange::ExternalEffect { .. }
             | RunReviewChange::Delete { .. }
-            | RunReviewChange::Erase { .. } => {}
+            | RunReviewChange::Erase { .. }
+            | RunReviewChange::OwnerTaskCancel { .. } => {}
         }
         Ok(outcome)
     }
