@@ -66,8 +66,10 @@ impl<'vault> ScopedRead<'vault> {
         // retrieved (ARCH-0069:8): a retrieval drops a custody row, so one
         // sealed row neither fails the whole read nor tells the reader that a
         // secret was just registered (FIX RECALL-CUSTODY-ROW-FAILS-WHOLE-READ).
-        // A named read of the row (point, version, hydrate) still meets the
-        // row gate's loud seal.
+        // A graph read anchored at a custody id reads it as absent, and no
+        // receipt counts it (`note::countable_read_suppression`). A named read
+        // of the row (point, version, hydrate) still meets the row gate's loud
+        // seal.
         if row.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Ok(false);
         }
