@@ -422,8 +422,7 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     wtxn,
                     &binding.claim_id,
-                    now,
-                    "rejected",
+                    crate::store::gate_reason::GateReceiptOutcome::Rejected,
                     vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
                     None,
                     removal,
@@ -607,15 +606,8 @@ pub(crate) struct ConfirmExpiryPage {
     pub(crate) ended: bool,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub enum CriticalWriteConfirmResolution {
-    Cleared,
-    Retracted,
-    DemotedToProposed,
-    AlreadySettled,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::confirm::CriticalWriteConfirmResolution;
 
 /// Reconciles replicated claim input against the claim's owner-answer
 /// obligation (FIX 9603). The peer's bytes always land unchanged: a replica
@@ -650,8 +642,7 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store.close_pending_gate_consent_as_in_txn(
         wtxn,
         claim_id,
-        pending.created_at,
-        "invalidated",
+        crate::store::gate_reason::GateReceiptOutcome::Invalidated,
         vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
         None,
         crate::store::TrayRemoval::Silent,

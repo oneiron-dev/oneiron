@@ -1,0 +1,37 @@
+[package]
+name = "oneiron-speech"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Speech wire adapters (ASR, TTS) for the Oneiron voice cascade seams, one module per wire protocol"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+# No doc-comment code fences in these modules; skip the doctest compile pass
+# entirely.
+doctest = false
+
+# ARCH-0036 #adapters (MED-1 = A): each wire protocol is a module of this one
+# family crate. The modules are sans-IO: the host owns every socket, key and
+# queue, so the crate carries no network client of its own.
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+# Default features only: the sans-IO codecs, no network client. The hosted
+# speech replies read a refusal as any OpenAI-compatible provider's status, and
+# the OpenAI-compatible speech and transcription legs send over the provider's
+# shared media client.
+oneiron-llm = { version = "0.1.0", path = "../oneiron-llm" }
+# A transcription's inference receipts read from its usage.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The OpenAI-compatible tests' budget lease (`BudgetLease::for_test`).
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-hooks"] }
+
+[lints]
+workspace = true

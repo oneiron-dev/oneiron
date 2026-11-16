@@ -12,259 +12,25 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::fold_kinds::{FoldByKind, FoldKind, FoldedOutput};
+use super::fold_kinds::{FoldKind, FoldedOutput};
 use crate::entity_id::EntityId;
 use oneiron_contracts::claim::ClaimSource;
 
-/// `self.fold`: marks steps `from..=through` of this run's log. The mark
-/// waits as pending; the log does not change until `self.compact`, or the
-/// next compaction breakpoint, folds it.
-///
-/// The guest call is positional, `self.fold(span, {note?})` (ARCH-0067
-/// #folds, Docs Q25): its wire input is the span alone, `[from, through]`, or
-/// the span and its options, `[[from, through], {note?}]`. A fold by kind
-/// (owner 2026-11-03) is one object, `{kind, before?, from?, through?,
-/// note?}`: it folds only that kind of content in each step of its span,
-/// such as `self.fold({kind: "repl_output", before: "t40"})`. This struct is
-/// the normalized mark every spelling decodes into.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-#[serde(try_from = "FoldMarkWire")]
-pub struct FoldMarkInput {
-    pub from: u64,
-    /// The last step; a fold by kind with no bound reaches the current step.
-    pub through: u64,
-    /// What the fold's summary must keep; on a fold by kind, the agent's
-    /// own note on it.
-    #[serde(default)]
-    pub note: Option<String>,
-    /// The one kind of content the fold folds in each step; `None` folds
-    /// whole steps.
-    #[serde(default)]
-    pub kind: Option<FoldKind>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::compaction::folds::{
+    FoldCompactInput, FoldDescription, FoldList, FoldMarkInput, FoldPending, FoldReply, FoldSpan,
+    FoldUnfold, FoldUnfoldInput, FoldsInput,
+};
 
-/// The wire spellings of one `self.fold` call.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum FoldMarkWire {
-    Span([u64; 2]),
-    SpanWithOptions([u64; 2], FoldMarkOptions),
-    Kind(FoldByKind),
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FoldMarkOptions {
-    #[serde(default)]
-    note: Option<String>,
-}
-
-impl TryFrom<FoldMarkWire> for FoldMarkInput {
-    type Error = String;
-
-    fn try_from(wire: FoldMarkWire) -> std::result::Result<Self, Self::Error> {
-        let ([from, through], note) = match wire {
-            FoldMarkWire::Span(span) => (span, None),
-            FoldMarkWire::SpanWithOptions(span, options) => (span, options.note),
-            FoldMarkWire::Kind(wire) => return wire.normalize(),
-        };
-        Ok(Self {
-            from,
-            through,
-            note,
-            kind: None,
-        })
-    }
-}
-
-/// `self.compact`: folds every pending mark in one batch, and compacts the
-/// run's settled steps, at the next step boundary.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FoldCompactInput {
-    /// What the summaries must keep.
-    #[serde(default)]
-    pub note: Option<String>,
-}
-
-/// `self.unfold`: appends one fold's raw turns at the end of the log.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FoldUnfoldInput {
-    /// The fold's handle, such as `f1`.
-    pub fold: String,
-}
-
-/// `self.folds`: the run's folds and its pending marks.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FoldsInput {}
-
-/// One fold verb call. Run and step come from the host binding, never from
-/// the guest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "verb", rename_all = "snake_case")]
-pub enum SelfFoldCall {
-    Mark {
-        from: u64,
-        through: u64,
-        note: Option<String>,
-        /// A fold by kind; absent on a whole-step fold.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        kind: Option<FoldKind>,
-    },
-    Compact {
-        note: Option<String>,
-    },
-    Unfold {
-        fold: u64,
-    },
-    List,
-    /// `describe({fold})`.
-    Describe {
-        fold: u64,
-    },
-}
-
-/// What a fold verb answers under `output`: its typed answer, or the
-/// ledger's refusal, which changes nothing and which the agent can act on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum FoldReply<T> {
-    Answer(T),
-    Refused { error: String },
-}
-
-/// `self.fold`'s answer: the pending mark it made.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FoldMarked {
-    pub fold: String,
-    pub from: u64,
-    pub through: u64,
-    /// Always true: the log does not change until a pass folds it.
-    pub pending: bool,
-    /// The kind it folds; absent on a whole-step fold.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<FoldKind>,
-}
-
-/// `self.compact`'s answer: the marks its batch folds, and when.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FoldCompactAsked {
-    pub pending: Vec<String>,
-    pub applies: String,
-}
-
-/// `self.unfold`'s answer: the fold whose raw turns come back after this
-/// step.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FoldUnfolded {
-    pub fold: String,
-    pub from: u64,
-    pub through: u64,
-    pub unfolded_after_step: u64,
-}
-
-/// `self.folds`' answer: the run's folds, its pending marks, and whether a
-/// compact is asked.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FoldList {
-    pub folds: Vec<FoldSpan>,
-    pub pending: Vec<FoldPending>,
-    pub compact_asked: bool,
-}
-
-/// One fold in [`FoldList`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FoldSpan {
-    pub fold: String,
-    pub from: u64,
-    pub through: u64,
-    /// The kind it folds; absent on a whole-step fold.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<FoldKind>,
-}
-
-/// One pending mark in [`FoldList`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FoldPending {
-    pub fold: String,
-    pub from: u64,
-    pub through: u64,
-    pub note: Option<String>,
-    /// Why its last pass did not fold it.
-    pub failed: Option<String>,
-    /// The kind it folds; absent on a whole-step mark.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<FoldKind>,
-}
-
-/// `describe({fold})`'s answer: a fold whole, or a mark still pending.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum FoldDescription {
-    Folded {
-        fold: String,
-        from: u64,
-        through: u64,
-        /// The stub the log shows in the span's place; for a fold by kind,
-        /// its head line, and `outputs` the stub each folded step shows.
-        stub: String,
-        source: String,
-        /// Every id the span's turns name.
-        ids: Vec<String>,
-        /// Every result handle the span covers.
-        handles: Vec<String>,
-        /// The kind it folds; absent on a whole-step fold.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        kind: Option<FoldKind>,
-        /// The agent's own note on a fold by kind.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        note: Option<String>,
-        /// Each step a fold by kind folded, with what its stub keeps.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        outputs: Vec<FoldedOutput>,
-    },
-    Pending {
-        fold: String,
-        from: u64,
-        through: u64,
-        /// Always true.
-        pending: bool,
-        note: Option<String>,
-        failed: Option<String>,
-        /// The kind it folds; absent on a whole-step mark.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        kind: Option<FoldKind>,
-    },
-}
-
-impl SelfFoldCall {
-    /// Whether the call changes the run's ledger.
-    #[must_use]
-    pub const fn writes(&self) -> bool {
-        matches!(
-            self,
-            Self::Mark { .. } | Self::Compact { .. } | Self::Unfold { .. }
-        )
-    }
-}
-
-/// A fold's handle as the agent reads it: `f1`.
-#[must_use]
-pub fn fold_handle(fold: u64) -> String {
-    format!("f{fold}")
-}
-
-/// The fold a handle names: `f1`, or a bare `1`.
-pub fn parse_fold_handle(handle: &str) -> crate::Result<u64> {
-    let digits = handle.trim().strip_prefix('f').unwrap_or(handle.trim());
-    digits
-        .parse::<u64>()
-        .ok()
-        .filter(|fold| *fold > 0)
-        .ok_or_else(|| crate::Error::InvalidConfig(format!("`{handle}` names no fold")))
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::compaction::folds::STUB_IDS;
+#[doc(hidden)]
+pub(crate) use oneiron_records::compaction::folds::escape_compacted_text;
+#[doc(hidden)]
+pub use oneiron_records::compaction::folds::{
+    FoldCompactAsk, FoldCompactAsked, FoldMark, FoldMarked, FoldUnfolded, SelfFoldCall,
+    fold_handle, parse_fold_handle,
+};
 
 /// One run's folds, in the order they were made.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,31 +42,6 @@ pub struct FoldLedger {
     pub compact: Option<FoldCompactAsk>,
     pub folds: Vec<FoldRecord>,
     pub unfolds: Vec<FoldUnfold>,
-}
-
-/// A pending mark.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FoldMark {
-    pub fold: u64,
-    pub from: u64,
-    pub through: u64,
-    pub note: Option<String>,
-    /// Why its last pass did not fold it. A failed mark waits for the
-    /// agent's next `self.compact`, not for the next breakpoint.
-    pub failed: Option<String>,
-    /// A mark by kind; `None` folds whole steps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<FoldKind>,
-    /// The step the agent marked it at: how old its span was then, which
-    /// the Coach reads to suggest a fold default per agent type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub marked_at: Option<u64>,
-}
-
-/// `self.compact`'s ask, until a pass takes it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FoldCompactAsk {
-    pub note: Option<String>,
 }
 
 /// One fold, written once when its batch landed. Its summary is the only
@@ -350,9 +91,6 @@ pub struct FoldRecord {
     pub marked_at: Option<u64>,
 }
 
-/// The most ids a stub lists itself; `describe({fold})` lists them all.
-pub(super) const STUB_IDS: usize = 64;
-
 impl FoldRecord {
     /// The one stub the log shows in the span's place: its handle and span,
     /// the accepted summary (model output), the ids its turns name that the
@@ -400,25 +138,6 @@ impl FoldRecord {
         }
         stub
     }
-}
-
-/// Frame marks a summary may not forge: the record marks and the compacted
-/// frame.
-pub(crate) fn escape_compacted_text(text: &str) -> String {
-    text.replace("<exec>", r"<\exec>")
-        .replace("</exec>", r"<\/exec>")
-        .replace("<console>", r"<\console>")
-        .replace("</console>", r"<\/console>")
-        .replace("<compacted", r"<\compacted")
-        .replace("</compacted", r"<\/compacted")
-}
-
-/// One unfold: the fold's raw turns render just before step `at`, where the
-/// end of the log was when the agent unfolded it, and stay there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FoldUnfold {
-    pub fold: u64,
-    pub at: u64,
 }
 
 impl FoldLedger {

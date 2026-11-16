@@ -9,8 +9,6 @@
 pub use crate::store::framing::TransportError;
 use crate::store::framing::checked_encoded_frame_len;
 use crate::sync::types::parse_window_key_str;
-use loro::LoroValue;
-use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
@@ -278,6 +276,18 @@ pub mod window_sub_tags {
     /// The home held this residence update without persisting or importing it.
     /// The same window pad receipt binds the reply; the queued row stays owed.
     pub const RESIDENCE_HELD: u8 = 17;
+    /// Bind a followed world's full window to the grant on this opened-item
+    /// socket (ARCH-0023b #partial-sync). Payload is the strict encoded
+    /// SyncSelector, as for `PROMOTION_REQUEST`. The home answers
+    /// `PROMOTION_GRANTED`, or `FOLLOW_REFUSED` when it does not list the
+    /// window or does not grant the whole of it to this machine; the socket
+    /// stays open either way. The device exchanges the window only once it
+    /// is granted.
+    pub const FOLLOW_REQUEST: u8 = 18;
+    /// The home does not grant this followed window on this socket. Empty
+    /// payload. The device keeps the window unsynced on this socket, its
+    /// queued writes owed, and asks again on its next connection.
+    pub const FOLLOW_REFUSED: u8 = 19;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).
@@ -490,17 +500,8 @@ pub fn encode_ephemeral(payload: &[u8]) -> EncodedFrame {
     EncodedFrame::ok(buf)
 }
 
-/// Decoded Loro `EphemeralStore` wire record.
-///
-/// This mirrors the postcard-encoded shape used by Loro 1.10.x. It is shared
-/// so callers can validate untrusted ephemeral bytes before applying them to a
-/// store while still relaying the native bytes on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EphemeralWireState {
-    pub key: String,
-    pub value: Option<LoroValue>,
-    pub timestamp: i64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::transport::EphemeralWireState;
 
 /// Decodes Loro-native `EphemeralStore` bytes into timestamped wire records.
 pub fn decode_ephemeral_states(payload: &[u8]) -> Result<Vec<EphemeralWireState>, TransportError> {

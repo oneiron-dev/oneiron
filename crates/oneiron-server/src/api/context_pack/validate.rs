@@ -32,6 +32,9 @@ pub(crate) struct ValidatedContextPack {
     pub(super) room_id: Option<oneiron::EntityId>,
     pub(super) room: Option<RoomAudience>,
     pub(super) interlocutors: Option<oneiron::InterlocutorSet>,
+    /// The home of the conversation the pack serves (DEC-0006
+    /// `#home-clearance`).
+    pub(super) home: oneiron::ConversationHome,
     pub(super) media: Option<DecodedMediaQuery>,
     pub(super) skill_reliability: Option<oneiron::skill_reliability::SkillReliabilityQuery>,
     pub(super) candidate_limit: usize,
@@ -161,6 +164,12 @@ fn validated_inputs(
     let ranking = ContextPackRanking::checked(req.policy.as_ref())?;
     let time = ContextPackTimeWindow::checked(req.time.as_ref())?;
     let signals = ContextPackSignalRequest::checked(auth, &req, room_id)?;
+    let home = super::core_conversation_home(
+        &server.vault,
+        auth,
+        room_id,
+        req.conversation_home.as_deref(),
+    )?;
     Ok(ValidatedContextPack {
         read: transferred(server, scoped_read)?,
         req,
@@ -168,6 +177,7 @@ fn validated_inputs(
         room_id,
         room,
         interlocutors,
+        home,
         media,
         skill_reliability,
         candidate_limit,
