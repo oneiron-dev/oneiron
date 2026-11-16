@@ -36,7 +36,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 9 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
 | `src/llm/cache.rs` | src | m | 6 struct · 5 enum · 7 fn | CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError, CacheIdentity, CacheOutcome +3 | What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each… |
 | `src/llm/call.rs` | src | s | 5 struct · 6 enum · 6 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +3 | Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality |
-| `src/llm/catalog.rs` | src | m | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
+| `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 9 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/defaults.rs` | src | s | 5 struct · 3 enum · 1 trait · 15 fn | ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault, SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane +1 | Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies |
 | `src/llm/error.rs` | src | m | 3 struct · 7 enum · 10 fn | BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError, RetryableLlmError, SpentKind, TransportFault +2 | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/failure_policy.rs` | src | s | 2 struct · 3 enum · 9 fn | DreamerFailureClass, DreamerFailureDecision, DreamerFailurePrecedence, DreamerFailureRoute, DreamerFailureRule | Vault-resident Dreamer failure decisions; these restrict downstream use, never grant authority |
@@ -48,7 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
 | `src/llm/logprobs.rs` | src | s | 1 struct · 2 fn | TokenScore | Borrowed views over a reply token's reported scores |
-| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn · 1 type | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
+| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 2 fn · 1 type | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
 | `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 8 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
 | `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 6 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/replay.rs` | src | s | 1 enum · 3 fn | MediaReplayKey | A media call's replay key (FIX 465, FIX 2962): the name a repeat of one call shares with the first, so the… |
@@ -72,5 +72,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/teacher_probe_policy.rs` | src | s | 1 struct · 5 fn · 1 const | TeacherProbePolicy | Resolved extraction-teacher probe policy values |
 | `tests/budget_park_fence.rs` | test | s | — | — | FIX BUDGET-PARK: parking a workflow's budget fences every handle of the original meter |
 | `tests/budget_unsent_evidence.rs` | test | s | — | — | FIX BUDGET-LEASE: a call's lease, once a physical attempt began under it, can never be marked unsent |
-| `tests/model_register_names.rs` | test | s | — | — | The names of 3 name lists in `oneiron-model`, one line per row, generated from… |
+| `tests/model_register_names.rs` | test | s | — | — | The names of 4 name lists in `oneiron-model`, one line per row, generated from… |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |

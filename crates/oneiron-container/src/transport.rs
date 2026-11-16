@@ -1,5 +1,5 @@
 //! A selected backend's private duplex transport and lifetime custody.
-use crate::{GuestSession, SessionManifest};
+use crate::{GuestPressure, GuestSession, SessionManifest};
 use std::io::{Read, Write};
 
 pub trait SessionLease: Send {
@@ -20,6 +20,12 @@ pub trait SessionLease: Send {
     fn is_running(&mut self) -> bool;
     fn abandoned(&self) -> bool {
         false
+    }
+    /// The pressure the guest's container shows now (FIX 8013): its pids
+    /// limit's refusals, while the container runs. Best-effort, never an
+    /// error; a backend that counts no pressure here answers `None`.
+    fn observe_pressure(&self) -> Option<GuestPressure> {
+        None
     }
 }
 
@@ -43,6 +49,9 @@ impl SessionLease for GuestSession {
     }
     fn is_running(&mut self) -> bool {
         self.is_running()
+    }
+    fn observe_pressure(&self) -> Option<GuestPressure> {
+        GuestSession::observe_pressure(self)
     }
 }
 impl GuestSession {
