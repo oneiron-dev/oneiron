@@ -5,8 +5,9 @@
 //! `vault.esign.fields.place`, in the shape the owner's field editor exports, until it is sent:
 //! the signer's ceremony then holds exactly the placed fields, the signing preview lays them out
 //! at the rectangles the editor's own layout gives them, and the door is refused once the
-//! document has left Draft. The door is called by name, so this file builds where it does not
-//! exist and fails there by its asserts.
+//! document has left Draft. A field on a page its item's PDF lacks is refused before anything is
+//! written, so a sent document never freezes a field no signer can fill. The door is called by
+//! name, so this file builds where it does not exist and fails there by its asserts.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test esign_field_editor`.
 
 use std::collections::BTreeMap;
@@ -347,5 +348,69 @@ fn placed_fields_reach_the_ceremony_and_preview_until_send() -> TestResult {
     let state = vault.esign_document(*document)?;
     assert_eq!(state.status, DocumentStatus::Pending);
     assert_eq!(state.document.fields, std::slice::from_ref(&moved));
+    Ok(())
+}
+
+#[test]
+fn a_field_on_a_page_its_pdf_lacks_is_refused() -> TestResult {
+    let signing = signing_draft()?;
+    let Signing {
+        vault,
+        clock,
+        owner,
+        document,
+        recipient,
+        drafted,
+        ..
+    } = &signing;
+    let memory = vault.memory(*owner, EdgeActorClass::Human);
+
+    // The draft pins a one-page PDF: the signature field placed on page 2 is refused, and the
+    // draft keeps its own field with no new trail event.
+    clock.set(T0 + 60);
+    let mut beyond = signature_field(&drafted.id, recipient, [10.0, 10.0, 30.0, 8.0]);
+    beyond.geometry.page = 2;
+    let refused = invoke(
+        &memory,
+        PLACE,
+        placement(*document, std::slice::from_ref(&beyond))?,
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("field page is missing")),
+        "a field on a page the PDF lacks is refused: {refused:?}"
+    );
+    let state = vault.esign_document(*document)?;
+    assert_eq!(state.status, DocumentStatus::Draft);
+    assert_eq!(
+        state.document.fields,
+        std::slice::from_ref(drafted),
+        "the draft keeps its own field"
+    );
+    assert_eq!(
+        vault.esign_audit(*document)?.len(),
+        1,
+        "a refused placement writes no event"
+    );
+
+    // The same field on the PDF's one page lands.
+    clock.set(T0 + 120);
+    let mut on_page = beyond.clone();
+    on_page.geometry.page = 1;
+    let placed = answer(
+        &memory,
+        PLACE,
+        placement(*document, std::slice::from_ref(&on_page))?,
+    )?;
+    assert_eq!(
+        placed["fields"], 1,
+        "the draft holds the one placed field: {placed}"
+    );
+    assert_eq!(
+        vault.esign_document(*document)?.document.fields,
+        std::slice::from_ref(&on_page),
+        "the draft holds the field placed on its page"
+    );
     Ok(())
 }
