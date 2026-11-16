@@ -450,7 +450,7 @@ fn peer_read_keys_in(
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
-            if crate::disclosure::is_vault_owner(&fold, embedded_owner, member) {
+            if crate::disclosure::is_vault_owner(vault, txn, &fold, embedded_owner, member)? {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
             }
             if owners.contains(member) {
@@ -528,6 +528,37 @@ fn work_talk_reader_in(
         })),
         Err(crate::Error::Record(crate::error::RecordError::ConversationDenied)) => Ok(false),
         Err(error) => Err(error),
+    }
+}
+
+/// Whether `caller` stands in `room` as `txn` reads it: [`room_reader_in`]
+/// over the room's roster in this snapshot. A row that is no room has no
+/// roster, and no one stands in it.
+pub(crate) fn room_stander_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: EntityId,
+) -> crate::Result<bool> {
+    match room_roster_in(vault, txn, room)? {
+        Some(members) => room_reader_in(vault, txn, room, &members, caller),
+        None => Ok(false),
+    }
+}
+
+impl Vault {
+    /// Whether `caller` stands in `room` now ([`room_stander_in`]): a member,
+    /// a live Ready join for the room, one of a leader chat's two actors, or
+    /// the room's host. Reading the room's record is not standing in it: a
+    /// reader the conversation home binds names a room to read stamped claims
+    /// only while it stands in it (DEC-0006 `#home-clearance`; RULING
+    /// SECREAD-HOME-READ-DOORS = B).
+    ///
+    /// # Errors
+    /// A store failure reading the room.
+    pub fn stands_in_room(&self, room: EntityId, caller: EntityId) -> crate::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        room_stander_in(self, &txn, room, caller)
     }
 }
 

@@ -152,6 +152,11 @@ impl Vault {
             }
         };
 
+        // Halting after Started leaves only the reservation: the member's
+        // slot, with no workspace established yet.
+        if halt_after == MemberOnboardingStep::Started {
+            return Ok(None);
+        }
         for step in ONBOARDING_STEPS {
             if step.rank() <= done {
                 continue;

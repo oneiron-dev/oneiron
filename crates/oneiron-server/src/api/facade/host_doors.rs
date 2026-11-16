@@ -94,6 +94,8 @@ pub(crate) use super::shared_policy_doors::*;
 pub(crate) use super::trusted_contact_doors::*;
 // The voice-bank doors (DOOR-143, FIX 4393) too.
 pub(crate) use super::voice_bank_doors::*;
+// The voice-recognition consent door (VOICE-RECOGNITION-CONSENT-NO-DOOR) too.
+pub(crate) use super::voice_recognition_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
@@ -114,7 +116,6 @@ pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_pack_doors::*;
-pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;
@@ -183,6 +184,7 @@ pub(crate) use super::weave_admin_doors::{
 pub(crate) use super::inbox_group_doors::*;
 // The inquiry rows (INQUIRE-1 PR 5), likewise.
 pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
