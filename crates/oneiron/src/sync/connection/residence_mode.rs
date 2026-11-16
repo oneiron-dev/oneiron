@@ -83,12 +83,19 @@ impl SyncConnection {
     /// A change to All publishes first and then drops the opened read
     /// caches, so no reader sees Thin with its caches gone (FIX 11114).
     /// Under sync opened it first withdraws this install's full-copy mark,
-    /// changed or not (L7-47). An owner's switch can commit and publish
-    /// while the refresh runs, so the refresh resolves once more after it
-    /// publishes and repeats until the mode stands: the mode it leaves is
-    /// the one the store resolves to, and a refresh that ends on sync opened
-    /// withdrew the mark under that resolution.
+    /// changed or not (L7-47). It holds [`SyncConnection::mode_publish`]
+    /// from its first resolution to its last publish, so an owner's switch
+    /// records and publishes before or after it, never in between (FIX
+    /// RESIDENCE-SWITCH-STALE-HOME). An election can still commit while the
+    /// refresh runs, so the refresh resolves once more after it publishes
+    /// and repeats until the mode stands: the mode it leaves is the one the
+    /// store resolves to, and a refresh that ends on sync opened withdrew
+    /// the mark under that resolution.
     fn follow_home(&self, vault: &Vault) -> crate::error::Result<()> {
+        let _publish = self
+            .mode_publish
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let configured = self.config.client_config.residence_mode;
         let mut mode = crate::sync::residence::resolve_residence_mode(vault, configured)?;
         loop {
@@ -119,9 +126,8 @@ impl SyncConnection {
                     );
                 }
             }
-            // A switch that committed after the first resolution: its
-            // withdrawal transaction skipped a mark this mode disagrees
-            // with, or it published before this refresh did.
+            // An election that committed after the first resolution; an
+            // owner's switch waits for `mode_publish`.
             let resolved = crate::sync::residence::resolve_residence_mode(vault, configured)?;
             if resolved == mode {
                 return Ok(());

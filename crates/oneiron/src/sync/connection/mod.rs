@@ -104,6 +104,12 @@ pub struct SyncConnection {
     /// The residence mode this machine runs now. A change closes the live
     /// socket; the next connect negotiates the new hello.
     mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+    /// Held by an owner's switch from its recording transaction to its
+    /// publish, and by the residence refresh from its first resolution to its
+    /// last publish, so neither publishes a mode the other's commit made
+    /// stale (FIX RESIDENCE-SWITCH-STALE-HOME). Never held across an await;
+    /// no write transaction's closure takes it.
+    mode_publish: std::sync::Mutex<()>,
     /// Wakes the owner's residence directives naming this machine: the
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
@@ -200,6 +206,7 @@ impl SyncConnection {
             queue,
             config,
             mode,
+            mode_publish: std::sync::Mutex::new(()),
             directive_wake: Arc::default(),
             follow_wake: Arc::default(),
             home_handoff_wake: Arc::default(),
@@ -512,6 +519,21 @@ impl SyncConnection {
     /// directives record their result there (OF-534). A switch to sync-opened
     /// withdraws this install's full-copy mark in that same transaction
     /// (L7-47).
+    ///
+    /// The home read first only plans the switch: whether the held windows
+    /// must be granted again before sync opened. Those grants wait on the
+    /// home, and an election can move the home meanwhile, so the recording
+    /// transaction resolves the mode again from the choice it records and
+    /// the home it reads, and the withdrawal, the dropped caches and the
+    /// published mode follow that resolution (FIX
+    /// RESIDENCE-SWITCH-STALE-HOME). A machine elected home meanwhile stays
+    /// All and keeps its mark; every window syncs, so none is reported
+    /// retained or unsynced. A home that lost the election meanwhile runs the
+    /// owner's sync-opened choice and withdraws its mark; its held windows
+    /// are left to the opened lane's own grant path, as the residence refresh
+    /// leaves them after a lost election. The resolution and the publish
+    /// hold [`Self::mode_publish`], as the residence refresh does, so neither
+    /// publishes between the other's resolution and publish.
     async fn switch_residence_mode(
         &self,
         mode: SyncResidenceMode,
@@ -524,19 +546,14 @@ impl SyncConnection {
             ));
         }
         let vault = self.manager.vault();
-        let effective = crate::sync::residence::effective_residence_mode(
+        let planned = crate::sync::residence::effective_residence_mode(
             None,
             mode,
             crate::sync::residence::local_is_elected_home(vault).map_err(storage)?,
         );
-        let mut change = ResidenceModeChange {
-            mode: effective,
-            retained: Vec::new(),
-            unsynced: Vec::new(),
-            pruned_items: 0,
-        };
-        let switching = effective != *self.mode.borrow();
-        if switching && effective == SyncResidenceMode::Opened {
+        let mut retained = Vec::new();
+        let mut unsynced = Vec::new();
+        if planned == SyncResidenceMode::Opened && planned != *self.mode.borrow() {
             let mut config = self.client_config();
             config.residence_mode = SyncResidenceMode::Opened;
             let (mut client, _events) =
@@ -545,19 +562,40 @@ impl SyncConnection {
                 crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
             {
                 if client.retain_window(&window).await? {
-                    change.retained.push(window);
+                    retained.push(window);
                 } else {
-                    change.unsynced.push(window);
+                    unsynced.push(window);
                 }
             }
         }
-        if switching && effective == SyncResidenceMode::Opened {
+        if mode == SyncResidenceMode::Opened {
+            // The install key signs the withdrawal; a home that loses the
+            // election before the recording transaction withdraws too.
             vault.load_install_signing_if_minted().map_err(storage)?;
         }
         #[cfg(oneiron_test_support)]
         crate::test_doors::full_copy_mark::at_residence_switch_record(vault).map_err(storage)?;
-        vault
+        let configured = self.config.client_config.residence_mode;
+        let _publish = self
+            .mode_publish
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = *self.mode.borrow();
+        let change = vault
             .with_write_txn_grouped(|txn| {
+                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
+                let effective = vault.resolve_residence_mode_in_txn(txn, configured)?;
+                let mut change = ResidenceModeChange {
+                    mode: effective,
+                    retained,
+                    unsynced,
+                    pruned_items: 0,
+                };
+                if effective == SyncResidenceMode::All {
+                    change.retained.clear();
+                    change.unsynced.clear();
+                }
+                let switching = effective != running;
                 if switching && effective == SyncResidenceMode::Opened {
                     // L7-47: the mark is withdrawn in the same transaction
                     // that records the switch.
@@ -569,11 +607,11 @@ impl SyncConnection {
                     change.pruned_items =
                         crate::sync::residence::prune_thin_items_in_txn(vault, txn, u64::MAX)?;
                 }
-                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
-                finish(txn, &change)
+                finish(txn, &change)?;
+                Ok(change)
             })
             .map_err(storage)?;
-        self.mode.send_replace(effective);
+        self.mode.send_replace(change.mode);
         Ok(change)
     }
 
@@ -709,9 +747,9 @@ impl SyncConnection {
         let demotion = self.client()?.demote_window(window).await?;
         if demotion.complete {
             // The steady socket still follows the window: a fresh hello
-            // drops it.
-            let mode = *self.mode.borrow();
-            self.mode.send_replace(mode);
+            // drops it. The mode stays as it is; a value read and sent back
+            // could undo a switch or refresh published in between.
+            self.mode.send_modify(|_| {});
         }
         Ok(demotion)
     }
