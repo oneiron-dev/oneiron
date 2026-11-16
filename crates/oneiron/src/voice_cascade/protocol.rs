@@ -267,6 +267,15 @@ pub trait Brain {
         let _ = (generation, playback);
         Ok(())
     }
+
+    /// The capture's session-local speaker key `generation`'s final was heard
+    /// under, when the host route's final named one (UNBUILT-02 PR 4); called
+    /// just before [`Self::start`] with that generation. A brain that keeps the
+    /// call's turns labels the kept words with it; a key only labels, it never
+    /// names who wrote them.
+    fn final_speaker(&mut self, generation: GenerationEpoch, speaker: Option<&str>) {
+        let _ = (generation, speaker);
+    }
 }
 
 pub trait TtsSeamClient {

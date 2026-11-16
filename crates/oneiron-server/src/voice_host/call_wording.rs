@@ -4,6 +4,10 @@
 //! nowhere else (Engine, 15 Nov 22:55; the UI session's section 10 of
 //! WORDS-FOR-ENGINE.md).
 //!
+//! A room call with other people writes its own line after its start row
+//! (UNBUILT-02 PR 4): the room line is written, not spoken, and only in a
+//! call with other people.
+//!
 //! A call the agent places itself will open with "Hello, this is {agent},
 //! calling for {owner}. This call is transcribed."; no call is placed yet,
 //! so that line joins the code with the first one that is.
@@ -19,6 +23,14 @@ const WITHHELD_NUMBER: &str = "a withheld number";
 /// What the other speaker's words are labelled with while no speaker match
 /// names them.
 pub(crate) const ANOTHER_SPEAKER: &str = "Another speaker";
+/// The line a room call with other people writes after its start row, when
+/// the owner's `voice.call_transcripts.announce` is on (UNBUILT-02 PR 4).
+const ROOM_ANNOUNCEMENT: &str = "This call is transcribed, like the rest of this room.";
+/// The divider's `{name or number}` when a room call names no other member.
+const ROOM_WITHOUT_NAMES: &str = "the room";
+/// How many other members a room call's start row names before it counts
+/// the rest.
+const MAX_DIVIDER_NAMES: usize = 3;
 /// What the agent says first on a call it answered, when the owner's
 /// `voice.call_transcripts.announce` is on.
 const ANSWERED_ANNOUNCEMENT: &str =
@@ -50,6 +62,43 @@ pub(crate) fn answered_announcement(agent: &str, owner: Option<&str>) -> String 
             .replace("{owner}", owner),
         None => ANSWERED_ANNOUNCEMENT_UNNAMED_OWNER.replace("{agent}", agent),
     }
+}
+
+/// The line a room call with other people writes after its start row: the
+/// room line is written, not spoken, and only in a call with other people.
+pub(crate) fn room_announcement() -> String {
+    ROOM_ANNOUNCEMENT.to_owned()
+}
+
+/// What the `ordinal`th unplaced speaker's words are labelled with, by
+/// first-heard order in the call: the first is "Another speaker", the next
+/// "Another speaker 2", and so on. Zero names the first, as one does.
+pub(crate) fn another_speaker(ordinal: usize) -> String {
+    if ordinal <= 1 {
+        ANOTHER_SPEAKER.to_owned()
+    } else {
+        format!("{ANOTHER_SPEAKER} {ordinal}")
+    }
+}
+
+/// The row where a room call with `names` starts at `started_at` (Unix
+/// seconds): the room's other members by name, at most three, then how many
+/// more, or the room when none read.
+pub(crate) fn room_call_started(names: &[String], started_at: u64) -> String {
+    let who = match names {
+        [] => ROOM_WITHOUT_NAMES.to_owned(),
+        [one] => one.clone(),
+        [one, two] => format!("{one} and {two}"),
+        [one, two, three] => format!("{one}, {two} and {three}"),
+        _ => {
+            let head = names[..MAX_DIVIDER_NAMES].join(", ");
+            let more = names.len() - MAX_DIVIDER_NAMES;
+            format!("{head} and {more} more")
+        }
+    };
+    CALL_STARTED
+        .replace("{name or number}", &who)
+        .replace("{time}", &clock_minutes(started_at))
 }
 
 /// `2026-11-16 00:31 UTC`: the call's start to the minute. Each row also
@@ -98,6 +147,56 @@ mod tests {
         assert_eq!(
             answered_announcement("Eiri", None),
             "Hello, this is Eiri, an assistant. This call is transcribed."
+        );
+    }
+
+    #[test]
+    fn the_room_line_is_written_not_spoken() {
+        assert_eq!(
+            room_announcement(),
+            "This call is transcribed, like the rest of this room."
+        );
+    }
+
+    #[test]
+    fn unplaced_speakers_number_by_first_heard() {
+        assert_eq!(another_speaker(0), "Another speaker");
+        assert_eq!(another_speaker(1), "Another speaker");
+        assert_eq!(another_speaker(2), "Another speaker 2");
+        assert_eq!(another_speaker(3), "Another speaker 3");
+    }
+
+    #[test]
+    fn the_room_divider_names_the_rooms_other_members() {
+        // 2026-11-16T00:31:00Z
+        let at = 1_794_789_060;
+        assert_eq!(
+            room_call_started(&[], at),
+            "call with the room · 2026-11-16 00:31 UTC"
+        );
+        assert_eq!(
+            room_call_started(&["A".to_owned()], at),
+            "call with A · 2026-11-16 00:31 UTC"
+        );
+        assert_eq!(
+            room_call_started(&["A".to_owned(), "B".to_owned()], at),
+            "call with A and B · 2026-11-16 00:31 UTC"
+        );
+        assert_eq!(
+            room_call_started(&["A".to_owned(), "B".to_owned(), "C".to_owned()], at),
+            "call with A, B and C · 2026-11-16 00:31 UTC"
+        );
+        assert_eq!(
+            room_call_started(
+                &[
+                    "A".to_owned(),
+                    "B".to_owned(),
+                    "C".to_owned(),
+                    "D".to_owned(),
+                ],
+                at,
+            ),
+            "call with A, B, C and 1 more · 2026-11-16 00:31 UTC"
         );
     }
 }

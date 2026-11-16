@@ -1085,6 +1085,13 @@ impl Vault {
                 ..room
             }))
     }
+    /// Whether `room` is a project room: it has an owner in the project-room
+    /// index. A room call keeps nothing in one yet (UNBUILT-02 PR 4), the
+    /// same check its witness makes.
+    pub fn room_is_project_room(&self, room: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ROOM_PROJECT.contains(&self.store, &txn, &room)?)
+    }
     /// Owner view of stored project rows the fold hides, each with its reason.
     /// They stay in storage and become visible when their authorization does.
     pub fn quarantined_projects(&self) -> Result<Vec<ProjectQuarantine>> {

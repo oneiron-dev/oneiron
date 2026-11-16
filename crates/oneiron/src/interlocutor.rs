@@ -17,7 +17,7 @@ use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedS
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
 };
-use crate::disclosure::AttendeeIdentityChoice;
+use crate::disclosure::{AttendeeIdentityChoice, RoomParty};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -433,6 +433,30 @@ impl InterlocutorStamp {
             claims_not_instructions: entry.class != InterlocutorClass::Owner,
         }
     }
+}
+
+/// Who a call's speaker key is, as the call's stored roster places it: for display only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CallSpeaker {
+    /// An enrolled OWNER print matched: corroboration, never authority (ROOMCALL-OWNER-VOICE = A).
+    OwnerPrint,
+    /// An active counterparty contact the roster places the key on, by its name.
+    Contact { contact: EntityId, name: String },
+    /// No segment of the key is placed, or no roster or key reads.
+    Unplaced,
+}
+
+/// Who a room call is with, as its members read now: whether anyone besides
+/// the caller and the vault's agents sits there, and their names for the
+/// call's dividers (UNBUILT-02 PR 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallRoomParties {
+    /// Whether the room holds anyone besides the caller and the vault's
+    /// agents: a co-Owner is another person in the call.
+    pub with_others: bool,
+    /// The other members' names, in room order, skipping one with none.
+    pub names: Vec<String>,
 }
 
 /// Validates an app-embedded interlocutor stamp value (D4 opt-in for callers
@@ -914,6 +938,79 @@ impl Vault {
         Ok(self
             .get_counterparty_contact_in_txn(rtxn, contact_ref)?
             .filter(|record| record.status == CounterpartyContactStatus::Active))
+    }
+
+    /// Who a call's speaker key is, as the call's stored roster places it
+    /// (UNBUILT-02 PR 4): the first placed segment of `speaker_key`, read
+    /// through the roster's own party mapping, for display only. A key only
+    /// labels a kept turn; it never names who wrote it.
+    pub fn call_speaker(&self, voice_session_ref: &str, speaker_key: &str) -> Result<CallSpeaker> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(roster) = self.voice_session_roster_in_txn(&rtxn, voice_session_ref)? else {
+            return Ok(CallSpeaker::Unplaced);
+        };
+        let Some(segment) = roster.segments.iter().find(|segment| {
+            segment.speaker_key == speaker_key
+                && !matches!(
+                    segment.evidence,
+                    VoiceAttributionEvidence::ResidualCluster { .. }
+                )
+        }) else {
+            return Ok(CallSpeaker::Unplaced);
+        };
+        let party = self.voice_roster_party(&rtxn, segment, None)?;
+        if party.owner_print_matched() {
+            return Ok(CallSpeaker::OwnerPrint);
+        }
+        if party.class() == InterlocutorClass::KnownContact
+            && let Some(contact_ref) = party.contact_ref()
+            && let Ok(contact) = EntityId::from_hex(contact_ref)
+        {
+            return Ok(CallSpeaker::Contact {
+                contact,
+                name: party.label().to_owned(),
+            });
+        }
+        Ok(CallSpeaker::Unplaced)
+    }
+
+    /// Who `caller`'s room call is with, as `members` read now (UNBUILT-02
+    /// PR 4): whether anyone besides the caller and the vault's agents sits
+    /// there, and their names for the call's dividers. An owner member other
+    /// than the caller, such as a co-Owner, is another person: their words
+    /// are never kept as the caller's own. A member with no active
+    /// counterparty contact to name it adds no name.
+    pub fn call_room_parties(
+        &self,
+        caller: EntityId,
+        members: &[EntityId],
+    ) -> Result<CallRoomParties> {
+        let entries = self.room_party_entries(members)?;
+        let rtxn = self.store.env.read_txn()?;
+        let mut with_others = false;
+        let mut names = Vec::new();
+        for (member, entry) in members.iter().zip(&entries) {
+            let other = match entry.party {
+                RoomParty::VaultAgent => false,
+                RoomParty::VaultOwner => *member != caller,
+                RoomParty::Contact(_) | RoomParty::Unknown => true,
+            };
+            if !other {
+                continue;
+            }
+            with_others = true;
+            let Some(contact) = entry.contact else {
+                continue;
+            };
+            let Some(record) = self.active_counterparty_contact(&rtxn, &contact)? else {
+                continue;
+            };
+            let name = record.counterparty.trim().to_owned();
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+        Ok(CallRoomParties { with_others, names })
     }
 }
 

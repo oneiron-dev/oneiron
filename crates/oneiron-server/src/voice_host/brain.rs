@@ -108,9 +108,9 @@ pub struct ChatBrainBindings {
     pub funding: Option<PayerPerson>,
     /// Where the turns' events go: the host's `brain_out`.
     pub out: mpsc::Sender<VoiceBrainOut>,
-    /// Where the call keeps its answered turns: an owner's own call, or a
-    /// phone call between its two divider rows (UNBUILT-02); `None` keeps
-    /// none, as a call heard in a room.
+    /// Where the call keeps its answered turns: an owner's own call, a phone
+    /// call between its two divider rows, or a room call in the room
+    /// (UNBUILT-02); `None` keeps none.
     pub(crate) record: Option<CallRecord>,
 }
 
@@ -137,6 +137,10 @@ pub struct ChatBrain {
     /// person heard of it arrives (FIX 4899): words speech never took count
     /// as unheard.
     interrupted: BTreeMap<GenerationEpoch, String>,
+    /// The speaker key the host route's final named for its generation, when
+    /// it named one (UNBUILT-02 PR 4): taken by the turn that generation
+    /// starts, to label the kept words.
+    final_speaker: Option<(GenerationEpoch, String)>,
 }
 
 /// One history message, beside the rows it was made from (FIX 4778): the
@@ -226,6 +230,7 @@ impl ChatBrain {
             foreign: Vec::new(),
             said_by: BTreeMap::new(),
             interrupted: BTreeMap::new(),
+            final_speaker: None,
         })
     }
 
@@ -724,6 +729,15 @@ impl Brain for ChatBrain {
         })));
         let said = Arc::new(Mutex::new(Some(String::new())));
         let memories = Arc::new(Mutex::new(memories));
+        // The final's speaker key, when the host route's final named one for
+        // this generation: taken now, to label the kept words.
+        let speaker = match self.final_speaker.take() {
+            Some((generation, key)) if generation == request.generation => Some(key),
+            other => {
+                self.final_speaker = other;
+                None
+            }
+        };
         // A recorded call keeps the turn once its answer stops: the
         // person's words as heard now, then the answer (UNBUILT-02), unless
         // the owner keeps no transcripts of calls with other people.
@@ -739,6 +753,7 @@ impl Brain for ChatBrain {
                 agent: self.bindings.agent,
                 transcript: request.transcript.clone(),
                 heard_at: self.bindings.vault.now_recorded_at(),
+                speaker,
                 funding: self.bindings.funding.clone(),
                 budget_units: self.bindings.ai.chat_settings().turn_budget_units,
             });
@@ -842,6 +857,13 @@ impl Brain for ChatBrain {
             .map_err(|_| refused("history poisoned"))?
             .push((text_message(LlmMessageRole::System, note), rows));
         Ok(())
+    }
+
+    /// The speaker key the host route's final named for `generation`, when it
+    /// named one: stored until the turn that generation starts takes it, to
+    /// label the kept words. `None` clears a stored key.
+    fn final_speaker(&mut self, generation: GenerationEpoch, speaker: Option<&str>) {
+        self.final_speaker = speaker.map(|key| (generation, key.to_owned()));
     }
 }
 

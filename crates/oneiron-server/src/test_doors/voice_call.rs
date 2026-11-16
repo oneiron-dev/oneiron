@@ -1,11 +1,12 @@
 //! Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2),
-//! `tests/voice_phone_transcript.rs` (PR 3) and
-//! `tests/voice_call_announcement.rs` (PR 3B): the brain of an owner's own
-//! standalone call on this device, or of a phone call its line agent
-//! answered, its record and opening line resolved as the call's boot
-//! resolves them, the opening line spoken as the call's loop opens it, and
-//! one of its turns driven from the speaker's final transcript to its stop,
-//! with what the turn keeps written.
+//! `tests/voice_phone_transcript.rs` (PR 3),
+//! `tests/voice_call_announcement.rs` (PR 3B) and
+//! `tests/voice_room_call.rs` (PR 4): the brain of an owner's own
+//! standalone call on this device, of a phone call its line agent
+//! answered, or of a room call heard in a room, its record and opening line
+//! resolved as the call's boot resolves them, the opening line spoken as the
+//! call's loop opens it, and one of its turns driven from the speaker's
+//! final transcript to its stop, with what the turn keeps written.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -24,7 +25,7 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 use crate::voice_host::{
     ChatBrain, ChatBrainBindings, VoiceBrainOut, phone_call_opening, phone_call_record,
-    phone_call_session, standalone_call_record,
+    phone_call_session, room_call_record, standalone_call_record,
 };
 
 /// The seeded agent a call answers with, as the call's boot reads it.
@@ -114,6 +115,7 @@ impl StandaloneCall {
             &self.session_ref,
             generation,
             transcript,
+            None,
         )
         .await
     }
@@ -249,6 +251,7 @@ impl PhoneCall {
             &self.session_ref,
             generation,
             transcript,
+            None,
         )
         .await
     }
@@ -260,21 +263,179 @@ impl PhoneCall {
     }
 }
 
+/// A room call heard in a room, held open by its brain. Its answering agent
+/// is the seeded default agent; the call's room read fence is not the door's
+/// subject, so the brain holds none.
+pub struct RoomCall {
+    brain: ChatBrain,
+    out: mpsc::Receiver<VoiceBrainOut>,
+    session_ref: String,
+    agent: EntityId,
+    conversation: EntityId,
+}
+
+impl RoomCall {
+    /// `person`'s room call heard in `room`, on this device, with the call's
+    /// speakers matched under `roster` when named: its record resolved as
+    /// the call's boot resolves it, so its start row is written. Refused
+    /// when the call keeps no turn.
+    ///
+    /// # Errors
+    ///
+    /// No default agent, no record, no room read, or no chat seat.
+    pub fn open(
+        server: &Arc<SyncServer>,
+        person: EntityId,
+        room: EntityId,
+        roster: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        Self::open_at(server, person, room, None, roster)?
+            .ok_or_else(|| anyhow::anyhow!("a room call that keeps no turn"))
+    }
+
+    /// `person`'s room call heard at `place`, a room or one of its threads by
+    /// any TURN of it: the place resolved as the call's boot resolves it.
+    /// `Ok(None)` when the call keeps no turn yet, as in a thread or a
+    /// project room.
+    ///
+    /// # Errors
+    ///
+    /// No default agent, no room read, or no chat seat.
+    pub fn open_in(
+        server: &Arc<SyncServer>,
+        person: EntityId,
+        place: EntityId,
+        roster: Option<&str>,
+    ) -> anyhow::Result<Option<Self>> {
+        let work = crate::api::ai::room_place::call_place(server.vault(), place)
+            .map_err(|error| anyhow::anyhow!("the call's place does not resolve: {error:?}"))?;
+        Self::open_at(server, person, work.room, work.branch, roster)
+    }
+
+    /// A room call in `room`, in `branch` when the call named a thread: its
+    /// members read as the call's boot reads them, its record resolved, and
+    /// its brain. `Ok(None)` when the record is none.
+    fn open_at(
+        server: &Arc<SyncServer>,
+        person: EntityId,
+        room: EntityId,
+        branch: Option<EntityId>,
+        roster: Option<&str>,
+    ) -> anyhow::Result<Option<Self>> {
+        let vault = server.vault();
+        let (agent, _) = vault
+            .get_seeded_agent_definition_by_logical_id(DEFAULT_AGENT)?
+            .ok_or_else(|| anyhow::anyhow!("no default agent"))?;
+        let auth = CoreAuth::from_oauth_relay(
+            person.to_hex(),
+            BTreeSet::from([CoreScope::Read, CoreScope::Write]),
+        );
+        let members = {
+            let read = crate::api::scoped_read_for_core_auth(vault, &auth)
+                .map_err(|error| anyhow::anyhow!("the room does not read: {error:?}"))?;
+            vault
+                .room_audience_members_under(&read, room, Some(person))
+                .map_err(|error| anyhow::anyhow!("the room does not read: {error:?}"))?
+        };
+        let payer = WriteActor::new(person, EdgeActorClass::Human);
+        let session_ref = format!("voice-call:{}", EntityId::now().to_hex());
+        let Some(record) = room_call_record(
+            server,
+            payer,
+            PeerMachine::Unknown,
+            CallerLocality::OnDevice,
+            room,
+            branch,
+            &members,
+            roster.map(str::to_owned),
+            &session_ref,
+        ) else {
+            return Ok(None);
+        };
+        let conversation = record.conversation;
+        let (out, receiver) = mpsc::channel(64);
+        let brain = ChatBrain::new(ChatBrainBindings {
+            ai: server.ai.clone(),
+            vault: Arc::clone(vault),
+            auth,
+            phone: None,
+            room: Some(room),
+            instructions: None,
+            agent,
+            payer,
+            funding: None,
+            out,
+            record: Some(record),
+        })
+        .map_err(|error| anyhow::anyhow!("voice brain: {error:?}"))?;
+        Ok(Some(Self {
+            brain,
+            out: receiver,
+            session_ref,
+            agent,
+            conversation,
+        }))
+    }
+
+    /// The agent answering the call.
+    #[must_use]
+    pub fn agent(&self) -> EntityId {
+        self.agent
+    }
+
+    /// The room the call is heard in.
+    #[must_use]
+    pub fn conversation(&self) -> EntityId {
+        self.conversation
+    }
+
+    /// One turn: `transcript` as the speaker's final at `generation`, heard
+    /// under `speaker` when the host route's final named one, as
+    /// [`StandaloneCall::say`] drives it.
+    ///
+    /// # Errors
+    ///
+    /// As [`StandaloneCall::say`].
+    pub async fn say(
+        &mut self,
+        generation: u64,
+        transcript: &str,
+        speaker: Option<&str>,
+    ) -> anyhow::Result<()> {
+        drive_turn(
+            &mut self.brain,
+            &mut self.out,
+            &self.session_ref,
+            generation,
+            transcript,
+            speaker,
+        )
+        .await
+    }
+
+    /// The call ends: the brain drops, which writes the call's end row
+    /// before this returns.
+    pub fn hang_up(self) {
+        drop(self.brain);
+    }
+}
+
 /// One turn of `brain`'s call: `transcript` as the speaker's final at
-/// `generation`, its answer streamed to its stop, then until the brain is at
-/// rest, so whatever the turn keeps has landed.
+/// `generation`, heard under `speaker` when the host route's final named
+/// one, its answer streamed to its stop, then until the brain is at rest, so
+/// whatever the turn keeps has landed.
 async fn drive_turn(
     brain: &mut ChatBrain,
     events: &mut mpsc::Receiver<VoiceBrainOut>,
     session_ref: &str,
     generation: u64,
     transcript: &str,
+    speaker: Option<&str>,
 ) -> anyhow::Result<()> {
+    let epoch =
+        oneiron::test_doors::voice_generation_epoch::generation_epoch(CASCADE_SESSION, generation);
     let request = BrainRequest {
-        generation: oneiron::test_doors::voice_generation_epoch::generation_epoch(
-            CASCADE_SESSION,
-            generation,
-        ),
+        generation: epoch,
         transcript: transcript.to_owned(),
         retrieval: RetrievalContext {
             result_refs: Vec::new(),
@@ -289,6 +450,7 @@ async fn drive_turn(
         tool_events: Vec::new(),
         externally_tainted: false,
     };
+    brain.final_speaker(epoch, speaker);
     brain.start(&request)?;
     tokio::time::timeout(TURN_PATIENCE, async {
         loop {

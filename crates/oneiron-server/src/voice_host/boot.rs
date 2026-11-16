@@ -68,7 +68,7 @@ use super::backend::CallBackend;
 use super::hello_refusal::{Refusal, refuse, refused};
 use super::{
     ChatBrain, ChatBrainBindings, VoiceHost, VoiceHostBindings, VoiceServeBindings,
-    VoiceWireBindings, standalone_call_record,
+    VoiceWireBindings, room_call_record, standalone_call_record,
 };
 use crate::ai_host::payer_funding::{PayerFault, room_launch_funding};
 use crate::api::ai::room_place::call_place;
@@ -510,13 +510,13 @@ pub(super) fn prepare_call(
     }) {
         return Err(refused(Refusal::Roster));
     }
-    let (container, branch) = match room
+    let (container, branch, members) = match room
         .as_deref()
         .map(|room| bind_room(vault, auth, actor, room))
         .transpose()?
     {
-        Some((binding, branch)) => (Some(binding), branch),
-        None => (None, None),
+        Some((binding, branch, members)) => (Some(binding), branch, members),
+        None => (None, None, Vec::new()),
     };
     // A call heard in a room bills the payer whose consent on its answering
     // agent's join funds that room (FIX 805), resolved once, before any
@@ -548,6 +548,8 @@ pub(super) fn prepare_call(
         .map(|bound| vault.register_live_speaker_call(bound.container, roster.clone()));
 
     let call_ref = format!("voice-call:{}", EntityId::now().to_hex());
+    // The record reads the roster the hello named; the session takes it.
+    let roster_ref = roster.clone();
     let mut session = VoiceSessionConfig::new(
         call_ref.clone(),
         InterlocutorResolutionInput {
@@ -611,9 +613,21 @@ pub(super) fn prepare_call(
     .map_err(failed)?;
 
     // The owner's own standalone call keeps its answered turns in its home
-    // (UNBUILT-02); a call heard in a room keeps none yet (PR 4).
+    // (UNBUILT-02); a call heard in a room keeps in the room (PR 4).
     let record = if standalone {
         standalone_call_record(server, person, agent, payer, auth.peer(), auth.locality())
+    } else if let Some(binding) = container.as_ref() {
+        room_call_record(
+            server,
+            payer,
+            auth.peer(),
+            auth.locality(),
+            binding.container,
+            branch,
+            &members,
+            roster_ref,
+            &call_ref,
+        )
     } else {
         None
     };
@@ -660,13 +674,13 @@ pub(super) fn prepare_call(
 /// must place there enters it as the caller, and one it cannot place is
 /// offered as any of the room's contacts. A TURN of one of its threads names
 /// that thread's room, and the thread, by its root, is returned beside it
-/// (FIX 3572).
+/// (FIX 3572), with the members, so the record reuses that read.
 fn bind_room(
     vault: &Vault,
     auth: &CoreAuth,
     caller: EntityId,
     room: &str,
-) -> io::Result<(VoiceContainerBinding, Option<EntityId>)> {
+) -> io::Result<(VoiceContainerBinding, Option<EntityId>, Vec<EntityId>)> {
     let place = EntityId::from_hex(room).map_err(|_| refused(Refusal::Room))?;
     let RoomWork { room, branch } = call_place(vault, place).map_err(|_| refused(Refusal::Room))?;
     let read =
@@ -696,6 +710,7 @@ fn bind_room(
             ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
         },
         branch,
+        members,
     ))
 }
 
