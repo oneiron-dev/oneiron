@@ -413,7 +413,7 @@ impl Vault {
         let seed = held.seed();
         bound_seed(seed, asked, root)?;
         let confirm = request_confirmation(asked.change);
-        let (machine, request) = self.seed_door_prep(owner, seed, confirm)?;
+        let (machine, request) = self.restore_prep(owner, seed, confirm)?;
         let restored = self.answer_root_request(asked, Answer::Enacted, |txn| {
             self.restore_world_keys_in_txn(txn, owner, &machine, &request, seed, confirm)
         })?;
