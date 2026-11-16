@@ -181,6 +181,12 @@ impl TurnText {
         self.messages.iter().flatten().map(|pin| pin.id)
     }
 
+    /// Where each projected MESSAGE sits in [`Self::text`]: its id, the byte
+    /// offset its words start at and their length, in text order.
+    pub(super) fn message_places(&self) -> &[(EntityId, usize, usize)] {
+        &self.layout
+    }
+
     /// The one PERSON the source names as the speaker of every MESSAGE this
     /// text projects, read apart from its role (FIX 15412). None for inline
     /// text, a native turn, or one whose projected MESSAGEs name no one or
