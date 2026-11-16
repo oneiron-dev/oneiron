@@ -539,11 +539,14 @@ fn continue_body(fixture: &Fixture) -> Value {
     })
 }
 
-/// A refusal's status and body with the body's per-request id taken out, so
-/// two refusals of one caller compare equal when nothing else differs.
+/// A refusal's status and body with the body's per-call fields taken out
+/// (the wire's `requestId` and the call receipt's `receiptRef`, which differ
+/// on every call), so two refusals of one caller compare equal when nothing
+/// else differs.
 fn refusal_answer(status: StatusCode, mut body: Value) -> (StatusCode, Value) {
     if let Some(error) = body.get_mut("error").and_then(Value::as_object_mut) {
-        error.remove("request_id");
+        error.remove("requestId");
+        error.remove("receiptRef");
     }
     (status, body)
 }
