@@ -84,13 +84,7 @@ fn invalid(message: &str) -> OwnerError {
 
 fn hex_bytes(text: &str, field: &str) -> OwnerResult<Vec<u8>> {
     let malformed = || invalid(&format!("{field} must be hex bytes"));
-    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(malformed());
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).map_err(|_| malformed()))
-        .collect()
+    oneiron_hex::decode_vec_any_case(text).ok_or_else(malformed)
 }
 
 #[derive(Serialize, schemars::JsonSchema)]

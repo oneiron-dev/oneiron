@@ -47,9 +47,11 @@ use crate::error::{Error, Result};
 use crate::memory::Memory;
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::request_limits::page_limit_zero_as_one;
 use oneiron_authority::authority::{
-    AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, OwnerWorkKind,
-    authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+    AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, FullCopyMark,
+    OwnerWorkKind, authority_entry_hash, authority_log_entity_id_from_hash,
+    decode_authority_log_entry_body,
 };
 use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
 use oneiron_contracts::memory::MemoryResult;
@@ -114,10 +116,12 @@ impl Vault {
         reader: &AuditReader,
         query: &AuthorityAuditQuery,
     ) -> Result<AuthorityAuditPage> {
-        let limit = query
-            .limit
-            .unwrap_or(AUTHORITY_AUDIT_DEFAULT_LIMIT)
-            .clamp(1, AUTHORITY_AUDIT_MAX_LIMIT);
+        let limit = page_limit_zero_as_one(
+            query.limit,
+            AUTHORITY_AUDIT_DEFAULT_LIMIT,
+            AUTHORITY_AUDIT_MAX_LIMIT,
+        )
+        .rows;
         let scan_cap = limit.saturating_mul(AUTHORITY_AUDIT_SCAN_PER_ROW);
         let txn = self.store.env.read_txn()?;
         reader.admit_in_txn(self, &txn)?;
@@ -536,6 +540,17 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                     declaration.cloud
                 )),
                 subject_ref: Some(declaration.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        // A machine's full-copy mark (L7-47): its subject is the machine,
+        // and its detail says held or not.
+        AuthorityOp::FullCopyMark(FullCopyMark { machine, held }) => (
+            Other,
+            "full_copy_mark",
+            OpFields {
+                detail: Some(format!("held {held}")),
+                subject_ref: Some(machine.to_hex()),
                 ..OpFields::default()
             },
         ),
