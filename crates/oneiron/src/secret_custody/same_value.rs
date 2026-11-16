@@ -634,11 +634,19 @@ fn merge_statements_in_txn(
             continue;
         };
         let held = STATEMENTS.get(&vault.store, txn, &statement.writer)?;
-        if held.is_some_and(|held| held.statement.issued_at >= statement.issued_at) {
+        // The very statement held here unopened (taken while this machine's secret did not
+        // read) is opened again; any other one no later than the held one changes nothing.
+        let reopen = held
+            .as_ref()
+            .is_some_and(|held| held.opened.is_none() && held.statement == statement);
+        if !reopen && held.is_some_and(|held| held.statement.issued_at >= statement.issued_at) {
             continue;
         }
         let opened =
             secret.and_then(|secret| open_pairs(&vault_id, &statement, &envelopes, secret));
+        if reopen && opened.is_none() {
+            continue;
+        }
         STATEMENTS.put(
             &vault.store,
             txn,
