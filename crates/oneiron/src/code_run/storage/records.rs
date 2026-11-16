@@ -581,7 +581,10 @@ impl Vault {
         for (source, held) in from {
             let (more, marked) = self.result_marks_in_txn(&wtxn, Some(*source), held)?;
             for taint in more {
-                match refs.iter_mut().find(|held| held.secret_ref == taint.secret_ref) {
+                match refs
+                    .iter_mut()
+                    .find(|held| held.secret_ref == taint.secret_ref)
+                {
                     Some(held) => held.generation = held.generation.min(taint.generation),
                     None => refs.push(taint),
                 }
