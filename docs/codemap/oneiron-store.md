@@ -679,3 +679,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/shared_path_acl.rs` | test | s | — | — | Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS… |
 | `tests/side_key_derive.rs` | test | m | — | — | UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace |
 | `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
+| `tests/side_key_pins.rs` | test | m | — | — | UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read… |
