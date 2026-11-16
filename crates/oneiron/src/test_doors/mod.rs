@@ -123,6 +123,7 @@ pub mod own_device_message_replay;
 pub mod owner_key_release;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
+pub mod pairing_pending_rows;
 pub mod park_typed_wait;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
