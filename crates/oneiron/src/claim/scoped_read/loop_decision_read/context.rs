@@ -279,6 +279,11 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
+        // A kept position names two axes at once: one agent Grant alone must
+        // admit it (FIX AGENT-GRANT-TWO-AXIS-SEAMS).
+        if !self.one_grant_alternative_admits_record_in(txn, &read.policy, &position.scope)? {
+            return Ok(false);
+        }
         let Some(claim) = &position.claim else {
             return Ok(crate::gate::scoped_read_record_allowed(
                 &read.policy,

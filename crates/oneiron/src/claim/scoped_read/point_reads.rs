@@ -662,7 +662,14 @@ impl ScopedRead<'_> {
                 policy,
                 &self.actor_key,
                 &oneiron_authority::federation::scope_codec::read_preset(),
-            ))
+            )
+            // Every position, under one agent Grant alone (FIX
+            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+            && self.one_grant_alternative_admits_record_in(
+                txn,
+                policy,
+                &oneiron_authority::federation::scope_codec::read_preset(),
+            )?)
     }
 
     /// For each withdrawn entity `(id, entity_type)`, whether this reader may

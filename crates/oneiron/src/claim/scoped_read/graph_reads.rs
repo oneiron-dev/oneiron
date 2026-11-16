@@ -540,7 +540,10 @@ impl ScopedRead<'_> {
                 )?,
             };
             let position = world.map_or_else(Scope::top, super::actor_key::record_world_scope);
-            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling()));
+            // One agent Grant alone must hold it too (FIX
+            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling())
+                && self.one_grant_alternative_holds_shell_in(txn, id, raw, &position)?);
         }
         let kept = match self.session_view {
             Some(view) => scope_for_blob(view, txn, *id, raw)?,
@@ -552,11 +555,10 @@ impl ScopedRead<'_> {
             verbs: ScopeAxis::Some(["read".to_owned()].into()),
             ..default_stamp(header.entity_type, *id)
         });
-        Ok(crate::gate::scoped_read_record_allowed(
-            policy,
-            &self.actor_key,
-            &position,
-        ))
+        Ok(
+            crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &position)
+                && self.one_grant_alternative_admits_record_in(txn, policy, &position)?,
+        )
     }
 
     fn timeline_record_allowed_in(
