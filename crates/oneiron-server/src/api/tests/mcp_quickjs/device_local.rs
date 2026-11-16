@@ -361,6 +361,12 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             )
             .unwrap();
     }
+    // The asker is no live owner of this vault, so a fact's arrival labels
+    // nothing (FIX OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE): a
+    // projection judges both facts under the asker's saved lane, so the
+    // pairs rest on the world-bound claim.
+    oneiron::llm::decision::questions::project_bound_outcomes(&mode.vault, owner, handle.group_ref)
+        .unwrap();
     mode.backend.scripts.lock().unwrap().push_back(format!(
         "const pairs = await tasks.outcomes({{group_ref: '{}'}}); \
          finish(String(pairs.length));",
