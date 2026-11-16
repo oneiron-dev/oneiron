@@ -52,9 +52,9 @@ const WAKE_CARRY_LIMIT: usize = 16;
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResidentWakeMode {
-    /// Wakes on a human's message alone: one whose sender is a PERSON not
-    /// of model substrate, since every agent is a PERSON too. In a room, on
-    /// a turn a PERSON spoke (an agent speaks there as its AGENT_DEF).
+    /// Wakes on a human's message alone: one whose sender is a PERSON that
+    /// is no agent (not of model substrate, no named agent), since every
+    /// agent is a PERSON too. In a room, on a turn such a PERSON spoke.
     HumanMessages,
     AllAddressed,
     Manual,

@@ -276,14 +276,6 @@ impl AgentDispatcher<'_> {
             {
                 continue;
             }
-            // Human messages wake on a human's message alone: every agent is
-            // a PERSON too, so the sender's substrate decides, as for a busy
-            // resident's classes (FIX RESIDENT-HUMANMESSAGES-ADMITS-AGENTS).
-            if spec.wake == ResidentWakeMode::HumanMessages
-                && !self.sender_kind(&event.counterparty, now)?.0.is_human()
-            {
-                continue;
-            }
             let intent = blake3::hash(event.correlation_id.as_bytes()).to_hex();
             let key = format!(
                 "resident:{}:{}:{}",
@@ -292,6 +284,15 @@ impl AgentDispatcher<'_> {
                 intent
             );
             if woken.contains(&format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")) {
+                continue;
+            }
+            // Human messages wake on a human's message alone: every agent is
+            // a PERSON too, so the sender's substrate decides (FIX
+            // RESIDENT-HUMANMESSAGES-ADMITS-AGENTS). A busy resident's pending
+            // messages pass the same filter before they are classed.
+            if spec.wake == ResidentWakeMode::HumanMessages
+                && !self.sender_is_human(&event.counterparty, now)?
+            {
                 continue;
             }
             // The wake line names its message as the provider sent it, one
