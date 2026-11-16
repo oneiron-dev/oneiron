@@ -158,7 +158,7 @@ fn crl_valid(
         crl.tbs_cert_list.next_update,
         now_secs,
     ) {
-        return Ok(None); // not yet valid, or stale
+        return Ok(None); // not yet valid, stale, or without nextUpdate
     }
     Ok(Some(()))
 }

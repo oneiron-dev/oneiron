@@ -125,8 +125,8 @@ pub(crate) fn crl_complete_scope(crl: &x509_cert::crl::CertificateList) -> bool 
 /// otherwise why it is rejected (lead ruling F): unparseable, verified by
 /// no claimed issuer's key, signed by an issuer without cRLSign, or listing
 /// a covered certificate for an issuer it shadows is Unverifiable; a delta
-/// or IDP-scoped CRL or one stale at `at_unix` is Unusable; one listing a
-/// covered serial is Revoked.
+/// or IDP-scoped CRL, or one stale or without nextUpdate at `at_unix`, is
+/// Unusable; one listing a covered serial is Revoked.
 ///
 /// A CRL is about the covered chains when its signer has revocation
 /// authority over a covered non-anchor certificate: it issued it, or it
@@ -465,9 +465,9 @@ pub(crate) struct UnknownStatus<'a> {
 }
 
 /// What an authenticated SingleResponse says no to about the certificate
-/// it binds: `revoked` (Revoked), or stale, signed by a delegate outside
-/// its validity, or in a response produced after the applicable time
-/// (Unusable). It counts only when its issuer and serial name a covered
+/// it binds: `revoked` (Revoked), or stale or without nextUpdate, signed by
+/// a delegate outside its validity, or in a response produced after the
+/// applicable time (Unusable). It counts only when its issuer and serial name a covered
 /// non-anchor certificate (Engine call Q-C = A, 10 Nov 07:23); about any
 /// other certificate it claims nothing (Q4).
 pub(crate) struct NegativeClaim<'a> {
@@ -488,8 +488,9 @@ pub(crate) struct NegativeClaim<'a> {
 /// unsuccessful, empty, without a responder, bound to no validation-set
 /// certificate, signed by an unauthorized responder or not verifying. What
 /// an authentic response says no to (produced after the applicable time,
-/// stale, a delegate outside its validity, `revoked`) is returned as its
-/// negative claims, for the caller to weigh against the covered chains.
+/// stale or without nextUpdate, a delegate outside its validity, `revoked`)
+/// is returned as its negative claims, for the caller to weigh against the
+/// covered chains.
 pub(crate) fn ocsp_entry_valid<'a>(
     data: &[u8],
     embedded: &'a [EmbeddedCert],
