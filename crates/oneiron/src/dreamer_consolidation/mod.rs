@@ -63,6 +63,7 @@ mod person_about;
 mod provenance;
 mod recipe_failure;
 pub(crate) mod redirty;
+mod relation_extraction;
 mod request_sources;
 mod residency;
 mod resident_dream;
