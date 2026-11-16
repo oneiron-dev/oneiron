@@ -69,6 +69,7 @@ pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod esign_commitments;
+pub mod eval_repair_seed;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;

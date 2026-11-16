@@ -1,0 +1,545 @@
+//! A linked repair becomes a sealed eval seed (census L1-20; ARCH-0053
+//! `#eval-repair-seed`, owner 2026-10-15; ruling L1-20-SEEDER = A).
+//!
+//! "The case's source family gets its split before anything is derived from
+//! it": proposing a seed compiles the capture's task and assigns its family
+//! root to a sealed-confirmation family in the same write, before any case
+//! exists. "The old skill must fail the case and the candidate must pass it":
+//! the gate grades both arms' answers itself, against the app's observed
+//! outcome ("never the candidate skill's own text"), and only then records one
+//! `Repair` case and its `WorldOutcome` label. A refused seed records no case,
+//! so nothing is ever derived from it.
+//!
+//! The skill decides which repair to seed; fixed code compiles, seals and
+//! grades. Nothing here runs a model: the measuring host answers each arm and
+//! hands the answers to [`Memory::settle_eval_repair_seed`], as it hands leg
+//! results to the measurement doors. No verb reaches these doors.
+
+use std::collections::BTreeSet;
+
+use oneiron_contracts::fingerprint::ContentHasher;
+use serde::{Deserialize, Serialize};
+
+use super::cohort::cohorts_in_txn;
+use super::{
+    DerivationKind, EvalArmPin, EvalCaseDraft, EvalLabel, EvalLabelKind, EvalRepairTask,
+    EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose, MAX_REF_BYTES,
+    append_label_in_txn, assign_family_in_txn, bounded_ref, invalid, record_case_in_txn,
+};
+use crate::Vault;
+use crate::claim::ScopedReadReceipt;
+use crate::entity_id::EntityId;
+use crate::error::Result;
+use crate::memory::{Memory, MemoryResult};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::side_table::{self, Named, SideTable};
+
+/// One seed per task source, keyed by the BLAKE3 of the source's identity.
+const SEEDS: SideTable<[u8; 32], EvalRepairSeed, Named> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_EVAL_REPAIR_SEED);
+/// The seed key's domain.
+const SEED_DOMAIN: &[u8] = b"skill_optimize:eval_repair_seed:v1\0";
+
+/// What the eval-authoring skill proposes: a linked repair's task, and the
+/// old and candidate skill arms the gate compares on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairSeedRequest {
+    pub source: EvalRepairTaskSource,
+    /// The skill the person's repair corrected; it must fail the task.
+    pub old: EvalArmPin,
+    /// The skill proposed in its place; it must pass the task.
+    pub candidate: EvalArmPin,
+}
+
+/// Why the gate refused a seed. A refused seed has no case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalRepairSeedRefusal {
+    /// The old skill's answer already met the observed outcome.
+    OldPassed,
+    /// The candidate skill's answer did not meet the observed outcome.
+    CandidateFailed,
+    /// The capture's task no longer compiles to the task the seed was
+    /// proposed with.
+    TaskMoved,
+    /// A cohort already held the seed's family when the gate graded it: a
+    /// case added then was never in that cohort, and the cohort's retirement
+    /// would release it to development unserved.
+    FamilyHeld,
+}
+
+/// Where a seed stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalRepairSeedState {
+    /// Proposed and sealed; the gate has not graded it yet.
+    Pending,
+    /// The old arm failed and the candidate passed: `case` holds it.
+    Confirmed {
+        case: EntityId,
+        /// The receipt of the old arm's leg, as the measuring host named it.
+        old_receipt: String,
+        /// The receipt of the candidate arm's leg.
+        candidate_receipt: String,
+        at: u64,
+    },
+    Refused {
+        reason: EvalRepairSeedRefusal,
+        at: u64,
+    },
+}
+
+/// A sealed eval seed from one linked repair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairSeed {
+    pub source: EvalRepairTaskSource,
+    /// The sealed-confirmation family the capture's root was assigned to
+    /// when the seed was proposed.
+    pub family: EntityId,
+    /// The compiled task's hash when the seed was proposed.
+    pub task_hash: [u8; 32],
+    pub old: EvalArmPin,
+    pub candidate: EvalArmPin,
+    /// The rows the task was compiled from: the capture claim.
+    pub source_rows: Vec<EntityId>,
+    /// When the seed was proposed; its case's `source_at`.
+    pub proposed_at: u64,
+    pub state: EvalRepairSeedState,
+}
+
+/// A seed door's answer. `seed` is `None` when the scoped reader withholds
+/// the capture; `receipt` is that read's receipt.
+#[derive(Debug, Clone)]
+pub struct EvalRepairSeedRead {
+    pub seed: Option<EvalRepairSeed>,
+    pub receipt: ScopedReadReceipt,
+}
+
+/// One arm's answer to the task, as the measuring host received it: a text
+/// response for a text-response world, tool calls for a JSON-state-tools
+/// world. An answer of the other kind fails the task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalRepairLegAnswer {
+    Response(String),
+    ToolCalls(Vec<EvalRepairToolCall>),
+}
+
+/// The receipts of the two legs whose answers the gate grades.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairSeedLegs {
+    pub old_receipt: String,
+    pub candidate_receipt: String,
+}
+
+/// The seed's key: its seat, then the capture's claim ref as its reader
+/// names it (an entity id reads in any letter case; the key hashes its
+/// canonical hex, as the proposal's compiled task carries it), then the
+/// capture's hash, the outcome and the task pointer.
+fn seed_key(source: &EvalRepairTaskSource) -> Result<[u8; 32]> {
+    let seat = source.seat.token()?;
+    let claim = EntityId::from_hex(&source.claim_ref)?.to_hex();
+    let ordinal = source.outcome_ordinal.to_string();
+    let mut hasher = ContentHasher::new();
+    hasher.update(SEED_DOMAIN);
+    for part in [
+        seat.as_str(),
+        claim.as_str(),
+        source.source_hash.as_str(),
+        ordinal.as_str(),
+        source.task_pointer.as_str(),
+    ] {
+        hasher.update(&(part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    Ok(hasher.finish().into_bytes())
+}
+
+fn bounded_arm(arm: &EvalArmPin) -> Result<&str> {
+    bounded_ref(&arm.model)?;
+    bounded_ref(&arm.revision)?;
+    match &arm.skill_digest {
+        Some(digest) if !digest.trim().is_empty() && digest.len() <= MAX_REF_BYTES => {
+            Ok(digest.trim())
+        }
+        _ => Err(invalid("a repair seed's arm pins a bounded skill digest")),
+    }
+}
+
+/// A seed proves a skill repair: its two arms serve one model at one
+/// revision and pin two different skill digests (hex, in any letter case).
+/// Arms that differ only in their model, its revision or a digest's spelling
+/// compare no skill, and the gate would confirm a case run noise decided.
+fn skill_comparison(old: &EvalArmPin, candidate: &EvalArmPin) -> Result<()> {
+    let old_skill = bounded_arm(old)?;
+    let candidate_skill = bounded_arm(candidate)?;
+    if old.model != candidate.model
+        || old.revision != candidate.revision
+        || old_skill.eq_ignore_ascii_case(candidate_skill)
+    {
+        return Err(invalid(
+            "a repair seed compares two skills on one model at one revision",
+        ));
+    }
+    Ok(())
+}
+
+fn grade(task: &EvalRepairTask, answer: &EvalRepairLegAnswer) -> bool {
+    match answer {
+        EvalRepairLegAnswer::Response(text) => task.grade_response(text),
+        EvalRepairLegAnswer::ToolCalls(calls) => task.grade_tool_calls(calls),
+    }
+}
+
+/// Whether every row in `rows` is still stored and not deleted in `txn`: a
+/// seed is never recorded, nor settled, for a capture deleted or erased
+/// after its task compiled.
+fn sources_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, rows: &[EntityId]) -> Result<bool> {
+    for id in rows {
+        if vault.store.port_entity_record(txn, id)?.is_none()
+            || TombstoneStoreRead::port_deletion_state(&vault.store, txn, id)?.deleted
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether a cohort of `seat` already holds `family`. A case added to the
+/// family now was never in that cohort, and the cohort's retirement would
+/// release it to development unserved, so a held family takes no new repair.
+fn family_held_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat: &EvalSeat,
+    family: &EntityId,
+) -> Result<bool> {
+    Ok(cohorts_in_txn(vault, txn, seat)?
+        .iter()
+        .any(|cohort| cohort.families.contains(family)))
+}
+
+/// A proposal's write, for a task compiled before it: in one transaction the
+/// capture must still be live, the capture's root gets its sealed family,
+/// which no cohort may hold yet, and the seed is recorded. A seed already
+/// recorded for the source is returned unchanged.
+fn commit_proposal(
+    vault: &Vault,
+    task: &EvalRepairTask,
+    request: &EvalRepairSeedRequest,
+    at: u64,
+) -> Result<EvalRepairSeed> {
+    vault.with_write_txn_grouped(|txn| {
+        let key = seed_key(&task.source)?;
+        if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
+            return Ok(existing);
+        }
+        if !sources_live_in_txn(vault, txn, &task.source_rows)? {
+            return Err(invalid(
+                "the capture was erased before its repair seed was recorded",
+            ));
+        }
+        // The split comes first: no case can derive from the root until it
+        // has its sealed family.
+        let family = assign_family_in_txn(
+            vault,
+            txn,
+            &task.source.seat,
+            &BTreeSet::from([task.family_root()]),
+            FamilyPurpose::SealedConfirmation,
+            at,
+        )?;
+        if family_held_in_txn(vault, txn, &task.source.seat, &family.id)? {
+            return Err(invalid(
+                "a cohort already holds this capture's family, so a new repair from it is not held out",
+            ));
+        }
+        let seed = EvalRepairSeed {
+            source: task.source.clone(),
+            family: family.id,
+            task_hash: task.task_hash,
+            old: request.old.clone(),
+            candidate: request.candidate.clone(),
+            source_rows: task.source_rows.clone(),
+            proposed_at: at,
+            state: EvalRepairSeedState::Pending,
+        };
+        SEEDS.put(&vault.store, txn, &key, &seed)?;
+        Ok(seed)
+    })
+}
+
+/// The gate's write, for `stored` as it was read and `task` as it compiled
+/// before it. The seed must still be exactly `stored`: an erase and a new
+/// proposal between the read and this write leave another row, which is
+/// never settled with this verdict. The capture must still be live: a
+/// delete since the read keeps the seed but leaves it unsettled. A pending
+/// seed whose family a cohort holds by now is refused as `FamilyHeld`.
+fn commit_settlement(
+    vault: &Vault,
+    stored: &EvalRepairSeed,
+    task: &EvalRepairTask,
+    old: &EvalRepairLegAnswer,
+    candidate: &EvalRepairLegAnswer,
+    legs: &EvalRepairSeedLegs,
+    at: u64,
+) -> Result<EvalRepairSeed> {
+    let key = seed_key(&stored.source)?;
+    let verdict = if task.task_hash != stored.task_hash {
+        Err(EvalRepairSeedRefusal::TaskMoved)
+    } else if grade(task, old) {
+        Err(EvalRepairSeedRefusal::OldPassed)
+    } else if !grade(task, candidate) {
+        Err(EvalRepairSeedRefusal::CandidateFailed)
+    } else {
+        Ok(())
+    };
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut seed) = SEEDS.get(&vault.store, txn, &key)? else {
+            return Err(invalid("no repair seed was proposed for this source"));
+        };
+        if &seed != stored {
+            return Err(invalid(
+                "the repair seed changed while it was graded; settle it again",
+            ));
+        }
+        if seed.state != EvalRepairSeedState::Pending {
+            return Ok(seed);
+        }
+        // A delete keeps the seed until the erase scrubs it, but a deleted
+        // capture's seed never takes a case.
+        if !sources_live_in_txn(vault, txn, &seed.source_rows)? {
+            return Err(invalid(
+                "the capture was deleted before its repair seed was settled",
+            ));
+        }
+        let verdict = match verdict {
+            Ok(()) if family_held_in_txn(vault, txn, &seed.source.seat, &seed.family)? => {
+                Err(EvalRepairSeedRefusal::FamilyHeld)
+            }
+            verdict => verdict,
+        };
+        seed.state = match verdict {
+            Err(reason) => EvalRepairSeedState::Refused { reason, at },
+            Ok(()) => {
+                let root = task.family_root();
+                let draft = EvalCaseDraft {
+                    seat: seed.source.seat.clone(),
+                    kind: DerivationKind::Repair,
+                    receipts: vec![root],
+                    parents: Vec::new(),
+                    stratum: None,
+                    draw_probability: None,
+                    source_at: seed.proposed_at,
+                };
+                let case =
+                    record_case_in_txn(vault, txn, &draft, Some(task.source_rows.as_slice()), at)?;
+                let label = EvalLabel {
+                    kind: EvalLabelKind::WorldOutcome,
+                    value: task.outcome_digest(),
+                    reference: format!(
+                        "ag_ui:{}:{}#outcome/{}",
+                        task.source.claim_ref, task.source.source_hash, task.source.outcome_ordinal
+                    ),
+                    weight: 1.0,
+                    at,
+                    source_rows: Some(task.source_rows.clone()),
+                };
+                append_label_in_txn(vault, txn, &case.id, label)?;
+                EvalRepairSeedState::Confirmed {
+                    case: case.id,
+                    old_receipt: legs.old_receipt.clone(),
+                    candidate_receipt: legs.candidate_receipt.clone(),
+                    at,
+                }
+            }
+        };
+        SEEDS.put(&vault.store, txn, &key, &seed)?;
+        Ok(seed)
+    })
+}
+
+impl Memory<'_> {
+    /// Propose a sealed eval seed from a linked repair: compile its task
+    /// (refusals as [`Self::read_eval_repair_task`]: a contract that does not
+    /// fit its world, a failing precondition, a leaked answer), then, in one
+    /// write, assign the capture's family root to a sealed-confirmation
+    /// family and record the seed `Pending`. A capture the scoped reader
+    /// withholds returns no seed and the read receipt. A replay over the same
+    /// source returns the seed already proposed, unchanged.
+    ///
+    /// # Errors
+    ///
+    /// An arm that pins no bounded skill digest, arms that serve two models
+    /// or two revisions or pin one skill digest, a task the
+    /// capture does not compile to, a capture erased before the seed was
+    /// recorded, a root that already belongs to a family of another purpose
+    /// or to a family a cohort already holds, or storage errors.
+    pub fn propose_eval_repair_seed(
+        &self,
+        request: &EvalRepairSeedRequest,
+        at: u64,
+    ) -> MemoryResult<EvalRepairSeedRead> {
+        skill_comparison(&request.old, &request.candidate)?;
+        let read = self.read_eval_repair_task(&request.source)?;
+        let Some(task) = read.task else {
+            return Ok(EvalRepairSeedRead {
+                seed: None,
+                receipt: read.receipt,
+            });
+        };
+        let seed = commit_proposal(self.vault(), &task, request, at)?;
+        Ok(EvalRepairSeedRead {
+            seed: Some(seed),
+            receipt: read.receipt,
+        })
+    }
+
+    /// The gate for a pending seed: recompile its task from the capture,
+    /// grade both arms' answers by the task's own grader, and settle the
+    /// seed. The old answer must fail and the candidate's must pass; then one
+    /// `Repair` case is recorded in the seed's sealed family, reading the
+    /// capture's root, with a `WorldOutcome` label whose value is the
+    /// observed outcome's BLAKE3 hex (the answer stays out of the case), and
+    /// the seed is `Confirmed`. Otherwise it is `Refused` with its reason and
+    /// no case is recorded. A task that no longer compiles to the seed's hash
+    /// refuses as `TaskMoved`. A seed already settled is returned as it
+    /// stands. The caller is the measuring host, trusted to name the legs
+    /// that produced the answers, as the measurement doors trust it.
+    ///
+    /// The scoped read comes first: a caller the reader withholds the
+    /// capture from learns nothing of its seed, not even whether one exists.
+    ///
+    /// # Errors
+    ///
+    /// No seed for `source`, unbounded or equal leg receipts, a capture that
+    /// no longer compiles, a seed that changed while it was graded, a
+    /// capture deleted while it was graded, or storage errors.
+    pub fn settle_eval_repair_seed(
+        &self,
+        source: &EvalRepairTaskSource,
+        old: &EvalRepairLegAnswer,
+        candidate: &EvalRepairLegAnswer,
+        legs: &EvalRepairSeedLegs,
+        at: u64,
+    ) -> MemoryResult<EvalRepairSeedRead> {
+        bounded_ref(&legs.old_receipt)?;
+        bounded_ref(&legs.candidate_receipt)?;
+        if legs.old_receipt == legs.candidate_receipt {
+            return Err(invalid("a repair seed's two legs have their own receipts").into());
+        }
+        let read = self.read_eval_repair_task(source)?;
+        let Some(task) = read.task else {
+            return Ok(EvalRepairSeedRead {
+                seed: None,
+                receipt: read.receipt,
+            });
+        };
+        let vault = self.vault();
+        let stored = vault
+            .eval_repair_seed(&task.source)?
+            .ok_or(invalid("no repair seed was proposed for this source"))?;
+        let seed = commit_settlement(vault, &stored, &task, old, candidate, legs, at)?;
+        Ok(EvalRepairSeedRead {
+            seed: Some(seed),
+            receipt: read.receipt,
+        })
+    }
+}
+
+impl Vault {
+    /// The seed proposed for `source`, if one was. The claim ref reads in
+    /// any letter case.
+    ///
+    /// # Errors
+    ///
+    /// An invalid seat, a claim ref that is not an entity id, an unreadable
+    /// row, or storage errors.
+    pub fn eval_repair_seed(
+        &self,
+        source: &EvalRepairTaskSource,
+    ) -> Result<Option<EvalRepairSeed>> {
+        let txn = self.store.env.read_txn()?;
+        SEEDS.get(&self.store, &txn, &seed_key(source)?)
+    }
+
+    /// Every seed the gate has not graded yet, for the measuring host.
+    ///
+    /// # Errors
+    ///
+    /// An unreadable row, or storage errors.
+    pub fn pending_eval_repair_seeds(&self) -> Result<Vec<EvalRepairSeed>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(SEEDS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, seed)| seed)
+            .filter(|seed| seed.state == EvalRepairSeedState::Pending)
+            .collect())
+    }
+
+    /// A proposal's write for a task compiled earlier, for the test doors:
+    /// an erase between the compile and the write.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn commit_eval_repair_proposal_for_test_doors(
+        &self,
+        task: &EvalRepairTask,
+        request: &EvalRepairSeedRequest,
+        at: u64,
+    ) -> Result<EvalRepairSeed> {
+        commit_proposal(self, task, request, at)
+    }
+
+    /// The gate's write for a seed read and a task compiled earlier, for the
+    /// test doors: a change to the seed between the read and the write.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn commit_eval_repair_settlement_for_test_doors(
+        &self,
+        stored: &EvalRepairSeed,
+        task: &EvalRepairTask,
+        answers: (&EvalRepairLegAnswer, &EvalRepairLegAnswer),
+        legs: &EvalRepairSeedLegs,
+        at: u64,
+    ) -> Result<EvalRepairSeed> {
+        commit_settlement(self, stored, task, answers.0, answers.1, legs, at)
+    }
+
+    /// The ledger row of eval case `id`, for the test doors: a sealed case
+    /// has no read outside its cohort.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn eval_case_for_test_doors(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<super::EvalCase>> {
+        let txn = self.store.env.read_txn()?;
+        super::case_in_txn(self, &txn, id)
+    }
+}
+
+/// An erased capture takes its seeds with it: a pending seed is never
+/// graded, and a settled one keeps no reference to the capture. A confirmed
+/// seed's case stays, and the case erase hook drops the capture from its
+/// source rows. Registered on the seed table's declaration.
+///
+/// # Errors
+///
+/// Storage errors, or a stored seed that does not decode.
+pub(crate) fn erase_eval_repair_seeds_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let named: Vec<[u8; 32]> = SEEDS
+        .scan(&vault.store, wtxn)?
+        .into_iter()
+        .filter(|(_, seed)| seed.source_rows.contains(id))
+        .map(|(key, _)| key)
+        .collect();
+    for key in named {
+        SEEDS.delete(&vault.store, wtxn, &key)?;
+    }
+    Ok(())
+}
