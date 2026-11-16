@@ -5,6 +5,7 @@ pub mod ppr_community;
 
 use std::fmt;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 pub use ppr_community::PprCommunityConfig;
@@ -49,9 +50,12 @@ pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 pub const READER_SLOTS: u32 = 1024;
 
 /// Deployment posture: managed host root, blind relay, or owner self-host.
-/// This describes key custody, not an encryption protocol.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// This describes key custody, not an encryption protocol. A Register: the
+/// wire value the CLI, environment, TOML and serde use is its `as_str`
+/// (`managed`, `relay` or `self-host`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("hosting.privacy.posture")]
 pub enum HostingPrivacyPosture {
     /// Operator-hosted and host-readable: the hosting process holds the data
     /// key, whichever custody supplies it. Opted into explicitly.
@@ -64,19 +68,6 @@ pub enum HostingPrivacyPosture {
     #[default]
     #[serde(rename = "self-host")]
     SelfHostLocal,
-}
-
-impl HostingPrivacyPosture {
-    /// Returns the exact wire value used by the CLI, environment, TOML, and
-    /// serde representations: `managed`, `relay`, or `self-host`.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Hosted => "managed",
-            Self::Relay => "relay",
-            Self::SelfHostLocal => "self-host",
-        }
-    }
 }
 
 impl fmt::Display for HostingPrivacyPosture {
@@ -93,14 +84,8 @@ impl std::str::FromStr for HostingPrivacyPosture {
     /// hard error, so an unrecognized posture can never silently degrade into a
     /// weaker or stronger one.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "managed" => Ok(Self::Hosted),
-            "relay" => Ok(Self::Relay),
-            "self-host" => Ok(Self::SelfHostLocal),
-            _ => Err(format!(
-                "expected one of managed, relay, self-host; got {value:?}"
-            )),
-        }
+        <Self as Register>::named(value)
+            .ok_or_else(|| format!("expected one of managed, relay, self-host; got {value:?}"))
     }
 }
 

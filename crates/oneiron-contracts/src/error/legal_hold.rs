@@ -12,6 +12,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::register::Register;
+
 /// The remedy both error projections give a legal order's refusal.
 pub const LEGAL_HOLD_SUGGESTION: &str = "A legal order binding where Oneiron hosts these bytes keeps them until it lifts; the refusal names its bound. The same act works on bytes you host that no hold covers.";
 
@@ -23,25 +25,15 @@ const RETAINED_FOR_LAW_TEXT: &str =
 const USE_RESTRICTED_TEXT: &str = "legal hold: a legal order binding Oneiron's hosting keeps this record for its own purpose only, so it is not used";
 
 /// What a legal order does to the record its refusal names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("legal.hold.state")]
 pub enum LegalHoldState {
     /// The order keeps the bytes: no delete or erase destroys them.
     RetainedForLaw,
     /// The order keeps the bytes for its own purpose only: no named read or
     /// write uses them while it stands.
     UseRestricted,
-}
-
-impl LegalHoldState {
-    /// The stable wire code.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RetainedForLaw => "retained_for_law",
-            Self::UseRestricted => "use_restricted",
-        }
-    }
 }
 
 /// What kind of bound a hosted refusal names. A legal order's is the law.
