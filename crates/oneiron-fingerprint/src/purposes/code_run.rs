@@ -23,10 +23,10 @@ legacy_purposes! {
     /// its wait id.
     CONSENT_REQUEST = (Blake3, NotHashed, "oneiron.code_run.consent_request.v1");
 
-    /// Code consent run origin: the domain `oneiron:code-consent-run-origin:v1`,
-    /// then every origin field, each after its u64-LE byte length; no hashed
-    /// tag (the tag is a registry name only). Mixed into a code consent
-    /// binding's sealed digest.
+    /// Code consent run origin: the domain `oneiron:code-consent-run-origin:v1`
+    /// and then every origin field, each of them (the domain too) after its
+    /// u64-LE byte length; no hashed tag (the tag is a registry name only).
+    /// Mixed into a code consent binding's sealed digest.
     CONSENT_RUN_ORIGIN = (Blake3, NotHashed, "oneiron.code_run.consent_run_origin.v1");
 
     /// Code emission record id: the tag with no length before it, the salt

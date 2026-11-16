@@ -14,9 +14,10 @@
 //! The base modules copy exact main lines. Inline hash lines have hand-written
 //! headers and returns. Stand-ins hold only what main's lines read: a verb
 //! call's verb and input, a receipt's bridge rows, a request's params, a
-//! credential's and an attachment's fields, the claims field a leader sets, and
-//! the fresh id `EntityId::now()` answers there. `live_fork_offer_digest` and
-//! `ForkExecutionPin::digest` are public, so the test calls them directly.
+//! credential's and an attachment's fields, a fork pin's fields, the claims
+//! field a leader sets, and the fresh id `EntityId::now()` answers there.
+//! `live_fork_offer_digest` and `ForkExecutionPin::digest` are public, so the
+//! test calls them directly.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test fingerprint_keep_code_run_digests`.
 #![cfg(oneiron_test_support)]
