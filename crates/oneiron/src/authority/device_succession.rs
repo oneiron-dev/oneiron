@@ -119,6 +119,7 @@ pub(super) fn apply_device_succession(
         machine: succession.machine,
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -234,7 +235,7 @@ impl Vault {
         }
         let act = OwnerAct::by_owner(actor, OwnerActKind::DeviceSuccession, target, surface, seen);
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             fold,
             &key,
             seq,
@@ -247,6 +248,7 @@ impl Vault {
                 successor: machine,
             }),
             now,
+            self.owner_proof_signer(fold).as_deref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -255,6 +257,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        after.refuse_waiting_choice(&hash)?;
         let live = after
             .device_successions
             .predecessors

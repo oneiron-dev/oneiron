@@ -23,9 +23,9 @@
 //!
 //! Validity here reads the parents' fold state alone, pin-free and
 //! install-free: counting changes no entry's validity (`install_fold`), and a
-//! roster key is the same on every replica. A sequence floor still refuses
-//! the entry as it refuses any roster-signed row (it never lands restriction
-//! only). A carrier removed later does not unenrol the key: the owner revokes
+//! roster key is the same on every replica. No arrival floor refuses the
+//! entry, as none refuses any roster row (`changes_roster`); the causal
+//! sequence check below refuses a backward one. A carrier removed later does not unenrol the key: the owner revokes
 //! it with an ordinary `RevokeDevice`, as he revokes any owner root. A resumed
 //! fold refolds in full past an enrollment (`fold_resume::admits_past` takes
 //! none), and a checkpoint image carries its body.

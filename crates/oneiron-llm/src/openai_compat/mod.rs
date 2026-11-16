@@ -4,15 +4,13 @@
 //! authentication, cancellation wiring, and retry policy stay host-owned.
 
 mod backend;
-mod image;
-pub use self::image::{
-    DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse,
-    OpenAiImagePart, OpenAiImageTransport, OpenAiImageTransportFuture,
-};
+// The media wire's shared seam and its embeddings; images and video are
+// `oneiron_gen::openai_compat`'s, speech `oneiron_speech::{tts, asr}::openai_compat`'s.
 mod media;
 pub use self::media::{
-    EmbedShape, OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest,
-    OpenAiMediaHttpResponse, OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+    EmbedShape, OpenAiEmbedBackend, OpenAiImagePart, OpenAiMediaBody, OpenAiMediaClient,
+    OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod, OpenAiMediaTransport,
+    OpenAiMediaTransportFuture, audio_extension, form_fields, only_text, with_params,
 };
 mod options;
 mod responses;

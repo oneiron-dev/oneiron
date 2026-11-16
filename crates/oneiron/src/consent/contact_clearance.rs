@@ -34,7 +34,8 @@ use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, GateError};
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateEnginePart, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 use oneiron_authority::federation::Scope;
 use oneiron_authority::federation::scope_codec::{decode_scope_value, encode_scope_value};
@@ -274,10 +275,12 @@ pub enum ContactClearanceAct {
 }
 
 impl ContactClearanceAct {
-    const fn gate_outcome(self) -> &'static str {
+    const fn gate_outcome(self) -> GateReceiptOutcome {
         match self {
-            Self::Revoked => "revoked",
-            Self::Settled(_) | Self::Narrowed | Self::Precleared | Self::Used => "approved",
+            Self::Revoked => GateReceiptOutcome::Revoked,
+            Self::Settled(_) | Self::Narrowed | Self::Precleared | Self::Used => {
+                GateReceiptOutcome::Approved
+            }
         }
     }
 
@@ -706,44 +709,37 @@ impl Vault {
         let actor = owner
             .map(|owner| owner.revalidate_in_txn(self, &*txn))
             .transpose()?;
-        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let hex = |digest: &[u8; 32]| crate::entity_id::bytes_to_hex_lower(digest);
-        let mut receipt_reasons = vec![
+        let mut details = vec![
             format!("contact:{}", receipt.contact_ref.to_hex()),
             format!("before:{}", hex(&receipt.before_digest)),
             format!("after:{}", hex(&receipt.after_digest)),
         ];
-        receipt_reasons.extend(
+        details.extend(
             receipt
                 .proposal_ref
                 .iter()
                 .map(|reference| format!("proposal:{reference}")),
         );
-        receipt_reasons.extend(receipt.ask_ref.iter().map(|ask| format!("ask:{ask}")));
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: receipt.act.gate_outcome().into(),
-            reason_codes: vec![receipt.act.reason_code().into()],
-            receipt_reasons: Vec::new(),
-            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                CONSENT_CONTENT_KIND,
-                receipt_reasons,
-            ),
-            actor_class: if actor.is_some() { "human" } else { "engine" }.into(),
-            actor_ref: actor.map(|actor| actor.to_hex()),
-            content_kind: CONSENT_CONTENT_KIND.into(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-            claim_id: None,
-            grant_ref: Some(contact_clearance_ref(&receipt.contact_ref)),
-            diff_handle: receipt.after_digest.to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
+        details.extend(receipt.ask_ref.iter().map(|ask| format!("ask:{ask}")));
+        let actor = match actor {
+            Some(actor) => ReceiptActor::human(actor),
+            None => ReceiptActor::Part(GateEnginePart::Engine, None),
         };
-        self.store.append_gate_decision_in_txn(txn, &record)?;
-        Ok(decision_id)
+        let mut gate_receipt = GateReceipt::new(
+            receipt.act.gate_outcome(),
+            CONSENT_CONTENT_KIND,
+            receipt.act.reason_code(),
+            actor,
+            receipt.after_digest.to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        gate_receipt.grant_ref = Some(contact_clearance_ref(&receipt.contact_ref));
+        gate_receipt.details = details;
+        Ok(self
+            .store
+            .record_gate_receipt_in_txn(txn, gate_receipt)?
+            .decision_id)
     }
 }
 
