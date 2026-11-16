@@ -362,7 +362,10 @@ impl Vault {
     /// repo bounds or verb classes, as an OAuth sign-in's Grant. Only a named
     /// agent's PERSON gets one, and only while no Grant row names it: an
     /// agent definition, a base agent, an ordinary person and a holder a
-    /// Grant row already names mint nothing (`None`).
+    /// Grant row already names mint nothing (`None`). A published app's
+    /// backend mints nothing either: its grant rows are the owner's own acts,
+    /// default none (PUBLIC-BACKEND = A), and a link that names verbs for one
+    /// no Grant row names is refused before this (APP-BACKEND-LINK-GRANT = A).
     ///
     /// # Errors
     /// As [`Self::mint_agent_grant`]: the caller refuses its link.
@@ -374,12 +377,11 @@ impl Vault {
         holder: EntityId,
         scope: &Scope,
     ) -> Result<Option<EntityId>> {
-        if !self.is_live_named_agent_in_txn(txn, holder)?
-            || self
-                .agent_grants_reporting_in_txn(txn)?
-                .0
-                .iter()
-                .any(|standing| standing.grant.member_ref == holder)
+        let Some(name) = self.live_named_agent_name_in_txn(txn, holder)? else {
+            return Ok(None);
+        };
+        if crate::artifact_hosting::is_artifact_backend_name(&name)
+            || self.agent_grant_names_in_txn(txn, holder)?
         {
             return Ok(None);
         }
@@ -410,13 +412,65 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
     ) -> Result<bool> {
+        Ok(self.live_named_agent_name_in_txn(txn, holder)?.is_some())
+    }
+
+    /// The name a live named agent's PERSON `holder` records in `txn`, as
+    /// [`Self::is_live_named_agent_in_txn`] judges it; None for any other
+    /// holder.
+    ///
+    /// # Errors
+    /// A store failure reading the row.
+    pub(crate) fn live_named_agent_name_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<Option<String>> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &holder)? {
             LiveEntityRow::Live {
                 entity_type: crate::registry::ENTITY_TYPE_PERSON,
                 body,
-            } => crate::vault::is_named_agent_principal_body(&holder, &body),
-            _ => false,
+            } => crate::vault::named_agent_principal_name(&holder, &body),
+            _ => None,
         })
+    }
+
+    /// Whether a live owner-agent Grant row names `holder` in `txn`.
+    ///
+    /// # Errors
+    /// A store failure reading the Grant rows.
+    pub(crate) fn agent_grant_names_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .agent_grants_reporting_in_txn(txn)?
+            .0
+            .iter()
+            .any(|standing| standing.grant.member_ref == holder))
+    }
+
+    /// Whether a live owner-agent Grant row that has not expired names
+    /// `holder` in `txn`: [`Self::agent_grant_names_in_txn`] less every row
+    /// whose `expires_at` the authority clock has reached
+    /// ([`AgentGrantStanding::stands_at`] at [`Self::instant_in_txn`], the
+    /// reading the consent registry and a credential's read bound take). FIX
+    /// [APP-BACKEND-LINK-EXPIRED-GRANT-COUNTS].
+    ///
+    /// # Errors
+    /// A store failure reading the Grant rows or the authority clock.
+    pub(crate) fn unexpired_agent_grant_names_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        let now = self.instant_in_txn(txn)?.secs();
+        Ok(self
+            .agent_grants_reporting_in_txn(txn)?
+            .0
+            .iter()
+            .any(|standing| standing.grant.member_ref == holder && standing.stands_at(now)))
     }
 
     /// The owner revokes the agent grant `grant_ref`: his signed act, then
@@ -711,7 +765,11 @@ impl Vault {
     /// [`Vault::ensure_agent_principal`] derives from its name (an OAuth
     /// client's sign-in, FIX 4902). Any other machine is a device and any
     /// other person a person.
-    fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
+    pub(crate) fn is_agent_principal_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,

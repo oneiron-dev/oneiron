@@ -410,6 +410,33 @@ pub(crate) fn blob_scope_held_at(
         .map(|scope| held_at(store, txn, id, kind, &scope, ceilings)))
 }
 
+/// [`blob_scope_held_at`] for a CLAIM body served apart from its stored row,
+/// such as a pinned revision a pack hydrates: that body's own scope, read as
+/// [`super::scope_for_parts`] reads a stored CLAIM's, held as [`held_at`]
+/// holds the row.
+pub(crate) fn claim_body_scope_held_at(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &crate::claim::ClaimBody,
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Result<Option<Scope>> {
+    let scope = match store.machine_history_scope(txn, body)? {
+        Some(effective) => effective,
+        None => Some(crate::claim::ClaimRecordScope::record_scope(body, "read")),
+    };
+    Ok(scope.map(|scope| {
+        held_at(
+            store,
+            txn,
+            id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            &scope,
+            ceilings,
+        )
+    }))
+}
+
 /// [`super::scope_for_blob`] of the stored row `raw` of `id` as an
 /// [`every_world_position`].
 pub(crate) fn blob_scope_every_world(

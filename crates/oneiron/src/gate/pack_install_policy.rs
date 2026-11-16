@@ -14,11 +14,13 @@ use std::io::Cursor;
 
 pub(super) const KEY: &str = "pack_install_policy";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PackInstallPrecedence {
-    NestedNarrowingHolderCappedAtVault,
-}
+#[doc(hidden)]
+pub use oneiron_records::gate::pack_install_policy::PackInstallPolicyOverride;
+#[doc(hidden)]
+pub(crate) use oneiron_records::gate::pack_install_policy::{
+    EffectivePackInstallPolicy, PackInstallPrecedence,
+};
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PackInstallRuleRow {
@@ -41,27 +43,6 @@ pub(crate) struct PackInstallPolicy {
     pub vault: PackInstallRuleRow,
     pub owner: PackInstallRuleRow,
     pub holders: Vec<HolderInstallRow>,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EffectivePackInstallPolicy {
-    pub hidden_instructions: Vec<String>,
-    pub parameter_injection: Vec<String>,
-    pub allowed_calls: BTreeSet<String>,
-    pub known_bad_patterns: Vec<String>,
-    pub removed_hashes: Vec<String>,
-}
-
-/// Owner policy changes are narrowings: additions to the refusal classes and
-/// an optional subset of already-allowed analyzed calls. `holder_ref` scopes
-/// this narrowing to one publisher; None narrows the entire vault.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PackInstallPolicyOverride {
-    pub holder_ref: Option<String>,
-    pub hidden_instruction_phrases: Vec<String>,
-    pub parameter_description_phrases: Vec<String>,
-    pub allowed_python_calls: Option<Vec<String>>,
-    pub known_bad_patterns: Vec<String>,
-    pub removed_hashes: Vec<String>,
 }
 impl From<PackInstallPolicyOverride> for PackInstallRuleRow {
     fn from(value: PackInstallPolicyOverride) -> Self {

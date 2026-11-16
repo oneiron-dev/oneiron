@@ -36,7 +36,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{Named, SideCodec};
 
-const HEADER_DOMAIN: &[u8] = b"oneiron/home-handoff/header/v1\0";
+#[doc(hidden)]
+use oneiron_records::sync::home_handoff::envelope::{HEADER_DOMAIN, encode, signature, transcript};
+
 const SECTIONS_DOMAIN: &[u8] = b"oneiron/home-handoff/sections/v1\0";
 const ACK_DOMAIN: &[u8] = b"oneiron/home-handoff/ack/v1\0";
 /// The envelope epoch a handoff seals and opens at.
@@ -375,12 +377,6 @@ fn machine_key(fold: &AuthorityFold, machine: EntityId) -> Result<VerifyingKey> 
         .map_err(|_| refused("the machine's key does not import"))
 }
 
-fn signature(bytes: &[u8]) -> Result<Signature> {
-    <[u8; 64]>::try_from(bytes)
-        .map(|bytes| Signature::from_bytes(&bytes))
-        .map_err(|_| refused("a signature is malformed"))
-}
-
 fn ack_transcript(
     id: &HandoffId,
     digest: &[u8; 32],
@@ -438,16 +434,6 @@ fn split_pieces(sealed: &[u8]) -> Result<Vec<&[u8]>> {
         return Err(refused("the handoff does not open for this machine"));
     }
     Ok(pieces)
-}
-
-fn transcript(domain: &[u8], bytes: &[u8]) -> Vec<u8> {
-    let mut out = domain.to_vec();
-    out.extend_from_slice(bytes);
-    out
-}
-
-fn encode<V: Serialize + ?Sized>(value: &V) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| refused("a handoff value does not encode"))
 }
 
 fn decode<V: Serialize + DeserializeOwned>(bytes: &[u8]) -> Result<V> {

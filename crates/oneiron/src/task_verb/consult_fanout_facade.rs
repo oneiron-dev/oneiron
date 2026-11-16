@@ -10,13 +10,14 @@ use crate::temporal::TimeRange;
 
 use super::consts::{CONSULT_SETTLE_PAGE, TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED};
 use super::consult_assignee_wait::waits_for_assignee_fact;
-use super::consult_result::{CONSULT_EXPIRY_RECOVERY, ConsultDigestRoute, ConsultExpiryReport};
+use super::consult_result::{ConsultDigestRoute, ConsultExpiryReport};
 use super::create_validation::consult_body_in_txn;
 use super::follow_up::{
     consult_expiry_artifact_value, set_task_follow_up_marker_in_txn, task_follow_up_dedupe_key,
     task_follow_up_marker,
 };
 use super::rate_limit::task_create_owner;
+use super::setting_keys::consult_expiry_recovery_in_txn;
 use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{
     TaskExecutionState, TaskLapseCause, TaskTerminalDisposition, TaskTerminalRecord,
@@ -26,7 +27,7 @@ use super::wire_decode::task_verb_body;
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
 impl Vault {
-    /// Reconciles consults whose absolute deadline has passed: local
+    /// Reconciles consults whose absolute deadline second has come: local
     /// compare-and-set to terminal `Expired` with a durable expiry artifact,
     /// then ONE ARCH-0046 digest per task, addressed to that task's own asker.
     ///
@@ -78,7 +79,9 @@ impl Vault {
                 let Some(ttl) = body.ttl else {
                     continue;
                 };
-                if ttl.deadline_at >= now {
+                // Live strictly before its deadline second: at `deadline_at` the
+                // consult is due here, as the room and admission doors read it.
+                if ttl.deadline_at > now {
                     continue;
                 }
                 match body.terminal() {
@@ -210,7 +213,7 @@ impl Vault {
             if body.terminal().is_some() || body.settled_ladder_disposition().is_some() {
                 return Ok(None);
             }
-            let Some(ttl) = body.ttl.filter(|ttl| ttl.deadline_at < now) else {
+            let Some(ttl) = body.ttl.filter(|ttl| ttl.deadline_at <= now) else {
                 return Ok(None);
             };
             // A consult still waiting for its ConsultAssignee fact lapses
@@ -229,11 +232,10 @@ impl Vault {
                 }
             };
             let result_ref = self.store.clock.entity_id()?;
+            // The owner's menu in force in this write: the artifact records what was offered.
+            let recovery = consult_expiry_recovery_in_txn(self, &*wtxn)?;
             let artifact = canonical_bytes(&consult_expiry_artifact_value(
-                task_ref,
-                cause,
-                now,
-                &CONSULT_EXPIRY_RECOVERY,
+                task_ref, cause, now, &recovery,
             ));
             let occurred = TimeRange {
                 start: now,
