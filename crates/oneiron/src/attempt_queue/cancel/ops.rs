@@ -276,12 +276,7 @@ impl AttemptQueue<'_> {
         if record.state != AttemptState::Leased {
             return Err(invalid_transition("cancel_reject", record.state.as_str()));
         }
-        validate_transition_lease(
-            &record,
-            &input.lease_owner,
-            input.attempt_count,
-            "cancel_reject",
-        )?;
+        // SEEDED FAULT (red pin only): the lease fence is skipped.
         // Preserve the trigger on the request being answered. The worker's
         // refusal reason is new evidence, but it must not erase whether the
         // ask came from a peer, a quota warning, or lease expiry — and with
