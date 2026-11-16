@@ -252,7 +252,9 @@ pub(crate) fn project_repo_bytes_in_txn(
 /// with `known`, each custody record past them whose value custody knows
 /// reads in `bytes`, its own and every member's. Value-free: a grant must
 /// cover every class among them before the stored bytes go out, so a value
-/// learned after a grant leaves the file masked.
+/// learned after a grant leaves the file masked. The keys say `sealed` when
+/// the write door sealed the marked blob's bytes whole: such a file goes to
+/// the owner only, and no grant releases it (REVIEW-7708 P1).
 ///
 /// # Errors
 /// A store failure, or a walk failure.
@@ -273,9 +275,17 @@ pub(crate) fn repo_file_keys_in_txn(
             }
         }
     }
+    // A file the write door sealed whole holds a hit no mark places
+    // (ARCH-0069 #binary-secrets): the same bytes received as a repo blob
+    // stay the owner's only.
+    let sealed = match marks.raw_blake3() {
+        Some(raw) => masked_file_in_txn(&vault.store, txn, &raw)?.is_some_and(|row| row.sealed),
+        None => false,
+    };
     Ok(RepoFileKeys {
         custody,
         opaque: marks.opaque(),
+        sealed,
     })
 }
 

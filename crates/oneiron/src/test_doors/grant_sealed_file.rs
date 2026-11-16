@@ -16,3 +16,14 @@ use crate::error::Result;
 pub fn marked_key_groups(vault: &Vault, bytes: &[u8]) -> Result<Option<usize>> {
     vault.marked_file_key_groups_for_test(blake3::hash(bytes).as_bytes())
 }
+
+/// How many key groups an agent's real-byte read of a marked repo file whose
+/// stored bytes are `bytes` asks for, when the repo's marks name each key
+/// the stored file's own mark places: `None` when no grant can reach it (no
+/// key, a key not admitted, or stored bytes the write door sealed whole).
+///
+/// # Errors
+/// A store failure, or a key record that does not decode.
+pub fn repo_file_key_groups(vault: &Vault, bytes: &[u8]) -> Result<Option<usize>> {
+    vault.repo_file_key_groups_for_test(blake3::hash(bytes).as_bytes())
+}

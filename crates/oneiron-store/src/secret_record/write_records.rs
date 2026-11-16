@@ -188,9 +188,12 @@ pub struct RepoFileOriginal {
 }
 
 /// The keys a repo file's marks hold, value-free: each placed key's custody
-/// record, and whether residue no span isolates is marked.
+/// record, whether residue no span isolates is marked, and whether the
+/// write door sealed the stored bytes whole (their mask row's `sealed`):
+/// such a file goes to the owner only, so none of its keys opens a grant.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RepoFileKeys {
     pub custody: Vec<EntityId>,
     pub opaque: bool,
+    pub sealed: bool,
 }

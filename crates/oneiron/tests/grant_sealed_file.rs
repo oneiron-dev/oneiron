@@ -2,7 +2,9 @@
 //! whole goes to the owner only. Past the seal budget the door marks a
 //! file's first keys and seals the rest whole; those marked keys open no
 //! agent's grant, since a granted read is served the stored bytes whole,
-//! the hit no mark places among them.
+//! the hit no mark places among them. The same bytes received as a repo
+//! blob stay the owner's: a repo file read asks no grantable group for them
+//! either (REVIEW-7708 round 2).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -69,6 +71,11 @@ fn a_marked_file_asks_one_key_group() -> TestResult {
         Some(1),
         "the marked key makes one group"
     );
+    assert_eq!(
+        grant_sealed_file::repo_file_key_groups(&vault, &stored)?,
+        Some(1),
+        "the same key, marked in a repo blob of these bytes, makes one group"
+    );
     Ok(())
 }
 
@@ -98,6 +105,27 @@ fn a_file_sealed_past_the_seal_budget_opens_no_key_grant() -> TestResult {
         grant_sealed_file::marked_key_groups(&vault, &stored)?,
         None,
         "no key grant reaches a file sealed whole"
+    );
+    Ok(())
+}
+
+/// The same 65 tokens received as a repo blob, its marks naming the keys
+/// the stored file's mark places: a repo file read asks no grantable group,
+/// so no grant mints a delivery of the stored bytes. Before, those keys made
+/// one group, and an approved read was served the blob whole, the last
+/// token with it.
+#[test]
+fn a_repo_blob_of_a_file_sealed_whole_opens_no_key_grant() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let tokens: Vec<Vec<u8>> = (0..65).map(token).collect();
+    let body = serde_json::to_vec(&serde_json::json!({ "notes": tokens }))?;
+    let id = put_asset(&vault, &body)
+        .unwrap_or_else(|error| panic!("a file of many hits is stored: {error:?}"));
+    let stored = vault.get(&id)?.ok_or("the file is stored")?;
+    assert_eq!(
+        grant_sealed_file::repo_file_key_groups(&vault, &stored)?,
+        None,
+        "no key grant reaches a repo blob whose bytes were sealed whole"
     );
     Ok(())
 }
