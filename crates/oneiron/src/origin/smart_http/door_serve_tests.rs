@@ -262,7 +262,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
             &actor.to_hex(),
             &unpinned_repo_ref(&root),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
-            now_secs(),
+            crate::unix_seconds_now(),
         )
         .expect("noop stamp");
     vault
@@ -325,7 +325,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
                     provenance_claim_id: attribution.provenance_claim_id,
                     actor_id: actor,
                     occurred: landing_time(),
-                    learned_at: now_secs(),
+                    learned_at: crate::unix_seconds_now(),
                 }
             )
             .is_err(),
