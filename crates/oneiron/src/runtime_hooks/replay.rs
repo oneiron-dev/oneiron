@@ -30,9 +30,10 @@ use super::verb::{HookVerbRunRecord, VERB_RUNS};
 
 pub use self::page::{HookReplayCursor, HookReplayEntryPage};
 
-/// Entries one replay page returns at most: a larger limit is served a page
-/// at a time ([`HookReplayCursor`]).
-const MAX_REPLAY_ENTRIES: usize = 256;
+/// Entries a whole replay listing asks of each page it reads: a larger
+/// limit is read a page at a time ([`HookReplayCursor`]). The page itself
+/// holds at most the owner's `hooks.replay.page_max` (256 by default).
+const LISTING_PAGE_ENTRIES: usize = 256;
 /// Entries one source read takes.
 const REPLAY_BATCH: usize = 256;
 /// Source reads one replay page makes per source.
@@ -164,7 +165,7 @@ impl Vault {
             if remaining == 0 {
                 break;
             }
-            let page_limit = remaining.min(MAX_REPLAY_ENTRIES);
+            let page_limit = remaining.min(LISTING_PAGE_ENTRIES);
             let (page, listed) = self.hooks_replay_page_listing(
                 runtime,
                 verdict.clone(),
@@ -229,7 +230,7 @@ impl Vault {
             if remaining == 0 {
                 break;
             }
-            let page_limit = remaining.min(MAX_REPLAY_ENTRIES);
+            let page_limit = remaining.min(LISTING_PAGE_ENTRIES);
             let (page, listed) = self.hooks_replay_binding_page(
                 runtime,
                 verdict,
