@@ -3,7 +3,10 @@
 //! record, put on any record, so a test may delete archived NOTEs through
 //! `vault.archive.delete.confirm` without aging them past retention. The
 //! record's body and indexes stay, as the cleanup's archive keeps them.
+//! Row 2k5e: the cleanup mark a run puts on a completed attempt, for
+//! `vault.archive.attempt.delete.confirm`.
 
+use crate::attempt_queue::AttemptId;
 use crate::deletion::{TombstoneReason, TombstoneValueV2};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -24,6 +27,29 @@ pub fn archive_as_cleanup(vault: &Vault, record: &EntityId) -> Result<()> {
                 reason: TombstoneReason::ArchivedByCleanup,
                 deleted_at,
                 request_id: *EntityId::now().as_bytes(),
+            },
+        )
+    })
+}
+
+/// Archives completed attempt `attempt` as a cleanup run does, in one
+/// write: its cleanup mark binds the queue row's bytes as they stand, under
+/// a fresh run id. The row stays.
+///
+/// # Errors
+/// `EntityNotFound` for an attempt with no queue row; a store failure.
+pub fn archive_attempt_as_cleanup(vault: &Vault, attempt: AttemptId) -> Result<()> {
+    use crate::store::attempt_archive_mark::{CleanupMark, put_in_txn, revision_of};
+    vault.with_write_txn(|txn| {
+        let raw = crate::ports::JobQueueRead::port_job_row(&vault.store, txn, &attempt)?
+            .ok_or(crate::error::Error::EntityNotFound)?;
+        put_in_txn(
+            &vault.store,
+            txn,
+            attempt.as_bytes(),
+            CleanupMark::Archived {
+                revision: revision_of(&raw),
+                run: AttemptId::now(),
             },
         )
     })

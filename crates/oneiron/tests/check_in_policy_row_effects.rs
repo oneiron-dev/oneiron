@@ -11,6 +11,10 @@
 //!   change's writer, the receipt names the asker as requester, and it
 //!   applies once. A check-in for another change does nothing and stays
 //!   unspent.
+//! - Erasing that asker takes their id out of the change receipt: the
+//!   ruling and the decision stay, and the asker reads as erased (review
+//!   round 1 of #8085-#8087). Before the fix the receipt table has no
+//!   actor erase, and the receipt keeps the asker's id.
 //! - `vault.consent.create_bypass_grant` is the Owner's own act, receipt
 //!   only: each receipt records the own-proof decision, and the warning
 //!   must still be acknowledged unchanged.
@@ -38,7 +42,9 @@ use oneiron::consent::bypass_lifecycle::{
 use oneiron::consent::{BypassScope, CatastropheClass};
 use oneiron::policy_model::doors::{PolicyRowChangeRequest, change_owner_policy_row};
 use oneiron::policy_model::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
+use oneiron::receipt::ERASED_CALL_IDENTITY;
 use oneiron::registry::ENTITY_TYPE_CONVERSATION;
+use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
 use oneiron::{EntityId, TimeRange};
 
 use owner_apply_fixture::{approved, owner_decision, rooted, spent};
@@ -123,6 +129,50 @@ fn the_owner_applies_an_approved_policy_row_change_once() {
         vault.policy_row_change_log().expect("the change log").len(),
         1,
         "the replay landed nothing"
+    );
+}
+
+#[test]
+fn erasing_the_asker_takes_their_id_out_of_the_change_receipt() {
+    let (_dir, vault, owner, owner_proof) = rooted();
+    let change = add("asked");
+    let digest = policy_row_change_effect_digest(&change).expect("the change's digest");
+    let (ask, asker) = approved(&vault, owner, &owner_proof, ROW_CHANGE, ACT, &digest);
+    let own = change_owner_policy_row(&vault, &owner_proof, request(add("own"), None))
+        .expect("the Owner's own change");
+    let applied = change_owner_policy_row(&vault, &owner_proof, request(change, Some(ask)))
+        .expect("the Owner applies the approved ask");
+    assert_eq!(
+        applied.check_in,
+        Some(owner_decision(ACT, Some(ask), Some(asker))),
+        "the receipt names the asker"
+    );
+
+    assert_eq!(
+        erase_actor_in_tables_in_order(&vault, &asker, &["OWNER_POLICY_CHANGE_RECEIPT"])
+            .expect("the change receipts' actor erase runs"),
+        1,
+        "the change receipts register an actor erase"
+    );
+    let log = vault.policy_row_change_log().expect("the change log");
+    assert_eq!(log.len(), 2, "the receipts stay");
+    assert_eq!(
+        log.first(),
+        Some(&own),
+        "the Owner's own change is unchanged"
+    );
+    let kept = log.last().expect("the applied change's receipt");
+    assert_eq!(
+        (&kept.receipt_id, &kept.author, &kept.change),
+        (&applied.receipt_id, &applied.author, &applied.change),
+        "the ruling stays"
+    );
+    let mut erased = owner_decision(ACT, Some(ask), None);
+    erased.requester = Some(ERASED_CALL_IDENTITY.to_owned());
+    assert_eq!(
+        kept.check_in,
+        Some(erased),
+        "the decision and its spent ask stay, and the asker reads as erased"
     );
 }
 

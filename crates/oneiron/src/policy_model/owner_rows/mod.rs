@@ -13,6 +13,7 @@ pub(crate) use authority::{
     is_live_writing_member_for_store_in_txn, owners_for_store_in_txn, owners_in_txn,
     sole_recorded_owner_in_txn,
 };
+pub(crate) use ledger::erase_change_receipt_requester_in_txn;
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
 pub use notifications::{
     PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
