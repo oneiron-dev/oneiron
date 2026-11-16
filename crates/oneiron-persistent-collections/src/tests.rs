@@ -463,3 +463,46 @@ fn ordering_and_index_match_btree_map() {
     assert_eq!(left, left.clone());
     assert_ne!(left, right);
 }
+
+/// A value with no `Clone`: reads, equality, Debug and serde need none, so a
+/// generic struct that derives them over a map of its parameter compiles
+/// with only the derive's own bounds.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Unclonable(u16);
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Holder<P> {
+    entries: PersistentMap<u16, P>,
+}
+
+#[derive(serde::Serialize)]
+struct StdHolder<P> {
+    entries: BTreeMap<u16, P>,
+}
+
+#[test]
+fn reads_equality_and_serde_need_no_clone_of_the_value() {
+    let unclonable = |count: u16| -> BTreeMap<u16, Unclonable> {
+        (0..count).map(|key| (key, Unclonable(key))).collect()
+    };
+    for count in [0, 3, 70] {
+        let holder = Holder {
+            entries: PersistentMap::from(unclonable(count)),
+        };
+        let reference = StdHolder {
+            entries: unclonable(count),
+        };
+        assert_eq!(holder.entries.len(), reference.entries.len());
+        assert!(holder.entries.iter().eq(reference.entries.iter()));
+        assert_eq!(holder.entries.get(&2), reference.entries.get(&2));
+        assert!(holder.entries.range(1..3).eq(reference.entries.range(1..3)));
+        let bytes = rmp_serde::to_vec(&holder).expect("holder encodes");
+        assert_eq!(
+            bytes,
+            rmp_serde::to_vec(&reference).expect("reference encodes")
+        );
+        let decoded: Holder<Unclonable> = rmp_serde::from_slice(&bytes).expect("holder decodes");
+        assert_eq!(decoded, holder);
+        assert_eq!(format!("{decoded:?}"), format!("{holder:?}"));
+    }
+}

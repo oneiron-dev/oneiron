@@ -63,7 +63,7 @@ impl<K, V> Clone for PersistentMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
+impl<K: Ord, V> PersistentMap<K, V> {
     pub fn len(&self) -> usize {
         match &self.form {
             Form::Empty => 0,
@@ -112,6 +112,91 @@ impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
         }
     }
 
+    pub fn iter(&self) -> Iter<'_, K, V> {
+        let remaining = self.len();
+        let inner = match &self.form {
+            Form::Empty => IterForm::Empty,
+            Form::Small(map) => IterForm::Small(map.iter()),
+            Form::Large(map) => IterForm::Large(map.iter()),
+        };
+        Iter { inner, remaining }
+    }
+
+    pub fn keys(&self) -> Keys<'_, K, V> {
+        Keys { inner: self.iter() }
+    }
+
+    pub fn values(&self) -> Values<'_, K, V> {
+        Values { inner: self.iter() }
+    }
+
+    pub fn range<Q, R>(&self, range: R) -> Range<'_, K, V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        let inner = match &self.form {
+            Form::Empty => RangeForm::Empty,
+            Form::Small(map) => RangeForm::Small(map.range(range)),
+            Form::Large(map) => RangeForm::Large(map.range(range)),
+        };
+        Range { inner }
+    }
+
+    pub fn first_key_value(&self) -> Option<(&K, &V)> {
+        match &self.form {
+            Form::Empty => None,
+            Form::Small(map) => map.first_key_value().map(|(key, value)| (key, &**value)),
+            Form::Large(map) => map.get_min().map(|(key, value)| (key, &**value)),
+        }
+    }
+
+    pub fn last_key_value(&self) -> Option<(&K, &V)> {
+        match &self.form {
+            Form::Empty => None,
+            Form::Small(map) => map.last_key_value().map(|(key, value)| (key, &**value)),
+            Form::Large(map) => map.get_max().map(|(key, value)| (key, &**value)),
+        }
+    }
+
+    /// Whether both maps share one root, so that they are equal without a
+    /// walk. False says nothing.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        match (&self.form, &other.form) {
+            (Form::Empty, Form::Empty) => true,
+            (Form::Small(left), Form::Small(right)) => Arc::ptr_eq(left, right),
+            (Form::Large(left), Form::Large(right)) => left.ptr_eq(right),
+            _ => false,
+        }
+    }
+}
+
+impl<K: Ord + Clone, V> PersistentMap<K, V> {
+    /// Moves to the form the length asks for: empty at 0, large past
+    /// `SMALL_LIMIT`, small again at `SHRINK_LIMIT` or fewer.
+    fn fit_form(&mut self) {
+        let len = self.len();
+        let fitted = match &self.form {
+            Form::Empty => return,
+            _ if len == 0 => Form::Empty,
+            Form::Small(map) if len > SMALL_LIMIT => Form::Large(
+                map.iter()
+                    .map(|(key, value)| (key.clone(), Arc::clone(value)))
+                    .collect(),
+            ),
+            Form::Large(map) if len <= SHRINK_LIMIT => Form::Small(Arc::new(
+                map.iter()
+                    .map(|(key, value)| (key.clone(), Arc::clone(value)))
+                    .collect(),
+            )),
+            Form::Small(_) | Form::Large(_) => return,
+        };
+        self.form = fitted;
+    }
+}
+
+impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
     /// The value at `key`, copied first if a clone shares it. A key the
     /// map lacks copies nothing.
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
@@ -225,16 +310,6 @@ impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
         self.form = Form::Empty;
     }
 
-    pub fn iter(&self) -> Iter<'_, K, V> {
-        let remaining = self.len();
-        let inner = match &self.form {
-            Form::Empty => IterForm::Empty,
-            Form::Small(map) => IterForm::Small(map.iter()),
-            Form::Large(map) => IterForm::Large(map.iter()),
-        };
-        Iter { inner, remaining }
-    }
-
     /// Every entry with its value writable: each value is copied first if a
     /// clone shares it, and a large map moves to one `BTreeMap` (O(len), as
     /// the walk itself is).
@@ -244,48 +319,10 @@ impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
         }
     }
 
-    pub fn keys(&self) -> Keys<'_, K, V> {
-        Keys { inner: self.iter() }
-    }
-
-    pub fn values(&self) -> Values<'_, K, V> {
-        Values { inner: self.iter() }
-    }
-
     /// As [`Self::iter_mut`], values only.
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
         ValuesMut {
             inner: self.iter_mut(),
-        }
-    }
-
-    pub fn range<Q, R>(&self, range: R) -> Range<'_, K, V>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-        R: RangeBounds<Q>,
-    {
-        let inner = match &self.form {
-            Form::Empty => RangeForm::Empty,
-            Form::Small(map) => RangeForm::Small(map.range(range)),
-            Form::Large(map) => RangeForm::Large(map.range(range)),
-        };
-        Range { inner }
-    }
-
-    pub fn first_key_value(&self) -> Option<(&K, &V)> {
-        match &self.form {
-            Form::Empty => None,
-            Form::Small(map) => map.first_key_value().map(|(key, value)| (key, &**value)),
-            Form::Large(map) => map.get_min().map(|(key, value)| (key, &**value)),
-        }
-    }
-
-    pub fn last_key_value(&self) -> Option<(&K, &V)> {
-        match &self.form {
-            Form::Empty => None,
-            Form::Small(map) => map.last_key_value().map(|(key, value)| (key, &**value)),
-            Form::Large(map) => map.get_max().map(|(key, value)| (key, &**value)),
         }
     }
 
@@ -306,17 +343,6 @@ impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
             .collect()
     }
 
-    /// Whether both maps share one root, so that they are equal without a
-    /// walk. False says nothing.
-    pub fn ptr_eq(&self, other: &Self) -> bool {
-        match (&self.form, &other.form) {
-            (Form::Empty, Form::Empty) => true,
-            (Form::Small(left), Form::Small(right)) => Arc::ptr_eq(left, right),
-            (Form::Large(left), Form::Large(right)) => left.ptr_eq(right),
-            _ => false,
-        }
-    }
-
     /// Writes `value` at `key` without comparing it to a stored value.
     fn store(&mut self, key: K, value: V) -> Option<V> {
         let value = Arc::new(value);
@@ -331,28 +357,6 @@ impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
         };
         self.fit_form();
         replaced.map(Arc::unwrap_or_clone)
-    }
-
-    /// Moves to the form the length asks for: empty at 0, large past
-    /// `SMALL_LIMIT`, small again at `SHRINK_LIMIT` or fewer.
-    fn fit_form(&mut self) {
-        let len = self.len();
-        let fitted = match &self.form {
-            Form::Empty => return,
-            _ if len == 0 => Form::Empty,
-            Form::Small(map) if len > SMALL_LIMIT => Form::Large(
-                map.iter()
-                    .map(|(key, value)| (key.clone(), Arc::clone(value)))
-                    .collect(),
-            ),
-            Form::Large(map) if len <= SHRINK_LIMIT => Form::Small(Arc::new(
-                map.iter()
-                    .map(|(key, value)| (key.clone(), Arc::clone(value)))
-                    .collect(),
-            )),
-            Form::Small(_) | Form::Large(_) => return,
-        };
-        self.form = fitted;
     }
 
     /// The entries as one uniquely held `BTreeMap`, for the walks that hand
@@ -513,7 +517,7 @@ enum IterForm<'a, K, V> {
     Large(im::ordmap::Iter<'a, K, Arc<V>>),
 }
 
-impl<'a, K: Ord + Clone, V: Clone> Iterator for Iter<'a, K, V> {
+impl<'a, K: Ord, V> Iterator for Iter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -532,7 +536,7 @@ impl<'a, K: Ord + Clone, V: Clone> Iterator for Iter<'a, K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> DoubleEndedIterator for Iter<'_, K, V> {
+impl<K: Ord, V> DoubleEndedIterator for Iter<'_, K, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let next = match &mut self.inner {
             IterForm::Empty => None,
@@ -545,16 +549,16 @@ impl<K: Ord + Clone, V: Clone> DoubleEndedIterator for Iter<'_, K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> ExactSizeIterator for Iter<'_, K, V> {}
+impl<K: Ord, V> ExactSizeIterator for Iter<'_, K, V> {}
 
-impl<K: Ord + Clone, V: Clone> FusedIterator for Iter<'_, K, V> {}
+impl<K: Ord, V> FusedIterator for Iter<'_, K, V> {}
 
 /// The keys of a [`PersistentMap`] in order.
 pub struct Keys<'a, K, V> {
     inner: Iter<'a, K, V>,
 }
 
-impl<'a, K: Ord + Clone, V: Clone> Iterator for Keys<'a, K, V> {
+impl<'a, K: Ord, V> Iterator for Keys<'a, K, V> {
     type Item = &'a K;
 
     fn next(&mut self) -> Option<&'a K> {
@@ -566,22 +570,22 @@ impl<'a, K: Ord + Clone, V: Clone> Iterator for Keys<'a, K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> DoubleEndedIterator for Keys<'_, K, V> {
+impl<K: Ord, V> DoubleEndedIterator for Keys<'_, K, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.inner.next_back().map(|(key, _)| key)
     }
 }
 
-impl<K: Ord + Clone, V: Clone> ExactSizeIterator for Keys<'_, K, V> {}
+impl<K: Ord, V> ExactSizeIterator for Keys<'_, K, V> {}
 
-impl<K: Ord + Clone, V: Clone> FusedIterator for Keys<'_, K, V> {}
+impl<K: Ord, V> FusedIterator for Keys<'_, K, V> {}
 
 /// The values of a [`PersistentMap`] in key order.
 pub struct Values<'a, K, V> {
     inner: Iter<'a, K, V>,
 }
 
-impl<'a, K: Ord + Clone, V: Clone> Iterator for Values<'a, K, V> {
+impl<'a, K: Ord, V> Iterator for Values<'a, K, V> {
     type Item = &'a V;
 
     fn next(&mut self) -> Option<&'a V> {
@@ -593,15 +597,15 @@ impl<'a, K: Ord + Clone, V: Clone> Iterator for Values<'a, K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> DoubleEndedIterator for Values<'_, K, V> {
+impl<K: Ord, V> DoubleEndedIterator for Values<'_, K, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.inner.next_back().map(|(_, value)| value)
     }
 }
 
-impl<K: Ord + Clone, V: Clone> ExactSizeIterator for Values<'_, K, V> {}
+impl<K: Ord, V> ExactSizeIterator for Values<'_, K, V> {}
 
-impl<K: Ord + Clone, V: Clone> FusedIterator for Values<'_, K, V> {}
+impl<K: Ord, V> FusedIterator for Values<'_, K, V> {}
 
 /// The entries of a [`PersistentMap`] in key order, values writable.
 pub struct IterMut<'a, K, V> {
@@ -672,7 +676,7 @@ enum RangeForm<'a, K, V> {
     Large(im::ordmap::Iter<'a, K, Arc<V>>),
 }
 
-impl<'a, K: Ord + Clone, V: Clone> Iterator for Range<'a, K, V> {
+impl<'a, K: Ord, V> Iterator for Range<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -696,7 +700,7 @@ impl<'a, K: Ord + Clone, V: Clone> Iterator for Range<'a, K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> DoubleEndedIterator for Range<'_, K, V> {
+impl<K: Ord, V> DoubleEndedIterator for Range<'_, K, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let next = match &mut self.inner {
             RangeForm::Empty => None,
@@ -707,7 +711,7 @@ impl<K: Ord + Clone, V: Clone> DoubleEndedIterator for Range<'_, K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> FusedIterator for Range<'_, K, V> {}
+impl<K: Ord, V> FusedIterator for Range<'_, K, V> {}
 
 /// The entries of a [`PersistentMap`] by value, in key order.
 pub type IntoIter<K, V> = std::vec::IntoIter<(K, V)>;
@@ -732,7 +736,7 @@ impl<K: Ord + Clone, V: Clone> IntoIterator for PersistentMap<K, V> {
     }
 }
 
-impl<'a, K: Ord + Clone, V: Clone> IntoIterator for &'a PersistentMap<K, V> {
+impl<'a, K: Ord, V> IntoIterator for &'a PersistentMap<K, V> {
     type Item = (&'a K, &'a V);
     type IntoIter = Iter<'a, K, V>;
 
@@ -750,7 +754,7 @@ impl<'a, K: Ord + Clone, V: Clone> IntoIterator for &'a mut PersistentMap<K, V> 
     }
 }
 
-impl<K: Ord + Clone, V: Clone> From<BTreeMap<K, V>> for PersistentMap<K, V> {
+impl<K: Ord + Clone, V> From<BTreeMap<K, V>> for PersistentMap<K, V> {
     fn from(entries: BTreeMap<K, V>) -> Self {
         let entries: BTreeMap<K, Arc<V>> = entries
             .into_iter()
@@ -791,7 +795,7 @@ impl<'a, K: Ord + Copy, V: Copy + PartialEq> Extend<(&'a K, &'a V)> for Persiste
     }
 }
 
-impl<K: Ord + Clone + Borrow<Q>, Q: Ord + ?Sized, V: Clone> Index<&Q> for PersistentMap<K, V> {
+impl<K: Ord + Borrow<Q>, Q: Ord + ?Sized, V> Index<&Q> for PersistentMap<K, V> {
     type Output = V;
 
     /// Panics if the map lacks `key`, as `BTreeMap`'s index does.
@@ -800,7 +804,7 @@ impl<K: Ord + Clone + Borrow<Q>, Q: Ord + ?Sized, V: Clone> Index<&Q> for Persis
     }
 }
 
-impl<K: Ord + Clone, V: Clone + PartialEq> PartialEq for PersistentMap<K, V> {
+impl<K: Ord, V: PartialEq> PartialEq for PersistentMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         match (&self.form, &other.form) {
             (Form::Large(left), Form::Large(right)) => left == right,
@@ -809,21 +813,21 @@ impl<K: Ord + Clone, V: Clone + PartialEq> PartialEq for PersistentMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone + Eq> Eq for PersistentMap<K, V> {}
+impl<K: Ord, V: Eq> Eq for PersistentMap<K, V> {}
 
-impl<K: Ord + Clone, V: Clone + PartialOrd> PartialOrd for PersistentMap<K, V> {
+impl<K: Ord, V: PartialOrd> PartialOrd for PersistentMap<K, V> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.iter().partial_cmp(other.iter())
     }
 }
 
-impl<K: Ord + Clone, V: Clone + Ord> Ord for PersistentMap<K, V> {
+impl<K: Ord, V: Ord> Ord for PersistentMap<K, V> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.iter().cmp(other.iter())
     }
 }
 
-impl<K: Ord + Clone + Hash, V: Clone + Hash> Hash for PersistentMap<K, V> {
+impl<K: Ord + Hash, V: Hash> Hash for PersistentMap<K, V> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.len());
         for entry in self {
@@ -832,13 +836,13 @@ impl<K: Ord + Clone + Hash, V: Clone + Hash> Hash for PersistentMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone + fmt::Debug, V: Clone + fmt::Debug> fmt::Debug for PersistentMap<K, V> {
+impl<K: Ord + fmt::Debug, V: fmt::Debug> fmt::Debug for PersistentMap<K, V> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_map().entries(self.iter()).finish()
     }
 }
 
-impl<K: Ord + Clone + Serialize, V: Clone + Serialize> Serialize for PersistentMap<K, V> {
+impl<K: Ord + Serialize, V: Serialize> Serialize for PersistentMap<K, V> {
     /// The call `BTreeMap`'s impl makes, with the same exact length hint.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_map(self)
@@ -848,7 +852,7 @@ impl<K: Ord + Clone + Serialize, V: Clone + Serialize> Serialize for PersistentM
 impl<'de, K, V> Deserialize<'de> for PersistentMap<K, V>
 where
     K: Ord + Clone + Deserialize<'de>,
-    V: Clone + Deserialize<'de>,
+    V: Deserialize<'de>,
 {
     /// Through `BTreeMap`, so a repeated key keeps its last value.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
