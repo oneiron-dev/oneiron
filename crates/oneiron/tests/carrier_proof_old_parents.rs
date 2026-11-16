@@ -1528,3 +1528,83 @@ fn a_revoke_above_an_agent_copy_of_an_owner_key_does_not_end_it() {
         "a revoke above the refused copy never ends the owner key: {key:?}"
     );
 }
+
+/// The agent key the root rotates into the owner's key, and the second
+/// successor root of the forked handoff (test 20).
+const ROTATED_AGENT_SEED: u8 = 66;
+const FORK_ROOT_SEED: u8 = 67;
+
+/// A handoff to a fresh custodial root of `seed`, as test 12's.
+fn re_root_op(seed: u8) -> AuthorityOp {
+    AuthorityOp::ReRoot {
+        new_device: DeviceAuthority {
+            key: key_of(&signing(seed)),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::CloudCustodial,
+            roles: ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+        },
+    }
+}
+
+/// Test 20 of the row (pipeline review round 2 of #8502, P1, 17 Nov 04:54):
+/// a rotation onto the owner's key on old parents does not end it, as the
+/// agent enrolment of test 10 does not. From P, E enrols K (holder M); the
+/// root enrols an agent key A on P and rotates A into K as an agent key (R).
+/// A rotation is a retired op that counts only in a handoff's pre-handoff
+/// ancestry, so the root signs two handoffs on E and R (H1, H2): a fork,
+/// whose fences close and neither of which installs a successor, so E, A and
+/// R stand as the rows both handoffs rest on. Main and this row's head
+/// before the fix: R counts, and the roster merge of E and R leaves K no
+/// owner role.
+#[test]
+fn a_rotation_onto_an_owner_key_on_old_parents_does_not_end_it() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let enrolment = vault.enrol_owner_key();
+    let key = vault.owner_authority_key();
+    let agent_key = key_of(&signing(ROTATED_AGENT_SEED));
+    let agent_enrolment = vault.root_enrols_agent_key(p, agent_key.clone());
+    let rotation = vault.push_root_row(
+        vec![agent_enrolment],
+        AuthorityOp::RotateKey {
+            old_key: agent_key,
+            new_device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_AGENT,
+            },
+        },
+    );
+    let first = vault.push_root_row(vec![enrolment, rotation], re_root_op(NEW_ROOT_SEED));
+    let second = vault.push_root_row(vec![enrolment, rotation], re_root_op(FORK_ROOT_SEED));
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment) && fold.valid_entries.contains(&agent_enrolment),
+        "enrolment and agent enrolment count: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&rotation),
+        "old-parents rotation onto the owner key is invalid: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &key),
+        "a rotation onto the owner key never ends it: {key:?} {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&first) && !fold.valid_entries.contains(&second),
+        "neither forked handoff installs: {:?}",
+        fold.issues
+    );
+}
