@@ -23,13 +23,13 @@
 //! Canon: the program calls the browser host verbs ("A mid planner tier writes
 //! one batched code-mode program for each subgoal. The program calls the
 //! browser host verbs, and decide() for routine choices."
-//! `/Users/olety/Desktop/code/oneiron-docs/generated/llms-full.txt:328717`);
+//! `oneiron-docs/generated/llms-full.txt:328717`);
 //! a run row needs its own binding ("A run row needs its own binding on the
 //! credential, or it gets `mcp_verb_not_bound`."
-//! `/Users/olety/Desktop/code/oneiron-docs/generated/llms-full.txt:344746`);
+//! `oneiron-docs/generated/llms-full.txt:344746`);
 //! without browser config the verbs return `browser_unbound` ("Without browser
 //! config, the verbs return `browser_unbound`."
-//! `/Users/olety/Desktop/code/oneiron-docs/generated/llms-full.txt:49076`).
+//! `oneiron-docs/generated/llms-full.txt:49076`).
 //! No canon line names `browser_pack_not_installed` or
 //! `browser_connection_unchecked`, or the desktop rows; the nearest desktop
 //! line is the code-mode execution doc's screenshot trigger
