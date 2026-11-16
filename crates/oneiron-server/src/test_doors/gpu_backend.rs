@@ -29,6 +29,12 @@ pub fn register_gpu_backend(server: &SyncServer, name: &str, connector: Arc<dyn 
     server.gpu_jobs.register_backend(name, connector);
 }
 
+/// Takes the GPU backend `name` off `server`, as a restart that no longer
+/// registers it does.
+pub fn unregister_gpu_backend(server: &SyncServer, name: &str) {
+    server.gpu_jobs.remove_backend(name);
+}
+
 /// Grants `server`'s host account a fresh allocation of `units` `unit`, the
 /// vault's paid credits a host-paid GPU job reserves on.
 ///

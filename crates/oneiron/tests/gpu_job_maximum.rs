@@ -6,7 +6,7 @@
 //! the billed time never above the quote, and a restarted host taking a chunk
 //! up again. The provider is a scripted fake that logs each call.
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
@@ -39,6 +39,19 @@ struct FakeState {
     create_times_out: bool,
     status: Option<GpuResourceStatus>,
     termination: Option<GpuTermination>,
+    /// The next create waits here twice before it makes its resource: once
+    /// on entering, once to go on; the test's other side runs between.
+    create_gate: Option<Arc<Barrier>>,
+    /// The next status read waits here the same way.
+    status_gate: Option<Arc<Barrier>>,
+}
+
+/// Waits at a gate taken from the fake twice, holding no lock of the fake.
+fn pass_gate(gate: Option<Arc<Barrier>>) {
+    if let Some(gate) = gate {
+        gate.wait();
+        gate.wait();
+    }
 }
 
 #[derive(Default)]
@@ -74,6 +87,8 @@ impl FakeGpu {
 
 impl GpuJobConnector for FakeGpu {
     fn create(&self, key: &str, spec: &GpuJobSpec) -> Result<GpuResourceRef, GpuConnectorError> {
+        let gate = self.state().create_gate.take();
+        pass_gate(gate);
         let mut state = self.state();
         state.calls.push(format!("create {key}"));
         state.specs.push(spec.clone());
@@ -92,6 +107,8 @@ impl GpuJobConnector for FakeGpu {
     }
 
     fn status(&self, _resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
+        let gate = self.state().status_gate.take();
+        pass_gate(gate);
         Ok(self
             .state()
             .status
@@ -696,4 +713,88 @@ fn a_restarted_host_takes_up_the_chunk_and_its_new_permit_pays_the_end() {
         "the new permit pays the end"
     );
     assert_eq!(settled(&first_receipts).iter().sum::<u64>(), 0);
+}
+
+/// A cancel that lands while the provider still creates the chunk finds no
+/// resource, ends the job and settles nothing; the resource that create then
+/// makes is terminated, never left running for a job that ended (review of
+/// #8059, round 1).
+#[test]
+fn a_create_that_loses_to_a_cancel_terminates_its_resource() {
+    let rig = rig();
+    let quote = rig.quote(100, None, NOW);
+    let (admission, _receipts) = admission(&quote.job, quote.units);
+    let gate = Arc::new(Barrier::new(2));
+    rig.gpu.state().create_gate = Some(Arc::clone(&gate));
+    let (started, cancelled) = std::thread::scope(|scope| {
+        let cancel = scope.spawn(|| {
+            gate.wait();
+            let cancelled =
+                rig.vault
+                    .cancel_gpu_job(&rig.owner, &quote.job, &rig.permits, &rig.gpu, NOW);
+            gate.wait();
+            cancelled
+        });
+        let started = rig.start(&quote, &admission);
+        (started, cancel.join().expect("cancel thread"))
+    });
+
+    let ended = GpuJobState::Ended {
+        reason: GpuEndReason::Cancelled,
+    };
+    let cancelled = cancelled.expect("cancel");
+    assert_eq!(cancelled.state, ended);
+    assert_eq!(
+        cancelled.chunk().and_then(|chunk| chunk.resource.clone()),
+        None,
+        "the cancel found no resource"
+    );
+    assert_eq!(
+        cancelled.chunk().and_then(|chunk| chunk.settled_units),
+        Some(0)
+    );
+    assert_eq!(started.state, ended, "the start returns the stored job");
+    assert_eq!(
+        rig.gpu.called("terminate"),
+        1,
+        "the resource the losing create made is terminated"
+    );
+}
+
+/// An erase of the job's starter while a step waits on its provider: the
+/// erase is a write like any other, so the step's write over the row it read
+/// before loses, and the starter stays erased (review of #8059, round 1).
+#[cfg(oneiron_test_support)]
+#[test]
+fn an_erase_during_a_step_keeps_the_starter_erased() {
+    let rig = rig();
+    let quote = rig.quote(100, None, NOW);
+    let (admission, _receipts) = admission(&quote.job, quote.units);
+    let job = rig.start(&quote, &admission);
+    assert_eq!(job.started_by, Some(rig.owner_actor));
+    rig.gpu.running(50, None);
+    let gate = Arc::new(Barrier::new(2));
+    rig.gpu.state().status_gate = Some(Arc::clone(&gate));
+    let (report, scrubbed) = std::thread::scope(|scope| {
+        let erase = scope.spawn(|| {
+            gate.wait();
+            let scrubbed = oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
+                &rig.vault,
+                &rig.owner_actor,
+                &["GPU_JOB"],
+            );
+            gate.wait();
+            scrubbed
+        });
+        let report = rig.step(&job.id, &admission);
+        (report, erase.join().expect("erase thread"))
+    });
+
+    assert_eq!(scrubbed.expect("erase"), 1, "the job table's scrub ran");
+    assert_eq!(report.state, GpuJobState::Running);
+    assert_eq!(
+        rig.job(&job.id).started_by,
+        None,
+        "a step that read the job before the erase never puts its starter back"
+    );
 }

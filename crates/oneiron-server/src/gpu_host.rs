@@ -18,7 +18,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
 use oneiron::gpu_job::{
-    GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote, GpuJobStepReport, GpuOffer,
+    GpuConnectorError, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
+    GpuJobSignal, GpuJobSpec, GpuJobStepReport, GpuOffer, GpuResourceRef, GpuResourceStatus,
+    GpuTermination,
 };
 use oneiron::llm::run_admission::{BudgetLine, RunAdmission, RunDeclaration};
 
@@ -49,6 +51,16 @@ impl GpuJobHost {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(name.to_owned(), connector);
+    }
+
+    /// Takes the backend `name` off this host, as a restart that no longer
+    /// registers it does.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn remove_backend(&self, name: &str) {
+        self.backends
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
     }
 
     /// The backend registered as `name`.
@@ -102,6 +114,46 @@ pub(crate) fn offer_with_backend<'a>(
         .backend(&offer.backend)
         .ok_or_else(|| GpuHostError::NoBackend(offer.backend.clone()))?;
     Ok((offer, connector))
+}
+
+/// The connector of a door over a job with no live chunk, which calls no
+/// provider: such a job needs no offer or backend on this host. Every call
+/// answers that the provider is unavailable, so a job that turned live in
+/// between is left to the worker, which holds its backend.
+pub(crate) struct NoProvider;
+
+impl NoProvider {
+    fn unavailable() -> GpuConnectorError {
+        GpuConnectorError::Unavailable {
+            reason: "no provider is called for a job with no live chunk".to_owned(),
+        }
+    }
+}
+
+impl GpuJobConnector for NoProvider {
+    fn create(&self, _key: &str, _spec: &GpuJobSpec) -> Result<GpuResourceRef, GpuConnectorError> {
+        Err(Self::unavailable())
+    }
+
+    fn find(&self, _key: &str) -> Result<Option<GpuResourceRef>, GpuConnectorError> {
+        Err(Self::unavailable())
+    }
+
+    fn status(&self, _resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
+        Err(Self::unavailable())
+    }
+
+    fn signal(
+        &self,
+        _resource: &GpuResourceRef,
+        _signal: GpuJobSignal,
+    ) -> Result<(), GpuConnectorError> {
+        Err(Self::unavailable())
+    }
+
+    fn terminate(&self, _resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
+        Err(Self::unavailable())
+    }
 }
 
 /// The job's own run for the chunk `quote` prices: one line of the quote's
