@@ -168,11 +168,19 @@ fn carries_erased_row(vault: &Vault, erased: &EntityId) -> bool {
 }
 
 fn owed_compaction_queued(vault: &Vault) -> bool {
+    owed_compaction_raise(vault).is_some()
+}
+
+/// The value of the window's owed-compaction row: each raise writes a fresh
+/// id first, so two reads that differ prove a raise between them.
+fn owed_compaction_raise(vault: &Vault) -> Option<Vec<u8>> {
+    let key = format!("hc:{WINDOW}");
     vault
-        .sync_queue_rows_with_prefix(format!("hc:{WINDOW}").as_bytes())
+        .sync_queue_rows_with_prefix(key.as_bytes())
         .unwrap()
-        .iter()
-        .any(|(key, _)| key.as_slice() == format!("hc:{WINDOW}").as_bytes())
+        .into_iter()
+        .find(|(row, _)| row.as_slice() == key.as_bytes())
+        .map(|(_, value)| value)
 }
 
 fn obligation_queued(vault: &Vault, sweep_key: &[u8]) -> bool {
@@ -307,6 +315,9 @@ fn a_held_windows_later_persist_brings_no_erased_history_back() {
 /// insert is now in the window's history: the window owes the sweep a
 /// compaction, and the next pass runs it. On main the refusal raised no
 /// owed compaction, and the re-put's insert stayed in the window's history.
+/// The test reads the owe right after the import, before any persist: a
+/// window's persist can owe a compaction of its own, so only a fresh raise
+/// by the import proves that the refusal owed one.
 #[test]
 fn a_late_reput_of_an_erased_row_owes_its_window_a_compaction() {
     let (_dir, vault) = open_vault();
@@ -325,6 +336,7 @@ fn a_late_reput_of_an_erased_row_owes_its_window_a_compaction() {
     assert!(!owed_compaction_queued(&vault), "fixture: nothing owed yet");
 
     let window = manager.open_window(&key).unwrap();
+    let raise_before_import = owed_compaction_raise(&vault);
     let peer = window.doc.fork();
     peer.get_map("entities")
         .insert(&erased.to_hex(), erased_blob)
@@ -334,11 +346,12 @@ fn a_late_reput_of_an_erased_row_owes_its_window_a_compaction() {
         .export(ExportMode::updates(&window.doc.oplog_vv()))
         .unwrap();
     window.doc.import(&reput).unwrap();
-    window.persist_state(&vault).unwrap();
+    let raise = owed_compaction_raise(&vault);
     assert!(
-        owed_compaction_queued(&vault),
+        raise.is_some() && raise != raise_before_import,
         "the refused re-put owes its window no compaction"
     );
+    window.persist_state(&vault).unwrap();
 
     drop(window);
     assert!(manager.unload_window(&key).unwrap());
