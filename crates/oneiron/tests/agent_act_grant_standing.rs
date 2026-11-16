@@ -22,8 +22,8 @@ use oneiron::authority::{
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistryQuery};
 use oneiron::federation::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
-    GitPushBounds, GitPushRepo, Scope, ScopeAxis, ScopeId, decode_federation_grant_body,
-    own_device_residence_scope,
+    GIT_PUSH_VERB, GitPushBounds, GitPushRepo, Scope, ScopeAxis, ScopeId,
+    decode_federation_grant_body, own_device_residence_scope,
 };
 use oneiron::policy_model::WorldPrivacyOutcome;
 use oneiron::store::GateDecisionId;
@@ -206,14 +206,22 @@ fn a_bare_git_push_grant_row_is_no_active_grant() {
         FederationGrantRole::Delegate,
         FederationGrantPreset::Delegate,
     );
+    let project = EntityId::now();
     forged.kind = FederationGrantKind::GitPush;
     forged.delegated_by = Some(fixture.owner);
     forged.git_push_bounds = Some(GitPushBounds {
         repos: BTreeSet::from([GitPushRepo {
             repo: EntityId::now(),
-            project: EntityId::now(),
+            project,
         }]),
     });
+    // The one scope a git push body holds (federation/grant/git_push.rs git_push_scope): the
+    // `git_push` verb, the bounds' projects as its audience, every other axis bottom.
+    forged.authority_scope = Scope {
+        audience: ScopeAxis::Some(BTreeSet::from([ScopeId(project)])),
+        verbs: ScopeAxis::Some(BTreeSet::from([GIT_PUSH_VERB.to_owned()])),
+        ..Scope::default()
+    };
     let forged_id = EntityId::now();
     put_unkeyed_member_grant(&fixture.vault, forged_id, &forged).expect("the bare row lands");
 
