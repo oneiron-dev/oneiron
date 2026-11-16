@@ -795,7 +795,9 @@ pub(super) fn ensure_companion_profile_grant(
 
 /// Writes the preset row, or verifies the stored one agrees with it. A new
 /// workspace starts at the default `work_companion` policy; an existing one
-/// keeps whatever its owner set.
+/// keeps whatever its owner set. A new row brings its house and its slots
+/// into its org, so the companion split is checked across that org before
+/// the row commits: a member's reservation saw only published presets.
 pub(super) fn ensure_preset_row(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
@@ -817,7 +819,7 @@ pub(super) fn ensure_preset_row(
             return Ok(());
         }
         PRESET.put(&vault.store, wtxn, &key, &row)?;
-        Ok(())
+        super::companion_bind::require_org_companion_split_in_txn(vault, wtxn, &preset.org_ref)
     })
 }
 
