@@ -3,7 +3,8 @@
 use crate::calendar::outcome::{
     self, CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, MeetingClassSignals,
 };
-use crate::calendar::prep::{PrepBuildRequest, PrepPack, PrepPolicy, build_prep_pack_scoped};
+use crate::calendar::prep::setting_keys::prep_policy;
+use crate::calendar::prep::{PrepBuildRequest, PrepPack, build_prep_pack_scoped};
 use crate::claim::{
     ClaimApprovalStatus, ClaimReadStatus, ClaimSource, PointRead, ScopedReadResult,
 };
@@ -214,7 +215,7 @@ impl Memory<'_> {
             &PrepBuildRequest {
                 event,
                 fired_at: self.vault().now_recorded_at(),
-                policy: PrepPolicy::default(),
+                policy: prep_policy(self.vault())?,
             },
         )?;
         receipt.restrict_with(&pack.receipt);
