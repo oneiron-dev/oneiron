@@ -4,10 +4,14 @@
 //! owners before it lapses. Before this key it waited until an owner answered; the shipped default
 //! is 30 days (the Engine's choice, beside ARCH-0064's 30-day reminder cap). The owner changes
 //! it, `never` included; an agent's change, either way, waits on the owner's approval.
+//!
+//! The e-signature ask's learned knobs (ARCH-0003 #learning-settings; Setting stage 3): catalogue
+//! keys a fit learns under the owner's seeds and pins. The crate's build script places each row in the
+//! setting catalogue.
 
 use serde::{Deserialize, Serialize};
 
-use crate::setting::{Kind, SettingValue};
+use crate::setting::{Kind, LEARNED_SCOPES, SettingValue};
 
 /// Thirty days, in seconds: the shipped lapse.
 const THIRTY_DAYS_SECS: u64 = 30 * 24 * 60 * 60;
@@ -48,5 +52,16 @@ crate::setting::setting_keys! {
     pub(crate) ESIGN_HELD_SIGNING_OWNER_LAPSE: HeldSigningLapse =
         "esign.held_signing.owner_lapse" {
         kind: Kind::new(thirty_days).tighter(sooner_is_tighter),
+    };
+
+    /// Hours a held sign act's unanswered ask waits on the person it went to
+    /// before it climbs to the next role up its chain (CALLS "OF-415 held
+    /// signing climb"). At the vault owners it does not climb: it waits for the
+    /// vault's `esign.held_signing.owner_lapse`, then lapses unsigned. No
+    /// unanswered ask signs.
+    pub ESIGN_ASK_CLIMB_HOURS: f64 = "esign.ask.climb_hours" {
+        kind: Kind::new(|| 24.0).learned(1.0, 720.0),
+        scopes: &LEARNED_SCOPES,
+        on_change: Some(crate::learning_setting::refold_fits_on_change),
     };
 }

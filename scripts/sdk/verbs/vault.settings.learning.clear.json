@@ -1,6 +1,6 @@
 {
   "name": "vault.settings.learning.clear",
-  "description": "The owner, or a holder of the engine.controls class of the key's knob on a dial it may tune, clears one learned-setting row of a key, mode and scope; the owner's pins and work-budget rows stand.",
+  "description": "The owner clears one spawn-choice seed or pin row (model, width, pattern or budget) of a mode and scope. A learned knob is a setting: clear it with settings.set.",
   "input": "crate::learning_setting_doors::LearningSettingClear",
   "output": "crate::learning_setting_doors::LearningSettingsView",
   "call": "crate::learning_setting_doors::clear_learning_setting_embedded(memory, input)?",

@@ -2,18 +2,19 @@
 //! that cites its inputs reads in place of the bare value, at the scope its
 //! work ran under (FIX 2957).
 
-use super::resolution::{Decided, resolve_in_txn};
-use super::{SettingSpec, global_setting_subject, read_scopes_in_txn};
+use super::{global_setting_subject, known_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::{LearningPredicate, TypeRef};
+use crate::setting::{FitCell, Setting, SettingSource};
 
 /// [`super::setting_value_in_scope_in_txn`] beside the rows its value stands
 /// on, from the same walk: the heads of the deciding fit's cells when a fit
-/// decides, the deciding owner's native PUT act for a seed or pin, and none
-/// when the catalog seed does. `None`, unknown, when that owner act is gone
-/// or closed, or when the fit's cells hold no head.
+/// decides, the setting change that wrote the deciding seed or pin (the
+/// record of that act, by the revision the read names), and none when the
+/// shipped seed does. `None`, unknown, when that change is gone, when the
+/// deciding row does not decode, or when the fit's cells hold no head.
 ///
 /// # Errors
 ///
@@ -21,39 +22,55 @@ use crate::learning::{LearningPredicate, TypeRef};
 pub(crate) fn setting_value_in_scope_sourced_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
+    key: &Setting<f64>,
     project: Option<EntityId>,
     type_ref: Option<&TypeRef>,
 ) -> Result<(f64, Option<Vec<EntityId>>)> {
-    let scopes = read_scopes_in_txn(vault, txn, project, type_ref)?;
-    let (value, decided) = resolve_in_txn(&vault.store, txn, spec, &scopes, type_ref)?;
-    let rows = match decided {
-        Decided::Owner { witness } => super::witness::source_in_txn(vault, txn, witness)?,
-        Decided::Catalog => Some(Vec::new()),
-        Decided::Fit {
-            project,
-            subject,
-            type_node,
-        } => fit_heads_in_txn(vault, txn, spec, project, subject, type_node.as_deref())?,
+    let known = known_in_txn(vault, txn, project, type_ref)?;
+    let read = key.read_in_txn(vault, txn, &known, None)?;
+    let rows = match &read.source {
+        SettingSource::Default => Some(Vec::new()),
+        SettingSource::Fit(cell) => fit_heads_in_txn(vault, txn, key.spec.name, cell)?,
+        SettingSource::Row(_) | SettingSource::Pin(_) => {
+            change_row_in_txn(vault, txn, read.revision)?
+        }
+        SettingSource::Unreadable(_) => None,
     };
-    Ok((value, rows))
+    Ok((read.value, rows))
 }
 
-/// The active head CLAIM of each cell one fit of `spec` is cached from: in
-/// `project`'s scope exactly, else the vault's (FIX 6038); on `subject`,
-/// else its knob's global subject; at `type_node`, else root-typed; with no
-/// executor, axis or consent scope. `None` when no such cell holds one.
+/// The change row that wrote the deciding row, by the revision the read names: the record of
+/// the act that set it. `None` where no such change stands (erased with its setter's scope).
+fn change_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: u64,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(after) = revision.checked_sub(1) else {
+        return Ok(None);
+    };
+    let (changes, _) = crate::setting::settings_after_in_txn(&vault.store, txn, Some(after), 1)?;
+    Ok(changes
+        .into_iter()
+        .find(|change| change.sequence == revision)
+        .map(|change| vec![change.id]))
+}
+
+/// The active head CLAIM of each cell the fit `fit` of the knob `name` is
+/// cached from: in its project's scope exactly, else the vault's (FIX 6038);
+/// on its goal, else the knob's global subject; at its task type, else
+/// root-typed; with no executor, axis or consent scope. `None` when no such
+/// cell holds one.
 fn fit_heads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    project: Option<EntityId>,
-    subject: Option<EntityId>,
-    type_node: Option<&str>,
+    name: &str,
+    fit: &FitCell,
 ) -> Result<Option<Vec<EntityId>>> {
-    let subject = match subject {
-        Some(subject) => subject,
-        None => global_setting_subject(spec.key)?,
+    let (project, type_node) = (fit.project, fit.task_type.as_deref());
+    let subject = match fit.goal {
+        Some(goal) => goal,
+        None => global_setting_subject(name)?,
     };
     let typed = |type_ref: &TypeRef| match type_node {
         Some(node) => type_ref.node_id == node,
@@ -63,7 +80,7 @@ fn fit_heads_in_txn(
     for row in crate::learning::evidence::cells_for_subject_in_txn(vault, txn, &subject)? {
         let cell = row.cell;
         if cell.predicate != LearningPredicate::Setting
-            || cell.setting_key.as_deref() != Some(spec.key)
+            || cell.setting_key.as_deref() != Some(name)
             || cell.executor.is_some()
             || cell.axis.is_some()
             || cell.consent_scope.is_some()

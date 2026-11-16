@@ -45,12 +45,13 @@ use self::store::{
     member_key, member_note, note_prefix, pattern_key, support_key, take_members_in_txn,
     unlink_in_txn,
 };
+use super::coach::setting_keys::ATTRIBUTION_LABEL_RECEIPTS;
 use super::coach::{COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE, COACH_ATTRIBUTION_LABELS_FACET};
 use super::proposals;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning_setting::{SettingSpec, setting_value_in_txn};
+use crate::learning_setting::setting_value_in_txn;
 use crate::llm::decision::DecisionLadder;
 use crate::model_decision::catalogue::ATTRIBUTION_PATTERN;
 use crate::model_decision::{
@@ -63,16 +64,6 @@ use crate::skill_attribution::{
     unclear_row_in_txn,
 };
 use crate::{Vault, WriteEnvelope};
-
-/// How many distinct outcomes a pattern's live notes must come from before
-/// the Coach proposes a label for it. Canon names no count; two is the least
-/// that can recur, and the seed asks for three.
-pub const ATTRIBUTION_LABEL_RECEIPTS: SettingSpec = SettingSpec {
-    key: "coach.attribution_label_receipts",
-    min: 2.0,
-    max: 1_000_000.0,
-    seed: 3.0,
-};
 
 /// Outcomes one page reads.
 const PAGE: usize = 64;

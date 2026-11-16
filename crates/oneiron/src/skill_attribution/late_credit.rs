@@ -11,7 +11,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{PackAttributionFields, UsedProvenanceEdge};
 use crate::side_table::{self, Named, SideTable};
-use crate::store::setting_seed::CREDIT_DECAY;
+use crate::skill_attribution::setting_keys::CREDIT_DECAY;
 use crate::{Result, Vault};
 
 pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =

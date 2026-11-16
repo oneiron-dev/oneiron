@@ -56,8 +56,9 @@ pub(crate) mod blocked_reports;
 mod centroid_evidence;
 pub(crate) mod consent_depth;
 mod consent_detector;
+pub(crate) mod setting_keys;
 pub mod tripwires;
-pub use centroid_evidence::{CentroidCorpus, CentroidReplay, DETECTOR_CENTROID_MIN_SIMILARITY};
+pub use centroid_evidence::{CentroidCorpus, CentroidReplay};
 pub(crate) use centroid_evidence::{
     centroid_evidence_carriage, centroid_evidence_owners, erase_centroid_source_in_txn,
 };

@@ -50,6 +50,7 @@ mod policy;
 mod receipt_index;
 mod rollups;
 mod run_loop;
+pub(crate) mod setting_keys;
 mod silence;
 mod sources;
 pub mod steer;
@@ -104,6 +105,12 @@ pub use rollups::{
     HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource,
     TrendSpendTally, TrendStratum, health_trend_rollups,
 };
+pub use setting_keys::{
+    HEALTH_CARD_FLOOR, HEALTH_CHECK_FAILS, HEALTH_COST_MIN_RUNS, HEALTH_COST_SPIKE,
+    HEALTH_DUP_MIN_COST, HEALTH_ESCALATE_TTL_HOURS, HEALTH_LOOP_REPEATS, HEALTH_OWNER_COPY,
+    HEALTH_REVIEW, HEALTH_REVIEW_WINDOW_HOURS, HEALTH_SILENT_MINUTES, HEALTH_TREND_PERIOD_DAYS,
+    HEALTH_WAIT_MINUTES, HEALTH_WAIT_SHARE, HEALTH_WIDEN_DENIALS,
+};
 pub use silence::{HealthOtherSession, HealthSilenceActivity};
 use silence::{SilenceCalls, SilenceRefresh, silent_findings};
 pub(super) use targeted::review;
@@ -112,14 +119,11 @@ pub use trend::{
     TrendDirection, TrendMetric, TrendSide, TrendUnknown, review_health_trends,
 };
 pub(super) use trend_output::run_health_trends;
-pub use trend_policy::{DetectionDialChanges, HEALTH_TREND_PERIOD_DAYS, TrendPeriods, TrendWindow};
+pub use trend_policy::{DetectionDialChanges, TrendPeriods, TrendWindow};
 pub(crate) use vocabulary::parse_card_ref;
 pub use vocabulary::{
     AgentHealthCard, AgentHealthConfidence, AgentHealthCounter, AgentHealthMove,
-    AgentHealthOutcome, AgentHealthTone, HEALTH_CARD_FLOOR, HEALTH_CHECK_FAILS,
-    HEALTH_COST_MIN_RUNS, HEALTH_COST_SPIKE, HEALTH_DUP_MIN_COST, HEALTH_ESCALATE_TTL_HOURS,
-    HEALTH_LOOP_REPEATS, HEALTH_OWNER_COPY, HEALTH_REVIEW, HEALTH_REVIEW_WINDOW_HOURS,
-    HEALTH_SILENT_MINUTES, HEALTH_WAIT_MINUTES, HEALTH_WAIT_SHARE, HEALTH_WIDEN_DENIALS,
+    AgentHealthOutcome, AgentHealthTone,
 };
 use vocabulary::{CARDS, Finding, card_key, card_ref};
 

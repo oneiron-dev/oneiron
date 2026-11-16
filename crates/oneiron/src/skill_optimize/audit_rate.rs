@@ -7,11 +7,15 @@
 //! audit observes anything.
 
 use crate::claim::learning_evidence::Anchor;
-use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
+use crate::learning_setting::{
+    SettingCheck, global_setting_subject, knob_bounds, record_setting_check_in_txn,
+};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::self_heal::audit::{SealCheckKind, SealedAttemptReceipt};
-use crate::store::setting_seed::AUDIT_RATE;
+use crate::skill_optimize::audit_rate::setting_keys::AUDIT_RATE;
 use crate::{Result, Vault};
+
+pub(crate) mod setting_keys;
 
 /// The rate one completed random audit argues for: every attempt, when it
 /// found a flaw the attempt did not disclose; the catalog floor, when it
@@ -21,9 +25,9 @@ use crate::{Result, Vault};
 #[must_use]
 pub(crate) fn audit_rate_target(hidden: bool) -> f64 {
     if hidden {
-        AUDIT_RATE.max
+        knob_bounds(&AUDIT_RATE).max
     } else {
-        AUDIT_RATE.min
+        knob_bounds(&AUDIT_RATE).min
     }
 }
 
@@ -55,10 +59,10 @@ pub(crate) fn audit_rate_check(
             })
     });
     Ok(Some(SettingCheck {
-        subject: global_setting_subject(AUDIT_RATE.key)?,
+        subject: global_setting_subject(AUDIT_RATE.spec.name)?,
         // Intentionally global: the honesty floor is the vault's (FIX 6038).
         project: None,
-        key: AUDIT_RATE.key.to_owned(),
+        key: AUDIT_RATE.spec.name.to_owned(),
         // The vault-wide fit, whichever tree version the work was typed in.
         type_ref: TypeRef::root(0),
         observed: audit_rate_target(hidden),
