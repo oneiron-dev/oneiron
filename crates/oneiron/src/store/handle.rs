@@ -449,6 +449,14 @@ pub struct StoreCore {
     /// lock because the two critical sections never nest.
     #[cfg(feature = "sync")]
     pub(crate) staged_import_confirm_lock: Mutex<()>,
+    /// Held while an install reads its owner signing slot for this vault,
+    /// checks the slot's key against the roster and gives a revoked key's slot
+    /// a fresh seed. Two callers never act on one reading: a later delete
+    /// would take a fresh key that a vouch had made live in between. It was a
+    /// process-wide lock; the slot belongs to this vault, and a process holds
+    /// one store per vault path, so the vault's own lock keeps every caller
+    /// of the process that reaches the slot in one line.
+    pub(crate) owner_signing_slot_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.

@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use oneiron_base::msgpack_shape::{ShapeBudget, over_budget};
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use oneiron_store::diagnostic_record::untrusted_text::is_forbidden_text_scalar;
 use rmpv::Value;
 
@@ -43,8 +44,6 @@ use crate::{EntityId, Vault};
 use super::owner_key_enrollment_door::{KEY_ON_ROSTER, OWNER_ONLY, not_valid};
 use super::*;
 
-/// The context the request's digest is derived under.
-const VOUCH_REQUEST_DIGEST_CONTEXT: &str = "oneiron/owner-key-vouch-request/v1";
 /// The domain the holding machine's install key signs a request under
 /// ([`OwnerKeyVouchRequest::machine_transcript`]).
 const VOUCH_MACHINE_PROOF_DOMAIN: &[u8] = b"oneiron/owner-key-vouch-machine/v1";
@@ -292,17 +291,17 @@ impl OwnerKeyVouchRequest {
         Self::from_bytes(&bytes)
     }
 
-    /// The request's digest: BLAKE3 derived under its own context over
-    /// [`Self::to_bytes`], the same on every device. An ask names the act by
-    /// it, so a changed request is another ask.
+    /// The request's digest: its fingerprint under
+    /// [`purposes::authority::OWNER_KEY_VOUCH_REQUEST`], one part, the bytes
+    /// of [`Self::to_bytes`], the same on every device. An ask names the act
+    /// by it, so a changed request is another ask.
     ///
     /// # Errors
     /// The encoder's own refusal.
     pub fn digest(&self) -> Result<[u8; 32]> {
-        Ok(blake3::derive_key(
-            VOUCH_REQUEST_DIGEST_CONTEXT,
-            &self.to_bytes()?,
-        ))
+        let bytes = self.to_bytes()?;
+        let digest = Fingerprint::of_parts(purposes::authority::OWNER_KEY_VOUCH_REQUEST, &[&bytes]);
+        Ok(digest.into_bytes())
     }
 }
 

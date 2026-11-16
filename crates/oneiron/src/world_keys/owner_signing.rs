@@ -22,7 +22,7 @@
 //! has no owner signing key either (FIX 843, Engine 21:35): the explicit home
 //! for a host-held key is the platform backend, never a file beside the vault.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, PoisonError};
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
@@ -120,12 +120,6 @@ enum DeviceOwnerKey {
     },
 }
 
-/// Held while an install reads its owner signing slot, checks the slot's key
-/// against the roster and gives a revoked key's slot a fresh seed. Two
-/// callers never act on one reading: a later delete would take a fresh key
-/// that a vouch had made live in between.
-static OWNER_SIGNING_SLOT: Mutex<()> = Mutex::new(());
-
 /// The owner signing key whose seed `slot` holds: the one place an install
 /// makes that seed, from the OS CSPRNG on first use.
 fn slot_owner_signer(
@@ -150,7 +144,9 @@ impl Vault {
     pub fn device_owner_signing_key(&self) -> Result<OwnerRootSigner> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
-        let _slot_lock = OWNER_SIGNING_SLOT
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         slot_owner_signer(keystore.as_ref(), &self.owner_signing_slot(machine))
@@ -268,14 +264,16 @@ impl Vault {
     /// with its enrollment's receipt, or not enrolled yet with its challenge.
     /// A key the roster revoked is never enrolled again: a fresh seed takes
     /// its slot. The caller is checked first, before this install readies
-    /// anything, and the slot is read, checked and renewed under
-    /// [`OWNER_SIGNING_SLOT`].
+    /// anything, and the slot is read, checked and renewed under this
+    /// vault's `owner_signing_slot_lock`.
     fn device_owner_key_for_enrollment(&self, authority: &ActAuthority) -> Result<DeviceOwnerKey> {
         self.owner_key_act_owner(authority)?;
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
-        let _slot_lock = OWNER_SIGNING_SLOT
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let mut signer = slot_owner_signer(keystore.as_ref(), &slot)?;
