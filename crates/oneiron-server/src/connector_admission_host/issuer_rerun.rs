@@ -22,7 +22,7 @@ use oneiron::connector_key::{
     ELICITATION_ROW_KEY,
 };
 
-use super::{HttpQualificationConnector, client, discover, with_credential};
+use super::{HttpQualificationConnector, OwnerScreenChoices, client, discover, with_credential};
 use crate::config::connectors::normalize_name;
 use crate::server::SyncServer;
 
@@ -127,21 +127,32 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
             return Some(Rerun::failed(Stage::Qualification));
         }
     };
+    // The owner's "install it anyway" the routing slate holds: a slate that
+    // cannot be read holds none, so an accepted tool fails the re-run.
+    let slate = catalog
+        .slate_ref
+        .and_then(|id| vault.connector_slate(id).ok().flatten());
+    let choices = OwnerScreenChoices {
+        held: slate
+            .as_ref()
+            .map(|slate| &slate.slate_manifest().owner_accepted),
+        ..OwnerScreenChoices::default()
+    };
     let ran = with_credential(vault, catalog.secret_ref.as_deref(), name, |auth| {
         let client = client().map_err(|_| Stage::Discovery)?;
         let mut discovery =
             discover(&client, &endpoint, auth, Some(&revision)).map_err(|_| Stage::Discovery)?;
         // A listed tool the key never admitted and the pack install rules
         // keep out is left out of the re-run (FIX SCREENING-PER-TOOL-SKIP);
-        // an admitted tool that trips a rule still fails it, as before.
-        let screen = discovery
-            .screen(vault, name, &BTreeSet::new())
-            .map_err(|_| Stage::Screening)?;
-        if screen.refused.is_some()
-            || screen
-                .skipped
-                .iter()
-                .any(|skip| admitted(&catalog, &skip.tool))
+        // an admitted tool that trips a rule still fails it, as before,
+        // unless the owner's acceptance on the slate still covers it.
+        let Ok(Ok(screen)) = discovery.screen(vault, name, &choices) else {
+            return Err(Stage::Screening);
+        };
+        if screen
+            .skipped
+            .iter()
+            .any(|skip| admitted(&catalog, &skip.tool))
         {
             return Err(Stage::Screening);
         }

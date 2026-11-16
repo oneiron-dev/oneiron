@@ -1,4 +1,5 @@
 //! Bounded, source-bound install rules for connector tool manifests.
+use super::screen_rules::{OwnerAcceptedScreen, ScreenRule, listed_tool_digest};
 use super::tool_schema::{ResolvedToolSchema, TextRole};
 use super::{PackKind, PackObservedTool, PackSource, invalid};
 use crate::gate::{
@@ -249,9 +250,17 @@ impl Vault {
 pub struct SkippedConnectorTool {
     /// The tool's listed name.
     pub tool: String,
-    /// The rule it tripped and where, e.g.
-    /// `properties.limit.description: parameter-description injection`.
+    /// The first rule it tripped and where, e.g.
+    /// `oneiron:tool-root#/properties/limit: parameter-description injection`.
     pub reason: String,
+    /// Every rule it trips, on its name, its description and its schema.
+    pub rules: BTreeSet<ScreenRule>,
+    /// [`listed_tool_digest`] of the tool as listed: what the owner's
+    /// "install it anyway" names (FIX SCREENING-PER-TOOL-SKIP, PR C).
+    pub digest: String,
+    /// The owner may install it anyway: it trips at least one rule and
+    /// the owner may lift every rule it trips.
+    pub owner_may_install: bool,
 }
 
 /// The pack install rules' verdict on a connector's listed tools, tool by
@@ -265,12 +274,46 @@ pub struct ConnectorToolScreen {
     /// whose schema does not resolve, in listed order. Every other listed
     /// tool passes.
     pub skipped: Vec<SkippedConnectorTool>,
+    /// The tools that trip a rule but pass on the owner's "install it
+    /// anyway", by name, with the acceptance their slate manifest holds
+    /// (FIX SCREENING-PER-TOOL-SKIP, PR C).
+    pub accepted: BTreeMap<String, OwnerAcceptedScreen>,
 }
 impl ConnectorToolScreen {
     /// The listed tool `name` passes: nothing refused the listing and the
     /// tool is not skipped.
     pub fn admits(&self, name: &str) -> bool {
         self.refused.is_none() && !self.skipped.iter().any(|skip| skip.tool == name)
+    }
+    /// Admits the skipped tool `tool` on the owner's "install it anyway",
+    /// given as the digest he saw. Refused when it changed since he saw it,
+    /// or when it trips a rule the owner may not lift
+    /// ([`super::SCREEN_RULES`]). A tool the screen does not keep out needs
+    /// no acceptance and is left as it is.
+    pub fn accept_owner(&mut self, tool: &str, seen_digest: &str) -> Result<(), String> {
+        let Some(at) = self.skipped.iter().position(|skip| skip.tool == tool) else {
+            return Ok(());
+        };
+        let accepted = OwnerAcceptedScreen::accept(&self.skipped[at], seen_digest)?;
+        self.skipped.remove(at);
+        self.accepted.insert(tool.to_owned(), accepted);
+        Ok(())
+    }
+    /// Admits each skipped tool that an acceptance the owner already
+    /// stamped (`held`, by tool name) still covers. A tool whose name,
+    /// description or schema changed, or which now trips another rule,
+    /// stays skipped.
+    pub fn keep_owner_accepted(&mut self, held: &BTreeMap<String, OwnerAcceptedScreen>) {
+        let mut kept = Vec::with_capacity(self.skipped.len());
+        for skip in std::mem::take(&mut self.skipped) {
+            match held.get(&skip.tool) {
+                Some(accepted) if accepted.covers(&skip) => {
+                    self.accepted.insert(skip.tool, accepted.clone());
+                }
+                _ => kept.push(skip),
+            }
+        }
+        self.skipped = kept;
     }
 }
 
@@ -312,7 +355,7 @@ impl Vault {
         let Some(rules) = self.connector_screen_rules(holder)? else {
             return Ok(ConnectorToolScreen {
                 refused: Some(POLICY_UNAVAILABLE.into()),
-                skipped: Vec::new(),
+                ..ConnectorToolScreen::default()
             });
         };
         let mut seen = BTreeSet::new();
@@ -321,19 +364,25 @@ impl Vault {
             if !seen.insert(&tool.name) {
                 return Ok(ConnectorToolScreen {
                     refused: Some(format!("duplicate listed tool: {}", tool.name)),
-                    skipped: Vec::new(),
+                    ..ConnectorToolScreen::default()
                 });
             }
             if let Some(reason) = screen_listed_tool(tool, &rules) {
+                let tripped = listed_tool_rules(tool, &rules);
                 skipped.push(SkippedConnectorTool {
                     tool: tool.name.clone(),
                     reason,
+                    owner_may_install: !tripped.is_empty()
+                        && tripped.iter().all(|rule| rule.owner_may_lift()),
+                    rules: tripped,
+                    digest: listed_tool_digest(tool),
                 });
             }
         }
         Ok(ConnectorToolScreen {
             refused: None,
             skipped,
+            accepted: BTreeMap::new(),
         })
     }
 
@@ -366,6 +415,33 @@ fn screen_listed_tool(
         .or_else(|| screen_resolved_schema(&resolved, rules))
 }
 
+/// Every rule one listed tool trips, on its name, its description and each
+/// text of its resolved input schema: the same rules
+/// [`screen_listed_tool`] stops at the first of.
+fn listed_tool_rules(
+    tool: &PackObservedTool,
+    rules: &EffectivePackInstallPolicy,
+) -> BTreeSet<ScreenRule> {
+    let mut tripped: BTreeSet<ScreenRule> = decoded_rules(&tool.name, rules).into_iter().collect();
+    tripped.extend(decoded_rules(&tool.description, rules));
+    match ResolvedToolSchema::parse(&tool.input_schema).and_then(|schema| schema.text()) {
+        Ok(fields) => {
+            for field in fields {
+                tripped.extend(decoded_rules(&field.text, rules));
+                if field.role == TextRole::ParameterDescription
+                    && screen_parameter(&field.text, rules).is_some()
+                {
+                    tripped.insert(ScreenRule::ParameterInjection);
+                }
+            }
+        }
+        Err(_) => {
+            tripped.insert(ScreenRule::UnresolvedSchema);
+        }
+    }
+    tripped
+}
+
 fn screen_resolved_schema(
     schema: &ResolvedToolSchema,
     rules: &EffectivePackInstallPolicy,
@@ -387,11 +463,21 @@ fn screen_resolved_schema(
     None
 }
 fn decoded_rule(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
+    decoded_rules(text, rules).first().map(|rule| rule.reason())
+}
+/// Every rule `text` trips: the secret shape, then [`text_rules`], then the
+/// known-bad patterns, the order [`decoded_rule`] answers the first of.
+fn decoded_rules(text: &str, rules: &EffectivePackInstallPolicy) -> Vec<ScreenRule> {
     let normalized = ComposingNormalizer::new_nfkc().normalize(text);
+    let mut tripped = Vec::new();
     if crate::batch::secret_scan::scan_file_content("", normalized.as_bytes()).is_some() {
-        return Some("secret-shaped string");
+        tripped.push(ScreenRule::SecretShapedString);
     }
-    screen_text(text, rules).or_else(|| known_bad(text, rules))
+    tripped.extend(text_rules(text, rules));
+    if known_bad(text, rules).is_some() {
+        tripped.push(ScreenRule::KnownBadPattern);
+    }
+    tripped
 }
 fn known_bad(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
     let lower = ComposingNormalizer::new_nfkc()
@@ -414,22 +500,29 @@ fn screen_parameter(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'
         .then_some("parameter-description injection")
 }
 fn screen_text(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
-    if text.len() > 16384 {
-        return Some("manifest text bound exceeded");
+    text_rules(text, rules).first().map(|rule| rule.reason())
+}
+/// The size bound of one screened text, in bytes.
+const TEXT_MAX_BYTES: usize = 16384;
+/// Every size, deception and hidden-instruction rule `text` trips, in the
+/// order [`screen_text`] answers the first of.
+fn text_rules(text: &str, rules: &EffectivePackInstallPolicy) -> Vec<ScreenRule> {
+    let mut tripped = Vec::new();
+    if text.len() > TEXT_MAX_BYTES {
+        tripped.push(ScreenRule::TextBound);
     }
     if text.chars().any(|c| matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}')) {
-        return Some("zero-width or RTL deception");
+        tripped.push(ScreenRule::InvisibleText);
     }
     // Mixed Latin/Cyrillic or Latin/Greek text admits the whole confusable
     // repertoire, not a manually maintained set of code points.
-    for word in text.split(|c: char| !c.is_alphabetic()) {
-        if word.chars().any(|c| c.script() == Script::Latin)
+    if text.split(|c: char| !c.is_alphabetic()).any(|word| {
+        word.chars().any(|c| c.script() == Script::Latin)
             && word
                 .chars()
                 .any(|c| matches!(c.script(), Script::Cyrillic | Script::Greek))
-        {
-            return Some("mixed-script homoglyph deception");
-        }
+    }) {
+        tripped.push(ScreenRule::MixedScriptHomoglyph);
     }
     let normalized = ComposingNormalizer::new_nfkc().normalize(text);
     if text.chars().any(|c| {
@@ -439,12 +532,15 @@ fn screen_text(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'stati
                 .chars()
                 .any(|normalized| normalized.is_ascii_alphabetic())
     }) {
-        return Some("compatibility homoglyph deception");
+        tripped.push(ScreenRule::CompatibilityHomoglyph);
     }
     let lower = normalized.to_lowercase();
-    rules
+    if rules
         .hidden_instructions
         .iter()
         .any(|pattern| lower.contains(&pattern.to_lowercase()))
-        .then_some("hidden instructions")
+    {
+        tripped.push(ScreenRule::HiddenInstructions);
+    }
+    tripped
 }

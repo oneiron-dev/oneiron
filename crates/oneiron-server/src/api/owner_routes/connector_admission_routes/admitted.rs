@@ -63,8 +63,15 @@ fn refresh_connector(
             "the connector lists no tool {unknown}"
         )));
     }
-    let screen = screened(vault, &name, &mut discovery, &request.tools)?;
     let (slate_id, slate) = slate_of(vault, &catalog.record)?;
+    // The acceptances the slate holds carry while their tools are
+    // unchanged; a changed one is kept out and dropped.
+    let choices = host::OwnerScreenChoices {
+        held: Some(&slate.slate_manifest().owner_accepted),
+        install_anyway: Some(&request.install_anyway),
+        ..host::OwnerScreenChoices::default()
+    };
+    let screen = screened(vault, &name, &mut discovery, &request.tools, &choices)?;
     let mut classes: BTreeMap<String, ToolClass> = slate
         .manifest()
         .iter()
@@ -81,8 +88,12 @@ fn refresh_connector(
         .collect();
     classes.extend(request.tools);
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
-    let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
-    if discovery.revision == pinned && same_manifest(&listed, &slate) {
+    let listed = host::slate_manifest(&resolved, &discovery.tools, &classes)
+        .with_owner_accepted(&screen.accepted);
+    if discovery.revision == pinned
+        && same_manifest(&listed, &slate)
+        && listed.owner_accepted == slate.slate_manifest().owner_accepted
+    {
         // An unchanged refresh drops a staged expansion: the key keeps
         // routing on this slate, and qualify/attest must not target an
         // obsolete one.
@@ -99,6 +110,7 @@ fn refresh_connector(
             carried: Vec::new(),
             dropped: Vec::new(),
             skipped: screen.skipped,
+            accepted: screen.accepted,
         });
     }
     let delta = with_slate_drafter(server, owner, |drafter| {
@@ -125,6 +137,7 @@ fn refresh_connector(
         carried: delta.carried.into_iter().collect(),
         dropped: delta.dropped.into_iter().collect(),
         skipped: screen.skipped,
+        accepted: screen.accepted,
     })
 }
 

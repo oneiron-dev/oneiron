@@ -27,7 +27,9 @@ use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
-use oneiron::skill_hub::pack_catalog::{ConnectorToolScreen, PackObservedTool};
+use oneiron::skill_hub::pack_catalog::{
+    ConnectorToolScreen, OwnerAcceptedScreen, PackObservedTool,
+};
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
@@ -267,41 +269,62 @@ pub(crate) struct Discovery {
     pub(crate) tools: Vec<ListedTool>,
 }
 
+/// The owner's choices a screen of the live listing honours (FIX
+/// SCREENING-PER-TOOL-SKIP).
+#[derive(Default)]
+pub(crate) struct OwnerScreenChoices<'a> {
+    /// Tools the owner already admitted on the slate in force: judged where
+    /// they are used, as before, never kept out here.
+    pub(crate) admitted: BTreeSet<&'a str>,
+    /// The owner's "install it anyway" the slate in force holds, by tool
+    /// (PR C): a tool it still covers passes.
+    pub(crate) held: Option<&'a BTreeMap<String, OwnerAcceptedScreen>>,
+    /// The owner's new "install it anyway" in this request, by tool: the
+    /// digest he saw in a `skipped` answer (PR C).
+    pub(crate) install_anyway: Option<&'a BTreeMap<String, String>>,
+}
+
 impl Discovery {
     /// Screens the listed tools with the pack install rules held for
-    /// `connector` and keeps out each tool that trips one, unless `admitted`
-    /// names it (FIX SCREENING-PER-TOOL-SKIP). A tool the owner already
-    /// admitted is judged where it is used, as before; a tool kept out never
-    /// enters a slate or a manifest, so it stays uncallable. The answer's
-    /// `skipped` names exactly the tools kept out. When its `refused` (a
-    /// fault of the whole listing) is set, no tool is kept out and the
-    /// caller decides.
+    /// `connector` and keeps out each tool that trips one (FIX
+    /// SCREENING-PER-TOOL-SKIP), except a tool `choices` admitted or
+    /// accepted. A tool kept out never enters a slate or a manifest, so it
+    /// stays uncallable. The answer's `skipped` names exactly the tools kept
+    /// out and its `accepted` the tools that pass on an owner acceptance.
+    /// `Err` is a refusal that keeps every tool listed: a fault of the whole
+    /// listing (its `refused`), or a new acceptance the screen refuses (the
+    /// tool changed since the owner saw it, or trips a rule he may not
+    /// lift).
     pub(crate) fn screen(
         &mut self,
         vault: &Vault,
         connector: &str,
-        admitted: &BTreeSet<&str>,
-    ) -> oneiron::Result<ConnectorToolScreen> {
+        choices: &OwnerScreenChoices<'_>,
+    ) -> oneiron::Result<Result<ConnectorToolScreen, String>> {
         let screened: Vec<_> = self.tools.iter().map(ListedTool::screened).collect();
         let mut screen = vault.screen_connector_tools_each(&screened, connector)?;
-        if screen.refused.is_some() {
-            return Ok(screen);
+        if let Some(reason) = screen.refused.take() {
+            return Ok(Err(reason));
         }
         screen
             .skipped
-            .retain(|skip| !admitted.contains(skip.tool.as_str()));
+            .retain(|skip| !choices.admitted.contains(skip.tool.as_str()));
+        if let Some(held) = choices.held {
+            screen.keep_owner_accepted(held);
+        }
+        for (tool, seen) in choices.install_anyway.into_iter().flatten() {
+            if let Err(reason) = screen.accept_owner(tool, seen) {
+                return Ok(Err(reason));
+            }
+        }
         self.tools.retain(|tool| screen.admits(&tool.name));
-        Ok(screen)
+        Ok(Ok(screen))
     }
 }
 
-/// The refusal of a screened listing that keeps no tool: a fault of the
-/// whole listing, or every listed tool kept out. `None` when a tool passes
-/// or the connector lists none.
+/// The refusal of a screened listing that keeps no tool: every listed tool
+/// kept out. `None` when a tool passes or the connector lists none.
 pub(crate) fn screen_refusal(screen: &ConnectorToolScreen, kept: usize) -> Option<String> {
-    if let Some(reason) = &screen.refused {
-        return Some(reason.clone());
-    }
     (kept == 0 && !screen.skipped.is_empty()).then(|| {
         screen
             .skipped
