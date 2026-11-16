@@ -140,6 +140,21 @@ pub(super) struct OwnerWorkState {
         PersistentMap<([u8; 32], CustodyPermitPieces), permit_pieces::JoinedPermitSet>,
 }
 
+#[cfg(oneiron_test_support)]
+impl OwnerWorkState {
+    /// The admitted requests this state holds, for the fold memory
+    /// measurement.
+    pub(in crate::authority) fn request_count(&self) -> usize {
+        self.requests.len()
+    }
+
+    /// The answered requests' results this state holds, for the fold memory
+    /// measurement.
+    pub(in crate::authority) fn result_count(&self) -> usize {
+        self.results.len()
+    }
+}
+
 /// One admitted request as this install reads it. The body is the fold
 /// state's shared `Arc`, not a copy (FIX 12013).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

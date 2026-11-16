@@ -257,6 +257,24 @@ impl AncestorIndex {
     }
 }
 
+#[cfg(oneiron_test_support)]
+impl AncestorIndex {
+    /// Every row and every claimed parent the log lacks, for the fold
+    /// memory measurement.
+    pub(in crate::authority) fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// The runs of every node's ancestry summed (`None` counts 0), for the
+    /// fold memory measurement.
+    pub(in crate::authority) fn run_count(&self) -> u64 {
+        self.runs
+            .iter()
+            .map(|runs| runs.as_deref().map_or(0, |runs| runs.len() as u64))
+            .sum()
+    }
+}
+
 /// The marked nodes of an [`AncestorIndex`] ([`AncestorIndex::marks`]).
 pub(in crate::authority) struct AncestorMarks<'a> {
     index: &'a AncestorIndex,
