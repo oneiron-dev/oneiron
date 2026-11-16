@@ -328,7 +328,7 @@ fn judge_media(
 /// one render for exactly that target from the synthetic reference. The audio
 /// must be the target's mono PCM16, and not empty.
 async fn vox_answer(voice: &VoiceSocketDialer) -> Result<Answered, WorkerReadiness> {
-    let (mut socket, warm) = voice.open().await.map_err(probe_error)?;
+    let (mut socket, warm) = voice.open(None).await.map_err(probe_error)?;
     let result = async {
         let target = json!({
             "voice_id": PROBE_VOICE,

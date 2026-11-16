@@ -44,7 +44,7 @@ use oneiron::{
     RetryableLlmError, Vault,
 };
 use oneiron_speech::tts::voxcpm2::{joined_wav_header, text_pieces};
-use serde_json::{Value as JsonValue, json};
+use serde_json::json;
 
 use super::media::{AdmittedReference, VoiceReferenceUploadGuard};
 
@@ -156,12 +156,18 @@ impl VoxCpm2Speech {
         if let Some((release, _)) = dispatch {
             release()?;
         }
-        let (mut socket, warm): (socket::VoiceSocket, WarmTarget) = self.voice.open().await?;
+        // The vault's policy for the voice's holder bounds what the socket
+        // reads; narrowed to the worker's ceiling, it is what the renders send
+        // as their effective limits.
+        let holder = EntityId::from_hex(&owner).ok();
+        let vault = self.voice_refs.vault();
+        let header_bound = vault
+            .as_deref()
+            .and_then(|vault| vault.voice_serving_limits(holder).ok())
+            .map(|limits| limits.max_header_bytes);
+        let (mut socket, warm): (socket::VoiceSocket, WarmTarget) =
+            self.voice.open(header_bound).await?;
         let result = async {
-            // The vault's policy for the voice's holder, narrowed to the worker's
-            // ceiling: what the renders send as their effective limits.
-            let holder = EntityId::from_hex(&owner).ok();
-            let vault = self.voice_refs.vault();
             let limits = effective_limits(vault.as_deref(), holder, &warm.limits);
             let target = json!({
                 "voice_id": voice_id,
@@ -191,7 +197,7 @@ impl VoxCpm2Speech {
             let mut spoken = 0u64;
             let mut started = false;
             for piece in pieces {
-                let rendered = async {
+                let rendered: LlmResult<VoxCpm2PcmBody> = async {
                     if !admits() {
                         return Err(FatalLlmError::InvalidRequest.into());
                     }
@@ -199,20 +205,29 @@ impl VoxCpm2Speech {
                         release()?;
                         lease.begin_physical_attempt();
                     }
-                    let body = self
-                        .render(
-                            &mut socket,
-                            &target,
-                            warm.sample_rate,
-                            piece,
-                            &transcript,
-                            &audio,
-                            limits.max_header_bytes,
-                            !started,
-                        )
-                        .await?;
-                    started = true;
-                    Ok::<_, LlmError>(body)
+                    if !started {
+                        // The generation's `start` (and the clip) goes with
+                        // the first render only. Its exchange waits on the
+                        // worker, so the bank and the release are read again
+                        // before the text goes.
+                        socket
+                            .start(
+                                &target,
+                                warm.sample_rate,
+                                &transcript,
+                                &audio,
+                                limits.max_header_bytes,
+                            )
+                            .await?;
+                        started = true;
+                        if !admits() {
+                            return Err(FatalLlmError::InvalidRequest.into());
+                        }
+                        if let Some((release, _)) = dispatch {
+                            release()?;
+                        }
+                    }
+                    self.render(&mut socket, piece).await
                 }
                 .await;
                 let error = match rendered {
@@ -260,31 +275,18 @@ impl VoxCpm2Speech {
         result
     }
 
-    /// One render of `text`, within the effective per-render bounds, from the
-    /// whole reference clip and its `transcript`: the mono PCM16 the worker
-    /// answers for `target`, spooled as it arrives. The generation's `start`
-    /// goes with the first render only.
+    /// One render of `text` in the generation `start` began: the mono PCM16
+    /// the worker answers, spooled as it arrives.
     async fn render(
         &self,
         socket: &mut socket::VoiceSocket,
-        target: &JsonValue,
-        sample_rate: u32,
         text: &str,
-        transcript: &str,
-        audio: &[u8],
-        max_header_bytes: u64,
-        send_start: bool,
     ) -> LlmResult<VoxCpm2PcmBody> {
         // Bound whenever `admits` let the clip go: the runtime's own vault.
         let vault = self
             .voice_refs
             .vault()
             .ok_or(FatalLlmError::InvalidRequest)?;
-        if send_start {
-            socket
-                .start(target, sample_rate, transcript, audio, max_header_bytes)
-                .await?;
-        }
         let mut spool = PcmSpool::new(&vault).map_err(spool_failed)?;
         socket
             .render(text, &mut |chunk| spool.write(chunk).map_err(spool_failed))

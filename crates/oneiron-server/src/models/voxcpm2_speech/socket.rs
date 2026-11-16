@@ -4,8 +4,12 @@
 //! and the timeouts; the socket sends `start` once, then one `text` frame per
 //! render, and reads each render's `audio` frames until its `usage`. Frames
 //! of another generation, and every `done`, are skipped; an `error` for the
-//! call's generation fails it. This module is the host's I/O only: the frame
-//! shapes and checks are `oneiron_speech`'s and core's pure codec.
+//! call's generation fails it. A message past the larger of the vault's
+//! metadata ceiling and the audio frame bound is refused as it arrives, as
+//! core's own client refuses it; from `start` on, a text frame past the
+//! call's effective `max_header_bytes` is refused too. This module is the
+//! host's I/O only: the frame shapes and checks are `oneiron_speech`'s and
+//! core's pure codec.
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -23,6 +27,7 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -65,7 +70,13 @@ impl VoiceSocketDialer {
     }
 
     /// One socket to the worker, and the warm target its `ready` names.
-    pub(in crate::models) async fn open(&self) -> LlmResult<(VoiceSocket, WarmTarget)> {
+    /// `max_header_bytes` is the vault's metadata ceiling for the call, when
+    /// a vault binds it: no message past the larger of it and the audio
+    /// frame bound is read (core's own client's bound).
+    pub(in crate::models) async fn open(
+        &self,
+        max_header_bytes: Option<u64>,
+    ) -> LlmResult<(VoiceSocket, WarmTarget)> {
         let mut request = self
             .url
             .as_str()
@@ -74,9 +85,14 @@ impl VoiceSocketDialer {
         request
             .headers_mut()
             .insert(AUTHORIZATION, self.bearer.clone());
+        let bound = max_header_bytes.map_or(AUDIO_FRAME_MAX_BYTES, |bytes| {
+            usize::try_from(bytes)
+                .unwrap_or(usize::MAX)
+                .max(AUDIO_FRAME_MAX_BYTES)
+        });
         let config = WebSocketConfig::default()
-            .max_message_size(Some(AUDIO_FRAME_MAX_BYTES))
-            .max_frame_size(Some(AUDIO_FRAME_MAX_BYTES));
+            .max_message_size(Some(bound))
+            .max_frame_size(Some(bound));
         let (socket, _) = tokio::time::timeout(
             self.connect_timeout,
             tokio_tungstenite::connect_async_with_config(request, Some(config), false),
@@ -87,6 +103,7 @@ impl VoiceSocketDialer {
         let mut socket = VoiceSocket {
             socket,
             exchange_timeout: self.exchange_timeout,
+            header_bound: None,
         };
         let warm = tokio::time::timeout(self.exchange_timeout, socket.read_ready())
             .await
@@ -120,26 +137,45 @@ fn connect_error(error: WsError) -> LlmError {
     oneiron_llm::openai_compat::classify_openai_status(status, &headers, &body)
 }
 
-/// A socket failure past the upgrade: a frame the bounds refused is the
-/// peer's protocol error; any other failure never named one.
+/// A socket failure past the upgrade. A frame the bounds refused, one the
+/// protocol forbids, or text that is not UTF-8 is the peer's malformed
+/// reply. A connection reset without the closing handshake, a send after
+/// the peer closed, and any other failure are a cut stream that never named
+/// one.
 fn socket_error(error: WsError) -> LlmError {
     match error {
-        WsError::Capacity(_) => FatalLlmError::EmptyResponse.into(),
+        WsError::Protocol(
+            ProtocolError::ResetWithoutClosingHandshake | ProtocolError::SendAfterClosing,
+        ) => RetryableLlmError::ServerError.into(),
+        WsError::Capacity(_) | WsError::Protocol(_) | WsError::Utf8 => {
+            FatalLlmError::EmptyResponse.into()
+        }
         _ => RetryableLlmError::ServerError.into(),
     }
 }
 
-/// One open voice socket and how long each of its exchanges may take.
+/// One open voice socket, how long each of its exchanges may take, and,
+/// from `start` on, the call's effective metadata ceiling.
 pub(in crate::models) struct VoiceSocket {
     socket: Socket,
     exchange_timeout: Duration,
+    header_bound: Option<u64>,
 }
 
 impl VoiceSocket {
     /// The socket's next message: a close stays a message for its caller to
-    /// read as a cut stream; the stream ending is one already.
+    /// read as a cut stream; the stream ending is one already. A text frame
+    /// past the call's metadata ceiling is malformed, as a reply header past
+    /// it was.
     async fn next_message(&mut self) -> LlmResult<Message> {
         match self.socket.next().await {
+            Some(Ok(Message::Text(text)))
+                if self
+                    .header_bound
+                    .is_some_and(|bound| text.len() as u64 > bound) =>
+            {
+                Err(FatalLlmError::EmptyResponse.into())
+            }
             Some(Ok(message)) => Ok(message),
             Some(Err(error)) => Err(socket_error(error)),
             None => Err(RetryableLlmError::ServerError.into()),
@@ -193,7 +229,8 @@ impl VoiceSocket {
     }
 
     /// The generation's `start`, with the reference transcript and clip as
-    /// their own binary frames: the `started` meta it answers.
+    /// their own binary frames: the `started` meta it answers. Every text
+    /// frame from here on is held to `max_header_bytes`.
     pub(in crate::models) async fn start(
         &mut self,
         target: &JsonValue,
@@ -203,6 +240,7 @@ impl VoiceSocket {
         max_header_bytes: u64,
     ) -> LlmResult<JsonValue> {
         let start = start_frame(target, transcript, audio, max_header_bytes)?;
+        self.header_bound = Some(max_header_bytes);
         let exchange = self.exchange_timeout;
         tokio::time::timeout(exchange, self.start_inner(start, transcript, audio))
             .await
@@ -339,6 +377,7 @@ impl VoiceSocket {
         let Self {
             mut socket,
             exchange_timeout,
+            ..
         } = self;
         let _ = tokio::time::timeout(exchange_timeout, async move {
             let end = VoiceClientFrame::End {

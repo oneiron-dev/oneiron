@@ -16,6 +16,7 @@ use oneiron::{
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::models::ModelRuntime;
 use serde_json::{Value, json};
+use tokio::io::AsyncWriteExt;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
@@ -32,6 +33,22 @@ type SeenFrames = Arc<Mutex<Vec<StubSeen>>>;
 type SentPcm = Arc<Mutex<Vec<Vec<u8>>>>;
 type HandshakeFailures = Arc<Mutex<Vec<String>>>;
 type ServerWs = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+/// What the stub worker does besides answering every frame.
+#[derive(Clone)]
+enum StubPlan {
+    /// Answers every frame.
+    Answer,
+    /// Withdraws the owner's consent when the first text arrives.
+    WithdrawAtFirstText(Arc<Vault>, EntityId),
+    /// Withdraws the owner's consent before it answers `start`.
+    WithdrawAtStart(Arc<Vault>, EntityId),
+    /// Answers `start` with a frame whose reserved bit is set.
+    ReservedBitAtStart,
+    /// Answers `start` with a `started` past the call's metadata ceiling
+    /// (the stub's `max_header_bytes`, 32768), under the audio frame bound.
+    OversizedStarted,
+}
 
 #[derive(Debug, Clone)]
 enum StubSeen {
@@ -186,7 +203,28 @@ async fn read_binary(ws: &mut ServerWs) -> Option<Vec<u8>> {
     }
 }
 
-async fn handle_start(ws: &mut ServerWs, frame: &Value, seen: &SeenFrames) -> bool {
+fn withdraw_consent(vault: &Vault, owner: EntityId) {
+    let _ = vault.record_voice_render_consent(&VoiceRenderDecision {
+        event_id: "owner-withdrawn".into(),
+        voice_id: VOICE_ID.into(),
+        subject: owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: owner,
+        occurred_at: 2,
+        reach: ModelLocality::OwnServer,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
+            notice: "render".into(),
+        }),
+        state: VoiceConsentState::Withdrawn,
+    });
+}
+
+async fn handle_start(
+    ws: &mut ServerWs,
+    frame: &Value,
+    seen: &SeenFrames,
+    plan: &StubPlan,
+) -> bool {
     let generation = frame.get("generation").and_then(Value::as_u64).unwrap_or(0);
     let target = frame.get("target").cloned().unwrap_or(Value::Null);
     let Some(transcript) = read_binary(ws).await else {
@@ -203,15 +241,28 @@ async fn handle_start(ws: &mut ServerWs, frame: &Value, seen: &SeenFrames) -> bo
             reference,
         });
     }
-    let started = json!({
+    match plan {
+        StubPlan::WithdrawAtStart(vault, owner) => withdraw_consent(vault, *owner),
+        StubPlan::ReservedBitAtStart => {
+            // FIN, RSV1 and the text opcode, an empty payload, unmasked: no
+            // extension was negotiated, so the reserved bit is a protocol
+            // error at the client.
+            let raw = ws.get_mut();
+            return raw.write_all(&[0xC1, 0x00]).await.is_ok() && raw.flush().await.is_ok();
+        }
+        _ => {}
+    }
+    let mut started = json!({
         "type": "started",
         "generation": generation,
         "target": target,
         "sample_rate": SAMPLE_RATE,
         "channels": 1
-    })
-    .to_string();
-    ws.send(Message::text(started)).await.is_ok()
+    });
+    if matches!(plan, StubPlan::OversizedStarted) {
+        started["pad"] = Value::String("x".repeat(40_000));
+    }
+    ws.send(Message::text(started.to_string())).await.is_ok()
 }
 
 async fn handle_text(
@@ -220,7 +271,7 @@ async fn handle_text(
     seen: &SeenFrames,
     sent: &SentPcm,
     text_index: usize,
-    withdraw: &Option<(Arc<Vault>, EntityId)>,
+    plan: &StubPlan,
 ) -> bool {
     let generation = frame.get("generation").and_then(Value::as_u64).unwrap_or(0);
     let text_body = frame
@@ -235,20 +286,8 @@ async fn handle_text(
         });
     }
     if text_index == 0 {
-        if let Some((vault, owner)) = withdraw.as_ref() {
-            let _ = vault.record_voice_render_consent(&VoiceRenderDecision {
-                event_id: "owner-withdrawn".into(),
-                voice_id: VOICE_ID.into(),
-                subject: *owner,
-                subject_kind: VoiceRefSubjectKind::Person,
-                recorded_by: *owner,
-                occurred_at: 2,
-                reach: ModelLocality::OwnServer,
-                basis: Some(VoiceConsentBasis::ConversationalNotice {
-                    notice: "render".into(),
-                }),
-                state: VoiceConsentState::Withdrawn,
-            });
+        if let StubPlan::WithdrawAtFirstText(vault, owner) = plan {
+            withdraw_consent(vault, *owner);
         }
     }
     let pcm_a = vec![text_index as u8, 0xAA];
@@ -310,7 +349,7 @@ async fn handle_one(
     ready: &str,
     seen: &SeenFrames,
     sent: &SentPcm,
-    withdraw: &Option<(Arc<Vault>, EntityId)>,
+    plan: &StubPlan,
 ) {
     if ws.send(Message::text(ready.to_owned())).await.is_err() {
         return;
@@ -330,11 +369,11 @@ async fn handle_one(
                 };
                 let kind = frame.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == "start" {
-                    if !handle_start(&mut ws, &frame, seen).await {
+                    if !handle_start(&mut ws, &frame, seen, plan).await {
                         break;
                     }
                 } else if kind == "text" {
-                    let ok = handle_text(&mut ws, &frame, seen, sent, text_index, withdraw).await;
+                    let ok = handle_text(&mut ws, &frame, seen, sent, text_index, plan).await;
                     text_index += 1;
                     if !ok {
                         break;
@@ -356,7 +395,7 @@ async fn handle_one(
 
 async fn start_stub(
     expected_bearer: String,
-    withdraw: Option<(Arc<Vault>, EntityId)>,
+    plan: StubPlan,
 ) -> (
     u16,
     Connections,
@@ -425,7 +464,7 @@ async fn start_stub(
                     continue;
                 }
             };
-            handle_one(ws, &ready, &seen_task, &sent_task, &withdraw).await;
+            handle_one(ws, &ready, &seen_task, &sent_task, &plan).await;
         }
     });
     (port, connections, seen, sent, failures, handle)
@@ -485,11 +524,11 @@ async fn the_speech_rung_renders_through_the_voice_socket() {
     let (_dir, vault, _owner) = banked_vault();
     let key_env = "VOXCPM2_OUR_VOICE_TEST_A";
     let bearer = "t".repeat(32);
-    let (port, connections, seen, sent, _failures, handle) = start_stub(bearer, None).await;
+    let (port, connections, seen, sent, _failures, handle) =
+        start_stub(bearer, StubPlan::Answer).await;
     let runtime = speech_runtime(port, key_env, Arc::clone(&vault));
     let request = speech_request(reference_voice(&vault));
     let result = runtime.media().run(request, None, None).await;
-    handle.abort();
     let response = result.expect("speech renders");
     assert_eq!(response.parts.len(), 1, "one audio part");
     let part = response.parts.into_iter().next().expect("one part");
@@ -511,7 +550,9 @@ async fn the_speech_rung_renders_through_the_voice_socket() {
     assert_eq!(conns[0].0, "/v1/voice");
     assert!(conns[0].1, "the right bearer");
     drop(conns);
+    // The stub reads `end` after the call returns: it runs until it has.
     wait_for_end(&seen).await;
+    handle.abort();
     let guard = seen.lock().expect("frames");
     assert!(!guard.is_empty(), "the stub saw frames");
     match &guard[0] {
@@ -571,8 +612,11 @@ async fn a_withdrawn_reference_stops_the_renders_still_to_come() {
     let (_dir, vault, owner) = banked_vault();
     let key_env = "VOXCPM2_OUR_VOICE_TEST_B";
     let bearer = "t".repeat(32);
-    let (port, _connections, seen, _sent, _failures, handle) =
-        start_stub(bearer, Some((Arc::clone(&vault), owner))).await;
+    let (port, _connections, seen, _sent, _failures, handle) = start_stub(
+        bearer,
+        StubPlan::WithdrawAtFirstText(Arc::clone(&vault), owner),
+    )
+    .await;
     let runtime = speech_runtime(port, key_env, Arc::clone(&vault));
     let request = speech_request(reference_voice(&vault));
     let result = runtime.media().run(request, None, None).await;
@@ -591,7 +635,8 @@ async fn a_wrong_bearer_is_refused_at_the_upgrade() {
     let (_dir, vault, _owner) = banked_vault();
     let key_env = "VOXCPM2_OUR_VOICE_TEST_C";
     let expected = "u".repeat(32);
-    let (port, _connections, seen, _sent, _failures, handle) = start_stub(expected, None).await;
+    let (port, _connections, seen, _sent, _failures, handle) =
+        start_stub(expected, StubPlan::Answer).await;
     let runtime = speech_runtime(port, key_env, Arc::clone(&vault));
     let request = speech_request(reference_voice(&vault));
     let result = runtime.media().run(request, None, None).await;
@@ -610,5 +655,86 @@ async fn a_wrong_bearer_is_refused_at_the_upgrade() {
             .iter()
             .any(|frame| matches!(frame, StubSeen::Start { .. })),
         "no start"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reference_withdrawn_during_the_start_exchange_sends_no_text() {
+    let (_dir, vault, owner) = banked_vault();
+    let key_env = "VOXCPM2_OUR_VOICE_TEST_D";
+    let bearer = "t".repeat(32);
+    let (port, _connections, seen, _sent, _failures, handle) =
+        start_stub(bearer, StubPlan::WithdrawAtStart(Arc::clone(&vault), owner)).await;
+    let runtime = speech_runtime(port, key_env, Arc::clone(&vault));
+    let request = speech_request(reference_voice(&vault));
+    let result = runtime.media().run(request, None, None).await;
+    handle.abort();
+    assert!(result.is_err(), "the withdrawn call errs");
+    let guard = seen.lock().expect("frames");
+    let starts = guard
+        .iter()
+        .filter(|frame| matches!(frame, StubSeen::Start { .. }))
+        .count();
+    let texts = guard
+        .iter()
+        .filter(|frame| matches!(frame, StubSeen::Text { .. }))
+        .count();
+    assert_eq!(starts, 1, "the start went before the withdrawal");
+    assert_eq!(texts, 0, "no text after the withdrawal");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_frame_the_protocol_forbids_is_a_malformed_reply() {
+    let (_dir, vault, _owner) = banked_vault();
+    let key_env = "VOXCPM2_OUR_VOICE_TEST_E";
+    let bearer = "t".repeat(32);
+    let (port, _connections, seen, _sent, _failures, handle) =
+        start_stub(bearer, StubPlan::ReservedBitAtStart).await;
+    let runtime = speech_runtime(port, key_env, Arc::clone(&vault));
+    let request = speech_request(reference_voice(&vault));
+    let result = runtime.media().run(request, None, None).await;
+    handle.abort();
+    let error = match result {
+        Ok(_) => panic!("a forbidden frame must err"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, LlmError::Fatal(FatalLlmError::EmptyResponse)),
+        "a reserved bit is a malformed reply, got {error:?}"
+    );
+    let guard = seen.lock().expect("frames");
+    assert!(
+        guard
+            .iter()
+            .any(|frame| matches!(frame, StubSeen::Start { .. })),
+        "the stub saw the start"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_started_past_the_metadata_ceiling_is_a_malformed_reply() {
+    let (_dir, vault, _owner) = banked_vault();
+    let key_env = "VOXCPM2_OUR_VOICE_TEST_F";
+    let bearer = "t".repeat(32);
+    let (port, _connections, seen, _sent, _failures, handle) =
+        start_stub(bearer, StubPlan::OversizedStarted).await;
+    let runtime = speech_runtime(port, key_env, Arc::clone(&vault));
+    let request = speech_request(reference_voice(&vault));
+    let result = runtime.media().run(request, None, None).await;
+    handle.abort();
+    let error = match result {
+        Ok(_) => panic!("a started past max_header_bytes must err"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, LlmError::Fatal(FatalLlmError::EmptyResponse)),
+        "a started past the ceiling is a malformed reply, got {error:?}"
+    );
+    let guard = seen.lock().expect("frames");
+    assert!(
+        !guard
+            .iter()
+            .any(|frame| matches!(frame, StubSeen::Text { .. })),
+        "no text after a malformed started"
     );
 }
