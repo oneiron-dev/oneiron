@@ -2,6 +2,7 @@
 //! intent, question digest and round, naming the connector, the tool and the
 //! field names only, with the options Answer, Decline and Cancel.
 
+use oneiron_contracts::fingerprint::purposes;
 use serde_json::{Value, json};
 
 use super::RemoteTaskInputRow;
@@ -10,10 +11,6 @@ use crate::llm::decision::{AskTo, DecisionAsk, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
 };
-
-/// The domain an Ask's question id and correlation derive under, from the
-/// intent id, the question digest and the round's generation.
-const ASK_DOMAIN: &[u8] = b"oneiron:outbound-remote-task-input-ask:v1";
 
 /// The host-issued queue identity of a parked question's owner Ask.
 pub(super) const ASK_QUEUE: &str = "outbound.remote_task_input";
@@ -42,7 +39,7 @@ fn ask_correlation(
 ) -> crate::Result<EntityId> {
     let generation = generation.to_be_bytes();
     EntityId::derive(
-        ASK_DOMAIN,
+        purposes::outbound_intent_ledger::REMOTE_TASK_INPUT_ASK,
         &[intent.as_slice(), digest.as_slice(), generation.as_slice()],
     )
 }

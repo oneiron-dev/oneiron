@@ -44,9 +44,9 @@ const NOW: u64 = DUE_AT + 1;
 
 /// The shipped policy pack's id on its stored manifest.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
-/// The derived-id domain of the commitment lapse writer, pinned here so a
-/// moved domain shows as a failure of this test.
-const COMMITMENT_LAPSE_ACTOR: &[u8] = b"oneiron.commitment.lapse.actor.v1";
+// The derived-id purpose of the commitment lapse writer. Its bytes are pinned in
+// `crates/oneiron-contracts/tests/derive_registry_literals.rs`.
+use oneiron_contracts::entity_id::derived_domains::COMMITMENT_LAPSE_ACTOR;
 
 fn party(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("fixture entity id")

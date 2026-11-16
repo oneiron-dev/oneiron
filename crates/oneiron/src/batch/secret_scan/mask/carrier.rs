@@ -15,6 +15,7 @@
 use std::ops::Range;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::purposes;
 use zeroize::Zeroizing;
 
 use super::super::shapes::HANDLE_OPEN;
@@ -29,10 +30,6 @@ use crate::side_table::SideTableDecl;
 use crate::store::Store;
 use crate::store::file_key_masks::masked_file_in_txn;
 use crate::store::known_value_index::KnownValues;
-
-/// Domain of the id a lifted carrier row's custody records name as where
-/// their keys were found.
-const CARRIER_ORIGIN: &[u8] = b"oneiron:secret-lift:carrier:v1";
 
 /// What [`mark_carrier_text_in_txn`] found in a carrier's text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +94,7 @@ pub(crate) fn mark_carrier_text_in_txn(
 /// (FIX 8996). A key only custody's known values place reads as unplaced
 /// here.
 pub(crate) fn carrier_text_placeable(text: &[u8]) -> Result<bool> {
-    let origin = EntityId::derive(CARRIER_ORIGIN, &[b"placeable".as_slice()])?;
+    let origin = EntityId::derive(purposes::secret::LIFT_CARRIER, &[b"placeable".as_slice()])?;
     let mut plan = Masker {
         mints: true,
         at: Some((origin, "carrier".to_owned())),
@@ -263,7 +260,10 @@ pub(crate) fn carrier_texts_hit_in_txn(
 /// writer's admission masked them (FIX 2372).
 pub(crate) fn carrier_origin(table: &SideTableDecl, key: &[u8]) -> Result<(EntityId, String)> {
     Ok((
-        EntityId::derive(CARRIER_ORIGIN, &[table.name.as_bytes(), key])?,
+        EntityId::derive(
+            purposes::secret::LIFT_CARRIER,
+            &[table.name.as_bytes(), key],
+        )?,
         format!("carrier:{}", table.name),
     ))
 }

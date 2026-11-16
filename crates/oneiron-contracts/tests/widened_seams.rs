@@ -23,9 +23,9 @@ use oneiron_contracts::retrieval_telemetry::{
 use oneiron_contracts::serialize::entity_ref;
 
 #[test]
-fn derive_refuses_an_empty_or_non_utf8_domain() {
+fn derive_unregistered_refuses_an_empty_or_non_utf8_domain() {
     for domain in [&b""[..], &[0xFF, 0xFE][..]] {
-        let refused = EntityId::derive(domain, &[b"part"]);
+        let refused = EntityId::derive_unregistered(domain, &[b"part"]);
         assert!(
             matches!(refused, Err(Error::InvariantViolation(_))),
             "{refused:?}"

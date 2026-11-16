@@ -32,15 +32,13 @@ use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{WitnessAuthor, WitnessReceipt};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::{EntityId, Vault, WriteActor};
+use oneiron_contracts::fingerprint::purposes;
 use oneiron_driver::SessionHint;
 
 use crate::ai_host::{AiHandle, ChatBreakpointCall};
 use crate::api::ai::chat::witness_turn;
 use crate::models::{AnsweringRung, RoleCall};
 use crate::server::SyncServer;
-
-/// A standalone call's home conversation. Parts: the person, then the agent.
-const VOICE_HOME_DOMAIN: &[u8] = b"oneiron.conversation.voice_home.v1";
 
 /// The home conversation of `person`'s standalone calls with `agent`: one
 /// per pair, the same id on every host of the vault.
@@ -50,7 +48,7 @@ const VOICE_HOME_DOMAIN: &[u8] = b"oneiron.conversation.voice_home.v1";
 /// The id does not derive.
 pub fn voice_home_conversation_id(person: EntityId, agent: EntityId) -> oneiron::Result<EntityId> {
     Ok(EntityId::derive(
-        VOICE_HOME_DOMAIN,
+        purposes::voice::HOME_CONVERSATION,
         &[person.as_bytes(), agent.as_bytes()],
     )?)
 }

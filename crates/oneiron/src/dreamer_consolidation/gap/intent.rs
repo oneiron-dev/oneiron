@@ -13,6 +13,7 @@
 //!   words at the scan after it, no or no answer changes nothing. The words
 //!   must still read as they were asked, or nothing lands.
 
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 
 use super::super::turn_text::{TurnText, dreamer_read, read_turn_text};
@@ -37,11 +38,6 @@ const PROFILE_INTENT_PREDICATE: &str = "profile.intent";
 /// The intent ask's queue, as its pin names it.
 const INTENT_ASK_QUEUE: &str = "dreamer.intent_ask";
 const INTENT_ASK_QUEUE_VERSION: &str = "1";
-/// The domain an intent ask's question id is derived in, from its TURN and
-/// the words it quotes.
-const INTENT_QUESTION_DOMAIN: &[u8] = b"oneiron.dreamer.intent_ask.question.v1";
-/// The domain the intent a yes lands is derived in, from its ask.
-const INTENT_CLAIM_DOMAIN: &[u8] = b"oneiron.dreamer.intent_ask.claim.v1";
 /// Asks read per page when the scan looks for answered ones.
 const ASK_PAGE: usize = 256;
 /// What the gap scan reads as a stated intent, lowercased.
@@ -228,7 +224,7 @@ fn intent_sentence(text: &str) -> Option<(usize, usize)> {
 fn intent_question(turn: EntityId, at: (usize, usize), words: &str) -> Result<DecisionQuestion> {
     Ok(DecisionQuestion {
         id: EntityId::derive(
-            INTENT_QUESTION_DOMAIN,
+            purposes::dreamer::INTENT_ASK_QUESTION,
             &[turn.as_bytes().as_slice(), words.as_bytes()],
         )?,
         version: 1,
@@ -381,7 +377,10 @@ fn land_answer(vault: &Vault, ask: &DecisionAsk) -> Result<()> {
     let Some(&turn) = ask.evidence.first() else {
         return Ok(());
     };
-    let id = EntityId::derive(INTENT_CLAIM_DOMAIN, &[ask.id.as_bytes().as_slice()])?;
+    let id = EntityId::derive(
+        purposes::dreamer::INTENT_ASK_CLAIM,
+        &[ask.id.as_bytes().as_slice()],
+    )?;
     if vault.get_entity_type(&id)?.is_some() {
         return Ok(());
     }

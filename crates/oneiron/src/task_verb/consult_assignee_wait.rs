@@ -15,6 +15,8 @@
 //! cause [`CONSULT_ASSIGNEE_MISSING`], and that settlement wakes the parked
 //! run too.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::code_run::{SelfDurableWait, SelfEffect, peer_result_wait};
@@ -38,9 +40,6 @@ pub(super) const CONSULT_ASSIGNEE_FACT_WAIT: &str = "consult_assignee_fact";
 /// ConsultAssignee fact landed.
 pub(super) const CONSULT_ASSIGNEE_MISSING: &str = "consult_assignee_missing";
 
-/// Domain of a consult's assignee-fact wait id. Parts: the consult TASK.
-const CONSULT_ASSIGNEE_WAIT_DOMAIN: &[u8] = b"oneiron.tasks.consult_assignee_wait.v1";
-
 /// Whether `body`, read beside `facts`, is a consult still waiting for its
 /// ConsultAssignee fact.
 pub(super) fn waits_for_assignee_fact(body: &TaskVerbBody, facts: &TaskAuthorityFacts) -> bool {
@@ -63,7 +62,7 @@ pub(super) fn waits_for_assignee_fact_in(
 /// id, never the TASK's, which a delegator's run waits on for the result.
 fn assignee_park(task: EntityId) -> Result<SelfDurableWait> {
     let mut wait = peer_result_wait(EntityId::derive(
-        CONSULT_ASSIGNEE_WAIT_DOMAIN,
+        purposes::task::CONSULT_ASSIGNEE_WAIT,
         &[task.as_bytes()],
     )?);
     wait.effect = SelfEffect::TasksWait;

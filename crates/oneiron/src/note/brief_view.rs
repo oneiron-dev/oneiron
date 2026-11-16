@@ -1,5 +1,7 @@
 //! Fresh brief views: current ledger state, cursor drift, and one renderer.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::document::invalid;
 use super::{NoteKind, NoteSpanResolution};
 use crate::batch::secret_scan::LiftedKeys;
@@ -9,10 +11,6 @@ use crate::lens::{
     TextBlockAtom, render_instrument,
 };
 use crate::{EntityId, Result, Vault};
-
-/// The derivation domain of the id a shared view gives a citation it
-/// redacts in place of the claim's.
-const REDACTED_CITATION: &[u8] = b"oneiron.note.brief.redacted_citation.v1";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BriefCitationView {
@@ -241,7 +239,7 @@ impl Vault {
                 // whether hidden evidence was edited or erased.
                 citations.push(BriefCitationView {
                     claim: if visible.is_some() {
-                        EntityId::derive(REDACTED_CITATION, &[])?
+                        EntityId::derive(purposes::note::BRIEF_REDACTED_CITATION, &[])?
                     } else {
                         pin.claim
                     },

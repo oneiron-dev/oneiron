@@ -10,10 +10,6 @@ use serde::Serialize;
 /// The root node id: every unsure placement lands here.
 pub const ROOT_NODE_ID: &str = "root";
 
-/// The derived-id domain of a node's [`EntityId`] spelling
-/// ([`TaskTypeNode::entity_id`]). Parts: the node id.
-pub const TYPE_NODE_ID_DOMAIN: &[u8] = b"oneiron.task_type.node.v1";
-
 /// The tree version [`TaskTypeTree::seeded`] starts at.
 pub const SEEDED_TREE_VERSION: u64 = 1;
 

@@ -28,7 +28,6 @@ pub use crate::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealt
 pub mod apply;
 pub mod ask;
 pub mod doors;
-pub mod environment;
 pub mod grant_reads;
 pub mod loaded;
 pub mod moves;

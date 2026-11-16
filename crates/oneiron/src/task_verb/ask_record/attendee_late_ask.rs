@@ -1,12 +1,13 @@
 //! A placed attendee's first later identity question, separate from its
 //! immutable first-entry history cut.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::*;
 use crate::conversation::{ContainerAttendee, ContainerAttendeeEvent};
 use crate::disclosure::UnknownAttendeeAsk;
 
 pub(super) const ATTENDEE_LATE_ASK: &str = "tasks.attendee_late_ask";
-const LATE_ASK_ID_DOMAIN: &[u8] = b"oneiron.tasks.attendee_late_ask.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -60,7 +61,7 @@ impl AttendeeLateAskFact {
 }
 
 pub(super) fn late_ask_id(entry_ref: EntityId) -> Result<EntityId> {
-    EntityId::derive(LATE_ASK_ID_DOMAIN, &[entry_ref.as_bytes()])
+    EntityId::derive(purposes::task::ATTENDEE_LATE_ASK, &[entry_ref.as_bytes()])
 }
 
 impl Vault {

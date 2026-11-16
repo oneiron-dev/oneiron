@@ -3,6 +3,7 @@
 //! carries no identity id, so this record is how the Gate and the send doors
 //! know the identity is a native mailbox. A derived `mail-<id>` address names
 //! its identity itself and needs no record to be known.
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -19,7 +20,7 @@ pub const PREDICATE_NATIVE_MAIL_MAILBOX: &str = "native_mail.mailbox";
 /// writes it once.
 fn mailbox_record_id(identity_ref: EntityId) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron.native_mail.mailbox.v1",
+        purposes::channel_identity::NATIVE_MAIL_MAILBOX,
         &[identity_ref.as_bytes().as_slice()],
     )
 }

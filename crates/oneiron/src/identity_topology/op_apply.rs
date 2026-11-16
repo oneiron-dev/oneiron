@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeKind;
@@ -757,7 +759,7 @@ pub(super) fn facet_fork_writer(
 /// stored event without a second record of the pairs.
 pub(super) fn facet_fork_id(event: &EntityId, origin: &EntityId) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron/identity-topology/facet-fork/v1",
+        purposes::identity::FACET_FORK,
         &[event.as_bytes(), origin.as_bytes()],
     )
 }
