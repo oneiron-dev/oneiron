@@ -13,9 +13,8 @@ pub fn tagging_retry_delay_secs(backoff: TaggingBackoff, prior_retries: u32) -> 
 
 /// The `backoff_until` a notice dispatcher (trusted-contact notice, e-sign
 /// notice) writes when it keeps a send for a later retry at `now`, its
-/// receipt naming `edge` as its `retry_at` (FIX 11660). Both dispatchers
-/// write this expression.
+/// receipt naming `edge` as its `retry_at` (FIX 11660).
 #[must_use]
 pub fn kept_send_backoff_until(now: u64, edge: Option<u64>) -> u64 {
-    now.saturating_add(60).max(edge.unwrap_or(0))
+    crate::outbound::kept_send_backoff_until(now, edge)
 }

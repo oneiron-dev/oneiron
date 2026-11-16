@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::memory::extraction::{
     EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionEncoder, ExtractionWork,
 };
+use crate::schedule::retry_after;
 use crate::tagging::marker::TaggingMarkerConfig;
 use crate::tagging::trace::{TaggingOutcome, TaggingTrace};
 
@@ -39,9 +40,16 @@ impl Default for TaggingBackoff {
 }
 
 impl TaggingBackoff {
+    /// The delay before the retry that follows `prior_retries` earlier
+    /// retries: the Schedule's one backoff rule ([`retry_after`]) with this
+    /// marker's `first_secs` and `max_secs`, the first retry following the
+    /// first failure.
     pub(crate) fn delay_secs(self, prior_retries: u32) -> u64 {
-        let factor = 1_u64.checked_shl(prior_retries).unwrap_or(u64::MAX);
-        self.first_secs.saturating_mul(factor).min(self.max_secs)
+        retry_after(
+            prior_retries.saturating_add(1),
+            self.first_secs,
+            self.max_secs,
+        )
     }
 }
 
