@@ -45,6 +45,8 @@ serde_json_canonicalizer.workspace = true
 sha2 = "0.10"
 tempfile = "3"
 thiserror.workspace = true
+# UNBUILT3-06: ppr-walk-share times the engine's ppr_*_walk trace spans.
+tracing = "0.1"
 
 # ONE-331 (benchmark-only). `parking_lot` is the candidate primitive and `loro`
 # is needed to drive real CRDT documents; both stay OUT of `[dependencies]` so

@@ -23,6 +23,9 @@
 //!   real-traffic cache hit rates and a descriptive NVMe fsync row, each
 //!   reported on its own axis. Accuracy and cost stay BEAM-owned.
 //!
+//! * `ppr-walk-share` — UNBUILT3-06: share of High recall wall time spent in
+//!   the narrowed PPR walks over a generated linked corpus.
+//!
 //! * `swarm` — seeded one-vault, in-process write/recall/mixed agent curve.
 //! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
 //!   paired full/resumed PPR measurements and receipt-derived regression floors.
@@ -61,6 +64,7 @@ mod interface_bench;
 mod load;
 mod oneironer_shadow;
 mod perf;
+mod ppr_walk_share;
 mod retrieval_trace_export;
 mod retrieval_turn_corpus;
 mod swarm;
@@ -102,6 +106,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         [cmd, rest @ ..] if cmd == "eval" => eval::run(rest),
         [cmd, rest @ ..] if cmd == "perf" => perf::run(rest),
+        [cmd, rest @ ..] if cmd == "ppr-walk-share" => ppr_walk_share::run(rest),
         [cmd, rest @ ..] if cmd == "teacher-probe" => teacher_probe::run(rest),
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
@@ -182,6 +187,11 @@ fn print_help() {
                                        emits every axis and is always marked\n\
                                        synthetic_smoke and never a publication\n\
                                        candidate (see `perf --help`)\n\
+          ppr-walk-share [--records N] [--edges-per-record K]\n\
+                                       [--cases C] [--repetitions R] [--seed S]\n\
+                                       [--out PATH]\n\
+                                       share of High recall wall time in the narrowed\n\
+                                       PPR walks over a generated linked corpus\n\
           teacher-probe --checkpoint DIR --runner EXECUTABLE\n\
                                        --manifest CANDIDATE.json --policy RESOLVED.json\n\
                                        --out APPROVED.json\n\

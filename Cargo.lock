@@ -8205,6 +8205,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "tracing",
 ]
 
 [[package]]
