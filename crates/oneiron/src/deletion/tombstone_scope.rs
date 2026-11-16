@@ -153,7 +153,9 @@ pub(crate) fn forget_capture_in_txn(
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    TOMBSTONE_SCOPE.delete(store, txn, &HexId(*id))?;
+    // RED PIN (OPUS-LEAKS, test 9 of selector_tombstone_label): the held
+    // capture is kept.
+    let _ = (store, txn, id);
     Ok(())
 }
 
