@@ -91,8 +91,11 @@ impl ScopedRead<'_> {
     /// position here; one bound by no standing Grant, none. The key's world
     /// ceiling is the caller's to check.
     ///
-    /// The holder's Grants are read once per serving txn in `authority`, as
-    /// the row gate reads them.
+    /// The holder's Grants are read through `authority`, once per serving txn
+    /// where the caller holds one for the whole read (the change feed, short
+    /// references, loop decisions); the world listing and a timeline's
+    /// deleted shells pass a fresh one, so they read them per call. A kept
+    /// alternative that refuses ends the check before any Grant is read.
     ///
     /// # Errors
     /// `holds`'s, or a store, fold or clock failure reading the holder's
@@ -103,20 +106,7 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
         mut holds: impl FnMut(&Scope) -> Result<bool>,
     ) -> Result<bool> {
-        let standing = self
-            .actor_key
-            .agent_grant_holder()
-            .map(|holder| {
-                authority.grants().bounds_of(holder, || {
-                    self.vault.agent_grant_read_bounds_in_txn(rtxn, holder)
-                })
-            })
-            .transpose()?;
-        let standing = standing.as_deref().and_then(|bounds| bounds.as_deref());
         let kept = self.actor_key.grant_alternatives();
-        if kept.is_none() && standing.is_none() {
-            return Ok(true);
-        }
         if let Some(kept) = kept {
             let mut one = false;
             for alternative in kept {
@@ -129,7 +119,16 @@ impl ScopedRead<'_> {
                 return Ok(false);
             }
         }
-        let Some(standing) = standing else {
+        let standing = self
+            .actor_key
+            .agent_grant_holder()
+            .map(|holder| {
+                authority.grants().bounds_of(holder, || {
+                    self.vault.agent_grant_read_bounds_in_txn(rtxn, holder)
+                })
+            })
+            .transpose()?;
+        let Some(standing) = standing.as_deref().and_then(|bounds| bounds.as_deref()) else {
             return Ok(true);
         };
         let own = self
@@ -180,39 +179,63 @@ impl ScopedRead<'_> {
         raw: &[u8],
         position: &Scope,
     ) -> Result<bool> {
+        let entity_type = EntityMetadataHeader::parse(raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?
+            .entity_type;
         self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
-            if !holds_world(position, alternative) {
-                return Ok(false);
-            }
-            match self.session_view {
-                Some(view) => {
-                    facets_admit_in(self.vault, view, rtxn, *id, raw, &alternative.facets)
-                }
-                None => facets_admit_in(
-                    self.vault,
-                    &self.vault.store,
-                    rtxn,
-                    *id,
-                    raw,
-                    &alternative.facets,
-                ),
-            }
+            Ok(holds_world(position, alternative)
+                && alternative.bands.contains(&entity_type)
+                && self.alternative_facets_admit_in(rtxn, id, Some(raw), alternative)?)
         })
+    }
+
+    /// Whether `alternative`'s facets admit the row `id` whose stored row is
+    /// `raw`, as the key's own facet check judges it ([`facets_admit_in`]);
+    /// with no stored row, only an alternative that holds every facet does.
+    fn alternative_facets_admit_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: Option<&[u8]>,
+        alternative: &Scope,
+    ) -> Result<bool> {
+        let Some(raw) = raw else {
+            return Ok(matches!(
+                alternative.facets,
+                oneiron_authority::federation::ScopeAxis::All
+            ));
+        };
+        match self.session_view {
+            Some(view) => facets_admit_in(self.vault, view, rtxn, *id, raw, &alternative.facets),
+            None => facets_admit_in(
+                self.vault,
+                &self.vault.store,
+                rtxn,
+                *id,
+                raw,
+                &alternative.facets,
+            ),
+        }
     }
 
     /// Whether one Grant alone admits a read of the record position `record`
     /// under `policy`, as a proof of that Grant would at the record door: a
     /// deleted TASK's kept stamp, a kept loop decision's position with no
-    /// claim, or every position at once for deletion metadata.
+    /// claim, or every position at once for deletion metadata. The record
+    /// door judges no facet, so where the caller's own check judged the
+    /// facets of a `row` (its id and stored row, if any), that Grant's facets
+    /// must admit it too, as the row gate holds them.
     ///
     /// # Errors
-    /// A store, fold or clock failure reading the holder's Grants.
+    /// A store failure reading the row's facets, or a store, fold or clock
+    /// failure reading the holder's Grants.
     pub(super) fn one_grant_alternative_admits_record_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         authority: &HeldAuthority,
         policy: &crate::gate::PolicyManifestResolution,
         record: &Scope,
+        row: Option<(&EntityId, Option<&[u8]>)>,
     ) -> Result<bool> {
         self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
             Ok(crate::gate::scoped_read_record_allowed_with_scope(
@@ -220,7 +243,9 @@ impl ScopedRead<'_> {
                 &self.actor_key,
                 record,
                 Some(alternative),
-            ))
+            ) && row.map_or(Ok(true), |(id, raw)| {
+                self.alternative_facets_admit_in(rtxn, id, raw, alternative)
+            })?)
         })
     }
 
@@ -235,6 +260,7 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
         policy: &crate::gate::PolicyManifestResolution,
         view: &crate::gate::ClaimReadView<'_>,
+        row: Option<(&EntityId, Option<&[u8]>)>,
     ) -> Result<bool> {
         self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
             Ok(crate::gate::scoped_read_claim_view_allowed(
@@ -242,7 +268,9 @@ impl ScopedRead<'_> {
                 &self.actor_key,
                 view,
                 Some(alternative),
-            ))
+            ) && row.map_or(Ok(true), |(id, raw)| {
+                self.alternative_facets_admit_in(rtxn, id, raw, alternative)
+            })?)
         })
     }
 

@@ -280,8 +280,16 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         // A kept position names two axes at once: one agent Grant alone must
-        // admit it too, at the door its base check uses (FIX
+        // admit it too, at the door its base check uses, with the stored
+        // row's facets where the caller judged them (FIX
         // AGENT-GRANT-TWO-AXIS-SEAMS).
+        let stored = match record {
+            Some(id) => self.entity_record_in(txn, id)?.map(|row| row.encode()),
+            None => None,
+        };
+        let row = record
+            .zip(stored.as_deref())
+            .map(|(id, raw)| (id, Some(raw)));
         let Some(claim) = &position.claim else {
             return Ok(crate::gate::scoped_read_record_allowed(
                 &read.policy,
@@ -292,6 +300,7 @@ impl ScopedRead<'_> {
                 &read.held,
                 &read.policy,
                 &position.scope,
+                row,
             )?);
         };
         let confidence = f32::from_bits(claim.confidence_bits);
@@ -342,6 +351,7 @@ impl ScopedRead<'_> {
             &read.held,
             &read.policy,
             &view,
+            row,
         )?)
     }
 

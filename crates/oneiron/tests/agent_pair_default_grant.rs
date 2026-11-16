@@ -811,3 +811,58 @@ fn a_two_grant_agent_learns_no_deletion_neither_grant_alone_covers() {
         "actor=agent {covered:?}; expected its all-covering Grant to reveal the erased row's deletion"
     );
 }
+
+/// Review of #9182 (Opus second review, MAJOR): the record door judges no
+/// facet, so the two-axis rule must hold the facet axis per Grant too. One
+/// Grant reads every world in the owner's default facet, the other the base
+/// world in every facet; together they cover every position, neither alone
+/// covers an erased row that sits in no facet. A fresh key reveals no
+/// deletion for it.
+#[test]
+fn a_two_grant_agent_learns_no_deletion_neither_grant_alone_covers_on_the_facet_axis() {
+    let fixture = fixture();
+    let (short_id, hash) = erased_person_short_ref(&fixture);
+    let agent = create_enabled_agent(&fixture, "pair_facet_axis_deletion_agent");
+    let default_facet = fixture.vault.default_facet().expect("owner default facet");
+    for (worlds, facets) in [
+        (
+            ScopeAxis::All,
+            ScopeAxis::Some(BTreeSet::from([ScopeId(default_facet)])),
+        ),
+        (
+            ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())])),
+            ScopeAxis::All,
+        ),
+    ] {
+        let mut authority_scope = Scope::top();
+        authority_scope.worlds = worlds;
+        authority_scope.facets = facets;
+        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+        mint_agent_grant_as(
+            &fixture.vault,
+            &fixture.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
+                working_view_bounds: None,
+            },
+        )
+        .expect("owner mints the agent a read Grant");
+    }
+    let slip = paired_agent_slip(&fixture, agent, 0xb4);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let lane = fixture.vault.scoped_read(key);
+    assert!(
+        !reveals_erased_deletion(&lane, &short_id, hash),
+        "actor=agent {agent:?}; expected no deletion where neither Grant alone covers its facet and its world"
+    );
+}

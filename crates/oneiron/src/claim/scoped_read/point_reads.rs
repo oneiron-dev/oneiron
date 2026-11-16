@@ -665,13 +665,19 @@ impl ScopedRead<'_> {
                 &self.actor_key,
                 &oneiron_authority::federation::scope_codec::read_preset(),
             )
-            // Every position, under one agent Grant alone (FIX
-            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+            // Every position, and the shell's facets, under one agent Grant
+            // alone (FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS).
             && self.one_grant_alternative_admits_record_in(
                 txn,
                 authority,
                 policy,
                 &oneiron_authority::federation::scope_codec::read_preset(),
+                Some((
+                    id,
+                    self.entity_record_in(txn, id)?
+                        .map(|row| row.encode())
+                        .as_deref(),
+                )),
             )?)
     }
 

@@ -568,6 +568,7 @@ impl ScopedRead<'_> {
                     &super::access_gate::HeldAuthority::for_request(None),
                     policy,
                     &position,
+                    Some((id, Some(raw))),
                 )?,
         )
     }
