@@ -101,8 +101,18 @@ fn hash(row: &AuthorityLogEntry) -> AuthorityEntryHash {
     authority_entry_hash(row).expect("a hash")
 }
 
-/// The genesis row of a vault whose root key `root` holds `roles` at `tier`.
-fn genesis_row(root: &SigningKey, roles: u16, tier: AuthorityTier) -> AuthorityLogEntry {
+/// The attestation of a key a host attests as its root, self-hosted or
+/// managed (`slip_vault.rs` `HOST_ROOT_ATTESTATION`).
+const HOST_ROOT_ATTESTATION: &str = "HostRoot";
+
+/// The genesis row of a vault whose root key `root` holds `roles` at `tier`,
+/// attested as `attestation`.
+fn genesis_row(
+    root: &SigningKey,
+    roles: u16,
+    tier: AuthorityTier,
+    attestation: &str,
+) -> AuthorityLogEntry {
     signed(
         None,
         0,
@@ -112,7 +122,7 @@ fn genesis_row(root: &SigningKey, roles: u16, tier: AuthorityTier) -> AuthorityL
                 key: key_of(root),
                 transport_key_binding: [7; 32],
                 attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
+                    kind: attestation.to_owned(),
                     evidence: vec![1, 2, 3],
                 },
                 tier,
@@ -221,19 +231,38 @@ impl OwnerKeyVault {
         Self::with_root(
             ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
             AuthorityTier::CloudCustodial,
+            HOST_ROOT_ATTESTATION,
             true,
         )
     }
 
     /// A self-host vault: its root is an owner-held key.
     fn self_hosted() -> Self {
-        Self::with_root(ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Software, false)
+        Self::with_root(
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+            "SoftwareArgon2id",
+            false,
+        )
     }
 
-    fn with_root(roles: u16, tier: AuthorityTier, hosted: bool) -> Self {
+    /// A vault a self-hosted root rooted, folded under the hosted posture, as
+    /// when the vault is opened with a Hosted config or its history is
+    /// imported into a hosted vault: its root is a host-attested key with no
+    /// cloud stamp.
+    fn self_hosted_folded_as_hosted() -> Self {
+        Self::with_root(
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+            HOST_ROOT_ATTESTATION,
+            true,
+        )
+    }
+
+    fn with_root(roles: u16, tier: AuthorityTier, attestation: &str, hosted: bool) -> Self {
         let root = signing(ROOT_SEED);
         let node = signing(NODE_SEED);
-        let genesis = genesis_row(&root, roles, tier);
+        let genesis = genesis_row(&root, roles, tier, attestation);
         let vault_id = genesis_vault_id(&genesis).expect("the vault id");
         let machine = EntityId::from_bytes([0x70; 16]).expect("an id");
         let registration = signed(
@@ -622,6 +651,41 @@ fn a_self_host_root_binds_the_owner_alone() {
     assert!(
         fold.valid_entries.contains(&bind),
         "the self-host root's bind counts: {bind:?}"
+    );
+    assert!(
+        binds_active(&fold, &root_key, owner()),
+        "the root speaks for the owner: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Passes on main too: the gate reads the cloud stamp, a fact in the log,
+/// and not host custody, which takes a host-attested self-host root as the
+/// host's on a hosted fold. A self-hosted vault opened as Hosted keeps the
+/// bind of the transaction that rooted it, and every row after.
+#[test]
+fn a_self_host_root_bind_counts_when_its_log_is_folded_as_hosted() {
+    let mut vault = OwnerKeyVault::self_hosted_folded_as_hosted();
+    let registration = vault.registration();
+    let root = vault.root.clone();
+    let root_key = key_of(&root);
+    let bind = vault.append(
+        2,
+        registration,
+        human_bind(root_key.clone(), owner(), 1),
+        &root,
+        &[],
+    );
+    let node_key = key_of(&vault.node);
+    let after = vault.append(3, bind, actor_revoke(node_key, 1), &root, &[]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&bind),
+        "the self-host root's bind counts under the hosted posture: {bind:?}"
+    );
+    assert!(
+        fold.valid_entries.contains(&after),
+        "the row after the bind counts too: {after:?}"
     );
     assert!(
         binds_active(&fold, &root_key, owner()),

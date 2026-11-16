@@ -87,6 +87,69 @@ fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
     matches!(key, AuthorityKey::Ed25519(_)) && proves_for_the_owner(state, key)
 }
 
+/// Whether a `human` bind or rebind in `state` has the owner's proof where
+/// the fold asks for it: on a hosted fold, one of the row's `participants`
+/// (its signer and cosigners) is an owner key no cloud key holds
+/// ([`owner_key_outside_cloud_custody`]). A managed host's root acts as
+/// nobody inside a customer's vault, and being the trust root never makes
+/// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
+/// OLD-PARENTS-OWNER-BINDING-REVOKE and OLD-PARENTS-OWNER-BINDING-CONFLICT).
+/// So its signature alone binds no person. A binding it made alone would let
+/// it end the owner's standing on every replica (`owner_live_at` takes an
+/// owner every binding of whom is revoked or conflicted as removed), by
+/// revoking that binding, on parents from before an owner key's enrolment
+/// too, or by a conflicting sibling bind. No writer binds a person on a
+/// hosted vault, so its owner is unbound and trusted on the carrier's word;
+/// the owner binds from a device of their own. A self-host or relay fold,
+/// another class and every other op pass: a self-host root is the owner's
+/// own key, and those folds take no cloud key's consent. A revoke never asks
+/// (ONE-REVOKE-DURABILITY).
+pub(super) fn human_bind_proved(
+    state: &FoldState,
+    op: &AuthorityOp,
+    participants: &BTreeSet<AuthorityKey>,
+) -> bool {
+    let (AuthorityOp::BindActor { actor_class, .. } | AuthorityOp::RebindActor { actor_class, .. }) =
+        op
+    else {
+        return true;
+    };
+    !state.hosted
+        || actor_class != ACTOR_CLASS_HUMAN
+        || participants
+            .iter()
+            .any(|key| owner_key_outside_cloud_custody(state, key))
+}
+
+/// Whether `key` is a live owner key on `state`'s roster that no cloud key
+/// holds: neither it nor any key that admitted it, directly or through
+/// others (`key_admitters`), is stamped `ROLE_CLOUD` or `CloudCustodial`.
+/// A managed host's root carries that stamp in the log
+/// (`HostSlipIssuer::root_device`), so every fold reads it alike, under any
+/// posture. Host custody ([`proves_for_the_owner`]) also takes a self-host
+/// root, by its host-root attestation, as the host's on a hosted fold. Read
+/// that way, a self-hosted vault opened as Hosted (`Vault::open` with a
+/// Hosted config) or imported into a hosted vault would lose the bind of the
+/// transaction that rooted it, and with it every row after.
+fn owner_key_outside_cloud_custody(state: &FoldState, key: &AuthorityKey) -> bool {
+    if !roster_has_live_owner(&state.roster, key) {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![key];
+    while let Some(next) = pending.pop() {
+        if state.roster.get(next).is_some_and(|device| {
+            device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
+        }) {
+            return false;
+        }
+        if seen.insert(next) {
+            pending.extend(state.key_admitters.get(next).into_iter().flatten());
+        }
+    }
+    true
+}
+
 /// Whether an act a not-mine carrier delivers needs the proof in `state`
 /// (item 2): as soon as its roster holds a key that can give it
 /// ([`gives_owner_proof`]). A self-host vault's live owner root is one; a

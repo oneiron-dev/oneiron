@@ -78,6 +78,9 @@ pub enum ActorBindingRejection {
     KeyNotInRoster,
     /// A `"human"`-class bind whose key lacks owner/admin consent capability.
     OwnerCapabilityRequired,
+    /// A `"human"`-class bind or rebind on a hosted fold that no owner key
+    /// signs or cosigns: a managed host's root alone binds no person.
+    OwnerProofRequired,
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
