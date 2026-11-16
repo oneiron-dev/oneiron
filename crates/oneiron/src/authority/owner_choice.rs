@@ -158,11 +158,16 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     pub(super) choice: Option<&'a P>,
     /// The kind's revision domain, which `seen` is under.
     pub(super) context: &'static [u8],
-    /// The act is a person's own choice about themself (a person's kind,
-    /// whose act names its own person as owner and target): that person's
-    /// act, never the vault owner's, so it never waits for an owner key's
-    /// proof (ruling CARRIER-PERSON-OPT-OUT = A).
-    pub(super) persons_own: bool,
+    /// The act is a person's own narrowing of their own row (a person's
+    /// kind, whose act names its own person as owner and target, and whose
+    /// choice takes something of theirs away: an opt-out). It is that
+    /// person's act, never the vault owner's, and it lands on the carrying
+    /// machine's sign-in check, so it never waits for an owner key's proof
+    /// (ruling CARRIER-PERSON-OPT-OUT = A). A person's widening of their own
+    /// row (an opt back in) is not one: a carrier proves only itself, so it
+    /// goes through the gate as every act does (ruling
+    /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
+    pub(super) persons_own_narrowing: bool,
 }
 
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
@@ -209,8 +214,8 @@ pub(super) enum OwnerChoiceLanding<P> {
 /// ([`super::owner_proof::owner_proof_key`]). A proof never lifts a refusal.
 /// An admitted choice from a carrier that is not the owner's machine (its
 /// signing key is not its trusted mine key, pin-free) waits with no proof
-/// where such a carrier needs one, unless it is a person's own choice about
-/// themself.
+/// where such a carrier needs one, unless it is a person's own narrowing of
+/// their own row.
 pub(super) fn owner_choice_landing<P: Clone>(
     state: &FoldState,
     register: &OwnerChoiceState<P>,
@@ -256,7 +261,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
     }
     if proof.is_none()
         && !carrier_is_mine
-        && !op.persons_own
+        && !op.persons_own_narrowing
         && super::owner_proof::not_mine_carriers_need_proof(state)
     {
         return Ok(OwnerChoiceLanding::Waiting {
