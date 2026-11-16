@@ -439,15 +439,8 @@ fn receipt_in_txn(
 
 /// Lowercase or uppercase hex as bytes; `None` for anything else.
 pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.is_empty() || text.len() % 2 != 0 {
+    if text.is_empty() {
         return None;
     }
-    text.as_bytes()
-        .chunks(2)
-        .map(|pair| {
-            let high = char::from(pair[0]).to_digit(16)?;
-            let low = char::from(pair[1]).to_digit(16)?;
-            u8::try_from(high * 16 + low).ok()
-        })
-        .collect()
+    oneiron_hex::decode_vec_any_case(text)
 }
