@@ -269,21 +269,26 @@ impl Memory<'_> {
             },
             decisions,
         )?;
-        // AUTO rules on every auto fan-out, whatever its width. The ladder's
-        // receipt, when it decided it, is kept on the run (FIX 333).
-        let (disposition, decision_receipt) =
-            if !has_pathology && policy.mode == super::CheckInMode::AskWhenUnsure {
-                auto.decide_with_receipt(&run.plan, &run.estimate)
-            } else {
-                (FanoutAutoDisposition::SurfaceHuman, None)
-            };
+        // The accepted standing approval that covers the plan is its rung 0
+        // in every mode (CHECKIN-PR1-SHAPE Q2), and the row a cleared width
+        // check cites. The writer rechecks the standing row before admitting.
+        let rung_zero = crate::fanout_auto::rung_zero_row(
+            standing.as_ref(),
+            u64::from(run.estimate.total_count),
+        )
+        .map(|row| row.to_hex());
+        // AUTO rules on every auto fan-out its rung 0 does not clear, whatever
+        // its width. The ladder's receipt, when it decided it, is kept on the
+        // run (FIX 333).
+        let (disposition, decision_receipt) = if !has_pathology
+            && rung_zero.is_none()
+            && policy.mode == super::CheckInMode::AskWhenUnsure
+        {
+            auto.decide_with_receipt(&run.plan, &run.estimate)
+        } else {
+            (FanoutAutoDisposition::SurfaceHuman, None)
+        };
         run.decision_receipt = decision_receipt;
-        // An accepted standing row answers alone when it exists, so an Allow
-        // beside one stood on it.
-        let clearance = standing
-            .as_ref()
-            .filter(|_| disposition == FanoutAutoDisposition::Allow)
-            .map(|row| row.row_ref.to_hex());
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
             if policy_in(self.vault(), txn, &run.input.policy_scope)? != governed
@@ -305,12 +310,13 @@ impl Memory<'_> {
                     edges: &edges,
                     peer_rates: &rates,
                 },
+                rung_zero.as_deref(),
                 &CachedAuto(disposition),
                 &mut TxnSurface {
                     vault: self.vault(),
                     txn,
                     run: &mut run,
-                    clearance: clearance.clone(),
+                    clearance: rung_zero.clone(),
                 },
                 now.saturating_mul(1000),
             )?;
