@@ -203,7 +203,6 @@ impl Vault {
             "gate.connector_key.register",
             record,
             policy.read_frontier_hash()?,
-            record.registered_at,
         )
     }
     /// Mints an Active connector key whose budget table is necessarily empty.

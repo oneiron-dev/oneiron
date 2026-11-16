@@ -135,7 +135,7 @@ fn refused(server: &SyncServer, path: &str) -> Response {
         .into_response()
 }
 
-async fn private_response(
+pub(super) async fn private_response(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
