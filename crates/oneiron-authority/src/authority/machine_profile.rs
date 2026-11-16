@@ -123,7 +123,8 @@ impl MachineDeviceClass {
 pub enum MachineRole {
     /// A machine the owner added at the pairing ceremony.
     Owned(MachineOwnership),
-    /// A hosted home node.
+    /// A hosted node: the cloud's machine of this vault, a managed host's
+    /// own node or the peer `oneiron link` adds. It is never mine.
     HostedNode,
     /// A rented execution node (ARCH-0023b).
     ExecutionNode,
@@ -138,7 +139,9 @@ pub enum MachineRole {
 }
 
 impl MachineRole {
-    fn wire(self) -> &'static str {
+    /// The name the wire spells it by.
+    #[must_use]
+    pub fn wire(self) -> &'static str {
         match self {
             Self::Owned(MachineOwnership::Yours) => "yours",
             Self::Owned(MachineOwnership::WorkSchool) => "work_school",

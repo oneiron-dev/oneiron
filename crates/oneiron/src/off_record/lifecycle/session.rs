@@ -998,6 +998,12 @@ impl OffRecordSession<'_> {
         self.vault.limit_watch()
     }
 
+    /// The owner's `code_run.result_search.max_context` on this session's
+    /// vault.
+    pub(crate) fn result_search_max_context(&self) -> crate::Result<usize> {
+        crate::code_run::setting_keys::result_search_max_context(self.vault)
+    }
+
     /// A share of the result-memory pool for one run in this session.
     pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
@@ -1038,13 +1044,14 @@ impl OffRecordSession<'_> {
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
         let mut state = session_entry_state(&self.entry)?;
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
             OffRecordMode::OffRecord,
         )?;
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// Records one emit-adjacent receipt in the registry-owned log consumed
