@@ -315,13 +315,15 @@ impl EngineNativeExecutor<'_> {
                     }
                     // A step a provider outage ended stops on that outage,
                     // which parks its run, however its guest took the
-                    // failure (FIX 3194).
-                    if let Some(outage) = host
-                        .hard_failure
-                        .take()
-                        .filter(|failure| matches!(failure, Error::ProviderUnavailable { .. }))
-                    {
-                        return Err(outage.into());
+                    // failure (FIX 3194). A step an off-record session
+                    // refused an act of ends on that refusal the same way:
+                    // the guest's throw keeps none of its words (FIX
+                    // OFF-RECORD-RUN-POLICY-REFUSAL-500).
+                    if let Some(failure) = host.hard_failure.take().filter(|failure| {
+                        matches!(failure, Error::ProviderUnavailable { .. })
+                            || super::is_session_act_refusal(failure)
+                    }) {
+                        return Err(failure.into());
                     }
                     return Err(err.into());
                 }
