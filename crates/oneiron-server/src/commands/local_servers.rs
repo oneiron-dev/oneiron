@@ -112,11 +112,7 @@ pub(super) fn register(
         settings_file: files
             .and_then(|files| files.settings_file.as_deref())
             .map(absolute),
-        started_at_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            }),
+        started_at_ms: oneiron_base::unix_millis_now(),
     };
     match write(&server) {
         Ok(registration) => Some(registration),

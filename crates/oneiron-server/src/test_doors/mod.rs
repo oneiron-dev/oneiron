@@ -5,21 +5,30 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod booking_turn_line;
 pub mod build_server;
+pub mod calendar_ics_egress;
 pub mod coach_round;
 #[cfg(unix)]
 pub mod hosted_import;
+pub mod lens_frames;
 pub mod lfs_install_line;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
+pub mod mcp_carrier_release;
+pub mod mcp_page_mint;
 pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod native_board;
+pub mod one_click_wire_counter;
 pub mod openapi_document;
+pub mod pre_idle_reuse;
 pub mod raw_stream;
 pub mod replay_admission;
 pub mod resident_pump;
+pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
+pub mod wire_health_sweep;
 pub mod workflow_park;

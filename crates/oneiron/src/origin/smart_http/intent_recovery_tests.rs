@@ -39,8 +39,11 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         ref_update("refs/heads/published", None, Some(&second)),
         ref_update("refs/heads/declined", None, Some(&first)),
     ];
-    let stamp =
-        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
+    let stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &EntityId::now().to_hex(),
+        crate::unix_seconds_now(),
+    );
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -175,7 +178,7 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
         let stamp = DoorAdmissionStamp::from_principal(
             EntityId::now(),
             &EntityId::now().to_hex(),
-            now_secs(),
+            crate::unix_seconds_now(),
         );
         if admitted {
             vault
@@ -474,7 +477,7 @@ fn receive_pack_publication_cannot_omit_lfs_or_add_unobserved_objects() {
         actor_id: attribution.actor_id,
         provenance_claim_id: attribution.provenance_claim_id,
         occurred: landing_time(),
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     assert!(
         vault.publish_origin_ref(&wire, request.clone()).is_err(),

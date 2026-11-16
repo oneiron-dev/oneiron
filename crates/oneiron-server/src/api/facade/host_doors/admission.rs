@@ -180,6 +180,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::WorkflowMember => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
+        // A check-in holder's answer (ROLES-CHECKIN P2.3c): a live person on
+        // their own slip, bound to it, as the door answers under.
+        Proof::CheckInHolder => {
+            crate::api::facade::check_in_doors::holder_proof(server, auth, verb).map(drop)
+        }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.
@@ -247,6 +252,11 @@ pub(in crate::api::facade) fn door_admits(
         // A policy put by a person holding the policy power (FIX 8177), which the manifest writer checks.
         Proof::PolicyPutter => {
             crate::api::facade::gate_policy_doors::policy_putter(server, auth, verb).map(drop)
+        }
+        // A ramp demotion by the owner or a person holding the ramp demotion power (census L7-33), which
+        // the demotion writer checks again.
+        Proof::RampDemoter => {
+            crate::api::facade::graduation_doors::ramp_demoter(server, auth, verb).map(drop)
         }
         // A publish or repoint as the caller on its own slip (FIX 8161), which the outbound Gate judges.
         Proof::ArtifactPublisher => {

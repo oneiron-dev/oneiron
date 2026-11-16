@@ -141,6 +141,7 @@ fn seed_models(vault: &Vault) {
                 scores: BTreeMap::new(),
                 fetched_at: BTreeMap::new(),
                 tokens_per_o200k: None,
+                answer_tokens_per_o200k: None,
                 stale_since: None,
                 source_rows: None,
             })

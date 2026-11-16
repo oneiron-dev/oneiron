@@ -35,7 +35,7 @@ use oneiron::{
 };
 
 use crate::auth::CoreAuth;
-use crate::lens_frames::CardOwner;
+use crate::lens_frames::{CardOwner, HeldCardProof};
 use crate::server::SyncServer;
 
 const VERB: &str = "vault.weave.lens";
@@ -64,6 +64,9 @@ pub(crate) enum WeaveLensCaller {
         admin: AuthenticatedWeaveAdmin,
         auth: CoreAuth,
         actor: EntityId,
+        /// The proof its card is held under, naming the Admin membership
+        /// grant a reload binds again.
+        held: HeldCardProof,
     },
     /// A pumped run reads its own agent's lens (FIX 2086): on the agent's
     /// own lane on this device, its step spending on the run's own `line`
@@ -130,6 +133,18 @@ impl WeaveLensCaller {
         }
     }
 
+    /// The proof the caller's card is held under, which a reload of it
+    /// proves again: an Owner proof's, an Admin proof's under its grant,
+    /// else the credential's own read (a run's card never goes back to a
+    /// credential).
+    fn held_proof(&self) -> HeldCardProof {
+        match self {
+            Self::Owner { .. } => HeldCardProof::Owner,
+            Self::Admin { held, .. } => *held,
+            Self::Credential { .. } | Self::Run { .. } => HeldCardProof::CallerRead,
+        }
+    }
+
     /// Where the caller reads from: a credential's locality; a run's own
     /// door is on this device.
     fn locality(&self) -> CallerLocality {
@@ -165,7 +180,9 @@ impl WeaveLensCaller {
                     LensReader::Bound(Some(owner)),
                 )
             }
-            Self::Admin { admin, auth, actor } => read(
+            Self::Admin {
+                admin, auth, actor, ..
+            } => read(
                 &crate::api::credential_memory(vault, Some(auth), *actor, EdgeActorClass::Human)
                     .at(reads_at)
                     .listing_producers(producers),
@@ -427,7 +444,9 @@ async fn render_listing(
         let Some(hosted) = hosted else {
             continue;
         };
-        let (frame, card) = hosted.lower(&surface)?;
+        let (frame, mut card) = hosted.lower(&surface)?;
+        // A replacing card carries its predecessor's `$state`, so the card
+        // answered is the render as held.
         match (&caller, &auth, owner) {
             // A run holds its card itself, and its end closes it (FIX 2086).
             (WeaveLensCaller::Run { run, .. }, _, owner) => {
@@ -435,21 +454,28 @@ async fn render_listing(
                     creator_run: run.to_hex(),
                     subscription: None,
                 });
-                server
+                card.render = server
                     .lens_frames
-                    .replace_for_run(*run, frame, card.render.clone(), owner)?;
+                    .replace_for_run(*run, frame, card.render.clone(), owner)
+                    .await?;
             }
             (_, Some(auth), Some(owner)) => {
-                server.lens_frames.replace_for_subscription(
-                    auth,
-                    frame,
-                    card.render.clone(),
-                    owner,
-                )?;
+                card.render = server
+                    .lens_frames
+                    .replace_for_subscription(
+                        auth,
+                        frame,
+                        card.render.clone(),
+                        owner,
+                        caller.held_proof(),
+                    )
+                    .await?;
             }
-            (_, Some(auth), None) => server
-                .lens_frames
-                .record(auth, frame, card.render.clone())?,
+            (_, Some(auth), None) => {
+                server
+                    .lens_frames
+                    .record(auth, frame, card.render.clone(), caller.held_proof())?
+            }
             (_, None, _) => return Err(joined()),
         }
         return Ok(card);
