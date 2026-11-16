@@ -176,6 +176,84 @@ impl MailProviderWire for CountingSearchWire {
     }
 }
 
+/// A [`CountingSearchWire`] that flips `session` back off record while the
+/// search reads the message whole: the stretch's mode changes while the
+/// provider answers.
+pub struct OffRecordFlipAtWholeRead<'s, 'v> {
+    wire: CountingSearchWire,
+    session: &'s OffRecordSession<'v>,
+}
+
+impl<'s, 'v> OffRecordFlipAtWholeRead<'s, 'v> {
+    /// A provider holding the one message, received at `received_at`, that
+    /// flips `session` off record at its whole read.
+    #[must_use]
+    pub fn new(received_at: u64, session: &'s OffRecordSession<'v>) -> Self {
+        Self {
+            wire: CountingSearchWire::new(received_at),
+            session,
+        }
+    }
+
+    /// How many times a search read the message whole.
+    #[must_use]
+    pub fn whole_reads(&self) -> u32 {
+        self.wire.whole_reads()
+    }
+}
+
+impl MailProviderWire for OffRecordFlipAtWholeRead<'_, '_> {
+    fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
+        self.wire.current_anchor(source)
+    }
+
+    fn list_page(
+        &self,
+        source: &MailSyncSource,
+        query: &MailListQuery,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        self.wire.list_page(source, query, page)
+    }
+
+    fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
+        self.wire.headers(source, provider_id)
+    }
+
+    fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
+        self.session.flip_off_record()?;
+        self.wire.full(source, provider_id)
+    }
+
+    fn history(
+        &self,
+        source: &MailSyncSource,
+        anchor: &str,
+        page: Option<&str>,
+    ) -> Result<MailHistoryRead> {
+        self.wire.history(source, anchor, page)
+    }
+
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>> {
+        self.wire.attachment(source, provider_id, attachment)
+    }
+
+    fn search_page(
+        &self,
+        source: &MailSyncSource,
+        query: &str,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        self.wire.search_page(source, query, limit, page)
+    }
+}
+
 /// The mailbox the searches run on, and the owner proof they run under.
 pub struct SearchMailbox {
     /// The mailbox source.
@@ -249,7 +327,7 @@ pub fn search_in_session(
     vault: &Vault,
     mailbox: &SearchMailbox,
     session: &OffRecordSession<'_>,
-    wire: &CountingSearchWire,
+    wire: &dyn MailProviderWire,
 ) -> Result<MailSearchReport> {
     vault
         .mail_search_step_in_session(

@@ -46,6 +46,20 @@ const ROOM_SEARCH_REFUSAL: &str = "Mail is searched only where you are alone.";
 #[doc(hidden)]
 pub use oneiron_verb_wire::mail_pack::search::{MailSearchReport, MailSourceSearchRequest};
 
+/// Where one search keeps the hits it lands.
+enum HitKeeping<'s, 'v> {
+    /// Outside a session: in base.
+    Base,
+    /// Inside a session's stretch on record: in base, on the route the
+    /// search took. Each landing checks in its own transaction that the
+    /// route still stands, the session's participant is in its room and the
+    /// saver still holds, so a stretch that went off record meanwhile keeps
+    /// nothing of the search in base.
+    OnRecord(&'s OffRecordSession<'v>, SessionWriteRoute),
+    /// Inside a session's stretch off record: in its overlay, on that route.
+    Overlay(&'s OffRecordSession<'v>, SessionWriteRoute),
+}
+
 /// The query `query`, checked: 1 to 1024 bytes, no control character, its
 /// quotes closed and, outside them, its parentheses balanced. So a caller's
 /// `)` never closes the group a wire puts the query in. With `escapes`, a
@@ -169,9 +183,9 @@ impl Vault {
         limit: u32,
     ) -> MemoryResult<MailSearchReport> {
         let query = valid_query(query, wire.search_escapes())?;
-        let staging = match session {
-            Some(session) => self.session_staging(session)?,
-            None => None,
+        let keeping = match session {
+            Some(session) => self.session_keeping(session)?,
+            None => HitKeeping::Base,
         };
         let actor = owner.revalidate(self)?;
         let unknown = || MemoryError::not_found("no searchable mailbox source by that ref");
@@ -192,6 +206,12 @@ impl Vault {
         let hits = wire.search_page(&snapshot, query, limit, page)?;
         let at = crate::unix_seconds_now();
         let landing = Landing::new(self, owner, source_ref, at)?;
+        // On record, the saver the route lands under, which each landing's
+        // transaction checks again.
+        let saver = match &keeping {
+            HitKeeping::OnRecord(session, route) => session.saver_check_for(route)?,
+            HitKeeping::Base | HitKeeping::Overlay(..) => None,
+        };
         let mut report = MailSearchReport {
             source_ref: source_ref.to_hex(),
             found: u32::try_from(hits.messages.len()).unwrap_or(u32::MAX),
@@ -201,14 +221,18 @@ impl Vault {
         for hit in &hits.messages {
             // Held whole, or forgotten: nothing to fetch. A message held by
             // its headers only is fetched whole and lands its body.
-            // Inside a session, held means held in what the session reads:
-            // its overlay over base.
+            // Off record, held means held in what the session reads: its
+            // overlay over base.
             let held = {
                 let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
                 let key = occurrence_key(source_ref, &hit.provider_id);
-                match &staging {
-                    Some((session, _)) => OCCURRENCES.get(&session.read_view()?, &txn, &key)?,
-                    None => OCCURRENCES.get(&self.store, &txn, &key)?,
+                match &keeping {
+                    HitKeeping::Overlay(session, _) => {
+                        OCCURRENCES.get(&session.read_view()?, &txn, &key)?
+                    }
+                    HitKeeping::Base | HitKeeping::OnRecord(..) => {
+                        OCCURRENCES.get(&self.store, &txn, &key)?
+                    }
                 }
                 .is_some_and(|held| {
                     matches!(held.stage, MailStage::Body)
@@ -228,9 +252,16 @@ impl Vault {
                 report.skipped += 1;
                 continue;
             }
-            let outcome = match &staging {
-                Some((session, route)) => landing.land_in_session(session, route, &row, &full)?,
-                None => landing.land(&row, &full.headers, Some(&full), true)?,
+            let outcome = match &keeping {
+                HitKeeping::Base => landing.land(&row, &full.headers, Some(&full), true)?,
+                HitKeeping::OnRecord(session, route) => {
+                    landing.land_checked(&row, &full.headers, Some(&full), true, &|txn| {
+                        session.base_write_in_txn(route, saver.as_ref(), txn)
+                    })?
+                }
+                HitKeeping::Overlay(session, route) => {
+                    landing.land_in_session(session, route, &row, &full)?
+                }
             };
             match outcome {
                 LandOutcome::Landed => report.landed += 1,
@@ -241,15 +272,15 @@ impl Vault {
         Ok(report)
     }
 
-    /// Where a search inside `session` keeps its hits: the session and the
-    /// overlay route it stages through while the session is off record;
-    /// `None` once it is on record, so they land in base. The owner's proof
-    /// binds the session at the door (`bind_for`), and every staging writer
-    /// checks the session's participant again.
-    fn session_staging<'s, 'v>(
+    /// Where a search inside `session` keeps its hits: the session's overlay
+    /// while it is off record; base once it is on record, on the route taken
+    /// now, which each landing checks again. The owner's proof binds the
+    /// session at the door (`bind_for`), and every writer checks the
+    /// session's participant again.
+    fn session_keeping<'s, 'v>(
         &self,
         session: &'s OffRecordSession<'v>,
-    ) -> MemoryResult<Option<(&'s OffRecordSession<'v>, SessionWriteRoute)>> {
+    ) -> MemoryResult<HitKeeping<'s, 'v>> {
         if session.read_view()?.read().base().open_nonce != self.store.open_nonce {
             return Err(MemoryError::bad_request(
                 "the off-record session belongs to another vault open",
@@ -261,7 +292,7 @@ impl Vault {
         route.require_recording(session.session_ref())?;
         match route.target() {
             RouteTarget::Overlay => {}
-            RouteTarget::Base => return Ok(None),
+            RouteTarget::Base => return Ok(HitKeeping::OnRecord(session, route)),
             RouteTarget::Discard => {
                 return Err(MemoryError::bad_request(
                     "an anonymous off-record session keeps no searched mail",
@@ -284,7 +315,7 @@ impl Vault {
                 ));
             }
         }
-        Ok(Some((session, route)))
+        Ok(HitKeeping::Overlay(session, route))
     }
 
     /// [`Self::mail_source_search`] run inside the off-record session
@@ -343,7 +374,14 @@ impl Vault {
             return self.search_step(owner, session, source, &wire, query, page, limit);
         }
         if snapshot.provider == MailProvider::Imap {
-            let wire = ImapMailWire::new(self);
+            // Inside a session, what the wire learns of the mailbox (which
+            // UID holds which message) stays in memory: base keeps no row
+            // naming mail the session found (ARCH-0063 #searched-mail).
+            let wire = if session.is_some() {
+                ImapMailWire::keeping_uid_map_in_memory(self)
+            } else {
+                ImapMailWire::new(self)
+            };
             return self.search_step(owner, session, source, &wire, query, page, limit);
         }
         Err(MemoryError::bad_request(

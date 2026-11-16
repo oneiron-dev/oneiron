@@ -211,7 +211,7 @@ impl<'vault> OffRecordSession<'vault> {
         // this is the next landing's to find.
         recheck()?;
         let was = state.record.mode;
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
@@ -229,7 +229,8 @@ impl<'vault> OffRecordSession<'vault> {
             );
             self.entry.publish_state(&state);
         }
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// The route a write lands by now and, while the stretch is on record,
@@ -269,6 +270,23 @@ impl<'vault> OffRecordSession<'vault> {
         ))?;
         drop(state);
         Ok(Some(self.check_saver(saver)))
+    }
+
+    /// The first step of a base write on `route`, a route taken earlier, in
+    /// a write transaction another module's writer opens (a searched mail's
+    /// landing, ARCH-0063 #searched-mail), as [`Landing::in_txn`] runs it: a
+    /// run's participant is still in the room, `saver` (this route's
+    /// [`Self::saver_check_for`]) still holds, and `route` still stands. A
+    /// stretch that went off record while the write waited keeps nothing of
+    /// it in base.
+    pub(crate) fn base_write_in_txn(
+        &self,
+        route: &SessionWriteRoute,
+        saver: Option<&SaverCheck<'_, '_>>,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        self.participant_and_saver_in_txn(saver, txn)?;
+        route.revalidate()
     }
 
     /// The [`Landing`] a base write on `route`, a route taken earlier, runs
@@ -316,7 +334,7 @@ impl<'vault> OffRecordSession<'vault> {
         {
             return Ok(());
         }
-        super::vault_api::set_entry_mode(
+        let (_, writer_wait) = super::vault_api::set_entry_mode(
             &self.entry,
             &mut state,
             &self.session_ref,
@@ -330,7 +348,8 @@ impl<'vault> OffRecordSession<'vault> {
             hearing,
         );
         self.entry.publish_state(&state);
-        Ok(())
+        drop(state);
+        writer_wait.wait(&self.vault.store)
     }
 
     /// Stops the saving when this stretch is on record and its saver no
