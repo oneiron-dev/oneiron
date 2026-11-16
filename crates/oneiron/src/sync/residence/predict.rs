@@ -20,9 +20,10 @@ use super::{
     ResidenceAdmission, ResidenceDirectiveState, local_is_elected_home, residence_window_for_blob,
 };
 #[cfg(oneiron_test_support)]
-use crate::authority::{Destination, WorldPrivacyView};
+use crate::authority::WorldPrivacyView;
 use crate::authority::{
-    HostSlipIssuer, PredictedResidenceSet, ResidenceAct, ResidenceDirective, invalid_authority,
+    Destination, HostSlipIssuer, PeerMachine, PredictedResidenceSet, ResidenceAct,
+    ResidenceDirective, invalid_authority,
 };
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
@@ -114,6 +115,10 @@ struct LivePredictedParent {
 fn refused(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
 }
+
+/// The refusal of a prediction for a peer that is no standing machine of the owner's.
+const NOT_A_STANDING_MACHINE: &str =
+    "a prediction names one of the owner's machines, on the key it stands on here";
 
 /// The set body's key for the prediction `machine` holds under `digest` (the digest as 64
 /// lowercase hex characters).
@@ -234,34 +239,48 @@ impl Vault {
         })
     }
 
-    /// The home's prediction for `machine`, over what `admission` lets it read (production: the
-    /// request's own admission).
+    /// The home's prediction for the machine `peer` proved, over what `admission` lets it read
+    /// (production: the request's own admission, loaded for that peer).
     ///
     /// # Errors
     ///
-    /// A refusal (`InvalidConfig`) for a machine with no standing proof, for the elected home's own
-    /// machine, or for one not at the predicted level; storage.
+    /// A refusal (`InvalidConfig`) for a peer whose proof does not stand here on the key it proved,
+    /// for an admission that reads for any other destination, for the elected home's own machine,
+    /// or for one not at the predicted level; storage.
     pub fn predict_residence_for(
         &self,
         issuer: &HostSlipIssuer,
-        machine: EntityId,
+        peer: PeerMachine,
         admission: &ResidenceAdmission<'_>,
     ) -> Result<PredictedResidenceAnswer> {
+        // An admission for a stale key or a forwarded caller reads as an unknown destination; a
+        // walk over it would push a narrower prediction for the machine.
+        let PeerMachine::Proven { machine, .. } = peer else {
+            return Err(refused(NOT_A_STANDING_MACHINE));
+        };
+        if admission.destination() != Destination::Machine(machine) {
+            return Err(refused(NOT_A_STANDING_MACHINE));
+        }
         let nodes = AdmittedNodes(admission);
-        self.predict_residence_with(issuer, machine, &nodes)
+        self.predict_residence_with(issuer, peer, &nodes)
     }
 
-    /// The set body this home pushed for `machine` under `digest`, if it still holds it.
+    /// The set body this home pushed for the machine `peer` proved, under `digest`, if it still
+    /// holds it. None also for a peer whose proof does not stand here on the key it proved: a
+    /// machine removed, or rotated to another key since its connection proved it, gets nothing.
     ///
     /// # Errors
     ///
     /// Storage.
     pub fn predicted_residence_body(
         &self,
-        machine: EntityId,
+        peer: PeerMachine,
         digest: &[u8; 32],
     ) -> Result<Option<Vec<u8>>> {
         let txn = self.store.env.read_txn()?;
+        let Some(machine) = self.standing_machine(&txn, peer)? else {
+            return Ok(None);
+        };
         PREDICTED_BODY.get(&self.store, &txn, &predicted_body_key(machine, digest))
     }
 
@@ -270,13 +289,13 @@ impl Vault {
     pub(crate) fn predict_residence_with(
         &self,
         issuer: &HostSlipIssuer,
-        machine: EntityId,
+        peer: PeerMachine,
         visibility: &dyn PprNodeVisibility,
     ) -> Result<PredictedResidenceAnswer> {
         // Read before the writer: the election check may mint this install's sync id.
         let home_here = local_is_elected_home(self)?;
         let mut txn = self.store.env.write_txn()?;
-        self.refuse_unless_predictable(&txn, machine, home_here)?;
+        let machine = self.refuse_unless_predictable(&txn, peer, home_here)?;
         let states = directive_states_in_txn(self, &txn)?;
         let parent = live_predicted_parent(&states, machine)?;
         let now = self.instant_in_txn(&txn)?.secs();
@@ -315,27 +334,41 @@ impl Vault {
         Ok(PredictedResidenceAnswer::Pushed(pushed))
     }
 
-    /// Refuses a prediction that names no standing machine, or this install while it is the
-    /// elected home.
+    /// The machine `peer` proved, while its proof stands here on the key it proved
+    /// ([`crate::authority::AuthorityFold::machine_proof_key`]); None for an unproved peer.
+    fn standing_machine(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        peer: PeerMachine,
+    ) -> Result<Option<EntityId>> {
+        let PeerMachine::Proven { machine, key } = peer else {
+            return Ok(None);
+        };
+        let stands = self
+            .authority_view_readonly_in_txn(txn)?
+            .machine_proof_key(machine)
+            == Some(key);
+        Ok(stands.then_some(machine))
+    }
+
+    /// Refuses a prediction for a peer that is no standing machine
+    /// ([`Self::standing_machine`]), or for this install while it is the elected home. Answers
+    /// the machine.
     fn refuse_unless_predictable(
         &self,
         txn: &heed::RoTxn<'_>,
-        machine: EntityId,
+        peer: PeerMachine,
         home_here: bool,
-    ) -> Result<()> {
-        if self
-            .authority_view_readonly_in_txn(txn)?
-            .machine_proof_key(machine)
-            .is_none()
-        {
-            return Err(refused("a prediction names one of the owner's machines"));
-        }
+    ) -> Result<EntityId> {
+        let Some(machine) = self.standing_machine(txn, peer)? else {
+            return Err(refused(NOT_A_STANDING_MACHINE));
+        };
         if home_here && crate::identity::read_machine_id_in_txn(self, txn)? == Some(machine) {
             return Err(refused(
                 "the elected home always syncs every window it may read",
             ));
         }
-        Ok(())
+        Ok(machine)
     }
 
     /// The machine's fresh prediction seeds: its touch log's touches within `PREDICT_SEED_AGE_SECS`

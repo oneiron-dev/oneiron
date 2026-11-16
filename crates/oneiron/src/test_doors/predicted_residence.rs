@@ -20,19 +20,22 @@ pub async fn apply_residence_directives(
     connection.apply_residence_directives().await
 }
 
-/// The home's prediction for `machine` through the owner-grade view a home holds of its own
-/// linked machine: every node visible except those in a world withheld from it. For integration
-/// tests of the predicted level; production predicts through the request's own admission.
+/// The home's prediction for `machine`, asked by a connection that proved it on `key`, through
+/// the owner-grade view a home holds of its own linked machine: every node visible except those in
+/// a world withheld from it. For integration tests of the predicted level; production predicts
+/// through the request's own admission.
 ///
 /// # Errors
 ///
-/// The prediction's: a machine with no standing proof, one not at the predicted level, or
-/// storage.
+/// The prediction's: a key the machine does not stand on here, a machine not at the predicted
+/// level, or storage.
 pub fn predict_residence_withholding(
     vault: &Vault,
     issuer: &HostSlipIssuer,
     machine: EntityId,
+    key: [u8; 32],
 ) -> crate::error::Result<PredictedResidenceAnswer> {
     let visibility = crate::sync::residence::WithholdingNodes::for_machine(vault, machine)?;
-    vault.predict_residence_with(issuer, machine, &visibility)
+    let peer = crate::authority::PeerMachine::Proven { machine, key };
+    vault.predict_residence_with(issuer, peer, &visibility)
 }
