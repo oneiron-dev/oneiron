@@ -606,3 +606,56 @@ pub fn ordered_cap_read(vault: &Vault, known: &[SettingScope]) -> Result<Resolve
     let txn = vault.store.env.read_txn()?;
     super::setting_keys::TEST_ORDERED_CAP.read_in_txn(vault, &txn, known, None)
 }
+
+/// One setting act a peer signed that this install has not landed yet (stage 7b-3 tests).
+#[cfg(feature = "test-support")]
+pub struct SignedSettingAct(oneiron_authority::authority::AuthorityLogEntry);
+
+/// The owner `owner`'s change of the row `slot` to `value` (`None` clears), signed as `signer`'s
+/// own door signs it on `frontier` at `ts`, `ahead` sequences past the signer's next one here,
+/// and not landed ([`land_signed_setting_act`]). Landed before an act its signer signs after it
+/// at the next sequence, it puts that act past the signer's sequence floor on this install,
+/// which then counts that act restriction only (stage 7b-3 tests).
+///
+/// # Errors
+///
+/// A key name of another shape; a value with no JSON; storage errors.
+#[cfg(feature = "test-support")]
+pub fn sign_setting_act_ahead(
+    vault: &Vault,
+    (signer, owner): (&EnrolledMachine, EntityId),
+    frontier: &SettingFrontier,
+    ((key, item, mode, scope), value): (SlotName<'_>, Option<serde_json::Value>),
+    (ts, ahead): (u64, u64),
+) -> Result<SignedSettingAct> {
+    let inline = value
+        .as_ref()
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
+    vault
+        .sign_setting_act_ahead_as(
+            (signer.machine, &signer.key),
+            (owner, &frontier.0),
+            vec![(row_key(key, item, mode, scope), inline)],
+            (ts, ahead),
+        )
+        .map(SignedSettingAct)
+}
+
+/// Lands `act` here at `ts`, as a peer's entry lands (stage 7b-3 tests). The entry's hash.
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_signed_setting_act(
+    vault: &Vault,
+    act: &SignedSettingAct,
+    ts: u64,
+) -> Result<oneiron_authority::authority::AuthorityEntryHash> {
+    let hash = oneiron_authority::authority::authority_entry_hash(&act.0)?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(act.0.clone(), at, ts)])?;
+    Ok(hash)
+}

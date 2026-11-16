@@ -693,7 +693,31 @@ impl Vault {
             (owner, ActSurface::ThisInstall),
             rows,
         )?(machine));
-        self.sign_on_frontier_as(key, frontier, op, ts)
+        self.sign_on_frontier_as(key, frontier, op, ts, 0)
+    }
+
+    /// [`Self::sign_setting_act_as`] at `ahead` sequences past the signer's next one here (stage
+    /// 7b-3 tests): landed before an act signed later at the next sequence, it puts that act past
+    /// the signer's sequence floor on this install.
+    pub(crate) fn sign_setting_act_ahead_as(
+        &self,
+        (machine, key): (EntityId, &ed25519_dalek::SigningKey),
+        (owner, frontier): (EntityId, &SettingFrontier),
+        rows: Vec<(RowKey, Option<Vec<u8>>)>,
+        (ts, ahead): (u64, u64),
+    ) -> Result<AuthorityLogEntry> {
+        let rows = rows
+            .into_iter()
+            .map(|(slot, inline)| {
+                let seen = frontier.seen_of(&slot)?;
+                slot_row(slot, seen, setting_value_digest(b"null"), inline)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let op = AuthorityOp::PolicySettingSet(setting_act_of(
+            (owner, ActSurface::ThisInstall),
+            rows,
+        )?(machine));
+        self.sign_on_frontier_as(key, frontier, op, ts, ahead)
     }
 
     /// A move's copy of each carried row of `rows`, naming its acts, as the machine `machine`'s
@@ -717,7 +741,7 @@ impl Vault {
             })
             .collect::<Result<Vec<_>>>()?;
         let op = AuthorityOp::SettingCopy(SettingCopy { machine, rows });
-        self.sign_on_frontier_as(key, frontier, op, ts)
+        self.sign_on_frontier_as(key, frontier, op, ts, 0)
     }
 
     /// `op` signed with the install key `key` on `frontier`'s parents at `ts`, at the key's next
@@ -728,12 +752,13 @@ impl Vault {
         frontier: &SettingFrontier,
         op: AuthorityOp,
         ts: u64,
+        ahead: u64,
     ) -> Result<AuthorityLogEntry> {
         use ed25519_dalek::Signer;
 
         let fold = self.authority_fold()?;
         let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
-        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
+        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1) + ahead;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: fold.vault_id,
