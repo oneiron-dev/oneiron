@@ -279,14 +279,8 @@ impl Vault {
                 box_release_pending: false,
                 box_recovery_needs_new_kit: false,
             };
-            // The managed node folds the switch from its signed fact, written
-            // in this write (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A).
-            self.append_recovery_box_kit_only_fact_in_txn(
-                txn,
-                actor,
-                surface,
-                preset.is_nobody_but_me(),
-            )?;
+            // MUTATION (red proof): the switch signs no kit-only fact.
+            let _ = (actor, surface);
             state.recovery = preset;
             // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
             // will run last in this write, after the STATE put.
