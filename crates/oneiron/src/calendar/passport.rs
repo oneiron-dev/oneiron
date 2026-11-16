@@ -55,13 +55,25 @@ pub(crate) fn admitted_passports_for_event_in_txn(
         if let Some(body) = vault.get_claim_in_txn(txn, &id)?
             && body.predicate == PREDICATE_CALENDAR_PASSPORT
             && body.subject == ClaimSubject::Entity(*event)
-            && claim_surfaceable(&body)
-            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
+            && passport_admitted_in_txn(vault, txn, &id, &body)?
         {
             values.push((id, decode_passport_value(&body.value)?));
         }
     }
     Ok(values)
+}
+
+/// Whether the passport claim `id` is admitted: a surfaceable head whose
+/// critical confirm, if any, is settled. Only an admitted passport carries
+/// revision authority.
+fn passport_admitted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<bool, CalendarError> {
+    Ok(claim_surfaceable(body)
+        && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)?)
 }
 
 /// The one admitted passport on `event` for exactly `(system, uid)`. Two
@@ -317,10 +329,11 @@ pub(in crate::calendar) fn classify_event_passport(
     Ok(PassportDecision::SkipUnchanged { event_ref })
 }
 
-/// Keeps one live `calendar.passport` claim per `(system × UID)`: supersedes
-/// exactly the live claim whose decoded key is `(system, uid)` with the
-/// already-admitted `new_id` — never a sibling source's passport on the same
-/// EVENT.
+/// Files `new_id`, which its caller already admitted through the Gate door,
+/// as the next revision of exactly `(system × UID)` on `event_ref`, never
+/// touching a sibling source's passport on the same EVENT
+/// ([`revise_passport_in_txn`]): the admitted head stays the head until
+/// `new_id` is approved.
 ///
 /// Admission is the caller's half and runs FIRST, through CAL-09's
 /// `screen_then_claim` hook and the imported-evidence Gate door
@@ -340,11 +353,88 @@ pub fn supersede_calendar_passport(
     new_id: &EntityId,
     recorded_at: u64,
 ) -> Result<(), CalendarError> {
-    let Some((old_id, _)) = live_passport_for(vault, &event_ref, system, uid)? else {
-        return Err(ingest("no live passport carries this (system, uid) pair"));
-    };
-    vault.supersede_claim(new_id, &old_id, recorded_at)?;
-    Ok(())
+    vault.try_with_write_txn_grouped(|txn| {
+        if revise_passport_in_txn(vault, txn, &event_ref, system, uid, new_id, recorded_at)? {
+            Ok(())
+        } else {
+            Err(ingest("no live passport carries this (system, uid) pair"))
+        }
+    })
+}
+
+/// Files `new_id` as the next revision of `(system × UID)` on `event_ref`,
+/// against the live passports it replaces (ARCH-0060 §3: only an admitted
+/// passport carries authority, and a pending or rejected proposal can neither
+/// block a revision nor steer it).
+///
+/// An earlier revision that was never admitted, pending or rejected, carries
+/// no authority: `new_id` supersedes it at once and drops the closure it had
+/// staged. The admitted head closes only when `new_id` is admitted. A proposed
+/// `new_id` stages that closure (`DeferredAction::Supersede`): the owner's
+/// approval of `new_id` completes it in the approving write, and a rejection
+/// drops it, so the head keeps its authority while the revision waits and
+/// after it is rejected. A `new_id` that landed admitted closes the head at
+/// once. Answers whether any live passport carried the key.
+///
+/// # Errors
+///
+/// [`CalendarError::IcsIngest`] when two admitted heads carry the key, or on
+/// store failures.
+pub(in crate::calendar) fn revise_passport_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event_ref: &EntityId,
+    system: &str,
+    uid: &str,
+    new_id: &EntityId,
+    now: u64,
+) -> Result<bool, CalendarError> {
+    let mut head = None;
+    let mut unadmitted = Vec::new();
+    for claim_id in vault.claims_for_subject_in_txn(txn, event_ref)? {
+        if claim_id == *new_id {
+            continue;
+        }
+        let Some(body) = vault.get_claim_in_txn(txn, &claim_id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_CALENDAR_PASSPORT
+            || body.subject != ClaimSubject::Entity(*event_ref)
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            continue;
+        }
+        let value = decode_passport_value(&body.value)
+            .map_err(|_| ingest("stored passport claim did not decode"))?;
+        if value.system != system || value.uid != uid {
+            continue;
+        }
+        if passport_admitted_in_txn(vault, txn, &claim_id, &body)? {
+            if head.replace(claim_id).is_some() {
+                return Err(ingest("competing live calendar passports"));
+            }
+        } else {
+            unadmitted.push(claim_id);
+        }
+    }
+    let found = head.is_some() || !unadmitted.is_empty();
+    // Before `new_id` stages a closure of its own: a staged replacement
+    // closes nothing without its grant.
+    for old in unadmitted {
+        vault.cancel_deferred_claim_in_txn(txn, &old)?;
+        vault.supersede_claim_in_txn(txn, new_id, &old, now)?;
+    }
+    if let Some(head) = head {
+        let landed = vault
+            .get_claim_in_txn(txn, new_id)?
+            .is_some_and(|body| claim_surfaceable(&body));
+        if landed {
+            vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
+        } else {
+            vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
+        }
+    }
+    Ok(found)
 }
 
 /// Points the UID index at `event_ref`. Called when a passport is minted;
@@ -403,7 +493,16 @@ pub(super) fn event_ref_for_indexed_uid(
     Ok(None)
 }
 
-/// Every live passport claim on one EVENT, as `(claim id, decoded value)`.
+/// The live passport claims on one EVENT, one per `(system × UID)`, as
+/// `(claim id, decoded value)`: the revision the ingest diff compares a feed
+/// row with.
+///
+/// While a revision waits for review its admitted head stays live beside it
+/// ([`revise_passport_in_txn`]), so one key can hold two live claims. This
+/// view takes the revision that was never admitted, pending or rejected, over
+/// the admitted head: the diff files neither a waiting revision nor one the
+/// owner rejected again. Authority reads the admitted head
+/// ([`admitted_passports_for_event_in_txn`]).
 ///
 /// # Errors
 ///
@@ -421,7 +520,8 @@ fn live_passports_for_event_in_txn(
     txn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut out = Vec::new();
+    // Each key's chosen claim, and whether it is admitted.
+    let mut out: Vec<(EntityId, CalendarPassportValue, bool)> = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(txn, event_ref)? {
         let Some(body) = vault.get_claim_in_txn(txn, &claim_id)? else {
             continue;
@@ -433,9 +533,25 @@ fn live_passports_for_event_in_txn(
         }
         let value = decode_passport_value(&body.value)
             .map_err(|_| ingest("stored passport claim did not decode"))?;
-        out.push((claim_id, value));
+        let admitted = passport_admitted_in_txn(vault, txn, &claim_id, &body)?;
+        match out
+            .iter_mut()
+            .find(|(_, kept, _)| kept.system == value.system && kept.uid == value.uid)
+        {
+            // An unadmitted revision wins over an admitted head; within one
+            // kind, the later claim id, so scan order never picks.
+            Some(kept) => {
+                if (!admitted, claim_id.as_bytes()) > (!kept.2, kept.0.as_bytes()) {
+                    *kept = (claim_id, value, admitted);
+                }
+            }
+            None => out.push((claim_id, value, admitted)),
+        }
     }
-    Ok(out)
+    Ok(out
+        .into_iter()
+        .map(|(claim_id, value, _)| (claim_id, value))
+        .collect())
 }
 
 /// The live passport claim on `event_ref` for exactly `(system, uid)`.
