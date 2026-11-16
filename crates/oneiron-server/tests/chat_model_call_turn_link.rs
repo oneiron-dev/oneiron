@@ -1,3 +1,4 @@
+#![cfg(oneiron_test_support)]
 //! A saved chat reply names the model call that answered it (UNBUILT3-41,
 //! FIX [TURN-MODEL-LINK]). Canon ARCH-0026 #model-call-record: "One
 //! model-call record sits beside the messages for every call. It references
@@ -45,6 +46,9 @@ use fake_llm::{FakeLlm, Reply as ModelReply};
 
 /// The model every role of the test server runs, as its config names it.
 const MODEL: &str = "test-model";
+/// That model's engine id, as the answering rung records it: provider, the
+/// configured name and the default revision.
+const ENGINE_MODEL: &str = "local/test-model@live";
 
 /// One served vault with a scripted local model: the owner on the host root
 /// of a profiled install.
@@ -175,8 +179,8 @@ impl Host {
     }
 }
 
-/// The one call `records` holds, which generated the reply with `MODEL`
-/// under the wire model the scripted model was sent.
+/// The one call `records` holds, which generated the reply with
+/// `ENGINE_MODEL` under the wire model the scripted model was sent.
 fn answering_call(
     records: Vec<ModelCallRecord>,
     wire_model: &Value,
@@ -193,10 +197,10 @@ fn answering_call(
         "{what}: the answering call generated the reply: {:?}",
         record.kind
     );
-    assert!(
-        record.rung.model.as_str().ends_with(MODEL),
-        "{what}: the answering call names the model it ran: {}",
-        record.rung.model.as_str()
+    assert_eq!(
+        record.rung.model.as_str(),
+        ENGINE_MODEL,
+        "{what}: the answering call names the model it ran"
     );
     let route = record
         .route
