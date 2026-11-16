@@ -98,7 +98,7 @@ impl SideKey for HexId {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        EntityId::from_hex(std::str::from_utf8(bytes).ok()?)
+        EntityId::from_lower_hex(std::str::from_utf8(bytes).ok()?)
             .ok()
             .map(HexId)
     }

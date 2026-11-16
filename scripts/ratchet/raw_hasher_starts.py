@@ -10,8 +10,8 @@ component; the name is not tests.rs, *_tests.rs or tests_*.rs), outside what
 scripts/ratchet/raw_hasher_allowlist.txt lists. The count only goes down: a new hash
 goes through `oneiron_contracts::fingerprint` (a v1 purpose) or `ContentHash`, and each
 PLAN-UC-04 stage 1-7 PR lowers baseline.json's count (lead, 15 Nov 13:55,
-UC-04-LONG-TAIL = A). After stage 0 lands, the pipeline pre-flight runs `--check` on
-the PR merged into main, against main's baseline.json.
+UC-04-LONG-TAIL = A). The count blocks no merge: the merge pipeline counts each change
+merged into main and reports a raise to its author, who lowers it in a follow-up PR.
 
 It also prints `legacy_purposes`: the entries of the `legacy_purposes!` blocks under
 crates/oneiron-fingerprint/src/purposes/, less the test-only testing.rs. That count is printed only and never gated;
@@ -22,11 +22,12 @@ Usage:
   raw_hasher_starts.py --count [TREE]             the raw_hasher_starts count alone (check.sh)
   raw_hasher_starts.py --list [TREE]              every counted start, as path:line: text
   raw_hasher_starts.py --check [--baseline FILE] [TREE]
-      the merge gate: exit 1 when the count is above the baseline's raw_hasher_starts
+      the baseline check: exit 1 when the count is above the baseline's raw_hasher_starts
       count (default FILE: TREE/scripts/ratchet/baseline.json)
 
 TREE defaults to the current directory. Exit 2, never a silent pass, on a missing tree,
-an allowlist line without a scope or a reason, or an unreadable baseline.
+a tree with no counted source file, an allowlist line without a scope or a reason, or an
+unreadable baseline.
 """
 
 import argparse
@@ -102,10 +103,12 @@ def starts(tree):
     """Every counted start, as (path, line, text), in path order."""
     entries = read_allowlist(tree)
     hits = []
+    scanned = 0
     for source in sorted((tree / "crates").glob("*/src/**/*.rs")):
         relative = source.relative_to(tree).as_posix()
         if not counted_file(relative):
             continue
+        scanned += 1
         scope = allowed_scope(relative, entries)
         if scope == "all":
             continue
@@ -118,6 +121,9 @@ def starts(tree):
                 lines = text.splitlines()
             line = text.count("\n", 0, match.start()) + 1
             hits.append((relative, line, lines[line - 1].strip()))
+    if scanned == 0:
+        # A count of 0 is the goal; a tree with no source to count is not that.
+        fail(f"no counted .rs file under {tree}/crates/*/src: not an engine tree")
     return hits
 
 
