@@ -8381,6 +8381,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "oneiron-docedit"
 version = "0.1.0"
 dependencies = [
@@ -9031,6 +9040,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm",
+ "serde",
  "serde_json",
 ]
 
@@ -9054,6 +9064,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-derive",
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
