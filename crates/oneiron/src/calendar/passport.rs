@@ -543,7 +543,8 @@ fn live_passports_for_event_in_txn(
     txn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut out: Vec<(EntityId, CalendarPassportValue)> = Vec::new();
+    // Each key's chosen claim, and whether it is admitted.
+    let mut out: Vec<(EntityId, CalendarPassportValue, bool)> = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(txn, event_ref)? {
         let Some(body) = vault.get_claim_in_txn(txn, &claim_id)? else {
             continue;
@@ -555,19 +556,25 @@ fn live_passports_for_event_in_txn(
         }
         let value = decode_passport_value(&body.value)
             .map_err(|_| ingest("stored passport claim did not decode"))?;
+        let admitted = passport_admitted_in_txn(vault, txn, &claim_id, &body)?;
         match out
             .iter_mut()
-            .find(|(_, kept)| kept.system == value.system && kept.uid == value.uid)
+            .find(|(_, kept, _)| kept.system == value.system && kept.uid == value.uid)
         {
+            // An unadmitted revision wins over an admitted head; within one
+            // kind, the later claim id, so scan order never picks.
             Some(kept) => {
-                if claim_id.as_bytes() > kept.0.as_bytes() {
-                    *kept = (claim_id, value);
+                if (!admitted, claim_id.as_bytes()) > (!kept.2, kept.0.as_bytes()) {
+                    *kept = (claim_id, value, admitted);
                 }
             }
-            None => out.push((claim_id, value)),
+            None => out.push((claim_id, value, admitted)),
         }
     }
-    Ok(out)
+    Ok(out
+        .into_iter()
+        .map(|(claim_id, value, _)| (claim_id, value))
+        .collect())
 }
 
 /// The live passport claim on `event_ref` for exactly `(system, uid)`.
