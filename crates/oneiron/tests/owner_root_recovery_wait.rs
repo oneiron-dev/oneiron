@@ -110,6 +110,8 @@ const STRANGER_KEY_SEED: u8 = 61;
 const SHARED: u64 = 44;
 /// The seed of the co-Owner's first owner key, which binds them and is lost.
 const CO_OWNER_LOST_SEED: u8 = 51;
+/// The first owner's own device key on the shared vault.
+const FIRST_OWNER_KEY_SEED: u8 = 52;
 /// The seeds of successor keys.
 const NEW_KEY_SEED: u8 = 41;
 const NEW2_KEY_SEED: u8 = 42;
@@ -120,6 +122,7 @@ const HOLD_NOT_LIVE: &str = "the recovery hold is not live";
 const ANSWER_KEY_IS_SUCCESSOR: &str = "the hold's successor key never answers its own hold";
 const ANSWER_KEY_IS_ROOT: &str = "the root's authority key never answers a recovery hold";
 const NO_OWNER_KEY: &str = "this install holds no live owner key to answer the recovery hold";
+const ANSWER_NOT_HOLD_OWNER: &str = "only the owner whose recovery this is says it is them";
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -528,6 +531,8 @@ struct CoOwner {
     vault: Vault,
     clock: Arc<ManualClock>,
     issuer: HostSlipIssuer,
+    /// The first owner: the embedded owner the host root binds.
+    first_owner: EntityId,
     person: EntityId,
     vault_id: [u8; 32],
     machine: EntityId,
@@ -591,6 +596,7 @@ fn co_owner_wait_fixture() -> CoOwner {
         vault,
         clock,
         issuer,
+        first_owner: owner,
         person: co_owner,
         vault_id,
         machine,
@@ -651,6 +657,93 @@ impl CoOwner {
             public_key,
             proof: key.sign(&challenge).to_bytes().to_vec(),
         }
+    }
+
+    /// The first owner's act authority on this install.
+    fn first_owner_authority(&self) -> ActAuthority {
+        ActAuthority::Owner(
+            proof(&self.vault, self.first_owner),
+            ActSurface::ThisInstall,
+        )
+    }
+
+    /// The first owner enrols a device key of their own under the host
+    /// root, and this handle holds it alone, as the first owner's device
+    /// install holds its own key.
+    fn hold_first_owners_key(&self, seed: u8) -> SigningKey {
+        let key = SigningKey::from_bytes(&[seed; 32]);
+        let public_key = key.verifying_key().to_bytes();
+        let authority = self.first_owner_authority();
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(&authority, self.machine, &public_key)
+            .expect("the first owner's challenge");
+        let input = OwnerKeyEnrollment {
+            machine: self.machine,
+            public_key,
+            proof: key.sign(&challenge).to_bytes().to_vec(),
+        };
+        self.vault
+            .enrol_owner_signing_key_as_host(&authority, input, &self.issuer)
+            .expect("the first owner enrols a device key");
+        release_owner_keys(&self.vault);
+        self.vault
+            .hold_checkpoint_root_signer(Arc::new(KeySigner(key.clone())));
+        key
+    }
+
+    fn history(&self) -> Vec<AuthorityLogEntry> {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the signed history")
+            .iter()
+            .map(|row| decode_authority_log_entry_body(row).expect("a row"))
+            .collect()
+    }
+
+    /// `key`'s answer row to `hold`, signed by `key` on the stored heads.
+    fn signed_answer(
+        &self,
+        key: &SigningKey,
+        hold: AuthorityEntryHash,
+        answer: RecoveryHoldAnswerKind,
+    ) -> AuthorityLogEntry {
+        let public = key_of(key);
+        let rows = self.history();
+        let parents: BTreeSet<AuthorityEntryHash> = rows
+            .iter()
+            .flat_map(|row| row.parent_hashes.iter().copied())
+            .collect();
+        let mut heads: Vec<AuthorityEntryHash> = rows
+            .iter()
+            .map(|row| authority_entry_hash(row).expect("a hash"))
+            .filter(|row| !parents.contains(row))
+            .collect();
+        heads.sort_unstable();
+        heads.dedup();
+        let seq = rows
+            .iter()
+            .filter(|row| row.signer_key() == &public)
+            .map(|row| row.seq + 1)
+            .max()
+            .unwrap_or(1);
+        let mut row = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(self.vault_id),
+            seq,
+            parent_hashes: heads,
+            op: AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer { hold, answer }),
+            signer: AuthoritySignature {
+                suite: public.suite(),
+                public_key: public,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: T0,
+        };
+        let transcript = authority_transcript(&row).expect("the transcript");
+        row.signer.signature = key.sign(&transcript).to_bytes().to_vec();
+        row
     }
 
     /// The owner enrols the kit root's authority key before the loss.
@@ -1811,6 +1904,78 @@ fn a_landing_binds_a_co_owner_whose_lost_key_held_their_binding() {
     assert!(
         passes_owner_verbs(&fixture.vault, fixture.person),
         "the co-Owner keeps owner control"
+    );
+}
+
+/// A co-Owner's "it is me" never ends another owner's wait (REVIEW2 #8800
+/// P2-1; WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B): the first
+/// owner's install answers `ItIsMe` on the co-Owner's hold and is refused
+/// before any key signs, and an `ItIsMe` row the first owner's own key
+/// signs, imported, counts in the fold yet leaves the hold Waiting until
+/// its own `lands_at`.
+#[test]
+fn a_co_owners_it_is_me_never_ends_another_owners_wait() {
+    let fixture = co_owner_wait_fixture();
+    fixture.enrol_root_key();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let lost = key_of(&fixture.lost_key);
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released(),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost),
+            )
+            .expect("the co-Owner's box recovery holds"),
+    );
+    let first_key = fixture.hold_first_owners_key(FIRST_OWNER_KEY_SEED);
+
+    // At the door: refused, and nothing is written.
+    let before = fixture.history().len();
+    let refused = fixture
+        .vault
+        .answer_recovery_hold_as(
+            &fixture.first_owner_authority(),
+            hold,
+            RecoveryHoldAnswerKind::ItIsMe,
+        )
+        .expect_err("another owner's ItIsMe is refused at the door");
+    assert_refused(&refused, ANSWER_NOT_HOLD_OWNER);
+    assert_eq!(fixture.history().len(), before, "nothing was written");
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Waiting);
+
+    // Imported: the fold counts the first owner's signed ItIsMe row, and
+    // the hold still waits.
+    let row = fixture.signed_answer(&first_key, hold, RecoveryHoldAnswerKind::ItIsMe);
+    let hash = authority_entry_hash(&row).expect("a hash");
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&row).expect("the bytes")
+        ])
+        .expect("the import stores the row");
+    assert!(
+        fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&hash),
+        "the fold counts the first owner's answer row"
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(
+        view.state,
+        RecoveryHoldState::Waiting,
+        "a co-Owner's ItIsMe never ends another owner's wait"
+    );
+    assert!(view.answered_by.is_empty(), "it counts for nothing");
+    fixture.at(lands_at + 60);
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Due,
+        "the wait runs to its own end"
     );
 }
 
