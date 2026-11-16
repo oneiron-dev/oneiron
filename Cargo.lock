@@ -8032,7 +8032,9 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-schedule-contract",
  "oneiron-sdk-build",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
@@ -8326,6 +8328,7 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-derive",
  "oneiron-fingerprint",
  "oneiron-hex",
  "rand 0.8.8",
@@ -8378,6 +8381,16 @@ dependencies = [
  "oneiron-contracts",
  "schemars 0.8.22",
  "serde",
+]
+
+[[package]]
+name = "oneiron-derive"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -8684,6 +8697,7 @@ dependencies = [
  "der 0.7.10",
  "ipnet",
  "libc",
+ "lopdf",
  "oneiron",
  "oneiron-container",
  "oneiron-docedit",
@@ -8693,6 +8707,7 @@ dependencies = [
  "oneiron-sandbox-contract",
  "oneiron-spawn",
  "p256",
+ "pkix-chain",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8704,6 +8719,8 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "x509-cert",
+ "x509-ocsp",
+ "x509-tsp",
 ]
 
 [[package]]
@@ -8772,6 +8789,7 @@ dependencies = [
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8862,6 +8880,14 @@ dependencies = [
 [[package]]
 name = "oneiron-sandbox-contract"
 version = "0.1.0"
+
+[[package]]
+name = "oneiron-schedule-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+]
 
 [[package]]
 name = "oneiron-sdk-build"
@@ -9011,6 +9037,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-setting-contract"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "rmp-serde",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
@@ -9031,6 +9067,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm",
+ "serde",
  "serde_json",
 ]
 
@@ -9054,6 +9091,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-derive",
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
@@ -9123,6 +9161,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "libc",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "serde",
  "serde_json",
@@ -9194,6 +9233,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-model",
+ "oneiron-setting-contract",
  "oneiron-store",
  "schemars 0.8.22",
  "serde",

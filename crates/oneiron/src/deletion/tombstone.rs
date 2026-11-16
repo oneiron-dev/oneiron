@@ -345,9 +345,16 @@ impl SideKey for PendingTombstoneKey {
         let window = head.strip_suffix(b":")?;
         Some(Self {
             window: String::from_utf8(window.to_vec()).ok()?,
-            id: EntityId::from_hex(std::str::from_utf8(hex).ok()?).ok()?,
+            id: EntityId::from_lower_hex(std::str::from_utf8(hex).ok()?).ok()?,
         })
     }
+}
+
+/// The window label and entity a [`PendingTombstoneKey`] reads from the bytes after its
+/// table prefix, or `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_pending_tombstone_key_for_test(bytes: &[u8]) -> Option<(String, EntityId)> {
+    PendingTombstoneKey::decode_key(bytes).map(|key| (key.window, key.id))
 }
 
 // ─── Local hard-delete marker (`dt:`) — durable local delete truth ──────────
@@ -396,6 +403,40 @@ pub(crate) fn stage_engine_row_hard_erasure_in_txn(
         window_label_from_timestamp(learned_at),
         value,
     )
+}
+
+/// Marks, in the batch writer about to tear it, the hard delete of an actor
+/// row by its stored type alone: a PERSON or MACHINE stored at `id`, live or
+/// as a deleted shell, takes its permanent `dt:` marker, as every other hard
+/// delete leaves one (a batch delete tears the row: a hard delete,
+/// ARCH-0038). A capability slip it holds then stops standing, and the id is
+/// not born again here (RULING DELETED-SLIP-BATCH-DELETE = A). Any other
+/// kind, or no row, is left as before. An AGENT_DEF takes no marker: its id
+/// pin outlives the delete and says it (H215), so a definition reborn within
+/// its pin stands again. Nothing is staged for sync: a batch delete
+/// propagates no row's delete.
+pub(crate) fn mark_torn_actor_row_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<()> {
+    let actor =
+        crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, id)?.is_some_and(|row| {
+            matches!(
+                row.entity_type,
+                crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_MACHINE
+            )
+        });
+    let marker = HexId(*id);
+    if !actor || HARD_DELETE_MARKER.contains(store, wtxn, &marker)? {
+        return Ok(());
+    }
+    let value = TombstoneValueV2 {
+        reason: TombstoneReason::UserHardDelete,
+        deleted_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
+        request_id: *id.as_bytes(),
+    };
+    HARD_DELETE_MARKER.put(store, wtxn, &marker, &value.encode().to_vec())
 }
 
 /// [`stage_engine_row_hard_erasure_in_txn`] in the window labelled `window`.
