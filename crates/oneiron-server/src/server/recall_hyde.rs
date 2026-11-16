@@ -124,7 +124,8 @@ impl HydeHost {
         Ok(state
             .work
             .get(&input.request_id)
-            .filter(|work| work.credential == credential)
+            // CF6 (red head): a receipt finds any credential's work.
+            .filter(|work| work.credential == credential || true)
             .map(|work| work.receipt.clone()))
     }
 
@@ -138,7 +139,8 @@ impl HydeHost {
         let work = state
             .work
             .get_mut(&input.request_id)
-            .filter(|work| work.credential == credential)
+            // CF6 (red head): a completion finds any credential's work.
+            .filter(|work| work.credential == credential || true)
             .ok_or_else(|| MemoryError::bad_request("unknown HyDE host request"))?;
         if !matches!(
             work.receipt.status,
