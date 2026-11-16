@@ -41,6 +41,7 @@
 //! the per-verb sources (slice 4.2); until then these are the engine's doors.
 
 mod edges;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 
 use std::collections::BTreeSet;
@@ -81,7 +82,8 @@ const WITHDRAWN_TYPES: SideTable<EntityId, WithdrawnType, Named> =
 
 /// Entries one read returns from each source when the request names no limit.
 pub const FEED_READ_DEFAULT_LIMIT: usize = 64;
-/// The most entries one read returns from each source.
+/// The most entries one read returns from each source while the owner has not moved
+/// `feeds.read.max_per_source` (its default), and the candidates one scan of a source takes.
 pub const FEED_READ_MAX_LIMIT: usize = 256;
 /// Change log rows a read may scan for each entry it returns, so a run of rows the selector
 /// passes over cannot make one read unbounded. The page's `through` still moves past them.
@@ -570,10 +572,10 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedReadRequest,
     ) -> Result<FeedRead> {
-        let limit =
-            page_limit_zero_refused(request.limit, FEED_READ_DEFAULT_LIMIT, FEED_READ_MAX_LIMIT)
-                .map_err(|ZeroLimitRefused| invalid("a feed read's limit is at least 1"))?
-                .rows;
+        let max = self.page_max_in_force(&setting_keys::FEED_READ_MAX)?.rows();
+        let limit = page_limit_zero_refused(request.limit, FEED_READ_DEFAULT_LIMIT, max)
+            .map_err(|ZeroLimitRefused| invalid("a feed read's limit is at least 1"))?
+            .rows;
         let _bodies = reader.prepare_point_read::<Error>()?;
         let txn = self.store.env.read_txn()?;
         let actor = live_reader_actor_in(reader, &txn)?;

@@ -28,6 +28,7 @@
 mod catalogue;
 mod change;
 mod learned;
+mod page_max;
 mod read;
 mod set;
 pub(crate) mod tables;
@@ -51,6 +52,7 @@ pub(crate) use self::change::{
     settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
+pub use self::page_max::PageMax;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
