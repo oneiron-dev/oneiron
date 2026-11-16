@@ -410,6 +410,11 @@ pub struct StoreCore {
     pub(crate) policy_manifest_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault terminal hook-ask changes, published after commit.
     pub(crate) verb_hook_ask_updates: tokio::sync::watch::Sender<u64>,
+    /// Content-free, per-vault: bumped by each hard erase's writer as it
+    /// retires the code-run outputs the erased row sourced, before that
+    /// writer commits (L2-37 PR-3). A parked run's idle Keep refresh reads
+    /// it ([`crate::Vault::source_erase_generation`]). Never persisted.
+    pub(crate) source_erase_generation: std::sync::atomic::AtomicU64,
     /// The one decision-answer signal every ask door and waiter on this open
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.

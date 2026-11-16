@@ -29,6 +29,16 @@ pub(crate) enum Reply {
     /// Answer with this text, in the protocol and mode the request asked
     /// for. `model` is what the reply claims served it.
     Text { text: String, model: String },
+    /// Answer with this text, reporting `cache_write` created and
+    /// `cache_read` read tokens in its Anthropic usage (L2-37 PR-3): the
+    /// warm send's write, the refresh's read. Other protocols answer plain
+    /// text.
+    CachedText {
+        text: String,
+        model: String,
+        cache_write: u64,
+        cache_read: u64,
+    },
     /// Answer with these deltas as a stream (or their concatenation when
     /// the request did not stream).
     Deltas { deltas: Vec<String>, model: String },
@@ -230,6 +240,14 @@ async fn answer(
         None => Reply::Status(500),
     };
     let usage = !matches!(reply, Reply::NoUsage { .. });
+    let cache = match &reply {
+        Reply::CachedText {
+            cache_write,
+            cache_read,
+            ..
+        } => Some((*cache_write, *cache_read)),
+        _ => None,
+    };
     let (deltas, model) = match reply {
         Reply::Status(status) => {
             let body = if anthropic {
@@ -255,6 +273,7 @@ async fn answer(
             return response;
         }
         Reply::Text { text, model } => (vec![text], model),
+        Reply::CachedText { text, model, .. } => (vec![text], model),
         Reply::Deltas { deltas, model } | Reply::NoUsage { deltas, model } => (deltas, model),
         Reply::Computed(compute) => (vec![compute(&body)], "fake-model".to_owned()),
         Reply::Raw(body) => return sse_body(body),
@@ -282,6 +301,11 @@ async fn answer(
             let mut reply = anthropic_json(&deltas.concat(), &model);
             if !usage {
                 reply["usage"] = Value::Null;
+            } else if let Some((cache_write, cache_read)) = cache {
+                if let Some(object) = reply.get_mut("usage").and_then(Value::as_object_mut) {
+                    object.insert("cache_creation_input_tokens".to_owned(), json!(cache_write));
+                    object.insert("cache_read_input_tokens".to_owned(), json!(cache_read));
+                }
             }
             axum::Json(reply).into_response()
         }
@@ -293,7 +317,7 @@ async fn answer(
             sse(events)
         }
         (true, true) => {
-            let mut events = anthropic_events(&deltas, &model);
+            let mut events = anthropic_events(&deltas, &model, cache);
             if !usage {
                 for (_, event) in &mut events {
                     if let Some(message) = event.get_mut("message").and_then(Value::as_object_mut) {
@@ -356,12 +380,24 @@ fn openai_events(deltas: &[String], model: &str) -> Vec<(Option<&'static str>, V
     events
 }
 
-fn anthropic_events(deltas: &[String], model: &str) -> Vec<(Option<&'static str>, Value)> {
+fn anthropic_events(
+    deltas: &[String],
+    model: &str,
+    cache: Option<(u64, u64)>,
+) -> Vec<(Option<&'static str>, Value)> {
+    let mut start = json!({"type": "message_start", "message": {"id": "msg_fake", "type": "message", "role": "assistant", "model": model, "content": [], "usage": {"input_tokens": 11, "output_tokens": 1}}});
+    if let Some((cache_write, cache_read)) = cache {
+        if let Some(object) = start
+            .get_mut("message")
+            .and_then(|message| message.get_mut("usage"))
+            .and_then(Value::as_object_mut)
+        {
+            object.insert("cache_creation_input_tokens".to_owned(), json!(cache_write));
+            object.insert("cache_read_input_tokens".to_owned(), json!(cache_read));
+        }
+    }
     let mut events = vec![
-        (
-            Some("message_start"),
-            json!({"type": "message_start", "message": {"id": "msg_fake", "type": "message", "role": "assistant", "model": model, "content": [], "usage": {"input_tokens": 11, "output_tokens": 1}}}),
-        ),
+        (Some("message_start"), start),
         (
             Some("content_block_start"),
             json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),

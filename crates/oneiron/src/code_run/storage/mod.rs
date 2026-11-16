@@ -162,3 +162,18 @@ pub(crate) use self::reader_jobs::code_run_reader_wait_accepts_masked;
 pub(crate) use self::records::code_run_replay_record_accepts_masked;
 pub(crate) use self::replay_capsule::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::type_diagnostics::code_run_type_diagnostics_accepts_masked;
+
+impl crate::Vault {
+    /// This open vault's source erase generation (L2-37 PR-3): how many hard
+    /// erase writers have retired the code-run outputs their row sourced
+    /// since the vault opened, each counted before it commits, so a writer
+    /// that rolls back still counts. In memory only: a host compares two
+    /// reads of it, as a parked run's idle Keep refresh compares the read its
+    /// hold took as the run entered with the one it takes before it sends.
+    #[must_use]
+    pub fn source_erase_generation(&self) -> u64 {
+        self.store
+            .source_erase_generation
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+}

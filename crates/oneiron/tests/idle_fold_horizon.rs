@@ -2,7 +2,8 @@
 //! cached prompt prefix go, the idle pass makes one call for its wait, Fold or Expire, by E+ over
 //! the wait's return cell. Fold seals the run's pending kind marks with no model call, so a return
 //! after the prefix is gone writes the smaller context; the resumed run takes the folds as its
-//! first brief boundary. A thin cell decides Expire (RULING L2-37-COLD-START = A).
+//! first brief boundary. A thin cell takes the cold-start rule D (RULING L2-37-COLD-START = B;
+//! its window in `tests/idle_fold_cold_start.rs`).
 //!
 //! Each wait parks as a canonical run does (the fixture of `tests/idle_wait_returns.rs`): the run
 //! parks on its wait, its trap opens and waits, and the try's park binds the trap through the
@@ -250,14 +251,14 @@ fn a_parked_run_folds_its_kind_marks_at_the_cache_horizon() -> TestResult {
     assert_eq!(idle_fold::next_idle_call_due_ms(&vault)?, Some(DUE_MS));
 
     assert_eq!(
-        idle_fold::run_due_idle_calls(&vault, DUE_MS - 1)?,
+        idle_fold::run_due_idle_calls(&vault, DUE_MS - 1, &mut |_| None)?.made,
         0,
         "no call before it is due"
     );
     assert_eq!(doors::idle_call(&vault, &key)?, None);
 
     assert_eq!(
-        idle_fold::run_due_idle_calls(&vault, DUE_MS)?,
+        idle_fold::run_due_idle_calls(&vault, DUE_MS, &mut |_| None)?.made,
         1,
         "the pass at the due minute makes the call"
     );
@@ -267,6 +268,7 @@ fn a_parked_run_folds_its_kind_marks_at_the_cache_horizon() -> TestResult {
             folds: 1,
             // The two folded observations, four bytes to a token.
             tokens: 2 * OBSERVATION_BYTES as u64 / 4,
+            keeps: 0,
             at_ms: DUE_MS,
         }),
         "E+ folds: every return comes after the prefix is gone"
@@ -292,7 +294,7 @@ fn a_parked_run_folds_its_kind_marks_at_the_cache_horizon() -> TestResult {
         "the boundary is taken once"
     );
     assert_eq!(
-        idle_fold::run_due_idle_calls(&vault, DUE_MS + 60_000)?,
+        idle_fold::run_due_idle_calls(&vault, DUE_MS + 60_000, &mut |_| None)?.made,
         0,
         "a wait gets one call"
     );
@@ -320,13 +322,17 @@ fn overlapping_kind_marks_count_a_shared_output_once() -> TestResult {
         &prefix()
     )?);
 
-    assert_eq!(idle_fold::run_due_idle_calls(&vault, DUE_MS)?, 1);
+    assert_eq!(
+        idle_fold::run_due_idle_calls(&vault, DUE_MS, &mut |_| None)?.made,
+        1
+    );
     assert_eq!(
         doors::idle_call(&vault, &key)?,
         Some(IdleCallView::Fold {
             folds: 2,
             // Steps 0, 1 and 2, each once: step 1 lies under both marks.
             tokens: 3 * OBSERVATION_BYTES as u64 / 4,
+            keeps: 0,
             at_ms: DUE_MS,
         }),
         "the shared step's output counts once"
@@ -358,10 +364,16 @@ fn a_wait_whose_returns_fall_in_the_last_minute_expires() -> TestResult {
         &prefix()
     )?);
 
-    assert_eq!(idle_fold::run_due_idle_calls(&vault, DUE_MS)?, 1);
+    assert_eq!(
+        idle_fold::run_due_idle_calls(&vault, DUE_MS, &mut |_| None)?.made,
+        1
+    );
     assert_eq!(
         doors::idle_call(&vault, &key)?,
-        Some(IdleCallView::Expire { at_ms: DUE_MS }),
+        Some(IdleCallView::Expire {
+            keeps: 0,
+            at_ms: DUE_MS
+        }),
         "E+ lets the prefix go: its returns read it warm"
     );
     assert_eq!(
@@ -378,9 +390,11 @@ fn a_wait_whose_returns_fall_in_the_last_minute_expires() -> TestResult {
 }
 
 /// A cell whose waits still waiting at the call's elapsed time are below the person-wait floor
-/// of thirty, at every level of its back-off, decides Expire (RULING L2-37-COLD-START = A).
+/// of thirty, at every level of its back-off, is a cold start (RULING L2-37-COLD-START = B): rule
+/// D keeps, and a Keep whose refresh sends nothing falls back to the call after the Keeps, which
+/// folds the run's kind mark.
 #[test]
-fn a_wait_whose_cell_is_thin_expires() -> TestResult {
+fn a_wait_whose_cell_is_thin_takes_the_cold_start_rule() -> TestResult {
     let (_dir, vault) = open_vault()?;
     let (row, key, fold) = parked_run_with_a_kind_mark(&vault, 0x73)?;
     // Twenty-nine waits, all of which would favour Fold: one short of the floor.
@@ -393,16 +407,27 @@ fn a_wait_whose_cell_is_thin_expires() -> TestResult {
         &prefix()
     )?);
 
-    assert_eq!(idle_fold::run_due_idle_calls(&vault, DUE_MS)?, 1);
+    let mut asked = Vec::new();
+    let made = idle_fold::run_due_idle_calls(&vault, DUE_MS, &mut |wait| {
+        asked.push(*wait);
+        None
+    })?;
+    assert_eq!(made.made, 1);
+    assert_eq!(asked, vec![key], "rule D asks for a refresh");
     assert_eq!(
         doors::idle_call(&vault, &key)?,
-        Some(IdleCallView::Expire { at_ms: DUE_MS }),
-        "a thin cell decides Expire"
+        Some(IdleCallView::Fold {
+            folds: 1,
+            tokens: 2 * OBSERVATION_BYTES as u64 / 4,
+            keeps: 0,
+            at_ms: DUE_MS,
+        }),
+        "the Keep sent nothing, so the run's kind mark folds"
     );
     assert_eq!(
-        doors::fold_ledger(&vault, key.run)?.pending_marks,
+        doors::fold_ledger(&vault, key.run)?.kind_folds,
         vec![fold],
-        "nothing folds"
+        "the kind mark landed as its fold"
     );
     Ok(())
 }
@@ -435,7 +460,7 @@ fn a_reply_landing_before_the_horizon_cancels_the_call() -> TestResult {
     );
 
     assert_eq!(
-        idle_fold::run_due_idle_calls(&vault, DUE_MS)?,
+        idle_fold::run_due_idle_calls(&vault, DUE_MS, &mut |_| None)?.made,
         0,
         "no call for a run that came back"
     );
@@ -502,7 +527,7 @@ fn an_answer_with_no_cache_horizon_gets_no_idle_call() -> TestResult {
     put_own_cell(&vault, &[3_600; 30])?;
     assert_eq!(idle_fold::next_idle_call_due_ms(&vault)?, None);
     assert_eq!(
-        idle_fold::run_due_idle_calls(&vault, u64::MAX)?,
+        idle_fold::run_due_idle_calls(&vault, u64::MAX, &mut |_| None)?.made,
         0,
         "a parked run with no horizon gets no call"
     );
