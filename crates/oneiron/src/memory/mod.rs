@@ -72,6 +72,7 @@ mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
+mod say;
 mod settled_vad;
 mod skill_authoring;
 pub mod wellness_doors;
@@ -245,8 +246,7 @@ pub use dreamer_wake_read::{
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
 pub use edge_provenance::{
-    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
-    EdgeProvenanceSupersession, EdgeProvenanceView,
+    EdgeProvenanceLifecycle, EdgeProvenanceRequest, EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
@@ -267,6 +267,7 @@ pub use export_transfer_read::{
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
+    ExpressionPreferencesRequest,
 };
 pub(crate) use key_value::address_parses as key_value_address_parses;
 pub use key_value::{
@@ -295,6 +296,11 @@ pub use plugin_sections::{
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
     PluginSectionsView,
+};
+pub(crate) use say::MessageMarks;
+pub use say::{
+    SAY_NEEDS_A_DESTINATION, SAY_TASK_UNASSIGNED, SAY_UNKNOWN_DESTINATION, SayAnswer, SayKind,
+    SayReceipt, SayRequest,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
@@ -354,7 +360,8 @@ pub use scoped_export::{
     ScopedExportRecord, ScopedExportRequest,
 };
 pub use search_hybrid::{
-    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+    HybridPhoneticVectorQuery, HybridPprQuery, HybridRankReplay, HybridSearchHit,
+    HybridSearchRequest, HybridTemporalQuery,
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
