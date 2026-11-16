@@ -93,6 +93,7 @@ mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
 mod handover_evidence;
+mod held_answers;
 mod history_admission;
 mod history_coverage;
 mod history_fetch;
@@ -312,6 +313,7 @@ pub(crate) use full_copy_mark::append_install_signed_in_txn;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
+pub use held_answers::{ConfirmedHeldAnswers, HeldAnswerListing, ListedHeldAnswer};
 pub use history_coverage::{
     AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest,
 };
@@ -475,6 +477,7 @@ pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
+pub(crate) use held_answers::{drop_held_answer_dismissals_in_txn, is_dismissed_held_answer_row};
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };

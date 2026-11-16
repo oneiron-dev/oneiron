@@ -41,9 +41,10 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
     AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp,
     AuthoritySignature, AuthorityTier, AuthorityVaultId, CheckpointPolicyView,
-    ConversationLearningView, DeviceAuthority, GenesisRecoveryStep, HostSlipIssuer,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
-    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
+    ConfirmedHeldAnswers, ConversationLearningView, DeviceAuthority, GenesisRecoveryStep,
+    HeldAnswerListing, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
     ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
     fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
     machine_profile_proof_transcript,
@@ -55,8 +56,10 @@ use oneiron::dreamer_runner::{
 use oneiron::error::{OWNER_KEY_REQUIRED, RecordError};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryResult};
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::conversation_training_fold::leaves_out;
 use oneiron::test_doors::device_succession_fold::successor;
+use oneiron::test_doors::held_answer_confirm::confirming_answer;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
@@ -87,6 +90,10 @@ const SERVED_REPO: &str = "carried";
 /// the seed of its device key.
 const PREDECESSOR_CLIENT: u64 = 4242;
 const PREDECESSOR_SEED: u8 = 67;
+
+/// The machine the held-answer door tests enrol: the seed of its machine
+/// key.
+const JOINING_SEED: u8 = 68;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -734,6 +741,12 @@ fn a_hosted_nodes_own_yours_answer_stays_held() {
         !mine(&fold, machine, &node_key),
         "a hosted node's own answer, with no owner key's proof, never makes it mine"
     );
+    assert_eq!(
+        asking(&fold, machine).len(),
+        1,
+        "the answer is held, not refused: it asks the owner: {:?}",
+        fold.issues
+    );
 }
 
 /// Test 2 of the row. Main: the fold refuses any cosign on an answer, so the
@@ -759,6 +772,12 @@ fn a_hosted_nodes_unproven_home_pick_waits() {
         home_pick_in_force(&fold),
         None,
         "a not-mine node's home pick with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices().len(),
+        1,
+        "the pick is stored and asks the owner, not refused: {:?}",
         fold.issues
     );
 }
@@ -797,6 +816,12 @@ fn a_hosted_nodes_unproven_removal_of_another_machine_waits() {
         "the victim's registration still stands: {:?}",
         fold.issues
     );
+    assert_eq!(
+        asking(&fold, victim).len(),
+        1,
+        "the removal is held, not refused: it asks the owner: {:?}",
+        fold.issues
+    );
 }
 
 /// Test 3, hosted guard (the lead's ruling 15 Nov 13:2x,
@@ -825,6 +850,12 @@ fn a_custodial_roots_cosign_proves_nothing_on_a_hosted_vault() {
         !mine(&fold, machine, &node_key),
         "a hosted node's own answer on a hosted vault, with no owner key's proof, never makes it mine"
     );
+    assert_eq!(
+        asking(&fold, machine).len(),
+        1,
+        "the bare answer is held and asks the owner: {:?}",
+        fold.issues
+    );
     let answer = HostedNodeAnswer::on_a_hosted_vault();
     let root = answer.root.clone();
     let (fold, machine, node_key) = answer.answer_yours(&[&root]);
@@ -832,6 +863,11 @@ fn a_custodial_roots_cosign_proves_nothing_on_a_hosted_vault() {
         !mine(&fold, machine, &node_key),
         "the host's custodial root proves nothing for the owner: {:?}",
         fold.issues
+    );
+    assert_eq!(
+        asking(&fold, machine),
+        BTreeSet::new(),
+        "an answer cosigned by a key that proves nothing is a forged entry, not a held one"
     );
 }
 
@@ -851,6 +887,12 @@ fn a_machine_paired_without_an_owner_keys_proof_is_held() {
     assert!(
         !mine(&fold, paired.paired_machine, &paired_key),
         "a pairing the owner's laptop carried with no owner key's proof is held, not mine"
+    );
+    assert_eq!(
+        asking(&fold, paired.paired_machine).len(),
+        1,
+        "the pairing is held, not refused: it asks the owner: {:?}",
+        fold.issues
     );
 }
 
@@ -890,12 +932,22 @@ fn a_strangers_cosign_or_a_second_cosign_proves_nothing() {
         !mine(&fold, machine, &node_key),
         "a stranger's cosign is no owner key's proof"
     );
+    assert_eq!(
+        asking(&fold, machine),
+        BTreeSet::new(),
+        "a forged proof is a refused entry, not a held one"
+    );
     let answer = HostedNodeAnswer::new();
     let root = answer.root.clone();
     let (fold, machine, node_key) = answer.answer_yours(&[&root, &stranger]);
     assert!(
         !mine(&fold, machine, &node_key),
         "a proven answer carries exactly one cosign"
+    );
+    assert_eq!(
+        asking(&fold, machine),
+        BTreeSet::new(),
+        "a second cosign is a refused entry, not a held one"
     );
 }
 
@@ -953,6 +1005,12 @@ fn a_hosted_nodes_unproven_rekey_of_a_mine_machine_is_held() {
         "the laptop stays mine: {:?}",
         fold.issues
     );
+    assert_eq!(
+        asking(&fold, laptop_machine).len(),
+        1,
+        "the re-key is held, not refused: it asks the owner: {:?}",
+        fold.issues
+    );
 }
 
 /// Item 2 on the MachineProfile op: a not-mine carrier's unproven demote of a
@@ -970,6 +1028,12 @@ fn a_hosted_nodes_unproven_demote_of_a_mine_machine_waits() {
     assert!(
         mine(&fold, laptop_machine, &laptop_key),
         "a not-mine node's demote with no owner key's proof waits for the owner: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        asking(&fold, laptop_machine).len(),
+        1,
+        "the demote is held, not refused: it asks the owner: {:?}",
         fold.issues
     );
 }
@@ -1346,7 +1410,7 @@ fn a_members_own_opt_out_lands_through_a_not_mine_carrier() {
 /// The same ruling's other side: the vault-wide training setting is the
 /// vault owner's act, so a not-mine carrier's unproven set waits.
 #[test]
-fn an_admins_vault_wide_training_setting_waits_through_a_not_mine_carrier() {
+fn the_owners_vault_wide_training_setting_waits_through_a_not_mine_carrier() {
     let answer = HostedNodeAnswer::new();
     let node = answer.machine;
     let target = conversation_training_vault_target(&answer.vault_id()).expect("the target");
@@ -1436,6 +1500,41 @@ impl ServedVault {
             owner,
             _dir: dir,
         }
+    }
+
+    /// A self-host vault as its own server starts one: rooted under the
+    /// host's root, the owner bound by it, this install profiled.
+    fn self_host() -> Self {
+        let dir = tempfile::tempdir().expect("vault directory");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("self-host vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's machine profile under the host root");
+        let person = vault.ensure_embedded_owner_actor().expect("the owner");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, person)
+            .expect("the owner's binding");
+        let owner = vault
+            .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+            .expect("the owner's proof");
+        Self {
+            vault,
+            issuer,
+            owner,
+            _dir: dir,
+        }
+    }
+
+    /// The owner enrols the serving install's own owner signing key, as a
+    /// server's `enroll-this-install` route does.
+    fn enrol_serving_install_key(&self) -> oneiron::Result<()> {
+        self.vault
+            .enrol_serving_install_owner_signing_key(
+                &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+                &self.issuer,
+            )
+            .map(|_| ())
     }
 
     /// This install's MACHINE row.
@@ -1618,6 +1717,64 @@ impl ServedVault {
             PREDECESSOR_CLIENT,
             signing(PREDECESSOR_SEED).verifying_key().to_bytes(),
         )
+    }
+
+    /// The owner's list of the acts that wait for his proof.
+    fn held(&self) -> HeldAnswerListing {
+        self.vault
+            .held_machine_answers(&self.owner)
+            .expect("the held answer list")
+    }
+
+    /// The entry of every held answer the list names.
+    fn held_entries(&self) -> Vec<AuthorityEntryHash> {
+        self.held()
+            .answers
+            .iter()
+            .map(|listed| listed.entry)
+            .collect()
+    }
+
+    /// The owner confirms the held answers `entries` name through this
+    /// install.
+    fn confirm(&self, entries: &[AuthorityEntryHash]) -> oneiron::Result<ConfirmedHeldAnswers> {
+        self.vault
+            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries)
+    }
+
+    /// The owner dismisses the ask of the held answers `entries` name on
+    /// this install.
+    fn dismiss(&self, entries: &[AuthorityEntryHash]) -> oneiron::Result<HeldAnswerListing> {
+        self.vault
+            .dismiss_held_machine_answers(&self.owner, entries)
+    }
+
+    /// Another machine's request to join this vault: its own keys, and its
+    /// own proof over them for this vault.
+    fn joining_machine(&self) -> MachineEnrolmentRequest {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .vault_id
+            .expect("the vault is rooted");
+        let machine = EntityId::from_bytes([0x76; 16]).expect("an id");
+        let profile = node_profile(
+            vault_id,
+            machine,
+            &signing(JOINING_SEED),
+            MachineRole::Unanswered,
+            1,
+            None,
+        );
+        MachineEnrolmentRequest {
+            vault_id,
+            machine,
+            machine_key: profile.machine_key,
+            device_class: profile.device_class,
+            encryption_key: profile.encryption_key,
+            machine_proof: profile.machine_proof,
+        }
     }
 
     /// The machine the vault counts as the retired device's successor.
@@ -1930,4 +2087,274 @@ fn the_device_succession_door_lands_with_the_owners_key_on_this_install() {
         .name_predecessor()
         .expect("the proven succession lands");
     assert_eq!(served.predecessors_successor(), Some(served.install()));
+}
+
+/// The owner's list names a held answer: its entry, the machine and the
+/// role it asks for, how the machine stands, the install that carried it,
+/// and that this install cannot confirm it.
+#[test]
+fn the_held_list_names_the_answer_its_carrier_and_the_standing_role() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let listing = served.held();
+    assert_eq!(listing.answers.len(), 1, "one held answer: {listing:?}");
+    let listed = &listing.answers[0];
+    assert_eq!(BTreeSet::from([listed.entry]), served.asking());
+    assert_eq!(listed.answer.profile.machine, served.install());
+    assert_eq!(
+        listed.answer.profile.role,
+        MachineRole::Owned(MachineOwnership::Yours),
+        "what the answer asks for"
+    );
+    assert_eq!(
+        listed.standing,
+        Some(MachineRole::Unanswered),
+        "the machine stands as it did"
+    );
+    assert_eq!(listed.answer.carrier(), Some(served.install()));
+    assert_eq!(listed.carrier_role, Some(MachineRole::Unanswered));
+    assert!(!listed.carrier_is_mine, "the carrier is not his machine");
+    assert!(!listed.dismissed);
+    assert!(
+        !listed.replaces_keys,
+        "an answer a door wrote names the keys the machine stands under"
+    );
+    assert!(
+        !listing.can_confirm,
+        "an install that holds no owner key cannot confirm"
+    );
+}
+
+/// A confirm promises a proven answer, so on an install that holds no owner
+/// key it refuses before it writes: the answer still asks.
+#[test]
+fn a_confirm_on_an_install_without_the_owners_key_is_refused_and_writes_nothing() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let (rows, entries) = (served.stored_rows(), served.held_entries());
+    assert_eq!(entries.len(), 1, "guard: one held answer");
+    assert_owner_key_refusal(served.confirm(&entries));
+    assert_eq!(
+        served.stored_rows(),
+        rows,
+        "the refused confirm stores no row"
+    );
+    assert_eq!(served.held_entries(), entries, "the answer still asks");
+}
+
+/// The owner's confirm on an install that holds his key: the listed answer
+/// becomes his own proven answer, the machine is his, and nothing asks.
+#[test]
+fn the_owners_confirm_of_the_listed_answers_makes_the_machine_his_and_empties_the_list() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let entries = served.held_entries();
+    served.enrol_owner_key();
+    assert!(
+        served.held().can_confirm,
+        "this install holds the owner's key now"
+    );
+    let confirmed = served.confirm(&entries).expect("the owner's confirm lands");
+    assert!(
+        served.install_is_mine(),
+        "the confirmed answer makes it his machine"
+    );
+    assert_eq!(confirmed.removed, Vec::new(), "no machine was removed");
+    assert_eq!(
+        confirmed.listing.answers,
+        Vec::new(),
+        "nothing asks after the confirm"
+    );
+    assert_eq!(served.held().answers, Vec::new());
+}
+
+/// The strict case at the doors (ruling CARRIER-GRANDFATHER = C): a machine
+/// enrolled through an install that holds no owner key has no standing, and
+/// the owner's confirm gives it its first.
+#[test]
+fn the_owners_confirm_of_a_held_enrolment_gives_the_machine_its_first_standing() {
+    let served = ServedVault::hosted();
+    let request = served.joining_machine();
+    let landing = served
+        .vault
+        .enroll_machine(
+            &served.owner,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the enrolment is stored");
+    assert!(landing.held().is_some(), "guard: the enrolment is held");
+    let listing = served.held();
+    assert_eq!(listing.answers.len(), 1, "one held answer: {listing:?}");
+    assert_eq!(
+        listing.answers[0].standing, None,
+        "no revision names the machine yet"
+    );
+    served.enrol_owner_key();
+    served
+        .confirm(&served.held_entries())
+        .expect("the owner's confirm lands");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.trusted_machine(request.machine).is_some(),
+        "the confirmed machine is his"
+    );
+    assert_eq!(served.held().answers, Vec::new(), "nothing asks");
+}
+
+/// A dismissal is this install's own mark: it writes no log row, the answer
+/// stays held and makes nothing his, and a later confirm of it still lands.
+#[test]
+fn a_dismissed_answer_stays_held_and_a_later_confirm_still_lands() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let (rows, entries) = (served.stored_rows(), served.held_entries());
+    let listing = served.dismiss(&entries).expect("the dismissal");
+    assert_eq!(listing.answers.len(), 1, "the answer stays listed");
+    assert!(listing.answers[0].dismissed, "and reads as dismissed here");
+    assert_eq!(served.stored_rows(), rows, "a dismissal writes no log row");
+    assert_eq!(served.asking().len(), 1, "the answer stays held");
+    assert!(!served.install_is_mine(), "and makes nothing his");
+    served.enrol_owner_key();
+    served
+        .confirm(&entries)
+        .expect("a dismissed answer still confirms");
+    assert!(served.install_is_mine());
+}
+
+/// A confirm or a dismissal names what the owner's surface listed: an entry
+/// he answered since is stale, and nothing is written for it.
+#[test]
+fn a_confirm_or_a_dismissal_of_an_answered_entry_is_stale() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let entries = served.held_entries();
+    served.enrol_owner_key();
+    served.confirm(&entries).expect("guard: the first confirm");
+    let rows = served.stored_rows();
+    let again = served.confirm(&entries);
+    assert!(
+        matches!(again, Err(Error::ConcurrentWrite(_))),
+        "a second confirm is stale: {again:?}"
+    );
+    let dismissal = served.dismiss(&entries);
+    assert!(
+        matches!(dismissal, Err(Error::ConcurrentWrite(_))),
+        "a dismissal of it is stale: {dismissal:?}"
+    );
+    assert_eq!(served.stored_rows(), rows, "neither stores a row");
+}
+
+/// The confirm carries a held answer's role and class, never other keys than
+/// its machine stands under (review R7 P1). The fold lets an owner key's
+/// proof re-key a machine, and a held answer's bytes are its carrier's: a
+/// confirm that carried them as they came would hand the machine's identity,
+/// and the secrets sealed to it, to whoever wrote the answer. No door of the
+/// crate writes such an answer (a class revision keeps both keys), so the
+/// case is a pure fold: the hosted node's unproven re-key of the owner's
+/// laptop is held, and the confirm of it is refused.
+#[test]
+fn the_owners_confirm_never_replaces_a_standing_machines_keys() {
+    let beside = LaptopBesideNode::new();
+    let laptop_machine = beside.laptop_machine;
+    let stranger = signing(STRANGER_SEED);
+    let fold =
+        beside.node_answers_for_the_laptop(MachineRole::Owned(MachineOwnership::Yours), &stranger);
+    let held = asking(&fold, laptop_machine);
+    assert_eq!(
+        held.len(),
+        1,
+        "guard: the re-key is held: {:?}",
+        fold.issues
+    );
+    let confirm = confirming_answer(&fold, owner(), held.first().expect("the held re-key"));
+    assert!(
+        confirm.is_err(),
+        "the confirm of a held answer that names other keys is refused: {confirm:?}"
+    );
+}
+
+/// Guard: a held answer under the machine's own keys is confirmed as it was
+/// carried. The node's unproven demote of the laptop is held; the confirm
+/// carries its role under the laptop's keys, at the next revision above the
+/// laptop's standing head.
+#[test]
+fn the_owners_confirm_of_a_held_demote_keeps_the_machines_keys() {
+    let beside = LaptopBesideNode::new();
+    let (laptop_machine, laptop_key, laptop) = (
+        beside.laptop_machine,
+        beside.laptop_key(),
+        beside.laptop.clone(),
+    );
+    let fold = beside
+        .node_answers_for_the_laptop(MachineRole::Owned(MachineOwnership::WorkSchool), &laptop);
+    let held = asking(&fold, laptop_machine);
+    assert_eq!(
+        held.len(),
+        1,
+        "guard: the demote is held: {:?}",
+        fold.issues
+    );
+    let confirm = confirming_answer(&fold, owner(), held.first().expect("the held demote"))
+        .expect("the confirm of a held demote is carried");
+    assert_eq!(confirm.machine, laptop_machine);
+    assert_eq!(
+        confirm.role,
+        MachineRole::Owned(MachineOwnership::WorkSchool)
+    );
+    assert_eq!(confirm.machine_key, laptop_key, "the laptop's own key");
+    assert_eq!(
+        confirm.revision, 2,
+        "the next revision above the standing head"
+    );
+    assert_eq!(confirm.carrier, None, "the writer names the carrier");
+}
+
+/// A managed host's server is no owner device (ruling
+/// CARRIER-HOSTED-SERVER-OWNER-KEY = A; review R8-a). An enrolled owner key
+/// proves the owner acts its install carries, so the serving install of a
+/// hosted vault never enrols its own: the refusal names its rule and stores
+/// no row, and no key of this install proves afterwards. A device's own
+/// enrolment on the same vault still lands.
+#[test]
+fn a_managed_hosts_serving_install_never_enrols_its_own_owner_key() {
+    let served = ServedVault::hosted();
+    let rows = served.stored_rows();
+    match served.enrol_serving_install_key() {
+        Err(Error::Record(RecordError::AuthorityRefused(reason))) => assert_eq!(
+            reason,
+            "a managed host holds no owner key: enrol one on your own device"
+        ),
+        other => panic!("a hosted vault's serving install is refused by that rule: {other:?}"),
+    }
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert!(
+        !served.held().can_confirm,
+        "no key of this install proves for the owner"
+    );
+    served.enrol_owner_key();
+    assert!(
+        served.held().can_confirm,
+        "a device's own enrolment on a hosted vault still lands"
+    );
+}
+
+/// Guard: a self-host server is the owner's own machine, and its serving
+/// install enrols its own owner signing key as before.
+#[test]
+fn a_self_host_serving_install_enrols_its_own_owner_key() {
+    let served = ServedVault::self_host();
+    assert!(
+        !served.held().can_confirm,
+        "guard: this handle holds no owner key yet"
+    );
+    served
+        .enrol_serving_install_key()
+        .expect("a self-host server's install enrols its own owner signing key");
+    assert!(
+        served.held().can_confirm,
+        "the enrolled key proves the owner acts this install carries"
+    );
 }

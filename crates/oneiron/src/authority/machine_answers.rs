@@ -77,7 +77,7 @@ pub(super) struct AnswerAct {
 impl AnswerAct {
     /// The owner's own answer from `surface`: a removal for `Removed`, an
     /// answer for any other role.
-    fn by_owner(
+    pub(super) fn by_owner(
         owner: EntityId,
         surface: ActSurface,
         role: MachineRole,
