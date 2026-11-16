@@ -740,7 +740,7 @@ impl Memory<'_> {
             && receipt.actor_class == self.actor_class().gate_actor_class();
         if !own
             && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?
-            && !vault.audit_read_live_in_txn(&txn, self.actor())?
+            && !self.audit_read_holder_in_txn(&txn, "vault.receipts.get")?
         {
             return Ok(None);
         }
