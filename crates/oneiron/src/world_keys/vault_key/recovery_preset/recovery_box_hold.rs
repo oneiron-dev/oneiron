@@ -72,7 +72,9 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             self.recovery_wait_in_txn(&txn)?
         };
-        box_hold.report_recovery_wait(wait)
+        // Mutation red: the report never reaches the box.
+        let _ = (box_hold, wait);
+        Ok(())
     }
 
     /// The box-hold-pending marker, if set: the hold a switch asked for and its attempt. A
