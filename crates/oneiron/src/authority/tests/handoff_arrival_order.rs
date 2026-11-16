@@ -177,8 +177,9 @@ fn a_handoff_that_arrives_after_its_siblings_floor_still_settles() {
 }
 
 /// Control 5: local sequence floors still refuse every row outside a
-/// handoff's line. After H settles, a row the successor B signs below B's
-/// own observed floor is refused, though H's line stands unfloored.
+/// handoff's line but a roster row (`changes_roster`). After H settles, a
+/// withdrawal the successor B signs below B's own observed floor is refused,
+/// though H's line stands unfloored.
 #[test]
 fn a_row_below_its_floor_outside_any_handoffs_line_stays_refused() {
     let fork = fork(239);

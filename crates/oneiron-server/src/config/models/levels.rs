@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use oneiron::llm::manifest::ModelRole;
 use serde::Deserialize;
 
+use crate::runtime::{GpuPodHours, GpuPodHoursConfig};
+
 /// The model-backed seats a shorthand fills: chat and agent work, typed
 /// checks, and the Dreamer. Other roles are named only in DETAILED.
 pub const SHORTHAND_ROLES: [ModelRole; 3] = [
@@ -72,14 +74,23 @@ impl fmt::Display for ModelRef {
 pub struct Rung {
     pub model: ModelRef,
     pub prompt: Option<String>,
+    /// The daily hours this rung serves its seat's ladder, such as a GPU
+    /// box the owner runs batch models on at night (UNBUILT-14). Inside
+    /// them the seat's walk tries it before the rungs without hours; outside
+    /// them the walk passes it at once. `None`: it serves at any hour, in
+    /// its place in the ladder.
+    pub hours: Option<GpuPodHours>,
 }
 
+/// One rung of `rungs`. `hours` is the type `[[gpu.pods]] hours` is, with
+/// its checks.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RungFile {
     model: String,
     prompt: Option<String>,
     prompt_file: Option<PathBuf>,
+    hours: Option<GpuPodHoursConfig>,
 }
 
 /// `[models.roles.<role>]`: either one `model` or a `rungs` list, and
@@ -164,6 +175,7 @@ pub(super) fn expand(
         Ok(Rung {
             model: ModelRef::parse(field, value)?,
             prompt: prompt.clone(),
+            hours: None,
         })
     };
     let mut ladders = BTreeMap::new();
@@ -225,22 +237,37 @@ fn role_ladder(role: ModelRole, file: RoleFile, base: Option<&Path>) -> anyhow::
         (Some(model), true) => Ok(vec![Rung {
             model: ModelRef::parse(&format!("{field}.model"), &model)?,
             prompt: prompt_text(&field, file.prompt, file.prompt_file, base)?,
+            hours: None,
         }]),
         (None, false) => {
             if file.prompt.is_some() || file.prompt_file.is_some() {
                 anyhow::bail!("{field}: with `rungs`, set each rung's own prompt");
             }
-            file.rungs
+            let ladder = file
+                .rungs
                 .into_iter()
                 .enumerate()
                 .map(|(index, rung)| {
                     let field = format!("{field}.rungs[{index}]");
+                    let hours = rung
+                        .hours
+                        .as_ref()
+                        .map(GpuPodHoursConfig::hours)
+                        .transpose()
+                        .map_err(|error| anyhow::anyhow!("{field}.hours: {error}"))?;
                     Ok(Rung {
                         model: ModelRef::parse(&format!("{field}.model"), &rung.model)?,
                         prompt: prompt_text(&field, rung.prompt, rung.prompt_file, base)?,
+                        hours,
                     })
                 })
-                .collect()
+                .collect::<anyhow::Result<Vec<Rung>>>()?;
+            // A call outside every rung's hours would find no rung.
+            anyhow::ensure!(
+                ladder.iter().any(|rung| rung.hours.is_none()),
+                "{field}: every rung keeps hours; leave one rung without hours, so a call outside them has a rung"
+            );
+            Ok(ladder)
         }
     }
 }
