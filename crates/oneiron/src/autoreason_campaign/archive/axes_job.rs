@@ -197,12 +197,15 @@ impl ArchiveAxesRequestRecord {
         self.root
     }
 
-    /// The entities of the samples the recipe reads.
-    pub(crate) fn sample_entities(&self) -> Vec<EntityId> {
-        self.sample_outputs
-            .iter()
-            .map(|output| output.entity)
-            .collect()
+    /// The rows the recipe reads, as [`ArchiveAxesBrief::source_rows`] names
+    /// them: the goal claim and each sample. A caller of the request's doors
+    /// must read every one.
+    pub(crate) fn source_rows(&self) -> Vec<EntityId> {
+        let mut rows = vec![self.goal_ref];
+        rows.extend(self.sample_outputs.iter().map(|output| output.entity));
+        rows.sort();
+        rows.dedup();
+        rows
     }
 
     pub(crate) fn into_state(self) -> CampaignArchiveProposalState {
