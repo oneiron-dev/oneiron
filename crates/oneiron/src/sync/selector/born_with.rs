@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use loro::LoroDoc;
 
-use super::authorize::member_reads_labels;
+use super::authorize::{MemberAccess, member_reads_row, member_reads_word_sources};
 use super::codec::SyncSelector;
 use super::document_admission::{DocumentGrant, admit_selected_in_txn, authorize_at_in_txn};
 use crate::Vault;
@@ -147,6 +147,19 @@ pub(super) fn carry_born_with(
             }
             prompt.push_str(marker);
         }
+        // No grant admits a credential (SCOPED-EXPORT-RULE = A, ARCH-0027
+        // :382): a field whose text the release check reads one in, raw or
+        // through the typed rule, stays home whole, as a denied prompt
+        // source's text does; the row and its other fields still travel.
+        // The Prompt field joins its sources' texts with a blank line, and
+        // the typed rule reads each source's text alone, so each part of a
+        // field between blank lines is judged too.
+        text.retain(|_, value| {
+            crate::serialize::release_keeps_text(value)
+                && value
+                    .split("\n\n")
+                    .all(crate::serialize::release_keeps_text)
+        });
         if !text.is_empty() {
             map_insert_bytes(&map, &id.to_hex(), &encode(&text)?)?;
         }
@@ -205,13 +218,13 @@ fn readable_births(
     };
     let admission = admission.as_ref();
     // FIX SELECTOR-BORN-WITH-PROMPT-LABEL (OPUS-LEAKS): a prompt source's
-    // words reach only a member who reads that source at the relationship
-    // gate, as the window filter judges the source row itself. An Owner's
-    // member reads every source.
+    // words reach only a member who reads that source at the member gate
+    // (the relationship gate and the conversation home), as the window
+    // filter judges the source row itself. An Owner's member reads every
+    // source.
     let member = admission
-        .map(|admission| super::authorize::member_label_access(vault, &txn, &admission.grant))
-        .transpose()?
-        .flatten();
+        .map(|admission| super::authorize::member_access(vault, &txn, &admission.grant))
+        .transpose()?;
     let mut readable = Vec::with_capacity(births.len());
     for birth in births {
         let Some(birth) = birth else {
@@ -246,19 +259,19 @@ fn readable_births(
 }
 
 /// Whether the export `admission` resolved reads prompt source `source`,
-/// and its `member` (`None`: an Owner's) reads the source, and every source
-/// of a text source, at the relationship gate. No admission (its grant
-/// denied here), a source not live here, the admission's denial or the
-/// gate's answers no; any other error is the export's.
+/// and its grant's `member` reads the source, every source of its words, and
+/// every source of a text source, at the member gate. No admission (its grant denied here), a
+/// source not live here, the admission's denial or the gate's answers no;
+/// any other error is the export's.
 fn prompt_source_readable(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: EntityId,
     selector: &SyncSelector,
     admission: Option<&DocumentGrant>,
-    member: Option<&crate::access_grant::AccessContext<'_>>,
+    member: Option<&MemberAccess<'_>>,
 ) -> Result<bool> {
-    let Some(admission) = admission else {
+    let (Some(admission), Some(member)) = (admission, member) else {
         return Ok(false);
     };
     if !live_entity_row_in_txn(&vault.store, txn, &source)?.is_live() {
@@ -274,7 +287,13 @@ fn prompt_source_readable(
     let Some(raw) = vault.get_raw_in(txn, &source)? else {
         return Ok(false);
     };
-    if !member_reads_labels(vault, txn, member, &source, &raw)? {
+    // A prompt source that carries other rows' words (a scope SUMMARY, the
+    // TURN that copies one) reaches the member only when it reads every one
+    // of those sources too, as the window filter judges the row itself (FIX
+    // SELECTOR-SCOPE-SUMMARY-WORDS; the Astra review of L5-02 PR 4, F1).
+    if !member_reads_row(vault, txn, member, &source, &raw)?
+        || !member_reads_word_sources(vault, txn, member, &source, &raw)?
+    {
         return Ok(false);
     }
     super::text_egress::text_backed(
@@ -282,7 +301,7 @@ fn prompt_source_readable(
         txn,
         &source,
         Some(raw.as_slice()),
-        |text_source, raw| member_reads_labels(vault, txn, member, text_source, raw),
+        |text_source, raw| member_reads_row(vault, txn, member, text_source, raw),
     )
 }
 

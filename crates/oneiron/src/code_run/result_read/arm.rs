@@ -5,7 +5,8 @@
 //! (a reader child's source, a child's finding, FIX 6352) is read for its
 //! owner, as a run's read of it is. The arm's program meets the answers a
 //! read of its run would give; no vault is read here, and a result that is
-//! not clean shows nothing of its body, as anywhere else.
+//! not clean shows nothing of its body: the arm holds no custody index to
+//! make a tainted body's redacted view with (L6-31), so it withholds it.
 
 use serde_json::{Value, json};
 
@@ -112,20 +113,30 @@ impl ResultRead {
 
     /// The result's card, as a run's read makes it, from the arm's store.
     pub(crate) fn arm_card(&self, store: &ShadowBodyStore) -> Result<Value> {
-        self.card_of(&self.arm_body(store))
+        self.card_of(&self.arm_body(store), false)
     }
 
     /// One facet of the result, as a run's read reads it, from the arm's
-    /// store under the `[limits]` rows `watch` froze for the arm. A
-    /// selection past one reply streams into `spill`.
+    /// store under the `[limits]` rows `watch` and the search context bound
+    /// `search_max_context` froze for the arm. A selection past one reply
+    /// streams into `spill`.
     pub(crate) fn arm_read(
         &self,
         store: &ShadowBodyStore,
         watch: &LimitWatch,
+        search_max_context: usize,
         facet: ResultFacet,
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
-        self.read_of(&self.arm_body(store), watch, facet, input, spill)
+        self.read_of(
+            &self.arm_body(store),
+            false,
+            watch,
+            search_max_context,
+            facet,
+            input,
+            spill,
+        )
     }
 }

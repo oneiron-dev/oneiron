@@ -189,6 +189,11 @@ impl<'de> Deserialize<'de> for TextBlockAtom {
 )]
 pub enum LensTextSpan {
     Literal(LensText),
+    /// The text block's one escaped interpolation point. In a generated card the
+    /// key names a declared `$state` key, which the client draws; in the engine's
+    /// instrument renderer it names a host-bound backing handle, read under the
+    /// viewer's scoped read. The fallback is drawn where the value is withheld or
+    /// the surface draws no state.
     Interpolation {
         key: LensHandleName,
         fallback: LensText,
