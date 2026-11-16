@@ -41,94 +41,11 @@ pub use oneiron_verb_wire::task_verb::brief::{
     BriefConstraints, BriefIntent, Care, Criterion, EscalationTrigger, SpawnPins, TypeRef,
 };
 
-/// Fixed-width byte strings travel as lowercase hex on every wire.
-pub(crate) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    if text.len() != N * 2 {
-        return None;
-    }
-    let mut out = [0_u8; N];
-    for (index, pair) in text.as_bytes().chunks(2).enumerate() {
-        let pair = std::str::from_utf8(pair).ok()?;
-        out[index] = u8::from_str_radix(pair, 16).ok()?;
-    }
-    Some(out)
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::task_verb::brief::{decode_hex, hex32};
 
-/// Serde for a 32-byte digest as 64 hex characters.
-pub(crate) mod hex32 {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub(crate) fn serialize<S: Serializer>(
-        bytes: &[u8; 32],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&crate::entity_id::bytes_to_hex_lower(bytes))
-    }
-
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<[u8; 32], D::Error> {
-        let text = String::deserialize(deserializer)?;
-        super::decode_hex::<32>(&text)
-            .ok_or_else(|| serde::de::Error::custom("expected a 64-character hex digest"))
-    }
-
-    /// The same for an optional digest.
-    pub(crate) mod option {
-        use serde::{Deserialize, Deserializer, Serializer};
-
-        pub(crate) fn serialize<S: Serializer>(
-            bytes: &Option<[u8; 32]>,
-            serializer: S,
-        ) -> Result<S::Ok, S::Error> {
-            match bytes {
-                Some(bytes) => {
-                    serializer.serialize_some(&crate::entity_id::bytes_to_hex_lower(bytes))
-                }
-                None => serializer.serialize_none(),
-            }
-        }
-
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Option<[u8; 32]>, D::Error> {
-            Option::<String>::deserialize(deserializer)?
-                .map(|text| {
-                    super::super::decode_hex::<32>(&text).ok_or_else(|| {
-                        serde::de::Error::custom("expected a 64-character hex digest")
-                    })
-                })
-                .transpose()
-        }
-    }
-}
-
-/// A context pack pinned by digest: a pack ref promises no immutability, so
-/// the brief keeps what it read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PinnedPack {
-    pub pack_ref: EntityId,
-    #[serde(default)]
-    pub context_version: Option<u64>,
-    #[serde(default)]
-    pub retrieval_run_id: Option<EntityId>,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub digest: [u8; 32],
-}
-
-/// One read-first handle pinned by digest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PinnedRef {
-    pub target: EntityId,
-    #[serde(default)]
-    pub frontier: Option<Vec<u8>>,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub digest: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::brief::{BriefStamp, ComposerStamp, PinnedPack, PinnedRef};
 
 /// Handles, never pasted bodies (ARCH-0079).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -276,20 +193,6 @@ pub struct EscalationRule {
     pub question_ref: Option<ConsultPayloadRef>,
 }
 
-/// Provenance of a model-composed brief. Excluded from the digest: who
-/// drafted a brief never changes what it asks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ComposerStamp {
-    pub seat: String,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub one_liner_digest: [u8; 32],
-    #[serde(default)]
-    pub lens_refs: Vec<EntityId>,
-    pub at: u64,
-}
-
 /// The typed brief one TASK carries: objective, intent, constraints, context
 /// pack, success criteria and escalation rule (workbench-engine-asks.md:76).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -326,18 +229,6 @@ pub struct StoredBrief {
     #[serde(with = "hex32")]
     pub digest: [u8; 32],
     pub brief: QueueTaskBrief,
-}
-
-/// The version one try was leased under. ATTEMPT payloads and receipts carry
-/// it, so a running try is never retargeted by a later revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BriefStamp {
-    pub rev: u32,
-    #[serde(with = "hex32")]
-    #[schemars(with = "String")]
-    pub digest: [u8; 32],
-    pub type_ref: TypeRef,
 }
 
 impl StoredBrief {

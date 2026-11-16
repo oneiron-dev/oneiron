@@ -64,11 +64,14 @@ mod feedback_redaction;
 mod files_intake;
 mod handler;
 mod home_candidacy;
+mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod hook_verdict;
 mod http_listener;
 mod idempotency;
 mod import_audience;
+/// The company host's inquiry transport (INQUIRE-1 PR 5).
+pub mod inquiry_delivery;
 mod invocation_claims;
 mod ladder_poll;
 mod lens_frames;

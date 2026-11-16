@@ -701,13 +701,13 @@ impl Vault {
         let Some(disclosure) = disclosure else {
             return Ok(true);
         };
-        if !disclosure.admits(&self.store, txn, id, live[0], None)? {
+        if !disclosure.admits_in(self, txn, id, live[0], None)? {
             return Ok(false);
         }
         match served {
             Some(raw) if raw[0] == crate::registry::ENTITY_TYPE_CLAIM => {
                 let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                Ok(disclosure.admits(&self.store, txn, id, raw[0], Some(&body))?)
+                Ok(disclosure.admits_in(self, txn, id, raw[0], Some(&body))?)
             }
             _ => Ok(true),
         }
