@@ -44,13 +44,7 @@ pub(in crate::booking) fn mint_raw_token() -> String {
 }
 
 pub(crate) fn hex_lower(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        out.push(char::from(DIGITS[usize::from(byte & 0x0F)]));
-    }
-    out
+    oneiron_hex::encode(bytes)
 }
 
 /// The persisted digest of a lifecycle bearer token.
