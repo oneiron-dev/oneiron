@@ -41,6 +41,12 @@ enum ConsentEventWrite {
 /// spoken voice-recognition consent or its withdrawal on a call.
 const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
 
+/// How far past this vault's clock a consent logged at a door may be dated:
+/// the recorder's clock skew. Enrolment counts a withdrawal only when it is
+/// dated at or after the grant, so a grant dated later than this would
+/// outlive a withdrawal logged before that date.
+const CONSENT_DATE_SKEW_SECS: u64 = 300;
+
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
 fn put_consent_event_once(
@@ -792,10 +798,11 @@ impl Vault {
             &event,
             |txn| {
                 if subject == actor {
-                    proof.revalidate_person_in_txn(self, txn).map(drop)
+                    proof.revalidate_person_in_txn(self, txn)?;
                 } else {
-                    proof.revalidate_in_txn(self, txn).map(drop)
+                    proof.revalidate_in_txn(self, txn)?;
                 }
+                self.consent_dated_by_clock_in_txn(txn, occurred_at)
             },
             |_, ()| Ok(()),
         )?;
@@ -835,15 +842,36 @@ impl Vault {
             basis,
             state: VoiceConsentState::Granted,
         };
-        let replayed = self.record_voice_consent_admitted(&event, admit_agent, |wtxn, grant| {
-            self.tell_owners_of_logged_consent_in_txn(wtxn, &event, grant)
-        })?;
+        let replayed = self.record_voice_consent_admitted(
+            &event,
+            |txn| -> std::result::Result<EntityId, E> {
+                let grant = admit_agent(txn)?;
+                self.consent_dated_by_clock_in_txn(txn, occurred_at)?;
+                Ok(grant)
+            },
+            |wtxn, grant| self.tell_owners_of_logged_consent_in_txn(wtxn, &event, grant),
+        )?;
         Ok(VoiceConsentReceipt {
             consent_event_ref: event_id,
             subject_ref: subject,
             purposes,
             replayed,
         })
+    }
+
+    /// Refuses a consent a door logs dated later than this vault's clock plus
+    /// [`CONSENT_DATE_SKEW_SECS`].
+    fn consent_dated_by_clock_in_txn(&self, txn: &heed::RoTxn<'_>, occurred_at: u64) -> Result<()> {
+        let latest = self
+            .instant_in_txn(txn)?
+            .secs()
+            .saturating_add(CONSENT_DATE_SKEW_SECS);
+        if occurred_at > latest {
+            return Err(invalid_voice(
+                "voice consent is dated after this vault's clock",
+            ));
+        }
+        Ok(())
     }
 
     /// One notice per live owner that `event.recorded_by_ref`, an agent under

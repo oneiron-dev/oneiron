@@ -8,11 +8,12 @@
 //! pointer, and keeps the consent record (ARCH-0061 promise-dura-13); logging
 //! consent enrols no print. `host_doors` re-exports them.
 //!
-//! Any other caller is an agent on its own credential, which logs a
+//! Any other caller is an agent (agent or system class) on its own credential, which logs a
 //! counterparty's spoken word on a call, its consent or its withdrawal
 //! (VOICE-WITHDRAW-AGENT-ON-CALL, VOICE-CONSENT-LOG-WHO = A), under its own
 //! Grant naming the consent-log verb (`VOICE_RECOGNITION_CONSENT_VERB`); the
-//! engine checks that Grant in each write and tells each live owner there.
+//! engine checks that Grant in each write and tells each live owner there,
+//! on its first insertion.
 //!
 //! Each lists its rows (`host_door_lists`): the subject and the recorder its
 //! receipt names. The consent log and the print rows are side tables, which

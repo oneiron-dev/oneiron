@@ -14,11 +14,14 @@
 //! oneiron-arch-0061 "the agent logs who/when/what"; lead: "the way out must never be harder
 //! than the way in") under the same Grant that lets it log that person's
 //! consent: one naming [`VOICE_RECOGNITION_CONSENT_VERB`], checked live in
-//! each write. Each live owner is told in that write.
+//! each write; never for a live owner's voice or its own. Each live owner is
+//! told in that write, on its first insertion; a replay tells no one again.
+//! An agent here is an agent or system-class principal on its own credential.
 //!
 //! No door enrols a print: logging consent enrols nothing, and enrolment stays
-//! engine-only. A hosted enrolment needs the written release first
-//! (CLOUD-FLOOR-BIPA-VOICEPRINT).
+//! engine-only, where its own law check answers the hosted written release
+//! (CLOUD-FLOOR-BIPA-VOICEPRINT). A logged consent is dated by the vault's
+//! clock at the latest, so it never outlives a later withdrawal.
 use crate::Vault;
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::consent::AuthenticatedOwner;
@@ -44,10 +47,10 @@ const WITHDRAW_VERB: &str = "vault.voices.recognition.withdraw";
 /// enrols one.
 pub const VOICE_RECOGNITION_CONSENT_VERB: &str = "vault.voices.recognition.consent";
 
-/// `vault.voices.recognition.withdraw` on an embedded handle: an agent's
-/// handle logs a counterparty's spoken withdrawal under its own Grant; any
-/// other acts as the vault's embedded owner, who may withdraw for any
-/// subject.
+/// `vault.voices.recognition.withdraw` on an embedded handle: an agent or
+/// system handle logs a counterparty's spoken withdrawal under its own
+/// Grant; a human handle acts as the vault's embedded owner, who may
+/// withdraw for any subject (any other human handle is refused).
 pub fn withdraw_voice_recognition_consent(
     memory: &Memory<'_>,
     input: VoiceRecognitionWithdrawRequest,
@@ -109,10 +112,11 @@ pub fn withdraw_voice_recognition_consent_as_agent(
     Ok(wire_receipt(&receipt, agent))
 }
 
-/// `vault.voices.recognition.consent` on an embedded handle: an agent's
-/// handle logs a counterparty's spoken consent under its own Grant; any
-/// other acts as the vault's embedded owner, who may log for any subject.
-/// Logging consent enrols nothing.
+/// `vault.voices.recognition.consent` on an embedded handle: an agent or
+/// system handle logs a counterparty's spoken consent under its own Grant;
+/// a human handle acts as the vault's embedded owner, who may log for any
+/// subject (any other human handle is refused). Logging consent enrols
+/// nothing.
 pub fn record_voice_recognition_consent(
     memory: &Memory<'_>,
     input: VoiceRecognitionConsentRequest,
@@ -179,8 +183,10 @@ pub fn record_voice_recognition_consent_as_agent(
 }
 
 /// The agent recorder's admission alone, in a snapshot of its own: a door
-/// asks it before the row's verb hooks fire, so no hook fires on a call the
-/// write would refuse. The write admits the agent again. It serves both the
+/// asks it before the row's verb hooks fire, so no hook fires for an agent
+/// whose credential or Grant the write would refuse. The subject, the
+/// purposes and the date are judged only in the write, which admits the
+/// agent again. It serves both the
 /// consent and the withdrawal verbs (`verb`, the row's own spelling, names
 /// the refusal): the admission is the same Grant.
 pub fn voice_recognition_recorder_admits_agent(
@@ -239,6 +245,12 @@ fn agent_recorder_in_txn(
             ));
         }
     };
+    if subject == Some(memory.actor()) {
+        return Err(agent_refused(
+            verb,
+            "an agent logs a counterparty's word, never its own",
+        ));
+    }
     if let Some(subject) = subject
         && crate::policy_model::owners_in_txn(vault, txn)?.contains(&subject)
     {
@@ -272,22 +284,26 @@ fn subject_of(subject: Option<&str>) -> MemoryResult<Option<EntityId>> {
         .map_err(|_| MemoryError::bad_request("subject is an entity id in lowercase hex"))
 }
 
-/// The engine purposes a consent `input`'s wire purposes name: at least one.
-/// A repeated purpose is left to the consent record's own check.
+/// The engine purposes a consent `input`'s wire purposes name: at least one,
+/// in their pinned spelling's order, so a retry that lists them in another
+/// order replays. A repeated purpose is left to the consent record's own
+/// check.
 fn purposes_of(input: &VoiceRecognitionConsentRequest) -> MemoryResult<Vec<VoicePrintPurpose>> {
     if input.purposes.is_empty() {
         return Err(MemoryError::bad_request(
             "name at least one recognition purpose",
         ));
     }
-    Ok(input
+    let mut purposes: Vec<_> = input
         .purposes
         .iter()
         .map(|purpose| match purpose {
             VoiceRecognitionPurpose::MeetingAttribution => VoicePrintPurpose::MeetingAttribution,
             VoiceRecognitionPurpose::LiveInterlocutor => VoicePrintPurpose::LiveInterlocutor,
         })
-        .collect())
+        .collect();
+    purposes.sort_by_key(VoicePrintPurpose::as_str);
+    Ok(purposes)
 }
 
 /// The wire receipt of `receipt`, recorded by `recorded_by`.
