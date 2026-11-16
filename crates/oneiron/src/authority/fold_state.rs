@@ -533,12 +533,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .conflicted_critical_write_confirms
         .extend(right.conflicted_critical_write_confirms.iter().copied());
+    // Each write below stores only a changed value (`modify`,
+    // `modify_or_default`, `insert`, `extend`), so a merge row copies only
+    // the entries its right parent changes.
     for (nonce, confirm_ids) in &right.critical_write_confirm_nonce_provenance {
         merged
             .critical_write_confirm_nonce_provenance
-            .entry(*nonce)
-            .or_default()
-            .extend(confirm_ids.iter().copied());
+            .modify_or_default(*nonce, |held| held.extend(confirm_ids.iter().copied()));
     }
     // Detect reuse from append-only provenance, not from the lossy winner map.
     // A same-id sibling may have been evicted before a later nonce contender is
@@ -570,79 +571,74 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         .extend(right.federation_confirms.clone());
     let local = merged.vault_id;
     for (pact_id, right_pact) in &right.federation_pacts {
-        match merged.federation_pacts.get_mut(pact_id) {
-            Some(left_pact) => {
-                *left_pact = merge_pact_states(&local, left_pact, right_pact);
-            }
-            None => {
-                merged.federation_pacts.insert(*pact_id, right_pact.clone());
-            }
+        let held = merged.federation_pacts.modify(pact_id, |left_pact| {
+            *left_pact = merge_pact_states(&local, left_pact, right_pact);
+        });
+        if !held {
+            merged.federation_pacts.insert(*pact_id, right_pact.clone());
         }
     }
     for (grant_ref, pact_ids) in &right.federation_grant_bindings {
         merged
             .federation_grant_bindings
-            .entry(*grant_ref)
-            .or_default()
-            .extend(pact_ids.iter().copied());
+            .modify_or_default(*grant_ref, |held| held.extend(pact_ids.iter().copied()));
     }
     for (key, device) in &right.roster {
-        match merged.roster.get_mut(key) {
-            Some(existing) => {
-                existing.revoked |= device.revoked;
-                existing.roles &= device.roles;
-                existing.tier = most_restrictive_device_tier(existing.tier, device.tier);
-            }
-            None => {
-                merged.roster.insert(key.clone(), device.clone());
-            }
+        let held = merged.roster.modify(key, |existing| {
+            existing.revoked |= device.revoked;
+            existing.roles &= device.roles;
+            existing.tier = most_restrictive_device_tier(existing.tier, device.tier);
+        });
+        if !held {
+            merged.roster.insert(key.clone(), device.clone());
         }
     }
     for (key, epoch) in &right.actor_binding_revocations {
-        merged
+        let held = merged
             .actor_binding_revocations
-            .entry(key.clone())
-            .and_modify(|current| *current = (*current).max(*epoch))
-            .or_insert(*epoch);
+            .modify(key, |current| *current = (*current).max(*epoch));
+        if !held {
+            merged.actor_binding_revocations.insert(key.clone(), *epoch);
+        }
     }
     for (key, hashes) in &right.actor_revocation_hashes {
         merged
             .actor_revocation_hashes
-            .entry(key.clone())
-            .or_default()
-            .extend(hashes.iter().copied());
+            .modify_or_default(key.clone(), |held| held.extend(hashes.iter().copied()));
     }
     for (key, binding) in &right.actor_bindings {
-        match merged.actor_bindings.get_mut(key) {
-            Some(existing) => *existing = merge_actor_bindings(existing, binding),
-            None => {
-                merged.actor_bindings.insert(key.clone(), binding.clone());
-            }
+        let held = merged.actor_bindings.modify(key, |existing| {
+            *existing = merge_actor_bindings(existing, binding)
+        });
+        if !held {
+            merged.actor_bindings.insert(key.clone(), binding.clone());
         }
     }
     for (key, seq) in &right.seqs {
-        merged
+        let held = merged
             .seqs
-            .entry(key.clone())
-            .and_modify(|current| *current = (*current).max(*seq))
-            .or_insert(*seq);
+            .modify(key, |current| *current = (*current).max(*seq));
+        if !held {
+            merged.seqs.insert(key.clone(), *seq);
+        }
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
     for (machine, held) in &right.held_machine_answers {
-        let merged_held = merged.held_machine_answers.entry(*machine).or_default();
-        for (hash, answer) in held {
-            merged_held
-                .entry(*hash)
-                .and_modify(|kept| kept.answered |= answer.answered)
-                .or_insert_with(|| answer.clone());
-        }
+        merged
+            .held_machine_answers
+            .modify_or_default(*machine, |merged_held| {
+                for (hash, answer) in held {
+                    merged_held
+                        .entry(*hash)
+                        .and_modify(|kept| kept.answered |= answer.answered)
+                        .or_insert_with(|| answer.clone());
+                }
+            });
     }
     for (anchor, roots) in &right.root_anchors {
         merged
             .root_anchors
-            .entry(*anchor)
-            .or_default()
-            .extend(roots.iter().copied());
+            .modify_or_default(*anchor, |held| held.extend(roots.iter().copied()));
     }
     merged
         .anchor_entries
@@ -699,9 +695,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     for (key, admitters) in &right.key_admitters {
         merged
             .key_admitters
-            .entry(key.clone())
-            .or_default()
-            .extend(admitters.iter().cloned());
+            .modify_or_default(key.clone(), |held| held.extend(admitters.iter().cloned()));
     }
     merged.actor_rows.extend(right.actor_rows.iter().copied());
     merged.residence_directives.extend(

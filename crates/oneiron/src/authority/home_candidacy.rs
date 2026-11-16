@@ -19,7 +19,9 @@
 //! has not answered never stand as candidates through a declaration
 //! (Engine 10-19, ruling 2).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -70,8 +72,8 @@ impl DeclaredHomeCandidacy {
 /// declaration of it replaced, and every one a later one replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct HomeCandidacyState {
-    live: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
-    replaced: BTreeSet<AuthorityEntryHash>,
+    live: PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
+    replaced: PersistentSet<AuthorityEntryHash>,
 }
 
 /// The `HomeCandidacy` transition, after the shape, signature, retired,
@@ -128,16 +130,21 @@ pub(super) fn apply_home_candidacy(
 pub(super) fn merge_home_candidacies(merged: &mut HomeCandidacyState, right: &HomeCandidacyState) {
     merged.replaced.extend(right.replaced.iter().copied());
     for (machine, declarations) in &right.live {
-        let live = merged.live.entry(*machine).or_default();
-        for (hash, declaration) in declarations {
-            live.entry(*hash).or_insert_with(|| declaration.clone());
-        }
+        merged.live.modify_or_default(*machine, |live| {
+            for (hash, declaration) in declarations {
+                live.entry(*hash).or_insert_with(|| declaration.clone());
+            }
+        });
     }
+    // A machine whose declarations stay as they were is not written.
     let HomeCandidacyState { live, replaced } = merged;
-    live.retain(|_, declarations| {
-        declarations.retain(|hash, _| !replaced.contains(hash));
-        !declarations.is_empty()
-    });
+    let machines: Vec<EntityId> = live.keys().copied().collect();
+    for machine in &machines {
+        live.modify(machine, |declarations| {
+            declarations.retain(|hash, _| !replaced.contains(hash));
+        });
+    }
+    live.retain(|_, declarations| !declarations.is_empty());
 }
 
 /// Each machine's newest declaration: the one no later declaration of it

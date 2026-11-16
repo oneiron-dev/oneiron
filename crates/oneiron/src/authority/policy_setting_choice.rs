@@ -126,7 +126,7 @@ pub(super) fn folded_policy_settings(
 ) -> FoldedPolicySettings {
     FoldedPolicySettings {
         targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
-        refused: refused_owner_choices(&state.policy_settings).clone(),
+        refused: refused_owner_choices(&state.policy_settings).to_btree_set(),
     }
 }
 

@@ -286,7 +286,9 @@ impl RevokeFacts {
                 continue;
             };
             let kind = match restriction {
-                Restriction::SlipBurn(_) => Restriction::SlipBurn(state.slips.consumed),
+                Restriction::SlipBurn(_) => {
+                    Restriction::SlipBurn(state.slips.consumed.to_btree_set())
+                }
                 other => other,
             };
             self.by_hash.insert(
