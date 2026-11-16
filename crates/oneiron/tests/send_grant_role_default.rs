@@ -2,7 +2,8 @@
 //! L3-35-ROLE, Sat 14 Nov 03:02: the press-per-send floor in PR 1, then the
 //! canon role column in PR 2): with no `mode` row naming `outbound_send`, an
 //! agent's send checks in by its role's default, the "Outbound send" row of
-//! the role table, and the Gate's decision names the role.
+//! the role table, and the Gate's decision names the role
+//! (`check_in_role_<role>`).
 //!
 //! - An agent holding Owner on the vault's shared vault sends with no press;
 //!   the decision stands on its role.
@@ -13,7 +14,7 @@
 //! - A `manual` row still holds an Owner agent's send: an explicit row beats
 //!   the role's default (a guard; PR 1 holds it too).
 //!
-//! At PR 1's head (aa42ebd36b8e) every test but the guard fails: the floor
+//! At PR 1's head (ed8a8009d6f8) every test but the guard fails: the floor
 //! holds the Owner's send, and no decision names a role.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -218,9 +219,9 @@ fn an_agent_holding_owner_sends_with_no_press_when_no_row_names_the_send() {
         Some("check_in:role:owner"),
         "the decision stands on the sender's role"
     );
-    assert!(names(&reasons, "check_in:shipped_default"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:role:owner"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:go:never_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_shipped_default"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_role_owner"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_go_never_ask"), "{reasons:?}");
 }
 
 #[test]
@@ -235,16 +236,16 @@ fn a_deputy_agents_send_is_held_as_unsure() {
     assert_eq!(sink.calls, 0, "a held send never reaches the transport");
     let (reasons, grant_ref) = decision_of(&vault, &held);
     assert_eq!(grant_ref, None, "nothing covers the held send");
-    assert!(names(&reasons, "check_in:role:deputy"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:unsure"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_role_deputy"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_unsure"), "{reasons:?}");
 }
 
 #[test]
 fn a_member_an_admin_and_a_steward_ask() {
     for (role, token) in [
-        (FederationGrantRole::Member, "check_in:role:member"),
-        (FederationGrantRole::Admin, "check_in:role:admin"),
-        (FederationGrantRole::Steward, "check_in:role:steward"),
+        (FederationGrantRole::Member, "check_in_role_member"),
+        (FederationGrantRole::Admin, "check_in_role_admin"),
+        (FederationGrantRole::Steward, "check_in_role_steward"),
     ] {
         let (_dir, vault, actor) = vault_under(waits_only());
         share_with(&vault, actor, role);
@@ -257,7 +258,7 @@ fn a_member_an_admin_and_a_steward_ask() {
         let (reasons, _) = decision_of(&vault, &held);
         assert!(names(&reasons, token), "{role:?}: {reasons:?}");
         assert!(
-            names(&reasons, "check_in:wait:always_ask"),
+            names(&reasons, "check_in_wait_always_ask"),
             "{role:?}: {reasons:?}"
         );
     }
@@ -273,8 +274,8 @@ fn an_agent_in_a_vault_that_is_not_shared_reads_the_member_column() {
     assert_eq!(held.gate_outcome, "pending", "{held:?}");
     assert_eq!(sink.calls, 0);
     let (reasons, _) = decision_of(&vault, &held);
-    assert!(names(&reasons, "check_in:role:member"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:always_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_role_member"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_always_ask"), "{reasons:?}");
 }
 
 #[test]
@@ -292,12 +293,12 @@ fn a_manual_row_holds_an_owner_agents_send() {
     assert_eq!(sink.calls, 0);
     let (reasons, grant_ref) = decision_of(&vault, &held);
     assert_eq!(grant_ref, None);
-    assert!(names(&reasons, "check_in:row:send-hold"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:always_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_row_send-hold"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_always_ask"), "{reasons:?}");
     assert!(
         !reasons
             .iter()
-            .any(|reason| reason.starts_with("check_in:role:")),
+            .any(|reason| reason.starts_with("check_in_role_")),
         "a row decided, not the role: {reasons:?}"
     );
 }

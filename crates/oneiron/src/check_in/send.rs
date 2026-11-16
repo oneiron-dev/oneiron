@@ -1,5 +1,5 @@
 //! The send grant at the Gate (ARCH-0046 #send-grant and
-//! #check-in-roles-20261110; PLAN L3-35 PR 1).
+//! #check-in-roles-20261110; PLAN L3-35 PR 1 and PR 2).
 //!
 //! The vault's grant for act class `outbound_send` is a `mode` row of the
 //! `check_in` policy row ([`super::CheckInPolicy`]). Each agent send the Gate
@@ -17,7 +17,8 @@
 //!   Member when it records none, as in a vault that is not shared;
 //! * an unreadable policy counts as `AlwaysAsk`.
 //!
-//! The Gate's decision record names the rows that decided and the answer.
+//! The Gate's decision record names the rows that decided and the answer, in
+//! its receipt vocabulary (`check_in_row_<ref>`, `check_in_go_never_ask`).
 //!
 //! The row does not reach these sends; the Gate gives them no check-in:
 //! * a person's own send: "a send from the actor's own identity is go"
@@ -29,7 +30,10 @@
 //!   A), and the engine records no principal on it, so its press per send
 //!   stays;
 //! * a native-mail cold send, or a recipient of a message that takes one: it
-//!   keeps its own graduation (OF-399), as it keeps it from an envelope slot.
+//!   keeps its own graduation (OF-399), as it keeps it from an envelope slot;
+//! * a campaign leg: it names its pinned sender only as its actor (FIX 11641
+//!   leaves its channel identity unset), so the Gate cannot tell a member
+//!   mailbox or a cold recipient from it; the leg is judged as before the row.
 
 use super::act_class::ActClass;
 use super::asker::AlwaysUnsure;
@@ -41,15 +45,22 @@ use super::resolve::{
 use super::role_preset::RolePreset;
 use crate::EntityId;
 use crate::error::Result;
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::store::Store;
 
-/// The prefix of the covering ref a send row gives, and of its receipt token.
+/// The prefix of the covering ref a send row gives.
 const SEND_ROW_REF_PREFIX: &str = "check_in:row:";
 
-/// The prefix of the covering ref a role's default gives, and of its receipt
-/// token.
+/// The prefix of the covering ref a role's default gives.
 const SEND_ROLE_REF_PREFIX: &str = "check_in:role:";
+
+/// The prefix of the receipt reason that names a send row (the decision
+/// ledger's `check_in_row_` family; the row decoder bounds the ref to fit).
+const SEND_ROW_REASON_PREFIX: &str = "check_in_row_";
+
+/// The prefix of the receipt reason that names the sender's role when its
+/// default decided (the decision ledger's `check_in_` family).
+const SEND_ROLE_REASON_PREFIX: &str = "check_in_role_";
 
 /// Where an agent send's mode came from.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,25 +113,26 @@ impl SendCheckIn {
         }
     }
 
-    /// The Gate decision record's reasons: `check_in:row:<ref>` for each row
-    /// that set the mode (or `check_in:shipped_default` and
-    /// `check_in:role:<role>`, or `check_in:unreadable`), then the answer:
-    /// `check_in:go:never_ask` or `check_in:wait:<reason>`.
+    /// The Gate decision record's reasons, in the decision ledger's
+    /// `check_in_` family: `check_in_row_<ref>` for each row that set the mode
+    /// (or `check_in_shipped_default` and `check_in_role_<role>`, or
+    /// `check_in_unreadable`), then the answer: `check_in_go_never_ask` or
+    /// `check_in_wait_<reason>`.
     pub(crate) fn receipt_reasons(&self) -> Vec<String> {
         let mut reasons = match &self.source {
             SendModeSource::Rows(row_refs) => row_refs
                 .iter()
-                .map(|row_ref| format!("{SEND_ROW_REF_PREFIX}{row_ref}"))
+                .map(|row_ref| format!("{SEND_ROW_REASON_PREFIX}{row_ref}"))
                 .collect(),
             SendModeSource::RoleDefault(role) => vec![
-                "check_in:shipped_default".to_owned(),
-                format!("{SEND_ROLE_REF_PREFIX}{}", role.as_str()),
+                "check_in_shipped_default".to_owned(),
+                format!("{SEND_ROLE_REASON_PREFIX}{}", role.as_str()),
             ],
-            SendModeSource::Unreadable => vec!["check_in:unreadable".to_owned()],
+            SendModeSource::Unreadable => vec!["check_in_unreadable".to_owned()],
         };
         reasons.push(match self.answer {
-            SendAnswer::NeverAsk => "check_in:go:never_ask".to_owned(),
-            SendAnswer::Wait(reason) => format!("check_in:wait:{}", reason.as_str()),
+            SendAnswer::NeverAsk => "check_in_go_never_ask".to_owned(),
+            SendAnswer::Wait(reason) => format!("check_in_wait_{}", reason.as_str()),
         });
         reasons
     }
@@ -142,7 +154,14 @@ pub(crate) fn send_check_in_in_txn(
     effect: &ExternalEffectGateInput,
     delegated_or_cold: bool,
 ) -> Result<Option<SendCheckIn>> {
-    if effect.actor.actor_class != "agent" || effect.verb != "send" || delegated_or_cold {
+    if effect.actor.actor_class != "agent"
+        || effect.verb != "send"
+        || delegated_or_cold
+        || matches!(
+            effect.provenance.approval_target,
+            Some(ApprovalTarget::Campaign(_))
+        )
+    {
         return Ok(None);
     }
     let explicit = match read {

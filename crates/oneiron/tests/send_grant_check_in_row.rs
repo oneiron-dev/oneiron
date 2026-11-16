@@ -13,7 +13,8 @@
 //! - Rung 0: a standing grant still covers its send under a `manual` row.
 //! - A `mode` row with no act class, or with `ask_per` on another class, makes
 //!   the manifest unreadable, and the Owner's install refuses it; the same row
-//!   with its class installs.
+//!   with its class installs. So does a row ref the decision's receipt reason
+//!   (`check_in_row_<ref>`) cannot carry.
 //!
 //! On main every test fails: main's row decoder refuses any `mode` field, and
 //! no Gate decision names `check_in`.
@@ -201,8 +202,8 @@ fn full_access_send_row_releases_an_agent_send_with_no_press() {
         Some("check_in:row:send-free"),
         "the decision stands on the row"
     );
-    assert!(names(&reasons, "check_in:row:send-free"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:go:never_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_row_send-free"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_go_never_ask"), "{reasons:?}");
 }
 
 #[test]
@@ -219,8 +220,8 @@ fn manual_send_row_holds_the_send() {
     assert_eq!(sink.calls, 0, "a held send never reaches the transport");
     let (reasons, grant_ref) = decision_of(&vault, &held);
     assert_eq!(grant_ref, None, "nothing covers the held send");
-    assert!(names(&reasons, "check_in:row:send-hold"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:always_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_row_send-hold"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_always_ask"), "{reasons:?}");
 }
 
 #[test]
@@ -233,8 +234,8 @@ fn auto_send_row_holds_the_send_while_the_gate_has_no_unsure_test() {
     assert_eq!(held.gate_outcome, "pending", "{held:?}");
     assert_eq!(sink.calls, 0);
     let (reasons, _) = decision_of(&vault, &held);
-    assert!(names(&reasons, "check_in:row:send-unsure"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:unsure"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_row_send-unsure"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_unsure"), "{reasons:?}");
 }
 
 #[test]
@@ -251,8 +252,8 @@ fn no_send_row_keeps_the_press_per_send_floor() {
     assert_eq!(held.gate_outcome, "pending", "{held:?}");
     assert_eq!(sink.calls, 0);
     let (reasons, _) = decision_of(&vault, &held);
-    assert!(names(&reasons, "check_in:shipped_default"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:always_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_shipped_default"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_always_ask"), "{reasons:?}");
 }
 
 #[test]
@@ -289,8 +290,8 @@ fn a_standing_grant_still_covers_its_send_under_a_manual_row() {
             .is_some_and(|grant| !grant.starts_with("check_in:")),
         "the decision stands on the standing grant, not the row: {grant_ref:?}"
     );
-    assert!(names(&reasons, "check_in:row:send-hold"), "{reasons:?}");
-    assert!(names(&reasons, "check_in:wait:always_ask"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_row_send-hold"), "{reasons:?}");
+    assert!(names(&reasons, "check_in_wait_always_ask"), "{reasons:?}");
 }
 
 /// The Owner's install of a manifest whose only row beside the header is
@@ -368,4 +369,23 @@ fn ask_per_on_another_class_makes_the_manifest_unreadable() {
         }],
     }))
     .expect("a manual send row may ask once per reviewed batch");
+}
+
+#[test]
+fn a_mode_row_ref_must_fit_its_receipt_reason() {
+    let row = |row_ref: &str| {
+        json!({
+            "version": 1,
+            "mode": [{"row_ref": row_ref, "act_class": "outbound_send", "mode": "manual"}],
+        })
+    };
+    assert!(
+        owner_install(row("Send Hold")).is_err(),
+        "a ref outside the receipt vocabulary would make the send's decision unrecordable"
+    );
+    assert!(
+        owner_install(row(&"r".repeat(116))).is_err(),
+        "check_in_row_ and 116 bytes overflow the 128-byte receipt reason"
+    );
+    owner_install(row(&"r".repeat(115))).expect("a 115-byte lowercase ref fits");
 }
