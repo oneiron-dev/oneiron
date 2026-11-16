@@ -137,7 +137,10 @@ fn resolve_hold_expiry(
     let session_key = &spec.session_key;
     let lease = &spec.lease;
     match lease {
-        HoldLeaseSpec::Ordinary => Ok((now_utc.saturating_add(DEFAULT_HOLD_TTL_SECS), None)),
+        HoldLeaseSpec::Ordinary => Ok((
+            oneiron_store::expiry::expires_at_saturating(now_utc, DEFAULT_HOLD_TTL_SECS),
+            None,
+        )),
         HoldLeaseSpec::CheckoutExtension {
             server_issued_lease,
         } => {
@@ -149,11 +152,12 @@ fn resolve_hold_expiry(
             if row.session_hash != session_digest(session_key) {
                 return Err(refused("checkout lease is bound to another session"));
             }
-            if row.expires_at <= now_utc {
+            if oneiron_store::expiry::is_expired(now_utc, row.expires_at) {
                 return Err(refused("checkout lease has expired"));
             }
             check_hold_lease_deposit(vault, txn, &row, spec.page_ref, &spec.event_type)?;
-            let capped = now_utc.saturating_add(MAX_CHECKOUT_HOLD_TTL_SECS);
+            let capped =
+                oneiron_store::expiry::expires_at_saturating(now_utc, MAX_CHECKOUT_HOLD_TTL_SECS);
             Ok((row.expires_at.min(capped), Some(digest)))
         }
     }
@@ -191,6 +195,7 @@ pub(crate) fn execute_hold(
                 token_hash: token_digest(&token),
                 expires_at,
                 checkout_lease_hash,
+                cap_override: spec.cap_override.clone(),
             };
             HOLD.put(&vault.store, wtxn, &digest, &row)
                 .map_err(|error| engine_failure("meta write", error))?;
@@ -351,14 +356,20 @@ fn confirm_in_writer(
     // (BK-DEPOSITS), checked here so a refusal writes nothing.
     let deposit = authorized_deposit_in_writer(vault, &*wtxn, &hold, &session_hash)?;
 
-    // (3) Fresh availability, read while we hold the writer.
+    // (3) Fresh availability, read while we hold the writer. A hold the owner
+    // took past the meeting caps is re-solved past them, and only it.
     let solve_over = |window: crate::temporal::TimeRange| {
-        oracle.solve(&SolveRequest {
+        let request = SolveRequest {
             event_type: hold.event_type.clone(),
             window,
             constraint: hold.constraint.clone(),
             visitor_tz: hold.visitor_tz.clone(),
-        })
+        };
+        if hold.cap_override.is_some() {
+            oracle.solve_past_caps(&request)
+        } else {
+            oracle.solve(&request)
+        }
     };
     let solved = solve_over(confirm_solve_window(hold.slot)?)?;
     // The wide solve carries the alternatives, and the oracle offers the flex

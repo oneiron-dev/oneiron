@@ -280,6 +280,7 @@ pub(super) fn fixture_config() -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -361,6 +362,7 @@ pub(super) fn hold(
         checkout_lease_token: lease,
         deposit_terms: None,
         idempotency_key: format!("hold-{session}"),
+        cap_override_reason: None,
     }))
 }
 

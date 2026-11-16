@@ -125,6 +125,7 @@ fn fixture_config() -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -422,6 +423,7 @@ fn paid_booking(
                     server_issued_lease: lease.lease.clone(),
                 },
                 idempotency_key: None,
+                cap_override: None,
             }),
             NOW,
         )

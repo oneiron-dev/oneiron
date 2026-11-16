@@ -160,7 +160,6 @@ mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
 mod model_pack_doors;
-mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).
@@ -212,6 +211,8 @@ mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod self_actor_doors;
+// The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1).
+mod setting_catalogue_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -249,6 +250,7 @@ mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
+mod voice_recognition_doors;
 mod wave_doors;
 mod weave_admin_doors;
 mod weave_doors;
