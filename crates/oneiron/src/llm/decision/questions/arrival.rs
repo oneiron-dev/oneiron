@@ -5,7 +5,7 @@ use super::{
     records::*,
     store::{
         LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
-        encode, family_prefix,
+        decode_family, encode, family_prefix,
     },
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -15,7 +15,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
 pub(super) use crate::store::decision_question_watches::{RESTS_ON, UNIT_WATCH};
-use crate::{EntityId, Error, Result};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Key of one predicate watcher registration. Not fixed-width: a variable-length predicate,
 /// then a NUL separator, then the watching question's id16. `OutcomeBinding::validate` refuses a
@@ -45,6 +45,33 @@ impl SideKey for WatchKey {
         })
     }
 }
+
+/// Key of one outcome fact a materializing batch could not judge under its
+/// question's saved lane ([`SavedLaneJudge::Deferred`]). Family:
+/// `deferred`, suffix: id16(fact). It goes with its question's rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DeferredOutcomeKey {
+    pub(super) question: EntityId,
+    pub(super) fact: EntityId,
+}
+
+impl SideKey for DeferredOutcomeKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&family_prefix(self.question, b"deferred"));
+        out.extend_from_slice(self.fact.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (question, suffix) = decode_family(bytes, b"deferred")?;
+        Some(Self {
+            question,
+            fact: EntityId::from_bytes(suffix.try_into().ok()?).ok()?,
+        })
+    }
+}
+
+pub(super) const QUESTION_DEFERRED_OUTCOME: SideTable<DeferredOutcomeKey, (), Named> =
+    SideTable::new(&side_table::TYPED_QUESTION);
 
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
@@ -165,15 +192,54 @@ fn predicate(source: &OutcomeSource) -> &str {
     }
 }
 
+/// Where an outcome derivation judges the lane a question's version was
+/// saved under (FIX SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The
+/// principal's own lane needs no judgment beside its reader's. A narrowed
+/// lane is rebuilt over the principal's key, as refresh rebuilds it (OF-506).
+#[derive(Clone, Copy)]
+pub(super) enum SavedLaneJudge<'a> {
+    /// A vault handle: a narrowed lane is rebuilt in the derivation's own
+    /// snapshot, and each row the label rests on is read inside it.
+    Vault(&'a Vault),
+    /// A materializing batch, which holds only the store: a narrowed lane
+    /// cannot be rebuilt here, so it derives no label. A fact that would
+    /// label but for that judgment is marked ([`QUESTION_DEFERRED_OUTCOME`]),
+    /// and the question pump's next pass judges it under the lane
+    /// ([`project_deferred_outcomes`]), whether its window is open, due or
+    /// closed. Live calibration judges every label again at each read.
+    Deferred,
+}
+
+/// What a question's saved lane says of the rows an outcome label rests on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SavedLaneVerdict {
+    Reads,
+    Refuses,
+    /// [`SavedLaneJudge::Deferred`] could not rebuild a narrowed lane.
+    Deferred,
+}
+
+/// [`evaluate_fact`]'s judgment of one fact for one answer.
+enum FactJudgment {
+    Label(OutcomeLabel),
+    NoLabel,
+    /// The fact labels the answer unless its saved lane refuses a row, and
+    /// [`SavedLaneJudge::Deferred`] could not judge that lane.
+    Deferred,
+}
+
 /// Called after the batch's final entity and edge state is installed, on both
 /// ordinary writes and replicated batches. Question metadata remains local.
+/// A question saved under a narrowed lane derives no label here
+/// (`SavedLaneJudge::Deferred`): its matching fact is marked for the
+/// question pump's next pass ([`project_deferred_outcomes`]).
 pub(crate) fn project_arrivals_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
     enqueue_arrivals(store, txn, ids)?;
-    project(store, txn, ids, None)
+    project(store, txn, ids, None, SavedLaneJudge::Deferred)
 }
 
 /// Queues the batch's actual record and topology changes while projecting
@@ -185,7 +251,7 @@ pub(crate) fn project_arrivals_for_changes_in_txn(
     changed_ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
     enqueue_arrivals(store, txn, changed_ids)?;
-    project(store, txn, materialized_ids, None)
+    project(store, txn, materialized_ids, None, SavedLaneJudge::Deferred)
 }
 
 fn enqueue_arrivals(
@@ -234,28 +300,83 @@ fn enqueue_arrivals(
     Ok(())
 }
 
+/// The facts of `ids` projected for `question` alone, through `vault`: a
+/// narrowed saved lane is judged here ([`SavedLaneJudge::Vault`]).
 pub(super) fn project_question_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
     question: EntityId,
 ) -> Result<usize> {
     project(
-        store,
+        &vault.store,
         txn,
         ids,
         Some(&std::collections::BTreeSet::from([question])),
+        SavedLaneJudge::Vault(vault),
     )
 }
 
 /// [`project_question_in_txn`] for several questions over one pass of `ids`.
 pub(super) fn project_questions_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
     questions: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
-    project(store, txn, ids, Some(questions))
+    project(
+        &vault.store,
+        txn,
+        ids,
+        Some(questions),
+        SavedLaneJudge::Vault(vault),
+    )
+}
+
+/// Judges, through `vault`, every outcome fact a materializing batch marked
+/// because it could not judge its question's narrowed lane
+/// ([`SavedLaneJudge::Deferred`]), and returns how many labels it wrote.
+/// It runs on every pass of the question pump, whatever the state of the
+/// question's windows: a fact recorded after its window closed, with an
+/// event time inside it, labels here as it would have at arrival. Each
+/// marker goes in the transaction that judged its fact, labelled or
+/// refused; a failure keeps every marker for the next pass.
+///
+/// # Errors
+/// A store, fold, clock or decode failure judging a fact.
+pub(super) fn project_deferred_outcomes(vault: &Vault) -> Result<usize> {
+    let deferred: std::collections::BTreeMap<EntityId, std::collections::BTreeSet<EntityId>> = {
+        let txn = vault.store.env.read_txn()?;
+        let mut deferred = std::collections::BTreeMap::<_, std::collections::BTreeSet<_>>::new();
+        // Several row families share the declaration; decode only exact keys.
+        for row in QUESTION_DEFERRED_OUTCOME.iter_raw_from(&vault.store, &txn, &[])? {
+            let (key, _) = row?;
+            if let Some(key) = DeferredOutcomeKey::decode_key(&key) {
+                deferred.entry(key.question).or_default().insert(key.fact);
+            }
+        }
+        deferred
+    };
+    if deferred.is_empty() {
+        return Ok(0);
+    }
+    vault.with_write_txn_grouped(|txn| {
+        let mut count = 0;
+        for (question, facts) in &deferred {
+            count += project_question_in_txn(vault, txn, facts, *question)?;
+            for fact in facts {
+                QUESTION_DEFERRED_OUTCOME.delete(
+                    &vault.store,
+                    txn,
+                    &DeferredOutcomeKey {
+                        question: *question,
+                        fact: *fact,
+                    },
+                )?;
+            }
+        }
+        Ok(count)
+    })
 }
 
 fn project(
@@ -263,6 +384,7 @@ fn project(
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
     only: Option<&std::collections::BTreeSet<EntityId>>,
+    lane: SavedLaneJudge<'_>,
 ) -> Result<usize> {
     if QUESTION_WATCH.iter_from(store, txn, &[])?.next().is_none() {
         return Ok(0);
@@ -300,19 +422,16 @@ fn project(
             .into_iter()
             .map(|(_, id)| id)
             .collect();
+        let fact = Fact {
+            id: *id,
+            body: &body,
+            occurred_at: header.occurred_start,
+        };
         for question in watchers {
             if only.is_some_and(|only| !only.contains(&question)) {
                 continue;
             }
-            count += project_fact(
-                store,
-                txn,
-                &policy,
-                question,
-                *id,
-                &body,
-                header.occurred_start,
-            )?;
+            count += project_fact(store, txn, &policy, lane, question, &fact)?;
         }
     }
     Ok(count)
@@ -322,21 +441,15 @@ fn project_fact(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     question: EntityId,
-    fact: EntityId,
-    body: &ClaimBody,
-    occurred_at: u64,
+    fact: &Fact<'_>,
 ) -> Result<usize> {
     let answers: Vec<AnswerRecord> = QUESTION_ANSWER
         .scan_from(store, txn, &family_prefix(question, b"answer"))?
         .into_iter()
         .map(|(_, answer)| answer)
         .collect();
-    let fact = Fact {
-        id: fact,
-        body,
-        occurred_at,
-    };
     let mut count = 0;
     for answer in answers {
         let version = answer.decision.receipt.question_version;
@@ -351,8 +464,21 @@ fn project_fact(
         else {
             continue;
         };
-        let Some(label) = evaluate_fact(store, txn, policy, &record, &answer, &fact)? else {
-            continue;
+        let label = match judge_fact(store, txn, policy, lane, &record, &answer, fact)? {
+            FactJudgment::Label(label) => label,
+            FactJudgment::NoLabel => continue,
+            FactJudgment::Deferred => {
+                QUESTION_DEFERRED_OUTCOME.put(
+                    store,
+                    txn,
+                    &DeferredOutcomeKey {
+                        question,
+                        fact: fact.id,
+                    },
+                    &(),
+                )?;
+                continue;
+            }
         };
         let label_key = LabelKey {
             question,
@@ -376,14 +502,37 @@ pub(super) struct Fact<'a> {
 
 /// Admission and reads use the same predicate, subject, link, horizon and
 /// privacy checks. A mutable fact cannot move an old label to another unit.
+/// Every row the label rests on also reads inside the lane `record` was
+/// saved under, as `lane` judges it ([`saved_lane_reads_in_txn`]); a lane
+/// [`SavedLaneJudge::Deferred`] cannot judge gives no label here.
 pub(super) fn evaluate_fact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
     record: &QuestionRecord,
     answer: &AnswerRecord,
     fact: &Fact<'_>,
 ) -> Result<Option<OutcomeLabel>> {
+    Ok(
+        match judge_fact(store, txn, policy, lane, record, answer, fact)? {
+            FactJudgment::Label(label) => Some(label),
+            FactJudgment::NoLabel | FactJudgment::Deferred => None,
+        },
+    )
+}
+
+/// [`evaluate_fact`], telling a lane it could not judge apart from a
+/// refusal.
+fn judge_fact(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    lane: SavedLaneJudge<'_>,
+    record: &QuestionRecord,
+    answer: &AnswerRecord,
+    fact: &Fact<'_>,
+) -> Result<FactJudgment> {
     record.definition.validate()?;
     let body = fact.body;
     let reaction_event = crate::reaction::outcome_fact_admissible_in(store, txn, fact.id, body)?;
@@ -405,16 +554,16 @@ pub(super) fn evaluate_fact(
             crate::gate::ConsolidationReader::ArrivalFact,
         )?
     {
-        return Ok(None);
+        return Ok(FactJudgment::NoLabel);
     }
     let Some(binding) = &record.definition.binding else {
-        return Ok(None);
+        return Ok(FactJudgment::NoLabel);
     };
     if predicate(&binding.source) != body.predicate
         || fact.occurred_at < answer.answered_at
         || fact.occurred_at.saturating_sub(answer.answered_at) > binding.horizon
     {
-        return Ok(None);
+        return Ok(FactJudgment::NoLabel);
     }
     let (subject, edge_kind, other_endpoint) = match body.subject {
         ClaimSubject::Entity(id) => (id, None, None),
@@ -438,7 +587,7 @@ pub(super) fn evaluate_fact(
     .flatten()
     {
         if !reader.readable_in_txn(txn, policy, &id)? {
-            return Ok(None);
+            return Ok(FactJudgment::NoLabel);
         }
     }
     if subject != answer.unit
@@ -450,47 +599,66 @@ pub(super) fn evaluate_fact(
             binding.linked_by.as_deref(),
         )?
     {
-        return Ok(None);
+        return Ok(FactJudgment::NoLabel);
     }
-    for source in crate::reaction::outcome_sources(body)? {
-        if !reader.readable_in_txn(txn, policy, &source)? {
-            return Ok(None);
+    let sources = crate::reaction::outcome_sources(body)?;
+    for source in &sources {
+        if !reader.readable_in_txn(txn, policy, source)? {
+            return Ok(FactJudgment::NoLabel);
         }
     }
     if !answer_live(store, txn, policy, &reader, answer)? {
-        return Ok(None);
+        return Ok(FactJudgment::NoLabel);
     }
+    // The reader's own live authority (FIX 7461) adds nothing outside the
+    // saved lane: the lane binds each row beside it.
+    let rows: Vec<EntityId> = [fact.id, answer.unit, subject]
+        .into_iter()
+        .chain(other_endpoint)
+        .chain(sources)
+        .chain([answer.claim])
+        .collect();
+    let deferred = match saved_lane_verdict_in_txn(lane, txn, record, &rows)? {
+        SavedLaneVerdict::Reads => false,
+        SavedLaneVerdict::Refuses => return Ok(FactJudgment::NoLabel),
+        SavedLaneVerdict::Deferred => true,
+    };
     let value = match &binding.source {
         OutcomeSource::Stage { campaign } => {
             let stage = crate::write_envelope::cohort_claims::decode_crm_stage_value(&body.value)?;
             if stage.campaign_ref.to_hex() != *campaign {
-                return Ok(None);
+                return Ok(FactJudgment::NoLabel);
             }
             stage.stage.0
         }
         OutcomeSource::Edge { relation } => {
             if crate::edge::EdgeKind::from_name(relation) != edge_kind {
-                return Ok(None);
+                return Ok(FactJudgment::NoLabel);
             }
             let provenance = crate::provenance::decode_edge_provenance_body(&body.value)?;
             match provenance.supersession_status {
                 crate::provenance::SupersessionStatus::Confirmed => "confirmed",
                 crate::provenance::SupersessionStatus::Disputed => "disputed",
                 crate::provenance::SupersessionStatus::Retracted => "retracted",
-                crate::provenance::SupersessionStatus::Proposed => return Ok(None),
+                crate::provenance::SupersessionStatus::Proposed => {
+                    return Ok(FactJudgment::NoLabel);
+                }
             }
             .into()
         }
-        _ if edge_kind.is_some() => return Ok(None),
+        _ if edge_kind.is_some() => return Ok(FactJudgment::NoLabel),
         _ => body
             .value
             .as_str()
             .map_or_else(|| body.value.to_string(), str::to_owned),
     };
     let Some(label) = binding.mapping.get(&value) else {
-        return Ok(None);
+        return Ok(FactJudgment::NoLabel);
     };
-    Ok(Some(OutcomeLabel {
+    if deferred {
+        return Ok(FactJudgment::Deferred);
+    }
+    Ok(FactJudgment::Label(OutcomeLabel {
         answer: answer.claim,
         fact: fact.id,
         fact_value_hash: value_hash(&body.value)?,
@@ -498,6 +666,63 @@ pub(super) fn evaluate_fact(
         noise_weight: binding.noise_weight,
         occurred_at: fact.occurred_at,
     }))
+}
+
+/// Whether the lane `record`'s version was saved under reads every one of
+/// `rows` in `txn`, as `lane` judges it (FIX
+/// SAVED-QUESTION-OUTCOME-IGNORES-READ-LANE). The principal's own lane reads
+/// them as the question's reader judges them, so it adds nothing here. A
+/// narrowed lane is rebuilt over the principal's key as refresh rebuilds it
+/// (OF-506): held to its frozen bounds, reading nothing once its credential
+/// is no longer live. Its claims are read at every status: the derivation
+/// keeps its own status checks. Without a vault handle a narrowed lane reads
+/// nothing ([`SavedLaneJudge::Deferred`]), and so does one whose principal's
+/// row is gone.
+///
+/// # Errors
+/// A store, fold, clock or decode failure rebuilding the lane or reading a
+/// row.
+pub(super) fn saved_lane_reads_in_txn(
+    lane: SavedLaneJudge<'_>,
+    txn: &heed::RoTxn<'_>,
+    record: &QuestionRecord,
+    rows: &[EntityId],
+) -> Result<bool> {
+    Ok(saved_lane_verdict_in_txn(lane, txn, record, rows)? == SavedLaneVerdict::Reads)
+}
+
+/// [`saved_lane_reads_in_txn`], telling a narrowed lane
+/// [`SavedLaneJudge::Deferred`] could not rebuild apart from a refusal.
+fn saved_lane_verdict_in_txn(
+    lane: SavedLaneJudge<'_>,
+    txn: &heed::RoTxn<'_>,
+    record: &QuestionRecord,
+    rows: &[EntityId],
+) -> Result<SavedLaneVerdict> {
+    if record.read_lane.is_principal() {
+        return Ok(SavedLaneVerdict::Reads);
+    }
+    let SavedLaneJudge::Vault(vault) = lane else {
+        return Ok(SavedLaneVerdict::Deferred);
+    };
+    let principal = record.principal;
+    let key = match super::refresh::source_actor_key(vault, txn, principal, None) {
+        Ok(key) => key.require_access_grants(Some(principal)),
+        Err(Error::EntityNotFound) => return Ok(SavedLaneVerdict::Refuses),
+        Err(error) => return Err(error),
+    };
+    let saved = super::reader_authority::question_lane(
+        vault,
+        record.read_lane.narrow_in_txn(vault, txn, key)?,
+    )
+    .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    let policy = saved.live_policy_manifest_in(txn)?;
+    for row in rows {
+        if !saved.is_ref_readable_with_policy_in(txn, &policy, row)? {
+            return Ok(SavedLaneVerdict::Refuses);
+        }
+    }
+    Ok(SavedLaneVerdict::Reads)
 }
 
 /// Whether `answer`'s claim still stands as the prediction it recorded: live,
