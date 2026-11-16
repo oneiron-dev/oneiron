@@ -38,8 +38,8 @@ pub use self::parse::parse_constraint_with_backend;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::constraint::{
-    BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey, LocalMinuteWindow,
-    RankedSlot,
+    BookingCapKind, BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey,
+    FullDay, LocalMinuteWindow, RankedSlot,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::booking::constraint::{MINUTES_PER_DAY, is_strictly_ascending};
