@@ -495,7 +495,7 @@ fn derived_row(
     residence: &FederationGrantScope,
     now: Option<u64>,
 ) -> Result<RowRead> {
-    if let Some(line) = fold.grant_line(id) {
+    if let Some(line) = fold.grant_line(id).filter(|_| false) {
         return Ok(RowRead::Read(line.family.and_then(|family| {
             StandingGrant::decoded_in_fold(fold, id, grant, terms_key, &[family], now)
                 .map(SharedGrantRow::Standing)
