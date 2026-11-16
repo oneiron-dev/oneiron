@@ -789,3 +789,53 @@ fn a_self_host_root_bind_counts_when_its_log_is_folded_as_hosted() {
         fold.actor_bindings
     );
 }
+
+/// Row OLD-PARENTS-OWNER-BINDING-CONFLICT, an agent-class sibling (blind
+/// review round 1 of #9137, P1, 17 Nov 05:43). The root binds the owner key
+/// as another actor's agent key at the owner's epoch on the enrolment, where
+/// no binding of the key is a person's, so the bind touches no person there.
+/// Main and this row's head before the fix: it counts beside the owner's own
+/// binding, the merge marks the key's binding conflicted, and the owner's
+/// only binding is dead.
+#[test]
+fn a_custodial_root_sibling_agent_bind_of_an_owner_key_leaves_the_owners_binding_active() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let owner_key = key_of(&key);
+    let enrolment = vault.enrol(2, registration, &key);
+    let owners_bind = vault.append(
+        1,
+        enrolment,
+        human_bind(owner_key.clone(), owner(), 1),
+        &key,
+        &[],
+    );
+    let root = vault.root.clone();
+    let agent_bind = vault.append(
+        3,
+        enrolment,
+        AuthorityOp::BindActor {
+            authority_key: owner_key.clone(),
+            actor_ref: other_person(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &root,
+        &[],
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&owners_bind),
+        "the owner key's bind of the owner counts: {owners_bind:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&agent_bind),
+        "the custodial root's agent bind of the owner key alone does not count: {agent_bind:?}"
+    );
+    assert!(
+        binds_active(&fold, &owner_key, owner()),
+        "the owner's own binding stays active: {:?}",
+        fold.actor_bindings
+    );
+}
