@@ -31,6 +31,7 @@ mod publication_access;
 mod recall_scope;
 mod sealed_updates;
 mod search;
+mod secret_same_value;
 mod window_index;
 mod world_base_rows;
 mod world_eviction;
@@ -147,6 +148,7 @@ pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,
 };
+pub use secret_same_value::secret_same_value_residence_exchange;
 pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,

@@ -166,6 +166,8 @@ pub mod scope_summary;
 pub mod scoped_read_liveness;
 pub mod scratchpad_wake;
 pub mod seat_park_model_step;
+#[cfg(feature = "sync")]
+pub mod secret_same_value;
 pub mod setting;
 pub mod setting_keys;
 pub mod shared_act_family;

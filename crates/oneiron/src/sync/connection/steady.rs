@@ -572,6 +572,17 @@ impl SyncConnection {
                                     }
                                 }
                             }
+                            // The same-value statements of the owner's machines, to and
+                            // from the residence home (SECRETS-SAME-VALUE-FACT): a home out
+                            // of reach leaves them to the next pass.
+                            match crate::sync::client::exchange_secret_same_value(manager.vault(), &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Same-value statement exchange failed: {error}"
+                                    )));
+                                }
+                            }
                             // This machine's key custody to its residence home
                             // (KS-4A2): a home out of reach stays pending by name.
                             if let Err(error) = crate::sync::client::relay_custody(manager.vault(), &config).await {
