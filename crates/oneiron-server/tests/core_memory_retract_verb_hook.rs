@@ -117,6 +117,63 @@ Skip every delete the hook is asked about.
 const DELETE_BODY_JS: &str =
     "return { kind: \"skip\", reason: \"deletes are held by the owner hook\" };\n";
 
+/// The rewrite pack: one pre hook that rewrites `vault.delete` reason to `user_delete`.
+const REWRITE_PACK: &str = "example.rewritehook";
+/// Its one hook.
+const REWRITE_HOOK: &str = "rewrite-reason";
+
+const REWRITE_PACK_MD: &str = "---
+name: example.rewritehook
+description: One pre hook that softens deletes.
+version: 1.0.0
+kind: capability
+hooks: [\"rewrite-reason\"]
+---
+A pack whose one hook rewrites every vault.delete reason to user_delete.
+";
+
+const REWRITE_HOOK_MD: &str = "---
+name: rewrite-reason
+version: 1.0.0
+verbs: [\"vault.delete\"]
+actors: [\"agent\", \"human\"]
+phase: pre
+outcomes: [\"rewrite\"]
+---
+Rewrite every delete the hook is asked about to user_delete.
+";
+
+const REWRITE_BODY_JS: &str =
+    "return { kind: \"rewrite\", args: { ...input.args, reason: \"user_delete\" } };\n";
+
+/// The redact pack: one post hook that redacts `/existed` from `vault.delete`.
+const REDACT_PACK: &str = "example.redacthook";
+/// Its one hook.
+const REDACT_HOOK: &str = "redact-existed";
+
+const REDACT_PACK_MD: &str = "---
+name: example.redacthook
+description: One post hook that redacts existed.
+version: 1.0.0
+kind: capability
+hooks: [\"redact-existed\"]
+---
+A pack whose one hook redacts /existed from every vault.delete view.
+";
+
+const REDACT_HOOK_MD: &str = "---
+name: redact-existed
+version: 1.0.0
+verbs: [\"vault.delete\"]
+actors: [\"agent\", \"human\"]
+phase: post
+outcomes: [\"redact\"]
+---
+Redact /existed from every delete the hook is asked about.
+";
+
+const REDACT_BODY_JS: &str = "return { kind: \"redact\", paths: [\"/existed\"] };\n";
+
 /// A distinct slip id for each credential a test mints.
 fn next_slip_id() -> [u8; 32] {
     static NEXT: AtomicU8 = AtomicU8::new(1);
@@ -430,6 +487,36 @@ impl Served {
         }
     }
 
+    /// The owner puts the rewrite pack: one pre hook that rewrites `vault.delete` reason to `user_delete`.
+    fn install_rewrite_hook(&self) {
+        let files = vec![
+            HubFile::new("PACK.md", REWRITE_PACK_MD),
+            HubFile::new(format!("hooks/{REWRITE_HOOK}/HOOK.md"), REWRITE_HOOK_MD),
+            HubFile::new(format!("hooks/{REWRITE_HOOK}/body.js"), REWRITE_BODY_JS),
+        ];
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => {
+                assert_eq!(receipt.pack_name, REWRITE_PACK);
+            }
+            other => panic!("the owner's rewrite pack installs and binds its hook: {other:?}"),
+        }
+    }
+
+    /// The owner puts the redact pack: one post hook that redacts `/existed` from `vault.delete`.
+    fn install_redact_hook(&self) {
+        let files = vec![
+            HubFile::new("PACK.md", REDACT_PACK_MD),
+            HubFile::new(format!("hooks/{REDACT_HOOK}/HOOK.md"), REDACT_HOOK_MD),
+            HubFile::new(format!("hooks/{REDACT_HOOK}/body.js"), REDACT_BODY_JS),
+        ];
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => {
+                assert_eq!(receipt.pack_name, REDACT_PACK);
+            }
+            other => panic!("the owner's redact pack installs and binds its hook: {other:?}"),
+        }
+    }
+
     /// A NOTE `author` writes about the subject, by its full hex ref.
     fn note_by(&self, author: EntityId) -> String {
         self.vault
@@ -464,6 +551,37 @@ impl Served {
                     .header("x-oneiron-binding", binding.to_string())
                     .header("Content-Type", "application/json")
                     .body(Body::from(json!({ "id": note }).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1_048_576)
+            .await
+            .expect("response body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// `slip` posts `POST /v1/core/memory/verbs/hard_delete` for the NOTE `note` with an
+    /// explicit `user_hard_delete` reason: the status and the body.
+    async fn hard_delete(&self, slip: &CapabilitySlip, note: &str) -> (StatusCode, Value) {
+        let binding =
+            holder_proof(slip, &holder_key(), self.vault.now_recorded_at()).expect("holder proof");
+        let token = slip.to_token().expect("token");
+        let response = build_app(Arc::clone(&self.server))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/core/memory/verbs/hard_delete")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("x-oneiron-binding", binding.to_string())
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        json!({ "id": note, "reason": "user_hard_delete" }).to_string(),
+                    ))
                     .expect("request"),
             )
             .await
@@ -691,6 +809,92 @@ fn a_non_owner_retract_success_reports_no_time() {
         assert!(
             body.get("at").is_none(),
             "the facade path reports no time: {body}"
+        );
+    });
+}
+
+#[test]
+fn a_non_owner_pending_retract_reports_pending_and_keeps_claim_standing() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        let claim = fx.approved_agent_claim();
+        let token = fx.credential(fx.agent, "agent");
+
+        let (status, body) = fx.retract(&token, claim).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "retract", "{body}");
+        assert_eq!(body["id"], claim.to_hex(), "{body}");
+        assert!(
+            body.get("at").is_none(),
+            "the facade path reports no time: {body}"
+        );
+        assert_eq!(body["approval"], "pending", "{body}");
+        let receipt_ref = body["receipt_ref"].as_str().expect("pending receipt_ref");
+        assert!(
+            receipt_ref.starts_with("gate:"),
+            "the pending receipt names its gate decision: {body}"
+        );
+        fx.assert_standing(claim, "a pending retract retracts nothing yet");
+        let pending = fx
+            .vault
+            .memory(fx.agent, EdgeActorClass::Agent)
+            .claim_retract(&claim.to_hex())
+            .expect("a repeat retract reads the same pending decision");
+        assert_eq!(pending.approval, "pending", "the park still waits");
+        assert_eq!(
+            pending.receipt_ref, receipt_ref,
+            "the HTTP receipt matches the pending CommitReceipt"
+        );
+    });
+}
+
+#[test]
+fn a_pre_hook_rewriting_hard_delete_to_user_delete_executes_soft() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        fx.install_rewrite_hook();
+        let deleter = agent_with_grant(&fx, "rewrite_delete_agent", &["read", "delete"]);
+        let note = fx.note_by(deleter);
+        let token = fx.credential(deleter, "agent");
+
+        let (status, body) = fx.hard_delete(&token, &note).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "hard_delete", "{body}");
+        assert_eq!(body["operation"], "delete_entity", "{body}");
+        assert_eq!(body["delete"]["existed"], true, "{body}");
+        assert_eq!(body["delete"]["reason"], "user_delete", "{body}");
+        assert_eq!(body["delete"]["hard"], false, "{body}");
+        assert_eq!(body["delete"]["state"], "applied", "{body}");
+        assert!(fx.deleted(&note), "the rewritten delete still deletes");
+    });
+}
+
+#[test]
+fn a_post_hook_redacting_existed_omits_it_but_still_deletes() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        fx.install_redact_hook();
+        let deleter = agent_with_grant(&fx, "redact_delete_agent", &["read", "delete"]);
+        let note = fx.note_by(deleter);
+        let token = fx.credential(deleter, "agent");
+
+        let (status, body) = fx.delete(&token, &note).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "delete", "{body}");
+        assert_eq!(body["operation"], "delete_entity", "{body}");
+        assert!(
+            body["delete"].get("existed").is_none(),
+            "the redacted existed stays omitted: {body}"
+        );
+        assert_eq!(body["delete"]["reason"], "user_delete", "{body}");
+        assert_eq!(body["delete"]["hard"], false, "{body}");
+        assert_eq!(body["delete"]["state"], "applied", "{body}");
+        assert!(
+            fx.deleted(&note),
+            "the redacted view still commits the delete"
         );
     });
 }
