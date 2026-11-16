@@ -21,7 +21,6 @@ use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, Dream
 use crate::edge::EdgeActorClass;
 use crate::limit_ask::EngineLimit;
 use crate::memory::state_index::StateWindow;
-use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::agent_record::AgentCeiling;
 use crate::{
     ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor,
@@ -30,8 +29,6 @@ use crate::{
 pub const ACTION_MODE_FACET: &str = "dreamer.action_mode";
 /// Predicate of an advisory action-mode finding.
 pub const ACTION_MODE_PROPOSAL_PREDICATE: &str = "dreamer.action_mode.proposal";
-const POLICY: SideTable<(), ActionModePolicy, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_ACTION_MODE_POLICY);
 
 /// One band: an index in `[min_index, max_index)` selects `mode`; a band
 /// whose upper bound is 1 includes 1.
@@ -150,6 +147,17 @@ impl ActionModePolicy {
         }
     }
 
+    /// The `after_commit` of `dreamer.action_mode.policy`: measures the policy now in force, as
+    /// its old setter did before each write. It asks the port and writes nothing.
+    pub(super) fn measure_in_force(vault: &Vault) {
+        let Ok(txn) = vault.store.env.read_txn() else {
+            return;
+        };
+        if let Ok(Some(policy)) = policy_in_txn(vault, &txn) {
+            policy.measure(vault);
+        }
+    }
+
     fn mode_for(&self, value: f32) -> Option<&ActionModeRule> {
         self.rules.iter().find(|rule| {
             rule.min_index <= value
@@ -158,12 +166,27 @@ impl ActionModePolicy {
     }
 }
 
+impl crate::setting::SettingValue for ActionModePolicy {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+/// The owner's action-mode policy (`dreamer.action_mode.policy`); `None` when none is set, and
+/// then no night refreshes an index for it.
+fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<ActionModePolicy>> {
+    Ok(super::setting_keys::ACTION_MODE_POLICY
+        .read_in_txn(vault, txn, &[], None)?
+        .value)
+}
+
 impl Vault {
-    /// The owner's action-mode policy; `None` when none is set, and then no
-    /// night refreshes an index for it.
+    /// The owner's action-mode policy, the setting `dreamer.action_mode.policy`; `None` when none
+    /// is set, and then no night refreshes an index for it.
     pub fn action_mode_policy(&self) -> Result<Option<ActionModePolicy>> {
         let txn = self.store.env.read_txn()?;
-        POLICY.get(&self.store, &txn, &())
+        policy_in_txn(self, &txn)
     }
 
     /// The same measurement and band selection used by the nightly run, for one subject.
@@ -174,7 +197,7 @@ impl Vault {
         now: u64,
         refresh: bool,
     ) -> Result<ActionModeProjection> {
-        let policy = POLICY.get(&self.store, txn, &())?;
+        let policy = policy_in_txn(self, txn)?;
         let state_index = if refresh {
             match &policy {
                 Some(policy) => self
@@ -196,28 +219,6 @@ impl Vault {
             policy,
             state_index,
             mode,
-        })
-    }
-
-    /// Replaces the owner's action-mode policy; `None` clears it.
-    pub fn set_action_mode_policy(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        policy: Option<ActionModePolicy>,
-    ) -> Result<Option<ActionModePolicy>> {
-        if let Some(policy) = &policy {
-            policy.validate()?;
-            policy.measure(self);
-        }
-        self.with_write_txn_grouped(|txn| {
-            validate_owner_in_txn(self, txn, owner)?;
-            match &policy {
-                Some(policy) => POLICY.put(&self.store, txn, &(), policy)?,
-                None => {
-                    POLICY.delete(&self.store, txn, &())?;
-                }
-            }
-            Ok(policy.clone())
         })
     }
 
@@ -381,7 +382,7 @@ impl DreamerRunnerStore<'_> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<()> {
-        if POLICY.get(&self.vault.store, &*txn, &())?.is_none() {
+        if policy_in_txn(self.vault, txn)?.is_none() {
             return Ok(());
         }
         for owner in crate::policy_model::owners_in_txn(self.vault, &*txn)? {

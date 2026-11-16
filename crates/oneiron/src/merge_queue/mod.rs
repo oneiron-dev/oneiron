@@ -4,6 +4,7 @@
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
 mod batch_index;
+mod batch_split;
 mod candidate_intake;
 mod check_execute;
 mod check_exhaust;
@@ -55,6 +56,9 @@ use crate::{
     git_wire::{GitWire, GitWireRepo},
     store::code_snapshot::RepoRef,
 };
+// The base a later batch of a split enqueue was reviewed on, which the
+// reviewed landing admits it at ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+pub(crate) use batch_split::{EnqueueBase, enqueue_base};
 // The pinned-plan checker (FIX 6868).
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
@@ -74,9 +78,9 @@ pub(crate) use check_exhaust::QueueCheckFieldToken;
 // The restart driver and overlap handoff (FIX 6868, G2 PR2).
 pub(crate) use driver_types::QueueStageOverlap;
 pub use driver_types::{
-    QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason,
-    QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView, QueueDriverTarget,
-    QueueSurvivorLink, QueueWork,
+    QueueBatchDrive, QueueConflictLink, QueueConflictResolver, QueueConflictView, QueueDriveHold,
+    QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView,
+    QueueDriverTarget, QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 // A queue entry's admission and completion receipts (FIX 4338) and the

@@ -27,7 +27,10 @@ use oneiron::test_doors::derive_verbs::{define_agent, grant_derive_rows, revert_
 use oneiron::test_doors::extraction_routing::native_routes;
 use oneiron::test_doors::extraction_single_valued::seed_extraction_single_valued_predicates;
 use oneiron::test_doors::steward::dreamer;
-use oneiron::{AttemptId, EdgeActorClass, EntityId, Vault};
+use oneiron::{
+    AttemptId, ClaimCandidate, EdgeActorClass, EntityId, Vault, WriteActor, WriteEnvelope,
+    WriteProvenance,
+};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -120,6 +123,11 @@ fn candidate(subject: &str, turn: &str, version: Value) -> Value {
 
 /// Lands one food preference about `subject` with `source` and returns its
 /// id: the raw claim shape the routing parity fixture lands its head with.
+///
+/// A Generated head lands attributed, under the subject's actor-bound permit:
+/// an unattributed Generated put at Auto pends on source trust. Any other
+/// source keeps the plain put. The permit door writes the policy from the
+/// shipped rows, so a test writes its own policy rows after this land.
 fn land_sourced_head(
     vault: &Vault,
     subject: EntityId,
@@ -127,6 +135,35 @@ fn land_sourced_head(
     source: ClaimSource,
 ) -> TestResult<EntityId> {
     let head = EntityId::now();
+    let now = vault.now_recorded_at();
+    if source == ClaimSource::Generated {
+        grant_derive_rows(vault, &[subject])?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(subject, EdgeActorClass::Human),
+            ClaimSource::Generated,
+            WriteProvenance::new(RmpValue::from("generated-head-fixture"))?,
+            ClaimApprovalStatus::Auto,
+        );
+        vault
+            .batch()
+            .claim_candidate(
+                &head,
+                ClaimCandidate::new(
+                    FOOD,
+                    ClaimSubject::Entity(subject),
+                    RmpValue::from(value),
+                    1.0,
+                ),
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .commit()?;
+        return Ok(head);
+    }
     let mut body = ClaimBody::new(
         FOOD,
         ClaimSubject::Entity(subject),
@@ -137,7 +174,6 @@ fn land_sourced_head(
     )?;
     body.source = Some(source);
     body.scope_facet = vault.default_facet()?;
-    let now = vault.now_recorded_at();
     let at = TimeRange {
         start: now,
         end: now,
