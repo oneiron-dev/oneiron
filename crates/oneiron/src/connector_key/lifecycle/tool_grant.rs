@@ -236,7 +236,6 @@ impl Vault {
                 &key_id,
                 "gate.connector_key.consent",
                 &active,
-                at,
             )?;
             granted.push(ConnectorToolGrant {
                 tool: row.tool.clone(),
@@ -302,7 +301,6 @@ impl Vault {
                             &key_id,
                             "gate.connector_key.suspend",
                             &held,
-                            at,
                         )?;
                     }
                     continue;
@@ -392,7 +390,7 @@ impl Vault {
             };
             next.validate()?;
             rewrite_connector_key_in_txn(&self.store, wtxn, &key_id, &next)?;
-            append_op(&self.store, wtxn, &key_id, op, &next, at)?;
+            append_op(&self.store, wtxn, &key_id, op, &next)?;
         }
         Ok(())
     }
@@ -482,7 +480,6 @@ impl Vault {
                     &key_id,
                     "gate.connector_key.revoke",
                     &revoked,
-                    at,
                 )?;
             }
         }
@@ -571,14 +568,7 @@ pub(in crate::connector_key) fn hold_derived_keys_in_txn(
         }
         let held = held(record, at);
         rewrite_connector_key_in_txn(store, wtxn, &key_id, &held)?;
-        append_op(
-            store,
-            wtxn,
-            &key_id,
-            "gate.connector_key.suspend",
-            &held,
-            at,
-        )?;
+        append_op(store, wtxn, &key_id, "gate.connector_key.suspend", &held)?;
     }
     Ok(())
 }
@@ -795,18 +785,9 @@ fn append_op(
     id: &EntityId,
     op: &'static str,
     record: &ConnectorKeyRecord,
-    at: u64,
 ) -> Result<()> {
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
-    append_connector_key_op_record(
-        store,
-        wtxn,
-        id,
-        op,
-        record,
-        policy.read_frontier_hash()?,
-        at,
-    )
+    append_connector_key_op_record(store, wtxn, id, op, record, policy.read_frontier_hash()?)
 }
 
 fn invalid(reason: &'static str) -> Error {
