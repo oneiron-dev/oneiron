@@ -1,0 +1,17 @@
+{
+  "name": "vault.imports.get",
+  "description": "The owner, or a holder of a Steward grant naming read, reads one hosted import's progress with its phases apart: upload, parse, searchable, embeddings and review. An unknown id reads as none.",
+  "input": "crate::ingest::history::HostedImportLookup",
+  "output": "Option<crate::ingest::history::HostedImportView>",
+  "call": "crate::ingest::history::hosted_import_get(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "substrate_reader"
+}

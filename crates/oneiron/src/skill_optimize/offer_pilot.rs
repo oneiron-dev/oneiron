@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     ComputeDestination, EvalExposure, EvalExposureKind, EvalRelease, EvalSeat, OfferCandidate,
-    OfferModelPin, SufficiencyCard, SufficiencyInput, sufficiency_card,
+    OfferModelPin, SufficiencyCard, sufficiency_card,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::limit_ask::EngineLimit;
@@ -48,38 +48,10 @@ pub struct OfferCandidateQuery {
     pub seat: Option<EvalSeat>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferPilotPrepare {
-    pub candidate: EntityId,
-    pub cohort: EntityId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferPilotRef {
-    pub pilot: EntityId,
-}
-
-/// Measurements supplied by the owner's evaluator, not by the offer skill.
-/// Unknowns stay null. `one_off_cost` includes pilot, migration and re-embed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferPilotMeasurement {
-    pub sufficiency: SufficiencyInput,
-    pub receipt_refs: Vec<String>,
-    pub currency: String,
-    pub one_off_cost: Option<f64>,
-    pub incumbent_score: Option<f64>,
-    pub candidate_score: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferPilotComplete {
-    pub pilot: EntityId,
-    pub measurement: OfferPilotMeasurement,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::offer_pilot::{
+    OfferPilotComplete, OfferPilotMeasurement, OfferPilotPrepare, OfferPilotRef,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

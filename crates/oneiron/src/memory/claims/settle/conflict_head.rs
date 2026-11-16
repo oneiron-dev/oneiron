@@ -3,9 +3,11 @@
 //! proposal's conflict set.
 //!
 //! The set is the key an Auto write replaces on: subject, predicate, world,
-//! relationship and exact scope, with `value.question_id` for the declared
-//! multi-cardinality predicates. Scopes compare by their canonical bytes, so
-//! two binary facet or project ids never read as one. The head must also
+//! relationship and exact scope, with the value key identity of a declared
+//! multi-cardinality predicate (`value.question_id`, `value.who` as a
+//! calendar address). Scopes
+//! compare by their canonical bytes, so two binary facet or project ids
+//! never read as one. The head must also
 //! carry the proposal's scope stamps, the facet and project each was born
 //! in, as an OF-023 conflict marker's peer must: a head in another facet is
 //! another audience's, and an approval here never closes it. A set-cardinality
@@ -27,7 +29,7 @@ const TOPIC_KEY_SCOPE_FIELD: &str = "topic_key";
 
 /// The predicate namespace of task proposals (`tasks.create`, `tasks.cancel`,
 /// `tasks.brief`), which `task_verb` settles into TASK rows.
-const TASK_PROPOSAL_NAMESPACE: &str = "tasks";
+pub(super) const TASK_PROPOSAL_NAMESPACE: &str = "tasks";
 
 /// A standing claim an approval closes, as its review read it.
 pub(super) struct ConflictHead {
@@ -42,7 +44,9 @@ struct ProposalConflictSet<'a> {
     subject: EntityId,
     proposal: &'a ClaimBody,
     scope: Option<Vec<u8>>,
-    question: Option<Option<serde_json::Value>>,
+    /// A declared multi-cardinality predicate's value key and the proposal's
+    /// identity under it.
+    value_key: Option<(MultiCardinalityValueKey, Option<serde_json::Value>)>,
     beside_stated: bool,
 }
 
@@ -63,9 +67,8 @@ fn proposal_conflict_set(proposal: &ClaimBody) -> crate::Result<Option<ProposalC
         subject,
         proposal,
         scope: canonical_scope(proposal.scope.as_ref())?,
-        question: MULTI_CARDINALITY_PREDICATES
-            .contains(&proposal.predicate.as_str())
-            .then(|| question_id(&proposal.value)),
+        value_key: multi_cardinality_value_key(&proposal.predicate)
+            .map(|key| (key, key.identity(&msgpack_value_to_json(&proposal.value)))),
         beside_stated: crate::claim::is_observed_preference(proposal.source, &proposal.predicate),
     }))
 }
@@ -86,10 +89,9 @@ impl ProposalConflictSet<'_> {
             && canonical_scope(body.scope.as_ref())? == self.scope
             && body.scope_facet == proposal.scope_facet
             && body.scope_project == proposal.scope_project
-            && self
-                .question
-                .as_ref()
-                .is_none_or(|question| *question == question_id(&body.value))
+            && self.value_key.as_ref().is_none_or(|(key, wanted)| {
+                *wanted == key.identity(&msgpack_value_to_json(&body.value))
+            })
             && (!self.beside_stated || body.source != Some(ClaimSource::UserStated))
             && crate::Vault::require_source_trust_supersession_rights(proposal, body).is_ok())
     }
@@ -131,11 +133,13 @@ pub(super) fn conflict_head_in_txn(
 /// The conflict heads of many proposals read in one txn: each subject's
 /// standing claims are read once, by predicate, newest first, so a restore
 /// group of N claims about one person costs one read of that person's claims,
-/// not N (R6, RULING 02:26 13 Nov). `head_id` names the head
-/// `conflict_head_in_txn` names. Only for a txn that writes nothing between
-/// two calls: a write could add or close a head.
+/// not N (R6, RULING 02:26 13 Nov). `head` names the head
+/// `conflict_head_in_txn` names in the same txn. A write between two calls
+/// could add or close a head, so a txn that writes passes each claim it
+/// settled to `record_settled`, and calls `clear` after a write that may
+/// change any other claim.
 #[derive(Default)]
-pub(super) struct ConflictHeadIndex {
+pub(in crate::memory) struct ConflictHeadIndex {
     subjects: std::collections::HashMap<EntityId, StandingClaims>,
 }
 
@@ -143,15 +147,15 @@ pub(super) struct ConflictHeadIndex {
 type StandingClaims = std::collections::HashMap<String, Vec<(EntityId, ClaimBody)>>;
 
 impl ConflictHeadIndex {
-    /// The id of the head `conflict_head_in_txn(vault, txn, id, proposal)`
-    /// returns, reading the proposal's subject at its first use.
-    pub(super) fn head_id(
+    /// The head `conflict_head_in_txn(vault, txn, id, proposal)` returns,
+    /// reading the proposal's subject at its first use.
+    pub(super) fn head(
         &mut self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         proposal: &ClaimBody,
-    ) -> crate::Result<Option<EntityId>> {
+    ) -> crate::Result<Option<ConflictHead>> {
         let Some(set) = proposal_conflict_set(proposal)? else {
             return Ok(None);
         };
@@ -163,11 +167,78 @@ impl ConflictHeadIndex {
         };
         for (candidate, body) in standing.get(&proposal.predicate).into_iter().flatten() {
             if candidate != id && set.admits(body)? {
-                return Ok(Some(*candidate));
+                return Ok(Some(ConflictHead {
+                    id: *candidate,
+                    body: body.clone(),
+                }));
             }
         }
         Ok(None)
     }
+
+    /// The id of the head `head` returns.
+    pub(super) fn head_id(
+        &mut self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        proposal: &ClaimBody,
+    ) -> crate::Result<Option<EntityId>> {
+        Ok(self.head(vault, txn, id, proposal)?.map(|head| head.id))
+    }
+
+    /// Takes in the claim `id` as `txn` stores it after a write in `txn`
+    /// settled it: it joins its subject's standing claims or leaves them. A
+    /// settlement keeps the claim's subject and predicate. A subject this
+    /// index has not read yet is read at its first use, so it needs nothing.
+    /// The claims about `id` itself change with it (an approval of a MACHINE
+    /// claim writes its history claims, and a claim Put deletes its lexical
+    /// query hints), so `id` read as a subject is read again at its next use.
+    pub(super) fn record_settled(
+        &mut self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> crate::Result<()> {
+        self.subjects.remove(id);
+        let Some(body) = vault.get_claim_in_txn(txn, id)? else {
+            for standing in self.subjects.values_mut() {
+                for claims in standing.values_mut() {
+                    claims.retain(|(candidate, _)| candidate != id);
+                }
+            }
+            return Ok(());
+        };
+        let ClaimSubject::Entity(subject) = body.subject else {
+            return Ok(());
+        };
+        let Some(standing) = self.subjects.get_mut(&subject) else {
+            return Ok(());
+        };
+        let claims = standing.entry(body.predicate.clone()).or_default();
+        claims.retain(|(candidate, _)| candidate != id);
+        if is_standing(&body) {
+            // Newest first, as `standing_claims_in_txn` orders them.
+            let at = claims.partition_point(|(candidate, _)| candidate > id);
+            claims.insert(at, (*id, body));
+        }
+        Ok(())
+    }
+
+    /// Forgets every subject read, after a write that may have changed a
+    /// claim other than the one it settled.
+    pub(super) fn clear(&mut self) {
+        self.subjects.clear();
+    }
+}
+
+/// Whether `body` is a standing claim: Active, and Auto or Approved.
+fn is_standing(body: &ClaimBody) -> bool {
+    body.lifecycle == ClaimLifecycleStatus::Active
+        && matches!(
+            body.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
 }
 
 /// The Active, Auto or Approved claims about `subject` in `txn`, by
@@ -182,12 +253,7 @@ fn standing_claims_in_txn(
         let Some(body) = vault.get_claim_in_txn(txn, &candidate)? else {
             continue;
         };
-        if body.lifecycle == ClaimLifecycleStatus::Active
-            && matches!(
-                body.approval,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
-        {
+        if is_standing(&body) {
             standing
                 .entry(body.predicate.clone())
                 .or_default()
@@ -216,11 +282,4 @@ fn has_topic_key(scope: Option<&Value>) -> bool {
     fields
         .iter()
         .any(|(key, value)| key.as_str() == Some(TOPIC_KEY_SCOPE_FIELD) && !value.is_nil())
-}
-
-/// The `question_id` of a multi-cardinality claim's value.
-fn question_id(value: &Value) -> Option<serde_json::Value> {
-    msgpack_value_to_json(value)
-        .get(MULTI_CARDINALITY_VALUE_KEY)
-        .cloned()
 }

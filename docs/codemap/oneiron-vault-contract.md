@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib/artifact_origin.rs` | src | m | 3 struct · 5 enum · 14 fn · 5 const | ArtifactHost, ArtifactHostRead, ArtifactInternalHost, ArtifactInternalRead, ArtifactLabelRefusal, PreviewLabelRefusal, PreviewOrigin, PreviewOriginRead | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
+| `src/lib/artifact_origin.rs` | src | m | 3 struct · 5 enum · 15 fn · 6 const | ArtifactHost, ArtifactHostRead, ArtifactInternalHost, ArtifactInternalRead, ArtifactLabelRefusal, PreviewLabelRefusal, PreviewOrigin, PreviewOriginRead | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
 | `src/lib/backup_handoff.rs` | src | s | 3 struct · 1 enum · 8 fn · 3 const | BackupHandoffPolicy, BackupStageAck, HeldBackup, PrivateFile | The backup handoff between a managed vault's engine and its node's supervisor (LC backup shipper rows… |
 | `src/lib/checkpoint_recipient.rs` | src | s | 1 struct | CheckpointHostHoldsRecipient | The supervisor-pinned public recipient for checkpoint host-order members |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
@@ -19,18 +19,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/conversation_training/piece.rs` | src | m | 22 struct · 2 enum · 1 fn · 13 const | PieceBatchResultV1, PieceBatchV1, PieceBoundsV1, PieceChunkV1, PieceCursorV1, PieceEntryV1, PieceErrorBodyV1, PieceErrorV1 +16 | The anonymous training window (TL-6, FIX 5813): the wire a self-host engine ships its released offers and… |
 | `src/lib/conversation_training/piece_check.rs` | src | s | 6 fn · 1 crate-vis | — | The anonymous training window's shape checks and decoders (TL-6): the shape only |
 | `src/lib/conversation_training/piece_facts.rs` | src | s | 1 struct · 9 fn | PieceFactsDigest | The anonymous training window's facts digest (TL-6): the one fn the engine and the intake both compute a… |
-| `src/lib/ctl.rs` | src | L | 4 struct · 13 enum · 6 fn · 4 const · 3 re-export | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +9 | Supervisor ctl request/response wire types and shed/slim validation |
+| `src/lib/ctl.rs` | src | L | 4 struct · 13 enum · 6 fn · 4 const · 4 re-export | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +9 | Supervisor ctl request/response wire types and shed/slim validation |
 | `src/lib/ctl/browser.rs` | src | s | 4 enum · 1 fn · 2 const | BrowserReadiness, BrowserTier, BrowserUnavailableReason, GuestRuntimeFact | A managed vault's browser readiness (FIX 7670): what every `Ping` says of its `[browser]` guest, and the… |
 | `src/lib/ctl/deletion.rs` | src | s | 1 struct · 1 crate-vis | PingDeletion | A managed vault's deletion (FIX 11710): what every `Ping` says once its Owners deleted it, so the supervisor… |
+| `src/lib/ctl/process_readiness.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ProcessReadinessReport, ProcessState | How a managed vault's process stands now (L8-11; runtime `#provider-health`, decision `scour:S25`): the live… |
 | `src/lib/ctl/readiness.rs` | src | s | 1 struct · 3 enum · 4 fn | FacilityNotice, FacilityReason, ManagedFacility, ManagedReadiness | How a managed vault came up (contract v3): the readiness every `Ping` reports, and the facilities it names… |
 | `src/lib/escrow.rs` | src | s | 1 struct · 2 fn · 2 const | EscrowCapsuleReport | The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is… |
 | `src/lib/esign_delivery.rs` | src | s | 1 struct · 3 fn · 6 const | EsignDeliveryCompleted | The e-sign delivery outbox's completion receipt (FIX 5306) |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
-| `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 4 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
-| `src/lib/host_adapters/desktop.rs` | src | s | 2 re-export | — | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
+| `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 5 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
+| `src/lib/host_adapters/desktop.rs` | src | s | 4 re-export | — | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
 | `src/lib/host_adapters/desktop/hosts.rs` | src | m | 2 struct · 3 enum · 10 fn | ActivatedListener, DesktopHost, LaunchdHost, SecretSource, SystemdHost | — |
 | `src/lib/host_adapters/desktop/keep_awake.rs` | src | s | 2 struct · 1 enum · 4 fn | AwakeGuard, AwakePolicy, KeepAwake | — |
 | `src/lib/host_adapters/desktop/keep_awake/power.rs` | src | s | 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
+| `src/lib/host_adapters/desktop/sleep_watch.rs` | src | s | 1 struct · 1 trait · 1 fn · 1 re-export | SleepHooks, SleepWatch | Watches this machine's sleep and wake so the host releases its executor leases before it sleeps and takes… |
+| `src/lib/host_adapters/desktop/sleep_watch/iokit.rs` | src | s | 2 crate-vis | — | IOKit's system power notifications, on a thread of its own running a run loop |
+| `src/lib/host_adapters/desktop/sleep_watch/logind.rs` | src | s | 1 fn · 2 crate-vis | — | logind's sleep signals: a delay lock the thread holds while awake and a signal monitor it reads line by line |
 | `src/lib/host_adapters/embedded.rs` | src | s | 1 struct · 1 trait · 4 fn | AppHost, EmbeddedHost | The in-process adapter for an engine embedded in a mobile app (NAPI or FFI) |
 | `src/lib/host_adapters/native.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | InProcessHost | Native socket ownership, secret lookup, and cooperative idle wakeup |
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
@@ -42,9 +46,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/managed_backup.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const · 1 re-export · 1 crate-vis | CheckpointSignerObservation, CheckpointSignerUnavailable, ManagedBackupFacts | What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its… |
 | `src/lib/managed_backup/idle_reap.rs` | src | s | 4 struct · 2 enum · 5 fn · 2 const | BackupCoverageWire, IdleBackupFailure, IdleBackupState, IdleBackupWire, IdleReapInFlight, IdleReapWire | The answer to an idle reap's preparation (`prepare_idle_reap`, Engine 10-20 backup shipper row (a)… |
 | `src/lib/managed_holder.rs` | src | m | 7 struct · 18 fn · 1 type · 8 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedPersonAction, ManagedWidenAction, ManagedWidenTranscript | Host-attested account actions: one managed widen request, one request the vault owner makes in person… |
-| `src/lib/mod.rs` | src | s | 23 mod · 13 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 23 mod · 14 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/owner_signing_recovery.rs` | src | s | 2 struct · 2 fn · 2 const | OwnerSigningRecovery, OwnerSigningRecoveryAck | Owner-signing recovery (FIX 5260): an adopted vault proves, on its supervisor's challenge, that it still… |
 | `src/lib/preview.rs` | src | s | 6 struct · 1 enum · 3 fn · 1 const | PreviewEndpoint, PreviewPortDeclaration, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
+| `src/lib/recovery_box_hold.rs` | src | s | 2 struct · 3 fn · 2 const | RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck | The kit-only hold on a hosted vault's recovery box (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY =… |
 | `src/lib/relay_delete.rs` | src | m | 4 struct · 9 enum · 18 fn · 2 const · 1 crate-vis | RelayDeleteExecuteWire, RelayDeleteGeneration, RelayDeleteIoKind, RelayDeleteRechecksRequest, RelayDeleteRechecksWire, RelayDeleteRequest, RelayDeleteStage, RelayDeleteState +5 | The relay locker delete the engine executes (FIX 6826, Engine 10-21) |
 | `src/lib/restore.rs` | src | s | 1 struct · 2 fn · 1 const · 4 mod · 4 re-export | RestoreCommitMarker | The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a… |
 | `src/lib/restore/facts.rs` | src | m | 12 struct · 5 enum · 1 fn · 1 const | AddedRecipientWire, AnchorDispositionWire, CustodyAdmissionWire, CustodyPositionWire, CustodyRouteWire, ManagedRestoreIdentity, ManagedRestoreReceipt, RecipientAdmissionWire +9 | The receipt of a verified cold managed restore: the attempt it answers, the engine's report, and everything… |
@@ -70,3 +75,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/vm_provision.rs` | src | s | 3 struct · 2 enum · 9 fn · 4 const | VmFscryptKey, VmProvision, VmProvisionBinding, VmProvisionFailure, VmProvisionReply | A vault VM's provision connection (FIX 6308): what its root bootstrap, `oneiron-vm-init`, takes from the… |
 | `src/lib/vm_restore.rs` | src | s | 2 struct · 5 enum · 9 fn · 5 const | VmRestoreBoot, VmRestoreHello, VmRestoreMarkerObservation, VmRestoreMarkerReply, VmRestoreMarkerUnreadable, VmRestoreRecord, VmRestoreSourceDevice | A vault VM's restore channel (FIX 6584): the cold restore start mode (`crate::restore`) carried into a… |
 | `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |
+| `tests/ctl_ping_process_readiness.rs` | test | s | — | — | L8-11: every `Ping` carries the vault process's live readiness as an optional `process` block… |
+| `tests/fingerprint_keep_restore_receipt_id.rs` | test | s | 1 fn | — | K-proof (oracle) for PLAN-UC-04 stage 6.3b: the managed restore receipt id keeps its bytes |
+| `tests/recovery_box_hold_wire.rs` | test | s | — | — | The kit-only hold's wire on the supervisor socket (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY =… |
+| `tests/sleep_watch_logind_line.rs` | test | s | — | — | — |
+| `tests/systemd_template_notify_without_socket.rs` | test | s | — | — | A `Type=notify` unit without socket activation still sets `NOTIFY_SOCKET`: the plain host reports `READY=1`… |

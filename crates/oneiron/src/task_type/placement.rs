@@ -30,8 +30,8 @@ use super::{
     ROOT_NODE_ID, SeedTaskType, TaskTypeNode, TaskTypeRef, TaskTypeTree, invalid_type_ref,
 };
 
-/// The routed skill that owns placement.
-pub const PLACEMENT_SKILL_ID: &str = "task_type.placement";
+#[doc(hidden)]
+pub use oneiron_records::task_type::placement::PLACEMENT_SKILL_ID;
 
 /// Which live node of the tree in force is this task? The options are the
 /// tree's live node ids, so an answer can only name a node the tree holds.

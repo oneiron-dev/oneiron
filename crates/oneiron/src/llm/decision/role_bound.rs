@@ -101,6 +101,10 @@ impl DecisionProvider for ManifestBoundRung {
         self.inner.leaves_host()
     }
 
+    fn runs_on_device(&self) -> bool {
+        self.inner.runs_on_device()
+    }
+
     fn cost_per_thousand(&self) -> Option<f64> {
         self.inner.cost_per_thousand()
     }

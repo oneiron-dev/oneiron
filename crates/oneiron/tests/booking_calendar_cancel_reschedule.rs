@@ -232,6 +232,7 @@ fn fixture_config() -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -255,6 +256,7 @@ fn book(fixture: &Fixture, session_key: SessionKey, slot: TimeRange) -> ConfirmR
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             NOW,
         )

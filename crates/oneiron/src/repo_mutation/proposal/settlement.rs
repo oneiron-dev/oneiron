@@ -10,24 +10,11 @@ use crate::claim::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Result, Vault};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RepoProposalDecision {
-    Approve,
-    Reject,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RepoProposalSettlement {
-    pub receipt: EntityId,
-    /// The owner who settled it; `None` once that actor was erased (FIX
-    /// 5220). The decision stays.
-    pub actor: Option<EntityId>,
-    pub decision: RepoProposalDecision,
-    pub settled_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::repo_mutation::proposal::settlement::{
+    RepoProposalDecision, RepoProposalSettlement,
+};
 
 impl Vault {
     /// Approve or reject one immutable proposal as an independent owner. Every
@@ -139,7 +126,7 @@ impl Vault {
         verdicts: &[String],
     ) -> Result<(EntityId, u64)> {
         let receipt = self.store.clock.entity_id()?;
-        let now = super::super::support::now_secs();
+        let now = crate::unix_seconds_now();
         let mut value: Vec<(rmpv::Value, rmpv::Value)> = vec![
             ("proposal".into(), id.to_hex().into()),
             ("actor".into(), actor.to_hex().into()),

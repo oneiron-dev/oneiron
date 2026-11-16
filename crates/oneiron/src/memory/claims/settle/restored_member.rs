@@ -67,17 +67,38 @@ impl crate::Vault {
     }
 }
 
+/// Whether settling the open proposal `id`, whose body is `body`, in `txn`
+/// may write a claim other than `id`: a deferred action closes the claim it
+/// names, an approved curator finding applies to other claims, and a task
+/// proposal lands its TASK. Read before the settlement writes.
+fn settlement_may_change_other_claims(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> crate::Result<bool> {
+    Ok(vault.has_deferred_claim_in_txn(txn, id)?
+        || body.predicate == crate::dreamer_runner::maintenance::CURATOR_PROPOSAL_PREDICATE
+        || body.predicate.split('.').next() == Some(super::conflict_head::TASK_PROPOSAL_NAMESPACE))
+}
+
 impl Memory<'_> {
     /// Settles the restored claim `id` by `action` as the owner `actor`, whose
     /// proof `owner` answers the claim's owner-answer obligation, in `wtxn`, the
     /// member's own savepoint: the gate decides it as `vault.claims.settle`
     /// does, and it appends its own Settlement receipt. An approval never
-    /// supersedes a live head here; that member waits.
+    /// supersedes a live head here; that member waits. `heads` is the act's
+    /// one index of the subjects' standing claims (FIX 23686): the review
+    /// reads its head there, and a settled member is recorded in it.
     ///
     /// # Errors
     ///
     /// A store failure, or an owner proof that no longer holds.
-    pub(crate) fn settle_restored_member_in_txn(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one member's settlement in its act, with the act's head index"
+    )]
+    pub(in crate::memory) fn settle_restored_member_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
@@ -85,6 +106,7 @@ impl Memory<'_> {
         id: EntityId,
         action: GateConsentBundleAction,
         now: u64,
+        heads: &mut ConflictHeadIndex,
     ) -> MemoryResult<RestoredMemberSettle> {
         // The review read below binds the live head, so this check reads none.
         if self
@@ -94,7 +116,7 @@ impl Memory<'_> {
         {
             return Ok(RestoredMemberSettle::Closed);
         }
-        let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
+        let reviewed = ReviewedProposal::read_indexed_in_txn(self.vault, &*wtxn, &id, heads)?;
         if reviewed.openers.contains(&actor.entity_ref()) {
             return Ok(waiting(RestoreMemberWait::OpenedByOwner, None, None));
         }
@@ -117,6 +139,8 @@ impl Memory<'_> {
             ));
         }
         let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;
+        let changes_others =
+            settlement_may_change_other_claims(self.vault, &*wtxn, &id, &reviewed.body)?;
         let settled = match self.vault.settle_proposed_claim_in_txn(
             wtxn,
             id,
@@ -140,19 +164,24 @@ impl Memory<'_> {
             self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
         }
         let (outcome, reason) = match action {
-            GateConsentBundleAction::Approve => ("approved", ClaimSettlementReason::OwnerApproved),
-            GateConsentBundleAction::Decline => ("rejected", ClaimSettlementReason::OwnerDeclined),
+            GateConsentBundleAction::Approve => (
+                GateReceiptOutcome::Approved,
+                ClaimSettlementReason::OwnerApproved,
+            ),
+            GateConsentBundleAction::Decline => (
+                GateReceiptOutcome::Rejected,
+                ClaimSettlementReason::OwnerDeclined,
+            ),
         };
-        let mut record = crate::memory::authorship::decision(
+        let mut receipt = crate::memory::authorship::decision(
             actor,
             CLAIM_SETTLEMENT_CONTENT_KIND,
             outcome,
             reason.as_str(),
             Some(id),
             reviewed.digest.to_vec(),
-            now,
         );
-        record.read_frontier_hash = reviewed.frontier;
+        receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
         // FIX 7499, 7500: the member's read context, and the loop links of
         // the pending decision it answers.
         let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -162,7 +191,7 @@ impl Memory<'_> {
                 .ok()
                 .flatten()
         });
-        record.context = crate::store::GateDecisionContext {
+        receipt.context = crate::store::GateDecisionContext {
             read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
                 .map(|read| {
                     read.with_anchors(crate::conversation::gate_claim_anchors_in(
@@ -179,9 +208,14 @@ impl Memory<'_> {
                 .map(crate::store::GateDecisionContext::answering)
                 .unwrap_or_default()
         };
-        self.vault
-            .store
-            .append_gate_decision_in_txn(wtxn, &record)?;
+        let record = self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
+        // The member's savepoint commits or the whole act fails, so the index
+        // takes in what this savepoint wrote.
+        if changes_others {
+            heads.clear();
+        } else {
+            heads.record_settled(self.vault, &*wtxn, &id)?;
+        }
         Ok(RestoredMemberSettle::Settled {
             receipt: record,
             recorded: settled.recorded,

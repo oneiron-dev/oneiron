@@ -31,3 +31,16 @@ pub(crate) fn served_room_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
         .map_err(|_| crate::store::conversation_body::invalid("body encode"))?;
     Ok(Some(out))
 }
+
+/// A stored body of `entity_type` as it leaves this vault for a reader that
+/// is not the owner's own copy: a room body without its shared pins, as
+/// [`served_room_body`] serves it, its `pin_policy` kept (Engine ruling
+/// EXPORTDOORS Q2 = A; FIX ROOM-PINS-WHOLE-BLOB-TRANSPORT). `None` for any
+/// other kind, and for a room body with no `pins` key, which leaves as
+/// stored.
+pub(crate) fn body_without_room_pins(entity_type: u8, body: &[u8]) -> Result<Option<Vec<u8>>> {
+    if entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+        return Ok(None);
+    }
+    served_room_body(body)
+}

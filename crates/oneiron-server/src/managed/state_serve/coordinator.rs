@@ -260,6 +260,13 @@ async fn serve_with_handles(
             .with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
             .with_tagger_egress(Arc::new(|_: &oneiron::llm::TaggerCall<'_>| true));
     }
+    // Bound before any worker starts, so every admitted call is attributed,
+    // to the payer of the tenancy the supervisor started this vault under
+    // (census L8-12, RULING HOSTED-BILLING-OWNER = A).
+    crate::managed::usage_meter::bind_tenancy_usage_metering(
+        &sync_server,
+        managed.vault_binding()?.tenancy(),
+    );
     sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();
@@ -270,6 +277,10 @@ async fn serve_with_handles(
     #[cfg(unix)]
     {
         sync_server = sync_server.with_organ_dir(super::owner_storage::organ_dir(&managed));
+        // The image organ the supervisor names by its program (L4-15).
+        if let Some(program) = &managed.image_organ {
+            sync_server.install_image_organ(program);
+        }
     }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
     // plain serve attaches them: a vault that dials a home, by the owner's
@@ -304,6 +315,9 @@ async fn serve_with_handles(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // Bulk campaign email names this host's one-click unsubscribe links
+    // (ARCH-0059 #opt-out), as plain serve installs them.
+    crate::api::install_one_click_unsubscribe_origin(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -337,6 +351,9 @@ async fn serve_with_handles(
         managed.hypnos_socket.clone(),
         &credentials,
     )?);
+    // The recovery box's kit-only hold rides the ledger's socket and spawn
+    // identity; the recovery preset switch is its only caller.
+    sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed
@@ -548,6 +565,20 @@ async fn serve_with_handles(
     handles.connector_sends = Some(sync_server.spawn_connector_send_worker(admitted()));
     // Checked built-in channels, under the same admission (OF-519).
     handles.builtin_host = Some(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Hosted imports staged in the vault's data folder, under the same
+    // admission (ARCH-0027 #hosted-import): a restart takes each job up
+    // where it stopped.
+    #[cfg(unix)]
+    {
+        handles.hosted_imports = Some(
+            crate::commands::hosted_import::HostedImports::new(
+                config.vault_path.clone(),
+                admitted(),
+            )
+            .with_archive_entry_cap(config.import.archive_entry_cap())
+            .spawn(Arc::clone(&sync_server)),
+        );
+    }
     // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
     crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
     // Failure signals reach our collector under the same admission (OF-380).
@@ -751,6 +782,10 @@ async fn serve_with_handles(
     // `quiescent: true` is a claim about a gate that nothing reaches. Each
     // socket upgraded on it or the mesh sees the shutdown, and is waited
     // for with the calls it admitted before any worker stops (FIX 4757).
+    // The event-loop watchdog (L8-11): a hung or recovering vault takes no
+    // new work, and `Ping` tells the supervisor. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::managed());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors),
         shutdown.0.subscribe(),

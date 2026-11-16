@@ -1,6 +1,6 @@
 {
   "name": "vault.runs.pause",
-  "description": "Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused.",
+  "description": "Pauses one branch of a run by its attempt id: a queued or scheduled one at once, a running run at its next step boundary. The vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat writes nothing.",
   "input": "crate::task_verb::run_control::RunControlRequest",
   "output": "crate::task_verb::run_control::RunControlReceipt",
   "call": "memory.runs_pause(input)?",

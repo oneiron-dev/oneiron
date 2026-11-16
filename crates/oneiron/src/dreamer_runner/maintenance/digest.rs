@@ -6,8 +6,9 @@
 //! Each digest is stored once, under a stable locator with a content hash
 //! (FIX 2332), and every read, answer and delivery of it is its viewer's
 //! own view, screened of private thread words they do not read (FIX 6411).
-use super::invalid;
+use super::{invalid, setting_keys};
 use crate::limit_ask::EngineLimit;
+use crate::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingSource, SettingValue};
 use crate::side_table::{self, LegacyJson, SideTable};
 #[cfg(test)]
 use crate::{ClaimApprovalStatus, ClaimSource};
@@ -37,19 +38,10 @@ pub use urgent::{
     DigestVersionRef, UrgentDigestAssessment,
 };
 pub use view::{DigestReadRequest, ProactivityDigestView};
-const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
 const STATE: SideTable<(), DigestState, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_STATE);
 const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
-const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
-/// Whether a masked copy of a `DREAMER_PROACTIVITY_PRESENTATION` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn dreamer_proactivity_presentation_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<ProactivityPresentation, LegacyJson>(bytes)
-}
 
 /// Whether a masked copy of a `DREAMER_PROACTIVITY_DIGEST` row still decodes as its typed value,
 /// for the historical lift sweep (FIX 2680).
@@ -71,14 +63,14 @@ pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.poli
 pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
 /// The derived group pending training offers (OF-577) render under.
 pub const TRAINING_OFFER_GROUP: &str = "coach.training_offer";
-/// The derived group the cleanup line (ARCH-0073, OF-449) renders under.
-pub const CLEANUP_GROUP: &str = "dreamer.cleanup";
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::digest::{
+    CLEANUP_GROUP, DigestOffer, DigestProposal, NOTE_TOMBSTONE_GROUP, ProactivityCadence,
+};
+
 /// The cleanup line's view: the owner cleanup surface, where every archive
 /// restores.
 pub const CLEANUP_VIEW: &str = "/v1/owner/cleanup";
-/// The derived group the NOTE tombstone line (OF-073, FIX 2419) renders
-/// under.
-pub const NOTE_TOMBSTONE_GROUP: &str = "note.tombstone";
 /// The NOTE tombstone line's view: the owner's tombstone review, where each
 /// proposal is accepted or declined.
 pub const NOTE_TOMBSTONE_VIEW: &str = "/v1/owner/notes/tombstones";
@@ -86,13 +78,6 @@ pub const NOTE_TOMBSTONE_VIEW: &str = "/v1/owner/notes/tombstones";
 pub const JUDGE_ASK_GROUP: &str = "coach.judge_ask";
 /// The derived group the recipient's eval label asks render under.
 pub const EVAL_LABEL_ASK_GROUP: &str = "coach.eval_label_ask";
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProactivityCadence {
-    pub period_secs: u64,
-    pub group_by_facet: bool,
-    pub urgent_breakthrough: bool,
-}
 /// Agent-authored, owner-confirmed presentation row. Templates and voice are
 /// data, not engine-owned prompt or persona text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -144,6 +129,86 @@ impl ProactivityPresentation {
         let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
     }
 }
+impl SettingValue for ProactivityPresentation {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+/// Seconds between two regular digests, at least one: the value of the setting
+/// `dreamer.proactivity.period`, the field of [`ProactivityCadence`] a holder of the maintenance
+/// cadence class moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct ProactivityPeriod(pub u64);
+
+impl SettingValue for ProactivityPeriod {
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            return Err(invalid());
+        }
+        Ok(self)
+    }
+}
+
+/// How the regular digest is delivered: the value of the setting `dreamer.proactivity.delivery`,
+/// the owner's fields of [`ProactivityCadence`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProactivityDelivery {
+    /// The digest groups its items by facet.
+    pub group_by_facet: bool,
+    /// An urgent item may go out before the period ends.
+    pub urgent_breakthrough: bool,
+}
+
+impl SettingValue for ProactivityDelivery {}
+
+/// The shipped cadence (`digest_defaults.json`): the defaults of the period and delivery settings.
+fn shipped_cadence() -> ProactivityCadence {
+    serde_json::from_str(include_str!("digest_defaults.json"))
+        .expect("the shipped digest_defaults.json decodes")
+}
+
+/// The default of `dreamer.proactivity.period`.
+pub(super) fn shipped_period() -> ProactivityPeriod {
+    ProactivityPeriod(shipped_cadence().period_secs)
+}
+
+/// The default of `dreamer.proactivity.delivery`.
+pub(super) fn shipped_delivery() -> ProactivityDelivery {
+    let cadence = shipped_cadence();
+    ProactivityDelivery {
+        group_by_facet: cadence.group_by_facet,
+        urgent_breakthrough: cadence.urgent_breakthrough,
+    }
+}
+
+/// The shipped presentation (`digest_presentation_defaults.json`): the default of
+/// `dreamer.proactivity.presentation`.
+pub(super) fn shipped_presentation() -> ProactivityPresentation {
+    serde_json::from_str(include_str!("digest_presentation_defaults.json"))
+        .expect("the shipped digest_presentation_defaults.json decodes")
+}
+
+/// The `after_commit` of the digest's settings: the host re-reads the cadence and presentation in
+/// force and re-arms its deadline, as each old setter signalled after its commit.
+pub(super) fn notify_proactivity_settings(vault: &Vault) {
+    vault.store.notify_proactivity_changes();
+}
+
+/// The `after_commit` of `dreamer.proactivity.presentation`: measures the presentation now in
+/// force against its `[limits]` rows, as its old setter did, then signals the host.
+pub(super) fn measure_presentation_and_notify(vault: &Vault) {
+    if let Ok(txn) = vault.store.env.read_txn() {
+        if let Ok(presentation) = load_presentation(vault, &txn) {
+            presentation.measure(vault);
+        }
+    }
+    notify_proactivity_settings(vault);
+}
+
 /// Typed request payload for the existing `vault.claims.put` agent verb.
 /// The host may build it from a chat request; no natural-language parser or
 /// product persona is embedded in the engine.
@@ -166,36 +231,6 @@ impl ProactivityPolicyRequest {
 pub struct ProactivityPolicyProposal {
     pub request: ProactivityPolicyRequest,
     pub revision: [u8; 32],
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DigestProposal {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub claim_ref: EntityId,
-    pub revision: [u8; 32],
-    pub summary: String,
-    /// The private thread turns its words were drawn from when its digest
-    /// was assembled (FIX 6411): a viewer reads it only while it reads each
-    /// one, whatever its claim's ancestry says later. Empty for words off
-    /// every private thread.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub private_sources: Vec<DigestPrivateSource>,
-    /// A private source its ancestry declared did not resolve when its
-    /// digest was assembled: no view carries it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub unverified: bool,
-}
-/// One pending training offer the digest carries to the owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DigestOffer {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub offer: EntityId,
-    /// The offer digest the owner's answer binds.
-    pub digest: String,
-    pub summary: String,
 }
 /// The cleanup cron's after-notice (ARCH-0073 §5): what it archived since
 /// the last digest that carried it, and the proposals that wait for the
@@ -344,99 +379,6 @@ impl DigestState {
     }
 }
 impl Vault {
-    pub fn set_proactivity_cadence(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        row: &ProactivityCadence,
-    ) -> Result<()> {
-        if row.period_secs == 0 {
-            return Err(invalid());
-        }
-        self.with_write_txn_grouped(|txn| {
-            super::validate_owner_in_txn(self, txn, owner)?;
-            CADENCE.put(&self.store, txn, &(), row)?;
-            Ok(())
-        })?;
-        self.store.notify_proactivity_changes();
-        Ok(())
-    }
-
-    /// The owner, by its proof, or a holder of `engine.controls` sets the proactivity digest's
-    /// period. Its grouping and urgent flags and the presentation stay as the owner set them
-    /// (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming it.
-    /// Untangle 6.6d gives it its verb. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
-    /// holder of `engine.controls`; the row's own validation; store failures.
-    pub fn set_proactivity_period_by(
-        &self,
-        actor: crate::federation::EngineControlActor<'_>,
-        period_secs: u64,
-    ) -> Result<EntityId> {
-        if period_secs == 0 {
-            return Err(invalid());
-        }
-        let receipt = self.apply_engine_control(
-            actor,
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_PROACTIVITY_CADENCE",
-            &crate::federation::rendered_change(&serde_json::json!({
-                "period_secs": period_secs,
-            }))?,
-            |txn| {
-                let cadence = load_cadence(self, &*txn)?;
-                CADENCE.put(
-                    &self.store,
-                    txn,
-                    &(),
-                    &ProactivityCadence {
-                        period_secs,
-                        ..cadence
-                    },
-                )?;
-                Ok(())
-            },
-        )?;
-        self.store.notify_proactivity_changes();
-        Ok(receipt)
-    }
-
-    /// [`Self::set_proactivity_period_by`] for a holder of `engine.controls` (untangle
-    /// 6.6b).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::set_proactivity_period_by`].
-    pub fn set_proactivity_period_as_holder(
-        &self,
-        holder: EntityId,
-        period_secs: u64,
-    ) -> Result<EntityId> {
-        self.set_proactivity_period_by(
-            crate::federation::EngineControlActor::Holder(holder),
-            period_secs,
-        )
-    }
-    /// An agent may draft this row in chat; only the authenticated owner's
-    /// confirmation writes it. Edits affect the next digest, not past rows.
-    pub fn set_proactivity_presentation(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        row: &ProactivityPresentation,
-    ) -> Result<()> {
-        row.validate()?;
-        row.measure(self);
-        self.with_write_txn_grouped(|txn| {
-            super::validate_owner_in_txn(self, txn, owner)?;
-            PRESENTATION.put(self, txn, &(), row)?;
-            Ok(())
-        })?;
-        self.store.notify_proactivity_changes();
-        Ok(())
-    }
-
     /// Subscribe before the first deadline read. Every notification means
     /// "re-read committed state", never "deliver a wake".
     pub fn subscribe_proactivity_changes(&self) -> tokio::sync::watch::Receiver<u64> {
@@ -541,16 +483,6 @@ impl Vault {
         })
     }
 
-    /// Fault injection for a presentation-only failure after a deadline has
-    /// already been selected. The row remains corrupt until explicitly edited.
-    #[cfg(feature = "test-support")]
-    pub fn corrupt_proactivity_presentation_for_test(&self) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            PRESENTATION.put_undecodable(&self.store, txn, &(), b"invalid presentation")?;
-            Ok(())
-        })
-    }
-
     /// The latest digest as stored, verified and unscreened: the canonical
     /// object, for a test. A person reads
     /// [`Vault::latest_proactivity_digest_view`].
@@ -578,18 +510,145 @@ impl Vault {
 #[cfg(test)]
 mod tests;
 
+/// The cadence in force: the period and delivery settings, each its default where unset.
 fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCadence> {
-    let row: ProactivityCadence = match CADENCE.get(&vault.store, txn, &())? {
-        Some(row) => row,
-        None => {
-            serde_json::from_str(include_str!("digest_defaults.json")).map_err(|_| invalid())?
-        }
-    };
+    let row = compose_cadence(
+        setting_keys::PROACTIVITY_PERIOD
+            .read_in_txn(vault, txn, &[], None)?
+            .value,
+        setting_keys::PROACTIVITY_DELIVERY
+            .read_in_txn(vault, txn, &[], None)?
+            .value,
+    );
     if row.period_secs == 0 {
         return Err(invalid());
     }
     Ok(row)
 }
+
+fn compose_cadence(period: ProactivityPeriod, delivery: ProactivityDelivery) -> ProactivityCadence {
+    ProactivityCadence {
+        period_secs: period.0,
+        group_by_facet: delivery.group_by_facet,
+        urgent_breakthrough: delivery.urgent_breakthrough,
+    }
+}
+
+/// The cadence as set: `None` while neither the period nor the delivery has a row, so the
+/// defaults decide. A policy request's basis and inverse name the rows so.
+fn cadence_row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<ProactivityCadence>> {
+    let period = setting_keys::PROACTIVITY_PERIOD.read_in_txn(vault, txn, &[], None)?;
+    let delivery = setting_keys::PROACTIVITY_DELIVERY.read_in_txn(vault, txn, &[], None)?;
+    if period.source == SettingSource::Default && delivery.source == SettingSource::Default {
+        return Ok(None);
+    }
+    Ok(Some(compose_cadence(period.value, delivery.value)))
+}
+
+/// The presentation as set: `None` while it has no row, so the default decides.
+fn presentation_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<ProactivityPresentation>> {
+    let read = setting_keys::PROACTIVITY_PRESENTATION.read_in_txn(vault, txn, &[], None)?;
+    Ok((read.source != SettingSource::Default).then_some(read.value))
+}
+
+/// Changes one of the digest's settings in `txn` as `caller`: `Some` sets its value row, `None`
+/// clears it. An owner's or the engine's change applies; the caller signals the host after its
+/// commit.
+fn set_digest_setting_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    caller: SettingCaller<'_>,
+    key: &str,
+    value: Option<serde_json::Value>,
+    why: Option<&str>,
+) -> Result<()> {
+    let request = SetSetting {
+        value,
+        why: why.map(str::to_owned),
+        ..SetSetting::vault_value(key, serde_json::Value::Null)
+    };
+    match vault.set_setting_in_txn(txn, caller, &request)? {
+        SetSettingOutcome::Applied { .. } => Ok(()),
+        SetSettingOutcome::Pending { .. } => Err(crate::Error::InvariantViolation(
+            "an owner's or the engine's digest setting change waits on a check-in",
+        )),
+    }
+}
+
+fn setting_json(value: impl Serialize) -> Result<serde_json::Value> {
+    serde_json::to_value(value).map_err(|_| invalid())
+}
+
+/// Sets the cadence in `txn` as `caller`, as its two settings: `None` clears both.
+fn set_cadence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    caller: SettingCaller<'_>,
+    cadence: Option<&ProactivityCadence>,
+    why: Option<&str>,
+) -> Result<()> {
+    let (period, delivery) = match cadence {
+        Some(cadence) => (
+            Some(ProactivityPeriod(cadence.period_secs)),
+            Some(setting_json(ProactivityDelivery {
+                group_by_facet: cadence.group_by_facet,
+                urgent_breakthrough: cadence.urgent_breakthrough,
+            })?),
+        ),
+        None => (None, None),
+    };
+    set_period_in_txn(vault, txn, caller, period, why)?;
+    set_digest_setting_in_txn(
+        vault,
+        txn,
+        caller,
+        setting_keys::PROACTIVITY_DELIVERY.spec.name,
+        delivery,
+        why,
+    )
+}
+
+/// Sets the period alone in `txn` as `caller` (`None` clears it).
+fn set_period_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    caller: SettingCaller<'_>,
+    period: Option<ProactivityPeriod>,
+    why: Option<&str>,
+) -> Result<()> {
+    let value = period.map(setting_json).transpose()?;
+    set_digest_setting_in_txn(
+        vault,
+        txn,
+        caller,
+        setting_keys::PROACTIVITY_PERIOD.spec.name,
+        value,
+        why,
+    )
+}
+
+/// Sets the presentation in `txn` as `caller`: `None` clears it.
+fn set_presentation_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    caller: SettingCaller<'_>,
+    presentation: Option<&ProactivityPresentation>,
+    why: Option<&str>,
+) -> Result<()> {
+    let value = presentation.map(setting_json).transpose()?;
+    set_digest_setting_in_txn(
+        vault,
+        txn,
+        caller,
+        setting_keys::PROACTIVITY_PRESENTATION.spec.name,
+        value,
+        why,
+    )
+}
+
 fn load_state(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DigestState> {
     Ok(STATE.get(&vault.store, txn, &())?.unwrap_or_default())
 }
@@ -601,12 +660,11 @@ fn load_ask_mark(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Resu
             other => other,
         })
 }
+/// The presentation in force: the owner's setting, else the shipped one.
 fn load_presentation(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityPresentation> {
-    let row: ProactivityPresentation = match PRESENTATION.get(&vault.store, txn, &())? {
-        Some(row) => row,
-        None => serde_json::from_str(include_str!("digest_presentation_defaults.json"))
-            .map_err(|_| invalid())?,
-    };
+    let row = setting_keys::PROACTIVITY_PRESENTATION
+        .read_in_txn(vault, txn, &[], None)?
+        .value;
     row.validate()?;
     Ok(row)
 }

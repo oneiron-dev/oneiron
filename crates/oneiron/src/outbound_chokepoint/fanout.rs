@@ -114,31 +114,10 @@ pub(crate) struct PeerRateSnapshot {
     pub(crate) spike_at: u32,
 }
 
-/// The closed, surfaced pathology vocabulary. Every arm pauses for judgment
-/// and carries the evidence a human needs to rule on it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum FanoutPathology {
-    ConsultCycle {
-        peer_path: Vec<String>,
-    },
-    PerPeerRateSpike {
-        peer_ref: String,
-        projected_count: u32,
-        spike_at: u32,
-        window_secs: u64,
-    },
-}
-
-impl FanoutPathology {
-    /// The stable receipt/wire spelling of this arm, matching the serde tag.
-    pub(crate) const fn kind(&self) -> &'static str {
-        match self {
-            Self::ConsultCycle { .. } => "consult_cycle",
-            Self::PerPeerRateSpike { .. } => "per_peer_rate_spike",
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::outbound_chokepoint::fanout::{
+    FanoutApprovalChoice, FanoutPathology,
+};
 
 /// What an injected classifier may answer for an `auto`-mode plan above the
 /// threshold. There is no third answer: a classifier cannot cancel a fan-out.
@@ -173,43 +152,6 @@ struct FanoutUnsureTest<'a> {
 impl UnsureTest for FanoutUnsureTest<'_> {
     fn is_sure(&self) -> Result<bool> {
         Ok(self.auto.decide(self.plan, self.estimate)? == FanoutAutoDisposition::Allow)
-    }
-}
-
-/// The receiptable choices a surfaced fan-out row offers. A pause row offers
-/// the first three; a width-question row offers only `Ack` and
-/// `AckAndRemember`, because there is nothing to keep paused or release.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum FanoutApprovalChoice {
-    ApproveOnce,
-    ApproveAndRememberBriefVerb,
-    KeepPaused,
-    Ack,
-    AckAndRemember,
-}
-
-impl FanoutApprovalChoice {
-    /// The stable per-choice action id carried on the surfaced row.
-    pub(crate) const fn action_id(&self) -> &'static str {
-        match self {
-            Self::ApproveOnce => "fanout_approve_once",
-            Self::ApproveAndRememberBriefVerb => "fanout_approve_and_remember_brief_verb",
-            Self::KeepPaused => "fanout_keep_paused",
-            Self::Ack => "fanout_check_ack",
-            Self::AckAndRemember => "fanout_check_ack_and_remember",
-        }
-    }
-
-    /// The receipt outcome this choice is recorded under.
-    pub(crate) const fn outcome(&self) -> &'static str {
-        match self {
-            Self::ApproveOnce => "approved_once",
-            Self::ApproveAndRememberBriefVerb => "grant_mint_intent",
-            Self::KeepPaused => "kept_paused",
-            Self::Ack => "acknowledged",
-            Self::AckAndRemember => "acknowledged_and_remembered",
-        }
     }
 }
 
@@ -271,13 +213,17 @@ pub(crate) trait FanoutSurfaceSink {
     /// pause that cannot be surfaced never degrades into a proceed.
     fn persist_pause_row(&mut self, row: &FanoutApprovalRow) -> Result<String>;
 
-    /// Persists one choice receipt and returns its durable ref.
+    /// Persists the receipt of `choice` and returns its durable ref.
     ///
     /// # Errors
     ///
     /// Any failure to durably record the choice. Resume propagates it, so an
     /// unreceipted approval never releases a plan.
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String>;
+    fn persist_choice_receipt(
+        &mut self,
+        choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String>;
 
     /// Records the exceptional-width check of a plan that proceeds and, when
     /// it asks, persists its question row and returns that row's durable ref.
@@ -506,7 +452,7 @@ pub(crate) fn answer_fanout_width_check(
         now_ms,
     );
     Ok(durable_ref(
-        surface.persist_choice_receipt(&receipt)?,
+        surface.persist_choice_receipt(&choice, &receipt)?,
         "fan-out choice receipt sink returned a blank ref",
     )?)
 }
@@ -571,7 +517,7 @@ pub(crate) fn approve_and_resume_fanout(
         now_ms,
     );
     let choice_receipt_ref = durable_ref(
-        surface.persist_choice_receipt(&receipt)?,
+        surface.persist_choice_receipt(&choice, &receipt)?,
         "fan-out choice receipt sink returned a blank ref",
     )?;
 

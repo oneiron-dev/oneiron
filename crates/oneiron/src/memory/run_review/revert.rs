@@ -7,6 +7,7 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::identity_topology::{IdentityOpOutcome, IdentityOpWrite, TopologySeal};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
+use crate::store::gate_reason::GateReceiptOutcome;
 
 impl Memory<'_> {
     /// Compensates the selected changes (all when absent). Each member's
@@ -43,10 +44,8 @@ impl Memory<'_> {
                 }
             }
         };
-        let all: std::collections::BTreeSet<_> = members
-            .iter()
-            .map(|(_, m)| m.member.change().to_owned())
-            .collect();
+        let all: std::collections::BTreeSet<_> =
+            members.iter().map(|(_, m)| m.member.change()).collect();
         let selected: std::collections::BTreeSet<_> = input
             .changes
             .as_ref()
@@ -65,7 +64,7 @@ impl Memory<'_> {
         // Reverse explicit membership order, so a dependent child listed
         // after its input can be compensated before that input.
         for (key, member) in members.iter().rev() {
-            let change = member.member.change().to_owned();
+            let change = member.member.change();
             if !selected.contains(&change) {
                 if let Some(receipt) = &member.compensation {
                     outcome.compensated.push(RunCompensation {
@@ -178,20 +177,19 @@ pub(super) fn undo_member_in_txn(
     let Some((inverse_receipt, unrestored)) = receipt else {
         return Ok(Err(RunNotUndoneReason::Dependent));
     };
-    let record = super::super::authorship::decision(
+    let gate_receipt = super::super::authorship::decision(
         actor,
         "run_compensation",
-        "approved",
+        GateReceiptOutcome::Approved,
         "gate.run.revert.compensated",
         row.member.rows()?.first().copied(),
         serde_json::to_vec(&(&inverse_receipt, &unrestored))
             .map_err(|_| MemoryError::bad_request("compensation receipt cannot be encoded"))?,
-        now,
     );
-    memory
+    let record = memory
         .vault()
         .store
-        .append_gate_decision_in_txn(txn, &record)?;
+        .record_gate_receipt_in_txn(txn, gate_receipt)?;
     let receipt = format!("gate:{}", record.decision_id.to_hex());
     row.compensation = Some(receipt.clone());
     row.unrestored = unrestored.clone();
@@ -212,7 +210,7 @@ fn compensate(
             author,
             fingerprint: expected,
         }) => {
-            let id = EntityId::from_hex(row.member.change())?;
+            let id = EntityId::from_hex(&row.member.change())?;
             let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
                 return Ok(None);
             };
@@ -241,7 +239,7 @@ fn compensate(
         Some(RunInverse::Restored {
             fingerprint: expected,
         }) => {
-            let id = EntityId::from_hex(row.member.change())?;
+            let id = EntityId::from_hex(&row.member.change())?;
             let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
                 return Ok(None);
             };

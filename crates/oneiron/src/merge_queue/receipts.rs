@@ -182,6 +182,12 @@ impl MergeQueue<'_> {
             ("expected_head", Value::from(batch.expected_head.as_str())),
             ("base_green", Value::from(batch.base_green.as_str())),
         ];
+        // A later batch of a split enqueue stages on the head the batch it
+        // follows lands, not on the head it was formed on
+        // ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+        if let Some(follows) = &batch.follows {
+            fields.push(("follows", Value::from(follows.as_str())));
+        }
         if let Some(order) = &batch.run_order {
             fields.push((
                 "run",
@@ -455,7 +461,7 @@ pub(crate) fn proposal_queue_failure_in_txn(
         check_queue_receipt(&body, QUEUE_COMPLETION_PREDICATE, store, &batch.id)?;
         if failure.is_none() {
             failure = Some(QueueProposalFailure {
-                batch: batch.id.clone(),
+                batch: batch.id,
                 completion,
                 outcome,
                 group,
