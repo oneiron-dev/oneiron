@@ -63,7 +63,9 @@ pub struct DecisionStepQuestion {
     /// `{"kind": "score", "min": 1, "max": 5}`, one number in that range.
     #[serde(default = "yes_no")]
     pub contract: oneiron_store::model_decision::AnswerContract,
-    /// What the question reads, as the run gives it.
+    /// What the question reads, as the run gives it. It is part of the
+    /// step's request: a retry of the key names the same state, its keys in
+    /// the same order, or it is refused as another request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<serde_json::Value>,
 }
@@ -135,8 +137,11 @@ pub struct ModelStepReceipt {
 
 /// What `ai.steps.submit` answers: the step's receipt, and beside it a
 /// decision step's typed answer, as the ladder read the step's generation
-/// on the submit that asked it or on a retry of its key. A model step names
-/// no decision; `ai.steps.receipt` reads the receipt alone.
+/// on the submit that asked it or on a retry of its key. A retry reads the
+/// same answer and probability; its decision receipt's clock is the retry's
+/// own. No decision when the step kept no reply (its receipt says why) or
+/// its reply did not read as an answer, and none for a model step;
+/// `ai.steps.receipt` reads the receipt alone.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepSubmitAnswer {
     #[serde(flatten)]

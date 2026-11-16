@@ -36,15 +36,17 @@ use oneiron::{
 };
 use serde_json::Value;
 
-use super::{RunStep, internal};
+use super::super::host_doors::support::internal;
+use super::RunStep;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// The clock the ladder routes one decision step's answer under. The step's
-/// generation is bounded by its own declared attempts, never by this clock,
-/// which is long enough that a reply the step kept is never read as cut, so
-/// a retry of the key reads it the same.
-const DECISION_STEP_CLOCK: Duration = Duration::from_secs(600);
+/// generation is bounded by its own declared attempts, its health wait and
+/// its provider's timeouts, never by this clock; a week is past anything
+/// those add up to, so a reply the step kept is never read as cut, and a
+/// retry of the key reads it as the first call did.
+const DECISION_STEP_CLOCK: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// [`super::submit_on_run`] for a typed decision step.
 pub(super) async fn decide_on_run(
@@ -112,8 +114,8 @@ impl RunStep {
         let policy = host.bands();
         let ladder = host.ladder().ladder();
         let state = decision.state.clone().unwrap_or(Value::Null);
-        // The run's step answers on the read's own thread; what it answered
-        // is kept here, for the call's answer.
+        // The run's step answers inside the read, on this thread; what it
+        // answered is kept here, for the call's answer.
         let step = Mutex::new(self);
         let kept: Mutex<Option<MemoryResult<ModelStepReceipt>>> = Mutex::new(None);
         // The read and its rung borrow the kept answer only inside this block.
@@ -154,11 +156,16 @@ impl RunStep {
                     version: decision.model.as_str().to_owned(),
                 },
                 backend: &StepOnly,
-                step: GeneratedStep::Submitted { submit: &submit },
+                step: GeneratedStep::Submitted {
+                    submit: &submit,
+                    vault: server.vault(),
+                },
                 request: shell(&server, &decision.model),
                 seal: &seal,
             };
-            runtime.block_on(ladder.run_pack_generated(
+            // On this thread, outside the runtime: the run's step blocks on it
+            // with this call's run-write, idempotency and admission context.
+            ladder.run_pack_submitted(
                 &rung,
                 &[&question],
                 principal,
@@ -168,31 +175,36 @@ impl RunStep {
                 &policy,
                 Reversibility::ReversibleRead,
                 &RetrievalDeadline::after(DECISION_STEP_CLOCK),
-            ))
+            )
         };
-        let kept = kept.into_inner().unwrap_or_else(PoisonError::into_inner);
-        let decisions = match decided {
-            Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
-            // The step kept no reply: its receipt, or its refusal, says why.
-            Ok(GeneratedDecisions::Trapped) => {
-                return kept
-                    .unwrap_or_else(|| Err(internal("ai.steps.submit")))
-                    .map(StepSubmitAnswer::from);
-            }
-            Ok(GeneratedDecisions::Unread(_)) => return Err(internal("ai.steps.submit")),
-            Err(DurableStepError::Engine(error)) => return Err(error.into()),
+        // No step was submitted: the ladder refused the question before its
+        // read, and its refusal is the call's.
+        let Some(submitted) = kept.into_inner().unwrap_or_else(PoisonError::into_inner) else {
+            return Err(match decided {
+                Err(DurableStepError::Engine(error)) => error.into(),
+                Err(error) => MemoryError::bad_request(error.to_string()),
+                Ok(_) => internal("ai.steps.submit"),
+            });
+        };
+        // The step's own refusal is the call's.
+        let receipt = submitted?;
+        // A step that ran answers its receipt, which may be paid for, whatever
+        // the ladder read: the typed answer beside it when the ladder read one,
+        // none when the step kept no reply (its receipt says why) or its reply
+        // did not read as an answer.
+        let decision = match decided {
+            Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions.into_iter().next(),
+            Ok(GeneratedDecisions::Trapped | GeneratedDecisions::Unread(_)) => None,
             Err(error) => {
-                return Err(MemoryError::bad_request_with(
-                    format!("the decision step's reply did not read as an answer: {error}"),
-                    &["Read the step's receipt, and ask again under a new step_key."],
-                ));
+                tracing::warn!(
+                    %error,
+                    step_ref = %receipt.step_ref,
+                    "a decision step's reply did not read as a typed answer"
+                );
+                None
             }
         };
-        let receipt = kept.ok_or_else(|| internal("ai.steps.submit"))??;
-        Ok(StepSubmitAnswer {
-            receipt,
-            decision: decisions.into_iter().next(),
-        })
+        Ok(StepSubmitAnswer { receipt, decision })
     }
 }
 
