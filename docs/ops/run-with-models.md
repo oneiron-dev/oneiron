@@ -252,7 +252,14 @@ sends it once over verified TLS (no redirect, no retry, no proxy) and strips the
 key from the reply. Each call reads the key at the custody door, so register the
 secret with a binding for the effector `broker:model` at T0 (doored). Run
 the broker with `oneiron-broker serve --socket <path> --client-uid <the
-server's uid>` (add `--extra-roots <pem>` for a private CA), and name it:
+server's uid>` (add `--extra-roots <pem>` for a private CA). On a systemd
+host, install `deploy/sysusers.d/oneiron-broker.conf` and
+`deploy/systemd/oneiron-broker@.service` instead (`oneiron-server host init`
+writes both), and enable `oneiron-broker@<the server's uid>.service`. That unit
+runs the broker as the user `oneiron-broker`, on the socket
+`/run/oneiron-broker/<the server's uid>/broker.sock`, in a directory only that
+user's group may enter: add the server's user to the group `oneiron-broker`.
+Name the broker:
 
 ```toml
 [models.broker]
