@@ -91,7 +91,11 @@ pub(super) fn resolve_inquiries_in_txn(
                     if !by_record.contains_key(&id) {
                         break;
                     }
-                    if vault.store.entities.get(txn, id.as_bytes())?.is_some() {
+                    // A plain delete keeps a scrubbed shell row: a deleted
+                    // copy is not kept, whatever its row still reads.
+                    if vault.store.entities.get(txn, id.as_bytes())?.is_some()
+                        && !crate::ports::removed_in_txn(&vault.store, txn, &id)?
+                    {
                         claims.insert(id);
                     }
                 }
