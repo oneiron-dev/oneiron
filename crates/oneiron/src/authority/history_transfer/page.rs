@@ -95,6 +95,13 @@ impl Vault {
             .map(|(hash, _, _)| *hash)
             .filter(|hash| !resident.contains(hash))
             .collect();
+        // Each row's store door reads the fold beside every row this page
+        // stages, as the fold after staging judges them (owner-reserve delta
+        // review F2).
+        let staged_rows: BTreeMap<AuthorityEntryHash, FoldRow> = decoded
+            .iter()
+            .map(|(hash, _, row)| (*hash, row.clone()))
+            .collect();
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
         // fold that closes it, after staging, and an import that leaves it
@@ -142,7 +149,7 @@ impl Vault {
                 hub_sync_imported: false,
             });
         }
-        apply_ops(
+        apply_ops_beside_authority_rows(
             &self.store,
             &self.config,
             &self.analyzer,
@@ -152,6 +159,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
+            &|| Ok(staged_rows.clone()),
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
