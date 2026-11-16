@@ -23,13 +23,13 @@ fn seven_days() -> u64 {
 crate::setting::setting_keys! {
     /// Whether an Admin's or a Deputy's power act in this shared vault waits for a second,
     /// distinct live admin's approve before it runs. An Owner's own act never waits.
-    pub ORG_TWO_ADMIN: bool = "org.two_admin" {
+    pub(crate) ORG_TWO_ADMIN: bool = "org.two_admin" {
         kind: Kind::new(two_admin_off).strictest(two_admin_on).tighter(higher_is_tighter::<bool>),
         read_by: ReadBy::Members,
     };
     /// How long, in seconds, a held admin act waits for its second admin before it lapses
     /// and its first admin is told.
-    pub ORG_TWO_ADMIN_LAPSE_SECS: u64 = "org.two_admin_lapse_secs" {
+    pub(crate) ORG_TWO_ADMIN_LAPSE_SECS: u64 = "org.two_admin_lapse_secs" {
         kind: Kind::new(seven_days),
         read_by: ReadBy::Members,
     };
