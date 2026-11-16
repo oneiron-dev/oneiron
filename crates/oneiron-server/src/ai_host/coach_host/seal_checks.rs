@@ -61,8 +61,9 @@ const CHECK_BUDGET: Duration = Duration::from_secs(30 * 60);
 /// What the seal's judge asks of the Coach's models: one tool-less call's
 /// text on a role's seat, with the binding of the rung that answered it,
 /// fallback included. `None` when no seat serves the call. The tests lend
-/// a stub through `crate::test_doors::seal_judge`.
-pub(crate) trait SealJudgeModels {
+/// a stub through `crate::test_doors::seal_judge`. `Sync`, because the
+/// judge that borrows it is a `DecisionProvider` (`Send + Sync`).
+pub(crate) trait SealJudgeModels: Sync {
     /// One recorded call's text on `role`'s seat, with its answering rung.
     fn generate_recorded(
         &self,
