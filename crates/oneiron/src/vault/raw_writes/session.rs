@@ -350,12 +350,9 @@ impl Memory<'_> {
         };
         let mut refusal = None;
         let staged = session.overlay_write_routed(&route, |wtxn, apply| {
-            if let Err(error) = crate::memory::verify_deletion_authority_in_txn(
-                self.vault(),
-                wtxn,
-                self.actor(),
-                self.actor_class(),
-            ) {
+            // A credential handed on to another key deletes nothing as the
+            // owner (HANDED-ON-SLIP-PERSON; Astra review on #8434, F3).
+            if let Err(error) = self.verify_own_deletion_authority_in(wtxn) {
                 refusal = Some(error);
                 return Err(Error::InvariantViolation("a bound raw delete was refused"));
             }

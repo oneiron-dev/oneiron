@@ -9,6 +9,7 @@ pub mod booking_turn_line;
 pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod coach_round;
+pub mod credential_write_actor;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;

@@ -214,12 +214,19 @@ impl<'a> HostSelfDispatcher<'a> {
     /// 4705): its slip and that slip's parent become the run's own lineage,
     /// which with its forks never settles a request the run opens. The ids
     /// come from the verified slip itself, never from a guest or wire value.
+    /// A slip its mint handed on to another key marks the run's write actor
+    /// ([`WriteActor::with_handed_on_credential`]): every write the run makes
+    /// is its key holder's, never the person's (HANDED-ON-SLIP-PERSON; Astra
+    /// review on #8434, F1).
     #[must_use]
     pub fn with_opener_credential(mut self, credential: &crate::authority::VerifiedSlip) -> Self {
         let claims = credential.claims();
         self.opener_lineage = std::iter::once(claims.slip_id)
             .chain(claims.parent_id)
             .collect();
+        if credential.is_transferred() {
+            self.actor = self.actor.with_handed_on_credential();
+        }
         self
     }
 

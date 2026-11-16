@@ -207,7 +207,7 @@ impl CoreAuth {
         super::body_credential::attach_slip(&admitted_auth);
         Ok(admitted_auth)
     }
-    pub(super) fn from_verified(
+    pub(crate) fn from_verified(
         verified: VerifiedSlip,
         unattenuated: bool,
     ) -> Result<Self, ApiError> {

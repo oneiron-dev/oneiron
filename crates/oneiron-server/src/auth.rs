@@ -542,6 +542,25 @@ impl CoreAuth {
         self.verified_slip.as_ref()
     }
 
+    /// The write actor `(actor, class)` as this request's credential writes:
+    /// marked handed on when its slip was handed on to another key
+    /// ([`oneiron::authority::VerifiedSlip::is_transferred`]), the person's
+    /// own other device key included. A marked Human writer acts as its key
+    /// holder, never as the person it names: it passes no person gate and
+    /// stamps no person's provenance (HANDED-ON-SLIP-PERSON, 15 Nov: Q1 = A,
+    /// Q2 = A), as the engine's `Memory::write_actor` marks it.
+    pub(crate) fn write_actor(
+        &self,
+        actor: oneiron::EntityId,
+        class: oneiron::EdgeActorClass,
+    ) -> oneiron::WriteActor {
+        let writer = oneiron::WriteActor::new(actor, class);
+        match self.verified_slip() {
+            Some(slip) if slip.is_transferred() => writer.with_handed_on_credential(),
+            _ => writer,
+        }
+    }
+
     /// The managed owner this request was attested as
     /// ([`Self::for_attested_owner`]).
     pub(crate) fn managed_owner(&self) -> Option<oneiron::EntityId> {

@@ -9,14 +9,17 @@ use crate::entity_id::EntityId;
 ///
 /// Equality is the actor's identity: its entity, class and observed
 /// authority state. The run attempt a delegated agent's write is bound to
-/// ([`Self::run_attempt`]) is write context, not identity, so two writes of
-/// one agent under different runs are the same actor.
+/// ([`Self::run_attempt`]) and the mark of a credential handed on to another
+/// key ([`Self::with_handed_on_credential`]) are write context, not
+/// identity, so two writes of one agent under different runs are the same
+/// actor.
 #[derive(Debug, Clone, Copy)]
 pub struct WriteActor {
     entity_ref: EntityId,
     actor_class: EdgeActorClass,
     authority_frontier: Option<AuthorityEntryHash>,
     run_attempt: Option<[u8; 16]>,
+    handed_on_credential: bool,
 }
 
 impl PartialEq for WriteActor {
@@ -38,6 +41,7 @@ impl WriteActor {
             actor_class,
             authority_frontier: None,
             run_attempt: None,
+            handed_on_credential: false,
         }
     }
 
@@ -55,6 +59,27 @@ impl WriteActor {
     #[must_use]
     pub const fn run_attempt(self) -> Option<[u8; 16]> {
         self.run_attempt
+    }
+
+    /// Marks this write as made under a credential its mint handed on to
+    /// another key (`VerifiedSlip::is_transferred`). The class still names
+    /// the mint's, but the act is the key holder's, never the person's: a
+    /// person gate refuses it and it stamps no person's provenance (rulings
+    /// HANDED-ON-SLIP-PERSON Q1 = A, Q2 = A, 15 Nov; canon
+    /// `#credential-read-key-built`: a narrower credential "never takes the
+    /// owner's floor").
+    #[must_use]
+    pub const fn with_handed_on_credential(mut self) -> Self {
+        self.handed_on_credential = true;
+        self
+    }
+
+    /// Whether this actor acts as a person in its own right: its class is
+    /// Human, and no credential handed on to another key makes the write
+    /// ([`Self::with_handed_on_credential`]).
+    #[must_use]
+    pub const fn acts_as_own_person(self) -> bool {
+        matches!(self.actor_class, EdgeActorClass::Human) && !self.handed_on_credential
     }
 
     /// Binds this write to an authority state observed by its author.

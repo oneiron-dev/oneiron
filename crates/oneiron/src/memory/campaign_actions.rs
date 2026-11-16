@@ -75,7 +75,9 @@ impl Memory<'_> {
             channels,
             derivation: None,
         };
-        let source = if self.actor_class == crate::EdgeActorClass::Human {
+        // A credential handed on to another key writes as its holder, never
+        // as the person (HANDED-ON-SLIP-PERSON Q1 = A).
+        let source = if self.acts_as_own_person() {
             ClaimSource::UserStated
         } else {
             ClaimSource::Observed

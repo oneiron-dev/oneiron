@@ -2,7 +2,7 @@
 //! the delete a non-owner's role or Grant admits (ARCH-0043 DEL-2), judged
 //! by check-in first (ROLES-CHECKIN 2k5).
 
-use super::support::{verify_actor_binding_in_txn, verify_deletion_authority_in_txn};
+use super::support::verify_actor_binding_in_txn;
 use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     Memory, MemoryError, MemoryResult, SafeDeleteReason,
@@ -368,7 +368,7 @@ impl Memory<'_> {
             &id,
             reason,
             gate,
-            &|txn| verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class),
+            &|txn| self.verify_own_deletion_authority_in(txn),
             check,
             stop_check_after_soft_scrub,
             claim,
@@ -507,7 +507,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        self.verify_own_deletion_authority_in(&txn)?;
         // One snapshot binds owner authority, content and recipients. The
         // test hook can commit a revocation on another thread at this seam.
         after_authority();
@@ -555,7 +555,7 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(&txn)?;
             preview.check_before_unshare(self.vault, &txn)?;
         }
         let actor = WriteActor::new(self.actor, self.actor_class);

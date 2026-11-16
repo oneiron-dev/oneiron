@@ -3,7 +3,6 @@
 //! only asks; a tombstone is the owner's act, through the deletion rail's
 //! `user_delete`, and is never reverted.
 
-use super::support::verify_deletion_authority_in_txn;
 use super::{
     DeleteReceipt, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
@@ -20,7 +19,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        self.verify_own_deletion_authority_in(&txn)?;
         Ok(crate::note::open_tombstone_proposals_in_txn(
             self.vault, &txn,
         )?)
@@ -54,7 +53,7 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(&txn)?;
         }
         if crate::note::decline_tombstone(self.vault, *note)? {
             Ok(())

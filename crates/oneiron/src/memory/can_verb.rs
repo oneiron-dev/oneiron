@@ -96,7 +96,9 @@ impl Memory<'_> {
         verb: AgentVerb,
         params: &serde_json::Value,
     ) -> MemoryResult<(CanVerbGate, Vec<String>)> {
-        let person = self.actor_class == EdgeActorClass::Human;
+        // A credential handed on to another key is no person's proof
+        // (HANDED-ON-SLIP-PERSON).
+        let person = self.acts_as_own_person();
         if !person && verb.takes_person_proof() {
             return Ok((CanVerbGate::Person, vec![PERSON_PROOF.to_owned()]));
         }
