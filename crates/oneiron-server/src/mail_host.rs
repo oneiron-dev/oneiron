@@ -179,14 +179,14 @@ impl MailSourceWakes {
 }
 
 /// Unix seconds now.
-fn unix_seconds_now() -> u64 {
+pub(crate) fn unix_seconds_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
 }
 
 /// Sleeps until the Unix second `at`, or forever without one.
-async fn sleep_until_unix(at: Option<u64>) {
+pub(crate) async fn sleep_until_unix(at: Option<u64>) {
     match at {
         Some(at) => {
             tokio::time::sleep(Duration::from_secs(at.saturating_sub(unix_seconds_now()))).await;

@@ -408,6 +408,8 @@ impl SyncServer {
             builtin_handles: Arc::default(),
             mail_source_wakes: Default::default(),
             #[cfg(unix)]
+            drive_source_wakes: Default::default(),
+            #[cfg(unix)]
             organs,
             #[cfg(unix)]
             organ_dir: None,
