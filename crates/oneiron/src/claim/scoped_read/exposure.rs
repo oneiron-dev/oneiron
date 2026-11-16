@@ -111,11 +111,21 @@ impl ScopedRead<'_> {
     /// (L8-65). It does nothing unless the read's key counts
     /// ([`super::ScopedReadActorKey::exposure_reader`]), and it opens no transaction: the
     /// records wait for the vault's next write.
+    ///
+    /// A record the read's room holds as a row of its own is never named, nor one whose place
+    /// cannot be read: base keeps no row naming an off-record room's record, which outlives
+    /// the room (ARCH-0052, "no durable trace of unsaved content"; its taint guard refuses a
+    /// base record that names one). A base record served in a room counts as any other: it
+    /// left the vault (FIX [READ-EXPOSURE-OFF-RECORD-SESSION-TRACE]).
     pub(crate) fn charge_served(&self, records: impl IntoIterator<Item = EntityId>) {
         let Some(reader) = self.actor_key.exposure_reader() else {
             return;
         };
         let at = self.vault.now_recorded_at();
+        let read = self.store_read();
+        let records = records
+            .into_iter()
+            .filter(|record| matches!(read.room_holds(record), Ok(false)));
         self.vault
             .store
             .pending_read_exposure
