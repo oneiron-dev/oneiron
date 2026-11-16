@@ -32,6 +32,7 @@ pub use oneiron_schedule_contract::{
 pub use self::arm::ScheduleView;
 pub(crate) use self::arm::{
     ScheduleCaller, erase_schedule_actor_in_txn, erase_schedule_subject_in_txn,
+    rebuild_schedule_due_in_txn,
 };
 pub(crate) use self::jobs::job_named;
 pub use self::run::{JobOutcome, JobRun, ScheduleRunReport};
