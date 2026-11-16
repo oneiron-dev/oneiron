@@ -23,8 +23,8 @@ use oneiron::llm::{
     ResponseFormat, TierPrecedence, VoiceBackendBinding, VoiceLane, VoicePrecedence,
     canonical_json_bytes,
 };
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::config::{ServeArgs, resolve_serve_config};
 
@@ -147,13 +147,16 @@ pub fn meeting_transcript(args: MeetingTranscriptArgs) -> anyhow::Result<()> {
         receipts.clone(),
     )
     .initiated_by(Some(owner));
-    let revision = digest(&canonical_json_bytes(&(
-        &capabilities.script_sha256,
-        &capabilities.runtime_components_sha256,
-        &capabilities.runtime_profile_sha256,
-        &capabilities.runtime_helper_sha256,
-        &capabilities.unit_models,
-    ))?);
+    let revision = digest(
+        purposes::meeting_audio::HOST_REVISION,
+        &canonical_json_bytes(&(
+            &capabilities.script_sha256,
+            &capabilities.runtime_components_sha256,
+            &capabilities.runtime_profile_sha256,
+            &capabilities.runtime_helper_sha256,
+            &capabilities.unit_models,
+        ))?,
+    );
     let host_route = OfferRoute::new("meeting-audio-command", format!("native:{revision}"))?;
     let selection = AsrSelectionReceipt {
         owner,
@@ -175,7 +178,13 @@ pub fn meeting_transcript(args: MeetingTranscriptArgs) -> anyhow::Result<()> {
         role: AsrRole::Asr,
         model_id: capabilities.asr_model_id.clone(),
         tier: ProcessingTier::Local,
-        route_receipt_ref: format!("sha256:{}", digest(&canonical_json_bytes(&selection)?)),
+        route_receipt_ref: format!(
+            "sha256:{}",
+            digest(
+                purposes::meeting_audio::ASR_SELECTION_RECEIPT,
+                &canonical_json_bytes(&selection)?,
+            )
+        ),
     };
     let seat =
         |model: &str, operation: AiOperation, rate: NativeRate| -> anyhow::Result<WireSeat> {
@@ -306,6 +315,14 @@ fn one_model<'a>(capabilities: &'a NativeAudioCapabilities, kind: &str) -> anyho
     Ok(&models[0])
 }
 
-fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+/// The SHA-256 of `bytes` under `purpose`, as 64 lowercase hex digits. The command names
+/// its native host and its ASR route by these, so each keeps its bytes (K, PLAN-UC-04
+/// stage 6.4c).
+fn digest(purpose: LegacyPurpose, bytes: &[u8]) -> String {
+    oneiron_hex::encode(&LegacyDigest::new(purpose).raw(bytes).finish())
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn digest_for_test(purpose: LegacyPurpose, bytes: &[u8]) -> String {
+    digest(purpose, bytes)
 }

@@ -37,7 +37,7 @@ use engines::{Admission, BaselineCalibration, COREML_ABSENT, MLX_ABSENT, Platfor
 use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
-pub(crate) use local::{QuestionHead, QuestionTokenizer};
+pub(crate) use local::{QuestionHead, QuestionTokenizer, training_pin};
 
 pub(crate) mod bundle;
 mod coreml;

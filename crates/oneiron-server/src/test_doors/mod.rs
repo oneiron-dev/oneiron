@@ -11,6 +11,7 @@ pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod coach_round;
 pub mod connector_sends;
+pub mod fingerprint_keep_server_json_digests;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
