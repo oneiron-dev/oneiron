@@ -88,7 +88,7 @@ impl SyncConnection {
 
     /// Runs every pending directive naming this machine, oldest first, and
     /// returns how many it finished. A federation lane runs none.
-    async fn apply_residence_directives(&self) -> Result<usize, TransportError> {
+    pub(crate) async fn apply_residence_directives(&self) -> Result<usize, TransportError> {
         if self.config.client_config.federation_peer.is_some() {
             return Ok(0);
         }
@@ -133,13 +133,17 @@ impl SyncConnection {
     ) -> Result<(), TransportError> {
         let vault = self.manager.vault();
         match &pending.directive.act {
-            ResidenceAct::SyncAll | ResidenceAct::SyncOpened => {
-                let mode = if pending.directive.act == ResidenceAct::SyncAll {
-                    SyncResidenceMode::All
-                } else {
-                    SyncResidenceMode::Opened
+            ResidenceAct::SyncAll
+            | ResidenceAct::SyncOpened
+            | ResidenceAct::SyncPredicted { .. } => {
+                // The predicted level runs as opened on the wire; its budget
+                // binds the home's predictions, which name this directive.
+                let (mode, predicted) = match pending.directive.act {
+                    ResidenceAct::SyncAll => (SyncResidenceMode::All, false),
+                    ResidenceAct::SyncPredicted { .. } => (SyncResidenceMode::Opened, true),
+                    _ => (SyncResidenceMode::Opened, false),
                 };
-                self.switch_residence_mode(mode, |txn, change| {
+                self.switch_residence_mode(mode, predicted, |txn, change| {
                     let count = match change.mode {
                         SyncResidenceMode::All => change.pruned_items,
                         SyncResidenceMode::Opened => change.retained.len(),
@@ -171,6 +175,11 @@ impl SyncConnection {
                 self.prune_opened_items_with(*before, |txn, pruned| {
                     applied(vault, txn, pending, pruned)
                 })?;
+            }
+            ResidenceAct::Predicted { .. } => {
+                return Err(TransportError::InvalidPayload(
+                    "this build applies no prediction",
+                ));
             }
         }
         Ok(())
