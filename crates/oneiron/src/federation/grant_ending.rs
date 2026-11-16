@@ -127,6 +127,7 @@ enum OwedEndCarry {
 fn owed_end_carry(line: Option<(bool, Option<GrantFamily>)>, owed: &OwedGrantEnd) -> OwedEndCarry {
     let family = match line {
         Some((true, _)) => return OwedEndCarry::Settle,
+        Some((false, None)) => return OwedEndCarry::Settle,
         Some((false, family)) => family,
         // No counted act names the Grant here yet: its writer's family ends it before its
         // giving arrives. A torn row's debt knows no family, so it waits for the giving to
