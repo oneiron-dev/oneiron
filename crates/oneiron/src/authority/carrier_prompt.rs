@@ -26,6 +26,10 @@ const ASKED_BY_YOURS: &str = "Your {machine} asked for it.";
 /// This install's records tie the signing key to a machine that is not the
 /// owner's own.
 const ASKED_BY_KNOWN: &str = "A {machine} ({role}, not one of your devices) asked for it.";
+/// The roster lists the signing key's machine as the owner's, and this
+/// install does not trust it as his.
+const ASKED_BY_LISTED_YOURS: &str = "A {machine} this vault lists as yours asked for it, but this \
+     device cannot verify that. Only confirm if you started it yourself.";
 /// This install's records tie the signing key to no machine.
 const ASKED_BY_UNKNOWN: &str = "This request doesn't come from any device this vault knows. Only \
      confirm if you started it yourself.";
@@ -83,11 +87,14 @@ impl CarrierReading {
             return ASKED_BY_UNKNOWN.to_owned();
         };
         let machine = class.wire();
+        if self.is_mine {
+            return ASKED_BY_YOURS.replace("{machine}", machine);
+        }
         match role_noun(role) {
             Some(noun) => ASKED_BY_KNOWN
                 .replace("{machine}", machine)
                 .replace("{role}", noun),
-            None => ASKED_BY_YOURS.replace("{machine}", machine),
+            None => ASKED_BY_LISTED_YOURS.replace("{machine}", machine),
         }
     }
 }
