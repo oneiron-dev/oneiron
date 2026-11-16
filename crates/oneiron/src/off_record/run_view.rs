@@ -17,6 +17,7 @@ use crate::code_run::{
 use crate::engine_executor::{EngineExecutorError, parked_wait_now};
 use crate::memory::result_facet::ResultFacet;
 use crate::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use crate::request_limits::page_limit_absent_as_all;
 use crate::{EntityId, Result};
 
 /// One session-bound run, as the participant its entries run as reads it.
@@ -149,7 +150,7 @@ impl SessionCodeRun<'_> {
             });
         }
         let remaining = count.saturating_sub(offset);
-        let take = limit.map_or(remaining, |limit| limit.min(remaining));
+        let take = page_limit_absent_as_all(limit, remaining).map_or(remaining, |limit| limit.rows);
         let (cards, _) = result_cards_in(&self.storage, &record, offset, take)?;
         Ok(SessionRunCards {
             cards,
