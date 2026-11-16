@@ -377,3 +377,10 @@ mesh = [
 
 [build-dependencies]
 oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
+
+# The saved-workflow doors root their owner on a `MemoryKeystore` too; the successor-hold
+# row claims its step through the `workflow_park` test door (`--cfg oneiron_test_support`).
+[[test]]
+name = "vault_workflows_doors"
+path = "tests/vault_workflows_doors.rs"
+required-features = ["oneiron/test-support"]
