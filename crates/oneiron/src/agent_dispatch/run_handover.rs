@@ -57,6 +57,7 @@ use super::run_task::{
     agent_run_lease_renewal, agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex,
     closing, open_agent_runs_in, update_agent_run_task_body_in_txn,
 };
+use super::spend_record::{SCOPE, SpendState};
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
 };
@@ -632,6 +633,19 @@ fn take_expired_agent_run_in_txn(
             if !queued {
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
             }
+            // The queued try spends under the scope its dispatch or an
+            // earlier take kept for it here, which must not let the run
+            // spend past its launch counted across the machines that ran it
+            // (REVIEW-7879 round 2). A run with no carry runs as its try
+            // stands.
+            if let Some(carry) = body.spend.as_ref() {
+                let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
+                    return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
+                };
+                if !kept_try_scope_funded_in_txn(vault, wtxn, id, &input, carry, node_id)? {
+                    return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                }
+            }
             (id, AgentRunResume::QueuedHere)
         }
         LocalTry::Recreate | LocalTry::Succeed(_) => {
@@ -711,6 +725,51 @@ fn take_expired_agent_run_in_txn(
         try_id,
         resume,
     })
+}
+
+/// Judges for a take the open scope that `attempt`, the try the take keeps
+/// queued here, spends under (REVIEW-7879 round 2). The run may commit under
+/// it what its launch reserved less what was committed outside it (`carry`,
+/// this machine's other scopes included). `false`, and the take waits, when
+/// the scope committed that already. A pinned scope's cap comes down to it.
+/// A carve keeps its cap, which its parent holds: on the machine whose tree
+/// funds the run, the custody fold of PR 2 counts the other machines' spend,
+/// as it does for a re-created try's carve. No open scope here, or a launch
+/// stated unmetered, keeps the try as it stands.
+fn kept_try_scope_funded_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    input: &AgentDispatchInput,
+    carry: &AgentRunSpendCarry,
+    node: u64,
+) -> Result<bool> {
+    let Some(kept) = AgentDispatcher::new(vault)
+        .attempt_spend_scope_in_txn(&*wtxn, attempt)?
+        .filter(|scope| scope.state == SpendState::Open)
+    else {
+        return Ok(true);
+    };
+    let base = input.launch.as_ref().and_then(|statement| {
+        if statement.parent_scope.is_some() {
+            Some(statement.reserved_units)
+        } else {
+            statement.cap_units
+        }
+    });
+    let Some(base) = base else {
+        return Ok(true);
+    };
+    let remaining = base.saturating_sub(carry.committed_except(node, &kept.scope));
+    if remaining <= kept.spent_units.saturating_add(kept.held_units) {
+        return Ok(false);
+    }
+    if kept.parent.is_none() && remaining < kept.cap_units {
+        let mut lowered = kept;
+        lowered.cap_units = remaining;
+        SCOPE.put(&vault.store, wtxn, &lowered.scope.0, &lowered)?;
+    }
+    Ok(true)
 }
 
 /// The agent dispatch input a run TASK's frozen queue payload carries;

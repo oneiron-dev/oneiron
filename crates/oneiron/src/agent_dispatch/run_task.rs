@@ -400,6 +400,19 @@ impl AgentRunSpendCarry {
             .saturating_sub(self.custody_folded_units)
     }
 
+    /// What the machines that ran the run committed of its launch outside
+    /// the scope `scope` on `node` (FIX 4889): [`Self::committed_units`] less
+    /// that scope's own share. A take that keeps that scope lets it commit
+    /// what the launch reserved less this.
+    pub(super) fn committed_except(&self, node: u64, scope: &SpendScopeId) -> u64 {
+        let own = self
+            .shares
+            .iter()
+            .find(|share| share.node == node && share.scope == *scope)
+            .map_or(0, |share| share.committed_units);
+        self.committed_units().saturating_sub(own)
+    }
+
     /// Sets the share of `scope` on `node` to `committed_units`, adding it
     /// when absent (FIX 4889).
     pub(super) fn stamp(&mut self, node: u64, scope: &SpendScopeId, committed_units: u64) {
