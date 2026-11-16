@@ -5,17 +5,11 @@ use super::{ConflictIdentity, ConflictSet, PromotionCandidate};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PredicateKeyRule {
-    pub normalize_text: bool,
-    /// A question key in a structured value. Missing means the whole predicate
-    /// question, never the answer; this conservatively sends ambiguity to judge.
-    pub topic_field: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_consolidation::routing::PredicateKeyRule;
+
 pub type PredicateKeyRules = BTreeMap<String, PredicateKeyRule>;
 
 /// Operator-set predicate key rules governing which claim keys the consolidator may fold.

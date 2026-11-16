@@ -27,8 +27,8 @@ use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::{EntityId, Result, Vault};
 
-/// One step's feedback row. Key: (run, step, invocation).
-pub(crate) type StepKey = (EntityId, u64, u64);
+#[doc(hidden)]
+pub(crate) use oneiron_records::code_run::storage::type_diagnostics::{StepKey, StoredCheckState};
 
 /// Step feedback rows.
 const ROWS: SideTable<StepKey, StoredStepFeedback, Named> =
@@ -37,15 +37,6 @@ const ROWS: SideTable<StepKey, StoredStepFeedback, Named> =
 /// for the historical lift sweep (FIX 2680).
 pub(crate) fn code_run_type_diagnostics_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<StoredStepFeedback, Named>(bytes)
-}
-
-/// A step's check as a row keeps it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum StoredCheckState {
-    Complete,
-    Pending,
-    Failed,
-    Unavailable,
 }
 
 /// One step's feedback, as its row keeps it: flat, every field the state

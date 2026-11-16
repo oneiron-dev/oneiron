@@ -17,6 +17,7 @@ use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
 pub use quic::EgressDatagramNameRefusal;
 pub use receipt::EgressReceipt;
+pub(crate) use receipt::SandboxReceiptOutcome;
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket};
@@ -73,13 +74,8 @@ pub struct RawEndpointGrant {
     pub protocol: RawProtocol,
 }
 
-/// The transport a [`RawEndpointGrant`] admits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RawProtocol {
-    Tcp,
-    Udp,
-}
+#[doc(hidden)]
+pub use oneiron_records::code_sandbox::egress::RawProtocol;
 
 impl RawEndpointGrant {
     /// The address this grant names, when its host is an IP literal.

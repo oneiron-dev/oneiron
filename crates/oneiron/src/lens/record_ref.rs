@@ -31,11 +31,10 @@ use crate::claim::{ScopedReadReceipt, ScopedReadResult};
 use crate::memory::{
     EntityView, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 
-pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
-/// The most characters a [`RecordRefPreview`] snippet carries.
-pub const RECORD_REF_SNIPPET_MAX_CHARS: usize = 280;
 pub use crate::request_limits::RECORD_REF_MAX_BYTES;
+pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
 
 /// The most messages one `vault.refs.links` page of a turn reads for links,
 /// and the page size when the caller names none.
@@ -74,18 +73,8 @@ impl RecordRef {
     }
 }
 
-/// `vault.refs.resolve`'s one input.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ResolveRecordRefRequest {
-    /// The ref to resolve: a short id or a 32-hex id, either one optionally
-    /// pinned as `<ref>@<revision>`.
-    pub reference: String,
-    /// The caller's retrieval filter (FIX 3977): a record it excludes
-    /// resolves as one the reader may not read.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::record_ref::{RecordLinksRequest, ResolveRecordRefRequest};
 
 /// The bounded hover/open preview of one record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,7 +84,9 @@ pub struct RecordRefPreview {
     /// The revision this preview was read at, lower hex: the pin the ref
     /// named, else the record's live revision when it keeps revisions.
     pub revision: Option<String>,
-    /// A bounded, single-line snippet of the record's text, when it has some.
+    /// A bounded, single-line snippet of the record's text, when it has some:
+    /// at most the owner's `refs.resolve.snippet_chars` characters (280 by
+    /// default).
     pub snippet: Option<String>,
 }
 
@@ -162,13 +153,19 @@ impl Memory<'_> {
             Some((_, pinned)) => Some(pinned.to_ascii_lowercase()),
             None => live(&view)?,
         };
+        let snippet_chars = super::setting_keys::vault_value(
+            self.vault(),
+            &super::setting_keys::REFS_RESOLVE_SNIPPET_CHARS,
+        )?;
+        let snippet_chars = usize::try_from(snippet_chars).unwrap_or(usize::MAX);
         Ok(ScopedReadResult {
             value: RecordRefPreview {
                 snippet: view
                     .body
                     .as_ref()
+                    .filter(|_| snippet_chars > 0)
                     .and_then(|body| first_text(body, &SNIPPET_FIELDS))
-                    .map(|text| bounded(&text, RECORD_REF_SNIPPET_MAX_CHARS))
+                    .map(|text| bounded(&text, snippet_chars))
                     .filter(|snippet| !snippet.is_empty()),
                 record: RecordRef::from_view(&view),
                 revision,
@@ -211,40 +208,6 @@ fn unresolved_ref() -> MemoryError {
 pub const RECORD_LINKS_TEXT_MAX_BYTES: usize = 256 * 1024;
 /// The most bytes the `texts` of one `vault.refs.links` read hold together.
 pub(crate) const RECORD_LINKS_TEXTS_MAX_BYTES: usize = 1024 * 1024;
-
-/// `vault.refs.links`'s one input: a text to read for links, the texts a
-/// read surface returned, or a TURN whose messages this reader may read, a
-/// page at a time. Exactly one of `text`, `texts` and `turn_ref` is named;
-/// `after` and `limit` page a turn only.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecordLinksRequest {
-    /// Text to read for `oneiron://` Markdown links.
-    #[serde(default)]
-    pub text: Option<String>,
-    /// The plain texts a read surface returned (a transcript page's
-    /// messages, a room's, a recall pack's items), each read for links as
-    /// `text` is and answered in order (Engine ruling 10-18): the explicit
-    /// link-span read beside those surfaces, whose own text stays plain.
-    #[serde(default)]
-    pub texts: Option<Vec<String>>,
-    /// A TURN ref (short id or 32-hex): each visible message of it this
-    /// reader may read is read for links.
-    #[serde(default)]
-    pub turn_ref: Option<String>,
-    /// The `next_after` the previous page of the turn gave: this page reads
-    /// the turn's messages after it. `None` reads the first page.
-    #[serde(default)]
-    pub after: Option<String>,
-    /// The most messages the page holds, 1 to
-    /// [`RECORD_LINKS_TURN_PAGE_MAX`] (also the default).
-    #[serde(default)]
-    pub limit: Option<u32>,
-    /// The caller's retrieval filter (FIX 3977): the turn's messages and
-    /// every link's record are read under it.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
 
 /// One stretch of a text as one reader sees it. `start` and `end` are UTF-8
 /// byte offsets into the text, end exclusive; `start_utf16` and `end_utf16`
@@ -355,18 +318,20 @@ impl Memory<'_> {
                 })
             }
             (None, Some(turn_ref)) => {
-                let limit = match input.limit {
-                    Some(0) => {
-                        return Err(MemoryError::bad_request_with(
-                            "a page of a turn holds at least one message",
-                            &["Pass a `limit` of 1 or more, or none for the default page."],
-                        ));
-                    }
-                    Some(limit) => usize::try_from(limit)
-                        .unwrap_or(RECORD_LINKS_TURN_PAGE_MAX)
-                        .min(RECORD_LINKS_TURN_PAGE_MAX),
-                    None => RECORD_LINKS_TURN_PAGE_MAX,
-                };
+                let limit = page_limit_zero_refused(
+                    input
+                        .limit
+                        .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                    RECORD_LINKS_TURN_PAGE_MAX,
+                    RECORD_LINKS_TURN_PAGE_MAX,
+                )
+                .map_err(|ZeroLimitRefused| {
+                    MemoryError::bad_request_with(
+                        "a page of a turn holds at least one message",
+                        &["Pass a `limit` of 1 or more, or none for the default page."],
+                    )
+                })?
+                .rows;
                 self.turn_links(turn_ref.trim(), input.after.as_deref(), limit)
             }
             _ => Err(MemoryError::bad_request_with(

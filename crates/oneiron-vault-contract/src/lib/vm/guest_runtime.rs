@@ -142,8 +142,5 @@ fn guest_path(path: &Path) -> bool {
 
 /// 64 lowercase hex digits.
 fn lower_hex(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    oneiron_hex::is_lower_hex(text, Some(64))
 }

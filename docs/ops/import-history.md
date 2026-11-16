@@ -13,6 +13,7 @@ read the same config as `serve` (`--config`, `--vault-path`, `ONEIRON_*`).
 | `claude-code` | `~/.claude/projects`, one project's folder in it, or one session `.jsonl`. Given `~/.claude`, only `projects/` is read. |
 | `codex` | `~/.codex/sessions`, any year, month or day folder in it, or one rollout `.jsonl`. Given `~/.codex`, only `sessions/` is read. |
 | `hook-transcript` | One GitHub Copilot or Cursor session `.jsonl` a hook handed over, under a folder in `hook_transcript_roots` (below). Never a folder. |
+| `slack` | A Slack workspace export zip, or the unzipped folder holding `users.json`, with `--members <map.json>` (below). |
 
 ```bash
 oneiron import claude-code ~/.claude/projects --dry-run   # counts only; writes nothing
@@ -100,6 +101,65 @@ landed`. A file with no Copilot or Cursor record at all is refused, with its
 line count, and nothing lands. Re-reading a grown log lands only what is new,
 as for every source; hand it over again at each stop.
 
+## A Slack workspace export: who reads what
+
+A Slack export keeps Slack's own sharing (ARCH-0027 #import-audience). Each
+channel, private channel, group DM and DM lands as one conversation that reads
+to you and to the members Slack shares it with whom your member map gives a
+vault person. A public channel's members are the whole workspace, so it reads
+to every person you matched in that workspace.
+
+```bash
+oneiron import slack "Example Slack export Nov 1 2026.zip" --members members.json
+```
+
+`--members` is required. It maps each Slack member id (as `users.json` lists
+it) to `"owner"` (your own account in the workspace: its words land as yours),
+a vault person's id in hex, or `null`. A member the map leaves out, or maps to
+`null`, is a contact: its name and its words are kept, it reads nothing, and no
+person is made for it. `{}` imports a workspace no one in the vault was in: it
+reads to you alone. A map naming a member the workspace does not list, or
+naming `"owner"` twice, is refused before anything is written.
+
+```json
+{ "U012AB3CD": "owner", "U045EF6GH": "3f2a…", "U078IJ9KL": null }
+```
+
+Every turn the import lands is born under the workspace's own facet, named
+after the workspace and worn by you: the first import makes it, and every
+later import of that name finds it again. A facet grants nothing and never
+limits what you see; it groups the workspace's turns, and an agent whose
+credential opted into that facet reads them. Conversations and messages keep
+their own facet, as for every source.
+
+The run ends with one line on the members, for example `Example: 0 of 7
+matched, kept as contacts, owner-only`. The JSON report adds a `workspace`
+object (`name`, `members`, `matched`, `contacts`, `owner_only`, and `facet`,
+the facet's id) and, on each
+conversation, `sharing` with the count of persons that read it (`readers`) and
+of contacts (`unmapped`). A later import of the same workspace with a longer
+map gives the newly mapped members their conversations, and one that maps a
+member to `null` takes their read away. So does a later export that no longer
+shares a conversation with a member, even one that holds none of its
+messages: every conversation the export lists sets its readers again. A map
+that moves a member to or from `"owner"` lands that member's words again, as a
+revision under their new author. Each message's id carries its workspace, so
+two workspaces never land as one. `--workspace <name>` names the
+workspace in the report; by default it is the export's file or folder name up
+to " Slack export". The generic ingest registry refuses a Slack export: only
+this command keeps its sharing.
+
+The export is untrusted input, so one that does not read one way only is
+refused before anything is written: a conversation id listed twice, a folder
+two conversations would claim (two of one name, or a name that is another
+conversation's id), members naming more than one workspace (`team_id`), two
+files at one path (a zip holding `groups.json` under two spellings), or an id
+that is not a Slack id (ASCII letters and digits). A message whose speaker or
+Slack time is not in Slack's form is counted unreadable. A workspace whose
+members name no team id is keyed `name.<its name>`, apart from every team id.
+Words you erased never land again, whichever way a later map moves their
+speaker.
+
 ## Generic ingest registry projection
 
 The registry's `hook-transcript` source accepts the same file snapshot envelope as
@@ -170,6 +230,50 @@ the same. The row asks whether everything is okay, and the report names it in
 `warnings` (`"warning": "limit_crossed"`, its `row`, `limit` and `observed`).
 `serve`'s queue lands queued sessions in passes of about that much; a session
 past it lands alone, and its rows ask in `serve`'s log.
+
+## Export zips: the archive pre-check
+
+Before anything of an export zip is read, one pass reads the zip's own entry
+list, the same way every time:
+
+- An entry whose path would leave the export's folder (`../x`, `/etc/x`), a
+  symbolic link, and a device file, FIFO or socket are skipped, never read,
+  and listed in `warnings` (`"warning": "archive_entry_skipped"`, its `name`
+  and `reason`: `escaping_path`, `symbolic_link` or `special_file`). The
+  rest of the zip imports.
+- The import is refused, and nothing lands, when two entries share their
+  bytes (overlapping entries), when two entries have one name, when the zip
+  declares more entries than `[import] archive_max_entries` (262,144 unless
+  set), or when `conversations.json` does not start as JSON.
+- The bytes it unzips are counted as they come, whatever the zip's headers
+  say. With `[import] storage_cap_bytes` set, the import reads at most the
+  cap less what the vault's folder already holds, and stops there. Unset (the
+  default), a local vault has no cap; Oneiron Cloud sets it for each plan.
+
+```toml
+[import]
+archive_max_entries = 262144      # raise it for a zip with more entries
+# storage_cap_bytes = 10737418240 # the vault's storage cap, in bytes
+```
+
+A Google Takeout `.zip` imported into a mailbox (`vault.mail.sources.import_mbox`)
+passes the same check, with each mbox file's first bytes checked as an mbox. Its
+entry cap is the call's own `archive_max_entries` input (262,144 when absent),
+which the refusal names; its report lists the skipped entries in
+`skipped_entries`. On a served vault with `[import] storage_cap_bytes` set,
+one call reads at most the cap less what the vault's folder holds: it stops
+before the message the cap cuts, keeps what landed, and answers
+`stopped_at_storage_cap: true` with `done: false`. A later call goes on from
+there once the vault holds less. A plain `.mbox` file is read in place and
+never stops so.
+
+A hosted import (`oneiron import <chatgpt|claude> <zip> --hosted`, or an
+upload to the vault's own hostname) passes it when its job decodes the
+export. The job's progress (`vault.imports.get`) lists the skipped entries in
+its `parse` phase, `skipped_entries` (the zip's first 100, with their
+`reason`) and `skipped_entry_count` (all of them); both are absent when none
+was skipped. A refused zip ends the job `failed`, with the refusal in
+`failure`, and nothing lands.
 
 ## The report
 

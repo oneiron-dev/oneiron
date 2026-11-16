@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::store::GateSystemNoticeRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 use oneiron_model::llm::{BudgetLease, LlmBackend};
 
 use super::clock::PolicyCallClock;
@@ -116,12 +117,8 @@ impl PolicyEnforcementAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyEnforcementVoice {
-    Persona,
-    System,
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::enforce::{PolicyEnforcementVoice, PolicyHelpRouting};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyBargeInKill {
@@ -138,17 +135,6 @@ impl PolicyBargeInKill {
             cancel_llm: true,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PolicyHelpRouting {
-    pub category: PolicyVerdictCategory,
-    pub message: String,
-    pub diagnosis: Option<String>,
-    pub persona_present: bool,
-    /// Host-configured resources, not an engine-owned safety taxonomy.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub resources: Vec<crate::store::GateSystemNoticeAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -317,7 +303,9 @@ impl Vault {
             &mut wtxn,
             &request,
             &verdict,
-            "owner_plane_stale_fail_open",
+            // A fail-open is a fact on the record: the plane answered nothing
+            // for the policy in force (`gate.policy_model.stale_manifest`).
+            GateReceiptOutcome::Noted,
             reason_codes,
             Vec::new(),
         )?;
@@ -589,7 +577,7 @@ impl Vault {
                     &mut wtxn,
                     &request,
                     &verdict,
-                    action.as_str(),
+                    verdict.decision.ledger_outcome(),
                     reason_codes,
                     system_notices.clone(),
                 )?;
