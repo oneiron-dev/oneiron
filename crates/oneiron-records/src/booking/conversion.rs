@@ -86,8 +86,10 @@ pub fn safe_asset_path(path: &str) -> bool {
         && !path.starts_with("/public/booking/")
 }
 
-/// A five-choice first view; the full Slots mask remains authoritative and
-/// accessible for see-more. The recommended slot is one of these five.
+/// The first view: the mask's first `max_visible` ranked slots, as the page's
+/// resolved conversion policy sets them (`max_visible_slots`, shipped 5). The
+/// full Slots mask remains authoritative and accessible for see-more. The
+/// recommended slot is one of the visible ones.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BookingSlotPreview {
@@ -96,8 +98,8 @@ pub struct BookingSlotPreview {
     pub remaining_count: usize,
 }
 
-pub fn booking_slot_preview(mask: &SlotMask) -> BookingSlotPreview {
-    let visible: Vec<_> = mask.slots.iter().take(5).cloned().collect();
+pub fn booking_slot_preview(mask: &SlotMask, max_visible: usize) -> BookingSlotPreview {
+    let visible: Vec<_> = mask.slots.iter().take(max_visible).cloned().collect();
     let recommended_start_utc = visible
         .iter()
         .max_by(|a, b| {
@@ -109,7 +111,7 @@ pub fn booking_slot_preview(mask: &SlotMask) -> BookingSlotPreview {
     BookingSlotPreview {
         visible,
         recommended_start_utc,
-        remaining_count: mask.slots.len().saturating_sub(5),
+        remaining_count: mask.slots.len().saturating_sub(max_visible),
     }
 }
 
