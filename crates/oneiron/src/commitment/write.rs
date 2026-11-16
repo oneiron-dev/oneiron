@@ -107,7 +107,7 @@ impl Vault {
         }
         let candidate = commitment_claim_candidate(record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
-        self.apply_commitment_candidate(id, candidate, envelope, valid_time, learned_at)
+        self.apply_commitment_candidate(id, record, candidate, envelope, valid_time, learned_at)
     }
 
     /// Births an INERT `commitment.record` claim at `id` in the caller's
@@ -129,6 +129,7 @@ impl Vault {
                 "commitment claim id already exists",
             ));
         }
+        self.check_commitment_text_in_force_in_txn(wtxn, record)?;
         let candidate = inert_commitment_claim_candidate(record)?
             .with_validity(Some(occurred.start), Some(occurred.end));
         apply_commitment_ops(self, wtxn, *id, candidate, envelope, occurred, learned_at)
@@ -270,6 +271,7 @@ impl Vault {
     fn apply_commitment_candidate(
         &self,
         id: &EntityId,
+        record: &CommitmentRecord,
         candidate: ClaimCandidate,
         envelope: &WriteEnvelope,
         occurred: TimeRange,
@@ -281,6 +283,7 @@ impl Vault {
                 "commitment claim id already exists",
             ));
         }
+        self.check_commitment_text_in_force_in_txn(&wtxn, record)?;
         apply_commitment_ops(
             self, &mut wtxn, *id, candidate, envelope, occurred, learned_at,
         )?;

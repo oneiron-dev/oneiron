@@ -62,7 +62,17 @@ pub(super) const KEY_BIRTH_KIND: &str = COMMITMENT_BIRTH_PROVENANCE_KEYS[0];
 
 pub(super) const KEY_BIRTH_REFERENCE: &str = COMMITMENT_BIRTH_PROVENANCE_KEYS[1];
 
-const MAX_COMMITMENT_TEXT_BYTES: usize = 8 * 1024;
+/// The longest promise text, in bytes, a door that authors a promise admits while the owner has
+/// not moved `commitment.content.max_text_bytes` (its default).
+pub(super) const COMMITMENT_TEXT_DEFAULT_MAX_BYTES: usize = 8 * 1024;
+
+/// The longest promise text, in bytes, a stored `commitment.record` may carry: the top of
+/// `commitment.content.max_text_bytes`, and the only text bound encode and decode check, so a row
+/// written under a raised key still decodes after the owner lowers it.
+pub(super) const COMMITMENT_TEXT_CEILING_BYTES: usize = 64 * 1024;
+
+/// The refusal of promise text that is empty or past its bound.
+const COMMITMENT_TEXT_REFUSAL: &str = "commitment content text must be non-empty and bounded";
 
 const MAX_COMMITMENT_PAYLOAD_REF_BYTES: usize = 1024;
 
@@ -136,8 +146,8 @@ impl CommitmentContent {
     fn validate(&self) -> Result<()> {
         validate_non_empty_bounded(
             &self.text,
-            MAX_COMMITMENT_TEXT_BYTES,
-            "commitment content text must be non-empty and bounded",
+            COMMITMENT_TEXT_CEILING_BYTES,
+            COMMITMENT_TEXT_REFUSAL,
         )?;
         if let Some(payload_ref) = &self.payload_ref {
             validate_non_empty_bounded(
@@ -147,6 +157,20 @@ impl CommitmentContent {
             )?;
         }
         Ok(())
+    }
+
+    /// Refuses text longer than `max_bytes`: the owner's bound in force where a door authors a
+    /// promise, with the refusal the fixed bound gave before it became a key.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidClaimBody` for text longer than `max_bytes`.
+    pub(crate) fn check_text_within(&self, max_bytes: usize) -> Result<()> {
+        if self.text.len() > max_bytes {
+            Err(Error::InvalidClaimBody(COMMITMENT_TEXT_REFUSAL))
+        } else {
+            Ok(())
+        }
     }
 }
 

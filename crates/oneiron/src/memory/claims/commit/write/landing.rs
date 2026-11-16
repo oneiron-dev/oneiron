@@ -147,6 +147,12 @@ impl Memory<'_> {
         // commitment series is indexed in this same transaction.
         let commitment_write = input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD;
         if commitment_write {
+            // The owner's `commitment.content.max_text_bytes` binds a promise authored here.
+            self.vault.check_claim_commitment_text_in_force_in_txn(
+                content.read(),
+                &input.predicate,
+                value,
+            )?;
             content.stage_claim_support(id, |_| Ok(()))?;
         }
         if publication_write {

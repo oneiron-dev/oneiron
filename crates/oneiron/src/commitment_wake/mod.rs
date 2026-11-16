@@ -34,7 +34,7 @@
 //! proposes no message: the executor dispatches the agent's own run instead.
 
 mod reminder;
-mod reminder_wording;
+pub(crate) mod reminder_wording;
 mod wake_approval;
 mod wake_event;
 mod wake_fire;

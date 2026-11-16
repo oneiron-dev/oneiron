@@ -169,6 +169,12 @@ impl Vault {
             {
                 return Err(Error::InvalidClaimBody("import claim id is not fresh"));
             }
+            // The owner's `commitment.content.max_text_bytes` binds an imported promise.
+            self.check_claim_commitment_text_in_force_in_txn(
+                txn,
+                &entry.predicate,
+                &json_to_msgpack_value(&entry.value),
+            )?;
         }
         // Proposed is the ordinary Gate admission path. With owner consent,
         // resolve these same candidates against the attached Gate bindings

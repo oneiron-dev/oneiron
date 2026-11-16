@@ -54,6 +54,7 @@ impl Vault {
         if self.get_raw_in(wtxn, id)?.is_some() {
             return Err(ScheduleError::Invalid("commitment claim id already exists"));
         }
+        self.check_commitment_text_in_force_in_txn(wtxn, record)?;
         let mut candidate = commitment_claim_candidate(record)?
             .with_validity(Some(occurred.start), Some(occurred.end));
         if let Some(evidence) = evidence {
@@ -96,6 +97,7 @@ impl Vault {
         let candidate = commitment_claim_candidate(new_record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
         self.try_with_write_txn_grouped(|wtxn| {
+            self.check_commitment_text_in_force_in_txn(wtxn, new_record)?;
             self.batch_in()
                 .claim_candidate(new_id, candidate, envelope, valid_time, learned_at)
                 .apply(wtxn)?;

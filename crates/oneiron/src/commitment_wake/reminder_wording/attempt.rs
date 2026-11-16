@@ -48,7 +48,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let text = text.trim();
-        if text.is_empty() || text.len() > COMMITMENT_REMINDER_WORDING_MAX_BYTES {
+        if text.is_empty() || text.len() > setting_keys::reminder_wording_max_bytes(self)? {
             return Err(Error::InvalidClaimBody(
                 "reminder wording is empty or too long",
             ));

@@ -18,6 +18,7 @@
 
 mod attempt;
 mod output;
+pub(crate) mod setting_keys;
 mod source;
 
 pub(crate) use output::wording_source_binding;
@@ -43,7 +44,8 @@ use super::wake_event::{
 
 /// Attempt kind for one reminder's queued wording.
 pub const COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND: &str = "commitment.reminder.wording";
-/// The longest wording a worder may file, in bytes.
+/// The longest wording a worder may file, in bytes, while the owner has not moved
+/// `commitment.reminder.max_wording_bytes` (its default).
 pub const COMMITMENT_REMINDER_WORDING_MAX_BYTES: usize = 4_096;
 const WORDING_MEDIA_TYPE: &str = "text/plain";
 const WORDING_RUN_PREFIX: &str = "commitment-reminder-wording:";
@@ -255,8 +257,9 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// The ref is not a reminder's, the text is empty or longer than
-    /// [`COMMITMENT_REMINDER_WORDING_MAX_BYTES`], or the store failed.
+    /// The ref is not a reminder's, the text is empty or longer than the
+    /// owner's `commitment.reminder.max_wording_bytes` (default
+    /// [`COMMITMENT_REMINDER_WORDING_MAX_BYTES`]), or the store failed.
     pub fn file_commitment_reminder_wording(
         &self,
         content_ref: &str,
@@ -269,7 +272,7 @@ impl Vault {
             ));
         };
         let text = text.trim();
-        if text.is_empty() || text.len() > COMMITMENT_REMINDER_WORDING_MAX_BYTES {
+        if text.is_empty() || text.len() > setting_keys::reminder_wording_max_bytes(self)? {
             return Err(Error::InvalidClaimBody(
                 "reminder wording is empty or too long",
             ));
