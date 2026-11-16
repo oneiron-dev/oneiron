@@ -62,7 +62,7 @@ use oneiron::authority::{
     AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp,
     AuthoritySignature, AuthorityTier, DeviceAuthority, HostSlipIssuer, MachineRole,
     OwnerKeyEnrollment, ROLE_AGENT, ReadLocation, WorldPrivacy, authority_entry_hash,
-    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
+    authority_transcript, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
@@ -72,7 +72,9 @@ use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault, VaultConfig};
-use oneiron_authority::authority::authority_overlay_seed_for;
+use oneiron_authority::authority::{
+    AuthorityEntryRead, authority_overlay_seed_for, read_authority_log_entry_body,
+};
 
 const SHARED: u64 = 44;
 /// The seed of the co-Owner's own owner key ([`Shared::bound_co_owner_key`]).
@@ -446,19 +448,22 @@ impl Shared {
             .expect("the signed history")
     }
 
-    /// The authority log's heads: the rows no row names as a parent.
+    /// The authority log's heads: the rows no row names as a parent, sealed or open.
     fn heads(&self) -> Vec<AuthorityEntryHash> {
-        let rows: Vec<AuthorityLogEntry> = self
+        let rows: Vec<AuthorityEntryRead> = self
             .history()
             .iter()
-            .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+            .map(|bytes| read_authority_log_entry_body(bytes).expect("a row"))
             .collect();
         let parents: BTreeSet<AuthorityEntryHash> = rows
             .iter()
-            .flat_map(|row| row.parent_hashes.iter().copied())
+            .flat_map(|row| row.parent_hashes().iter().copied())
             .collect();
         rows.iter()
-            .map(|row| authority_entry_hash(row).expect("a hash"))
+            .map(|row| match row {
+                AuthorityEntryRead::Open(entry) => authority_entry_hash(entry).expect("a hash"),
+                AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+            })
             .filter(|hash| !parents.contains(hash))
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -466,8 +471,8 @@ impl Shared {
     }
 
     /// The co-Owner's owner key signs `op` as its first row, parented on the
-    /// heads, and holds it back: the signed bytes a sync delivers later.
-    fn withheld_co_owner_row(&self, op: AuthorityOp) -> Vec<u8> {
+    /// heads, and holds it back: the entry and the signed bytes a sync delivers later.
+    fn withheld_co_owner_row(&self, op: AuthorityOp) -> (AuthorityLogEntry, Vec<u8>) {
         let signing = SigningKey::from_bytes(&[CO_OWNER_SEED; 32]);
         let signer = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
         let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
@@ -488,7 +493,8 @@ impl Shared {
         };
         let transcript = authority_transcript(&row).expect("the transcript");
         row.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
-        encode_authority_log_entry_body(&row).expect("the signed bytes")
+        let bytes = encode_authority_log_entry_body(&row).expect("the signed bytes");
+        (row, bytes)
     }
 
     fn on_roster_live(&self, public_key: [u8; 32]) -> bool {
@@ -541,7 +547,7 @@ impl Replica {
 fn a_revoked_keys_concurrent_enrolment_synced_late_lands_refused() {
     let shared = shared();
     let key = shared.bound_co_owner_key();
-    let late = shared.withheld_co_owner_row(enrol_agent(31));
+    let (_, late) = shared.withheld_co_owner_row(enrol_agent(31));
     shared.remove_owner(shared.co_owner);
     assert!(!shared.key_is_live(key), "the removal revokes the key");
 
@@ -567,7 +573,7 @@ fn a_revoked_keys_withheld_revocation_of_another_owner_key_lands_refused() {
     let shared = shared();
     shared.bound_co_owner_key();
     let owners_second = shared.enrol_owner_key(shared.owner, 9);
-    let late = shared.withheld_co_owner_row(AuthorityOp::RevokeDevice {
+    let (_, late) = shared.withheld_co_owner_row(AuthorityOp::RevokeDevice {
         revoked_key: AuthorityKey::Ed25519(owners_second),
     });
     shared.remove_owner(shared.co_owner);
@@ -597,16 +603,24 @@ fn a_revoked_keys_withheld_handoff_installs_no_root() {
     let key = shared.bound_co_owner_key();
     let roles =
         shared.vault.authority_fold().expect("the fold").roster[&AuthorityKey::Ed25519(key)].roles;
-    let late = shared.withheld_co_owner_row(AuthorityOp::ReRoot {
+    let (handoff_entry, late) = shared.withheld_co_owner_row(AuthorityOp::ReRoot {
         new_device: device(public_key(33), roles),
     });
     shared.remove_owner(shared.co_owner);
     let mut rows: Vec<AuthorityLogEntry> = shared
         .history()
         .iter()
-        .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+        .filter_map(
+            |bytes| match read_authority_log_entry_body(bytes).expect("a row") {
+                AuthorityEntryRead::Open(entry) => Some(entry),
+                // No row of this history seals (its attestation kinds name no
+                // device); a sealed row grants nothing, so skipping one keeps
+                // the roster promise.
+                AuthorityEntryRead::Sealed(_) => None,
+            },
+        )
         .collect();
-    rows.push(decode_authority_log_entry_body(&late).expect("the handoff"));
+    rows.push(handoff_entry);
 
     let arrival = shared
         .vault
@@ -634,7 +648,7 @@ fn a_revoked_keys_withheld_handoff_installs_no_root() {
 fn an_enrolment_the_revocation_saw_stands() {
     let shared = shared();
     let key = shared.bound_co_owner_key();
-    let row = shared.withheld_co_owner_row(enrol_agent(32));
+    let (_, row) = shared.withheld_co_owner_row(enrol_agent(32));
     shared
         .vault
         .import_signed_authority_history(&[row], &std::collections::BTreeMap::new())
@@ -660,7 +674,7 @@ fn a_replica_holding_a_revoked_keys_enrolment_drops_it_when_the_revocation_arriv
     let shared = shared();
     shared.bound_co_owner_key();
     let history = shared.history();
-    let late = shared.withheld_co_owner_row(enrol_agent(34));
+    let (_, late) = shared.withheld_co_owner_row(enrol_agent(34));
     shared.remove_owner(shared.co_owner);
     let mut replica = Replica::holding(history);
     replica.take(vec![late]);
@@ -687,7 +701,7 @@ fn a_replica_holding_a_revoked_keys_revocation_drops_it_when_the_removal_arrives
     shared.bound_co_owner_key();
     let owners_second = shared.enrol_owner_key(shared.owner, 9);
     let history = shared.history();
-    let late = shared.withheld_co_owner_row(AuthorityOp::RevokeDevice {
+    let (_, late) = shared.withheld_co_owner_row(AuthorityOp::RevokeDevice {
         revoked_key: AuthorityKey::Ed25519(owners_second),
     });
     shared.remove_owner(shared.co_owner);
@@ -712,16 +726,24 @@ fn a_replica_holding_a_revoked_keys_revocation_drops_it_when_the_removal_arrives
 
 impl Shared {
     /// The one world edit among the rows the history gained since `before`;
-    /// the edit's world key work may sign rows of its own.
+    /// the edit's world key work may sign rows of its own. A WorldPrivacy op
+    /// never seals, so the edit is always open; sealed companion rows are not edits.
     fn world_edit_since(&self, before: &[Vec<u8>]) -> AuthorityEntryHash {
         let held: BTreeSet<&Vec<u8>> = before.iter().collect();
         let edits: Vec<AuthorityEntryHash> = self
             .history()
             .iter()
             .filter(|row| !held.contains(row))
-            .map(|row| decode_authority_log_entry_body(row).expect("a row"))
-            .filter(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
-            .map(|entry| authority_entry_hash(&entry).expect("a hash"))
+            .filter_map(
+                |bytes| match read_authority_log_entry_body(bytes).expect("a row") {
+                    AuthorityEntryRead::Open(entry)
+                        if matches!(entry.op, AuthorityOp::WorldPrivacy(_)) =>
+                    {
+                        Some(authority_entry_hash(&entry).expect("a hash"))
+                    }
+                    AuthorityEntryRead::Open(_) | AuthorityEntryRead::Sealed(_) => None,
+                },
+            )
             .collect();
         assert_eq!(edits.len(), 1, "one new world edit: {edits:?}");
         edits[0]
