@@ -345,9 +345,8 @@ pub(super) fn erase_fanout_run_recipient_in_txn(
     Ok(())
 }
 
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| Error::InvariantViolation("fanout encoding"))
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::task_verb::consult_fanout_store::encode;
 
 pub(super) fn save_run(vault: &Vault, txn: &mut heed::RwTxn<'_>, run: &StoredFanout) -> Result<()> {
     let correlation = EntityId::from_hex(&run.correlation)?;

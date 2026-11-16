@@ -220,14 +220,62 @@ fn release_hit(bytes: &[u8]) -> Option<&'static str> {
     // A lossy copy is wiped on drop (FIX 6668).
     let mut wiped = None::<Zeroizing<String>>;
     let haystack = wiped_lossy(bytes, &mut wiped);
-    detect(haystack, Door::Release).or_else(|| {
-        let payload = framed_payload(bytes)?;
-        let Some(mut value) = decode_members(payload) else {
-            return nested_past_decoder(payload);
-        };
-        sanitize_messagepack(&mut value, false, Door::Release)
-            .then_some("gate.secret_scan.sensitive_env")
-    })
+    detect(haystack, Door::Release).or_else(|| release_decoded_hit(framed_payload(bytes)?))
+}
+
+/// How deep text decoded inside text the release rules read, as deep as the
+/// typed rule reads it (`serialize::export_value::TEXT_DEPTH`). A body that
+/// still decodes there reads as a hit: the typed rule reads it as nil.
+const RELEASE_TEXT_DEPTH: usize = 128;
+
+/// The release rules over `bytes` read as a structured body
+/// ([`decode_members`]): every member, its field names included, and each
+/// text in it (a string, or binary that is UTF-8) that decodes as a body
+/// again, read the same way at every depth, as the typed rule reads text
+/// inside text. A credential key escaped in JSON that is itself a string's
+/// text is no text the raw rules read. A body nested past its decoder reads
+/// as a hit: none of its members was read.
+pub(crate) fn release_decoded_hit(bytes: &[u8]) -> Option<&'static str> {
+    let Some(value) = decode_members(bytes) else {
+        return nested_past_decoder(bytes);
+    };
+    // Each body decoded from text, with how deep in text it sits. The walk
+    // keeps its own stacks: text nested in text must not deepen the call
+    // stack once per level on top of each body's own nesting.
+    let mut bodies = vec![(value, 0_usize)];
+    while let Some((mut body, depth)) = bodies.pop() {
+        if sanitize_messagepack(&mut body, false, Door::Release) {
+            return Some("gate.secret_scan.sensitive_env");
+        }
+        let mut nodes = vec![&body];
+        while let Some(node) = nodes.pop() {
+            let text: &[u8] = match node {
+                rmpv::Value::String(text) => text.as_bytes(),
+                rmpv::Value::Binary(bytes) if std::str::from_utf8(bytes).is_ok() => {
+                    bytes.as_slice()
+                }
+                rmpv::Value::Array(items) => {
+                    nodes.extend(items.iter());
+                    continue;
+                }
+                rmpv::Value::Map(fields) => {
+                    nodes.extend(fields.iter().flat_map(|(key, value)| [key, value]));
+                    continue;
+                }
+                _ => continue,
+            };
+            match decode_members(text) {
+                Some(_) if depth + 1 >= RELEASE_TEXT_DEPTH => return Some(REASON_JSON_TOO_DEEP),
+                Some(inner) => bodies.push((inner, depth + 1)),
+                None => {
+                    if let Some(reason) = nested_past_decoder(text) {
+                        return Some(reason);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The release reading of a body no decoder took whole: its text, and a
