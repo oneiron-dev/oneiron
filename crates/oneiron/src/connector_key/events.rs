@@ -630,7 +630,6 @@ impl Vault {
                         "gate.connector_key.wake_suspend",
                         &key,
                         floor,
-                        now,
                     )?;
                 }
                 Ok(settled(ConnectorWakeStatus::BudgetExhausted))

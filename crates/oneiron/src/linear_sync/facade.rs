@@ -19,6 +19,7 @@ use crate::memory::{
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::task_verb::{TaskActor, TaskCallReceipt};
+use oneiron_contracts::cursor_text::parse_hex_cursor;
 
 use super::facade_types::{
     LINEAR_PROVENANCE_PAGE_DEFAULT, LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt,
@@ -53,14 +54,8 @@ fn cursor_hex((at, key): EventCursor) -> String {
 }
 
 fn parse_cursor(text: &str) -> MemoryResult<EventCursor> {
-    let invalid = || MemoryError::bad_request("cursor is not a provenance page cursor");
-    if text.len() != CURSOR_BYTES * 2 || !text.is_ascii() {
-        return Err(invalid());
-    }
-    let mut bytes = [0; CURSOR_BYTES];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
-    }
+    let bytes: [u8; CURSOR_BYTES] = parse_hex_cursor(text)
+        .ok_or_else(|| MemoryError::bad_request("cursor is not a provenance page cursor"))?;
     let mut at = [0; 8];
     at.copy_from_slice(&bytes[..8]);
     let mut key: EventKey = [0; 33];
