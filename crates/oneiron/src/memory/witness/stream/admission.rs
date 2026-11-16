@@ -190,6 +190,7 @@ impl Memory<'_> {
             generation: EntityId::now(),
             actor: self.actor,
             actor_class: self.actor_class as u8,
+            session_key: self.session_key,
             conversation,
             turn: turn_id,
             author: message.author,

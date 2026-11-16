@@ -159,6 +159,16 @@ impl CarrierInventory {
         }
         Ok(())
     }
+
+    /// Whether a legal hold keeps a row this inventory holds: none does any
+    /// more (LEGAL-HOLD-USE = B: a hold keeps its sealed copy, never the
+    /// rows in place). The check, read in `txn` as the timer's act
+    /// ([`Self::reject_held_in_txn`]), still answers a cooperative
+    /// restriction on a row with absence, which fails the caller.
+    pub(crate) fn held_in_txn(&self, store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
+        self.reject_held_in_txn(store, txn, &HoldActor::TIMER)?;
+        Ok(false)
+    }
 }
 
 /// Every key a plain one and every value one holder's: the capture is read
