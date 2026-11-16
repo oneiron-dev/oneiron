@@ -119,18 +119,14 @@ pub fn ask_key(turn: &EntityId, message: &EntityId, start: usize, end: usize) ->
 }
 
 pub fn key_hex(key: &[u8; 32]) -> String {
-    key.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(key)
 }
 
+/// The key 64 hex digits name. Either case is accepted: the ask arrives as
+/// an owner's or agent's typed argument and as a stored applied-row key, and
+/// both were accepted in either case before; a sign (`+`) never is.
 pub fn parse_key(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 || !hex.is_ascii() {
-        return None;
-    }
-    let mut key = [0_u8; 32];
-    for (byte, pair) in key.iter_mut().zip(hex.as_bytes().chunks(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(key)
+    oneiron_hex::decode_any_case::<32>(hex)
 }
 pub mod erase;
 pub mod hints;
