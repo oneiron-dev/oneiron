@@ -112,7 +112,8 @@ impl ScopedRead<'_> {
     ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let authority = self.held_for(None);
-        ids.iter()
+        let parts = ids
+            .iter()
             .map(|id| {
                 let Some(revision) =
                     self.entity_raw_with_mode_held_in(txn, &policy, &filter, id, mode, &authority)?
@@ -127,7 +128,13 @@ impl ScopedRead<'_> {
                     revision.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
                 )))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        self.charge_served(
+            ids.iter()
+                .zip(&parts)
+                .filter_map(|(id, part)| part.as_ref().map(|_| *id)),
+        );
+        Ok(parts)
     }
 }
 
@@ -320,8 +327,9 @@ impl ScopedRead<'_> {
     /// learned by the vault by then (`learned_at <= as_of`). A row the
     /// selection drops answers as `None`, exactly like a missing one; it is
     /// the caller's requested instant, not a policy denial, so the receipt
-    /// counts no suppression for it. All scope and authority gates of the
-    /// underlying point read are unchanged — this only narrows further.
+    /// counts no suppression for it, and it is not served, so it adds nothing
+    /// to the reader's read exposure (L8-65). All scope and authority gates of
+    /// the underlying point read are unchanged — this only narrows further.
     ///
     /// A kept row carries its live body: retained revision frontiers hold
     /// no per-revision learned-at, so no earlier body can be named for an
@@ -332,15 +340,16 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         as_of: u64,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
-        let result = self.read(reads, requested)?;
-        Ok(ScopedReadResult {
-            value: result
-                .value
-                .into_iter()
-                .map(|row| row.filter(|row| row.occurred.start <= as_of && row.learned_at <= as_of))
-                .collect(),
-            receipt: result.receipt,
-        })
+        let _bodies = self.prepare_point_read::<Error>()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.read_kept_projected_opaque_in_txn(
+            &txn,
+            reads,
+            requested,
+            |row| row.occurred.start <= as_of && row.learned_at <= as_of,
+            |_, _| Ok(false),
+            |_, rows| Ok::<_, Error>(rows),
+        )
     }
 
     /// Keeps the scoped rows, their receipt and a dependent projection in the
@@ -399,6 +408,22 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
+        opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_kept_projected_opaque_in_txn(txn, reads, requested, |_| true, opaque, project)
+    }
+
+    /// [`Self::read_projected_opaque_in_txn`], where `keep` is the caller's own
+    /// selection: an admitted row it refuses answers as `None`, as a missing
+    /// one does, adds no suppression count, and is neither projected nor
+    /// charged to the reader's read exposure (L8-65).
+    fn read_kept_projected_opaque_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        keep: impl Fn(&ReadRow) -> bool,
         mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
@@ -433,9 +458,10 @@ impl ScopedRead<'_> {
                 )?,
             };
             suppressed += withheld;
-            value.push(row);
+            value.push(row.filter(&keep));
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        self.charge_served(value.iter().flatten().map(|row| row.id));
         Ok(ScopedReadResult {
             value: project(txn, value)?,
             receipt,
@@ -486,6 +512,7 @@ impl ScopedRead<'_> {
                 suppressed += withheld;
                 rows.push(row);
             }
+            self.charge_served(rows.iter().flatten().map(|row| row.id));
             project(&txn, frame_index * frame_size, rows, &mut state)?;
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);

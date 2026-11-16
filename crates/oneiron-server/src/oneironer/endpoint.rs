@@ -61,6 +61,10 @@ pub(crate) struct Returns {
     pub(crate) spans: bool,
     pub(crate) links: bool,
     pub(crate) mood: bool,
+    /// Relations between the answer's spans, from a relation head. A card
+    /// that does not name it declares none.
+    #[serde(default)]
+    pub(crate) relations: bool,
 }
 
 /// What a startup probe found.
