@@ -359,7 +359,12 @@ fn spend_on_the_seat_host(
         lease_owner: fence.lease_owner.clone(),
         attempt_count: fence.attempt_count,
         disposition: ByoaTerminalDisposition::Failed,
-        exhaust: ByoaExhaust::default(),
+        // The capture door refuses an empty exhaust, so the spent run leaves
+        // a line of stdout behind.
+        exhaust: ByoaExhaust {
+            stdout: b"the seat ran out of quota\n".to_vec().into(),
+            ..ByoaExhaust::default()
+        },
         reason: None,
         now: now + 1,
     };
