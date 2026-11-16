@@ -11,9 +11,7 @@
 //! `cargo test --locked -p oneiron --all-features --test fix_9839_withheld_full_view`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use oneiron::compaction::output::{
-    OutputDecayPolicy, OutputRef, OutputTier, OutputWorkingContext,
-};
+use oneiron::compaction::output::{OutputDecayPolicy, OutputRef, OutputTier, OutputWorkingContext};
 use oneiron::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
 
 /// A policy under which an entry recorded at turn 0 still shows Full at
@@ -49,9 +47,7 @@ fn withheld_full_view_renders_the_mark_instead_of_failing() {
             |got: OutputRef, _turn: u64| -> oneiron::Result<Option<Vec<u8>>> {
                 restore_calls += 1;
                 assert_eq!(got, source);
-                Ok(Some(
-                    CODE_RUN_OUTPUT_PREVIEW_WITHHELD.as_bytes().to_vec(),
-                ))
+                Ok(Some(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.as_bytes().to_vec()))
             },
             |got: OutputRef, _turn: u64| -> oneiron::Result<bool> {
                 assert_eq!(got, source);
@@ -62,10 +58,7 @@ fn withheld_full_view_renders_the_mark_instead_of_failing() {
     assert_eq!(views.len(), 1);
     assert_eq!(views[0].tier, OutputTier::Full);
     assert_eq!(views[0].source, source);
-    assert_eq!(
-        views[0].bytes,
-        CODE_RUN_OUTPUT_PREVIEW_WITHHELD.as_bytes()
-    );
+    assert_eq!(views[0].bytes, CODE_RUN_OUTPUT_PREVIEW_WITHHELD.as_bytes());
     assert_eq!(
         restore_calls, 0,
         "a withheld body is never read, as an overview's is not"
