@@ -7,11 +7,13 @@
 //! installed endpoint and nowhere else: the operation's path is appended
 //! under the endpoint's own path, each path argument fills its place as one
 //! percent-encoded segment (a Google Discovery `{+name}` place takes a value
-//! with `/` in it, each part between them one segment), and the URL that
-//! results is checked to keep the endpoint's origin and path. The JSON body is the `body` member's bytes as
-//! the frozen call encodes its arguments; that encoding is canonical (the
-//! view's decode re-encodes it byte for byte), so these are the bytes
-//! consent was given on, never a re-serialization of a changed value.
+//! with `/` in it, each part between them one segment, and only a value its
+//! stamped pattern matches whole), and the URL that results is checked to
+//! keep the endpoint's origin and path. The JSON body is the `body`
+//! member's bytes as the frozen call encodes its arguments; that encoding is
+//! canonical (the view's decode re-encodes it byte for byte), so these are
+//! the bytes consent was given on, never a re-serialization of a changed
+//! value.
 //!
 //! The credential goes in the `Authorization` header the door builds, as an
 //! MCP send's does, and the operation's idempotency header carries the
@@ -298,6 +300,7 @@ pub(super) fn http_call_request(
             None => return Err(format!("path argument {name} is missing")),
         };
         let parts: Vec<&str> = if reserved {
+            operation.check_reserved_value(name, &text)?;
             text.split('/').collect()
         } else {
             vec![text.as_str()]
@@ -398,6 +401,7 @@ mod tests {
             query: query.iter().map(|name| (*name).to_owned()).collect(),
             idempotency_header: None,
             json_body,
+            reserved_patterns: BTreeMap::new(),
         }
     }
 
@@ -429,7 +433,9 @@ mod tests {
 
     #[test]
     fn a_reserved_expansion_takes_slashes_and_keeps_each_part_one_segment() {
-        let get = operation(HttpMethod::Get, "/v1/{+name}:read", &[], false);
+        let mut get = operation(HttpMethod::Get, "/v1/{+name}:read", &[], false);
+        get.reserved_patterns
+            .insert("name".to_owned(), "spaces/.*".to_owned());
         let request = http_call_request(
             "https://chat.example.com/",
             &get,
@@ -451,6 +457,38 @@ mod tests {
                 http_call_request("https://chat.example.com/", &get, arguments.as_bytes()).is_err(),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn a_reserved_value_its_stamped_pattern_does_not_match_whole_is_refused() {
+        let mut delete = operation(HttpMethod::Delete, "/notes/v1/{+name}", &[], false);
+        let call = |operation: &HttpOperation, name: &str| {
+            let arguments = json!({ "name": name }).to_string();
+            http_call_request(
+                "https://notes.example.com/",
+                operation,
+                arguments.as_bytes(),
+            )
+        };
+        assert!(
+            call(&delete, "notes/n1/comments/c1").is_err(),
+            "no stamped pattern takes nothing"
+        );
+        // Unanchored as written: it is still matched against the whole value.
+        delete
+            .reserved_patterns
+            .insert("name".to_owned(), "notes/[^/]+/comments/[^/]+".to_owned());
+        assert_eq!(
+            call(&delete, "notes/n1/comments/c1").unwrap().url.as_str(),
+            "https://notes.example.com/notes/v1/notes/n1/comments/c1"
+        );
+        for name in [
+            "notes/n1",
+            "notes/n1/comments/c1/replies/r1",
+            "x/notes/n1/comments/c1",
+        ] {
+            assert!(call(&delete, name).is_err(), "{name}");
         }
     }
 

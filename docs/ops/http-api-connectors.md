@@ -82,6 +82,13 @@ document = "https://www.googleapis.com/discovery/v1/apis/docs/v1/rest"
 - A `{+name}` place in a path takes a value with `/` in it; each part between
   them is one percent-encoded segment, and an empty, `.` or `..` part is
   refused before anything is sent.
+- Such a value could name any resource under the API (the API routes by the
+  path; it does not check the name against the method). So the parameter's
+  own `pattern` (`^spaces/[^/]+/messages/[^/]+$`) is kept in the tool's
+  stamped `http.reserved_patterns`, the stamp covers it, and a call whose
+  value it does not match whole is refused before anything is sent. A
+  method whose `{+name}` parameter has no pattern, or one this host cannot
+  compile, is no tool; the register reply lists it under `skipped`.
 - The output is the `response` schema. Google's schemas refer to each other,
   often in cycles, and nest deeper than one signature can show: a reference is
   inlined as deep as the tool's schema still fits the resolver's 64 KiB bound

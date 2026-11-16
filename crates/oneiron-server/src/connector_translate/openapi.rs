@@ -264,6 +264,7 @@ impl Operation<'_> {
                 query,
                 idempotency_header,
                 json_body,
+                reserved_patterns: BTreeMap::new(),
             },
         })
     }

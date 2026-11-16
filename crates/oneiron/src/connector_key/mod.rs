@@ -185,7 +185,7 @@ pub(crate) use slate_setting::{
     effect_slate_always_allows, governing_slate_in_txn,
 };
 
-pub use http_operation::{HttpMethod, HttpOperation};
+pub use http_operation::{HttpMethod, HttpOperation, compile_reserved_pattern};
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };

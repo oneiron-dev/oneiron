@@ -15,7 +15,10 @@
 //! path is the `servicePath` and the method's `path` under it, and a
 //! `rootUrl` or `baseUrl` on another origin refuses the document. A `{+name}`
 //! place in a path takes a value with `/` in it, each part between them one
-//! segment (connector_call_host/http_api.rs).
+//! segment (connector_call_host/http_api.rs), and only a value the
+//! parameter's own `pattern` matches whole: the stamped operation carries
+//! that pattern, and a method whose place has no pattern that compiles is no
+//! tool, since its value could name any resource under the API.
 //!
 //! Google's schemas refer to each other by id, often in cycles (a table
 //! cell holds structural elements, which hold tables), and nest far deeper
@@ -31,9 +34,9 @@
 //! body. Any other method is a tool for its JSON form; its media forms (the
 //! upload paths, `alt=media`) are never sent.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron::connector_key::{HttpMethod, HttpOperation};
+use oneiron::connector_key::{HttpMethod, HttpOperation, compile_reserved_pattern};
 use reqwest::Url;
 use serde_json::{Map, Number, Value};
 
@@ -280,6 +283,29 @@ impl Service<'_> {
             }
         }
         check_path_template(&path, &path_names, true).map_err(fail)?;
+        let mut reserved_patterns = BTreeMap::new();
+        for argument in reserved_places(&path) {
+            let pattern = parameters
+                .get(argument)
+                .and_then(|parameter| parameter.get("pattern"))
+                .and_then(Value::as_str);
+            let checked = match pattern {
+                None => Err("it has no pattern".to_owned()),
+                Some(pattern) => compile_reserved_pattern(pattern).map(|_| pattern),
+            };
+            match checked {
+                Ok(pattern) => {
+                    reserved_patterns.insert(argument.to_owned(), pattern.to_owned());
+                }
+                Err(why) => {
+                    skipped.push(format!(
+                        "{name}: its path place {{+{argument}}} takes a value with `/` in it, and \
+                         {why}, so a call could name any resource under the API"
+                    ));
+                    return Ok(None);
+                }
+            }
+        }
 
         let request = method.get("request");
         let input_schema = match request {
@@ -335,6 +361,7 @@ impl Service<'_> {
                 query,
                 idempotency_header: None,
                 json_body: request.is_some(),
+                reserved_patterns,
             },
         }))
     }
@@ -384,6 +411,14 @@ impl Service<'_> {
         }
         Ok(fitted)
     }
+}
+
+/// The argument names of a checked path's `{+name}` places, in order.
+fn reserved_places(path: &str) -> impl Iterator<Item = &str> {
+    path.split('{')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('}'))
+        .filter_map(|(place, _)| place.strip_prefix('+'))
 }
 
 /// The method's parameter names: those `parameterOrder` lists first, in its
@@ -751,11 +786,48 @@ mod tests {
         let delete = tool(&translation, "notes.comments.delete");
         assert!(!delete.read_only && delete.destructive && delete.idempotent);
         assert_eq!(delete.http.path, "/notes/v1/{+name}");
-        // Screening reads no `pattern` in an input; the API checks it.
+        // Screening reads no `pattern` in an input. The API does not check
+        // a reserved value against the method (it routes by the path), so
+        // the stamped operation carries the place's pattern and the call
+        // host checks it.
         assert_eq!(
             delete.input_schema["properties"]["name"],
             json!({"type": "string"})
         );
+        assert_eq!(
+            delete.http.reserved_patterns,
+            BTreeMap::from([("name".to_owned(), "^notes/[^/]+/comments/[^/]+$".to_owned())])
+        );
+        assert!(get.http.reserved_patterns.is_empty());
+    }
+
+    #[test]
+    fn a_reserved_place_without_a_pattern_that_compiles_is_no_tool() {
+        for pattern in [None, Some("^notes/(")] {
+            let mut document = notes_document();
+            let name = &mut document["resources"]["notes"]["resources"]["comments"]["methods"]["delete"]
+                ["parameters"]["name"];
+            match pattern {
+                None => {
+                    name.as_object_mut().unwrap().remove("pattern");
+                }
+                Some(pattern) => name["pattern"] = json!(pattern),
+            }
+            let translation = translate(&document, &endpoint()).unwrap();
+            assert!(
+                translation
+                    .tools
+                    .iter()
+                    .all(|tool| tool.name != "notes.comments.delete"),
+                "{pattern:?}"
+            );
+            let skipped = translation
+                .skipped
+                .iter()
+                .find(|why| why.starts_with("notes.comments.delete: "))
+                .unwrap_or_else(|| panic!("no skip line for {pattern:?}"));
+            assert!(skipped.contains("{+name}"), "{skipped}");
+        }
     }
 
     #[test]
