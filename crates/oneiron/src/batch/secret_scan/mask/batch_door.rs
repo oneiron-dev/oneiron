@@ -1,12 +1,13 @@
 //! The batch door with mask on write (OF-560): the door's scan, a plan on a
 //! copy of the batch's ops, the custody records it mints, and the minted
-//! pass that writes each handle into the ops themselves.
+//! pass that writes each handle into the ops themselves. A hit no span
+//! places is sealed whole (`seal_whole`; ARCH-0038 #secret-scan-target).
 
 use heed::RwTxn;
 
 use super::super::{SecretScanMode, scan_batch_ops, secret_scan_mode_in_txn};
-use super::changed_scan;
 use super::known_note;
+use super::seal_whole;
 use super::text_log::TextLog;
 use super::wipe::PlanOps;
 use super::{MaskedFiles, Masker, marked_files, op_record, put_file_marks_in_txn, scan_screened};
@@ -21,7 +22,9 @@ use crate::write_envelope::ClaimCandidate;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. `at` stamps each custody record the batch mints. It also returns
+/// before. A hit no span places in a batch that masks is sealed whole; one
+/// no seal can take refuses the batch. `at` stamps each custody record the
+/// batch mints. It also returns
 /// each MACHINE claim candidate the minted pass rewrote with its pre-mask
 /// body, in op order, so the candidate apply can renew its proof over what
 /// is stored (FIX 11356); a replayed batch reports none.
@@ -86,23 +89,31 @@ pub(in crate::batch) fn mask_batch_ops(
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
-    if plan.found.is_empty() && plan.file_ids.is_empty() && !plan.placed_known {
-        // Nothing to place, but the original refusal was read before the
-        // plan screened the owner's kept values: a kept-screened re-scan
-        // decides, so a kept-as-text restoration lands instead of rolling
-        // back on its own value (REVIEW-4461 P1).
-        if refusal.is_some() {
-            scan_screened(store, wtxn, &plan.kept, ops)?;
-        }
+    let placed = !plan.found.is_empty() || !plan.file_ids.is_empty() || plan.placed_known;
+    if !placed && refusal.is_none() {
         return Ok((MaskedFiles::default(), Vec::new()));
     }
-    // A hit no span places is still in the copy, and refuses as before. A
-    // copy of a batch the first scan read clean, with no value kept, is read
-    // again only where the plan changed it (FIX 12212).
-    if refusal.is_none() && plan.kept.is_empty() {
-        changed_scan::scan_changed_ops(store, &*wtxn, &planned, ops)?;
-    } else {
-        scan_screened(store, wtxn, &plan.kept, &planned)?;
+    // The door reads the copy again. A hit no span places is still in it:
+    // the smallest value that reads as it alone is sealed whole, a stand-in
+    // in its place, and an op no seal clears refuses as before. A copy of a
+    // batch the first scan read clean, with no value kept, is read again
+    // only where the plan changed it (FIX 12212). With nothing placed, the
+    // original refusal was read before the plan screened the owner's kept
+    // values: this kept-screened read decides, so a kept-as-text
+    // restoration lands instead of rolling back on its own value
+    // (REVIEW-4461 P1).
+    let only_changed = refusal.is_none() && plan.kept.is_empty();
+    let seals = seal_whole::plan_seals(
+        store,
+        wtxn,
+        &plan.kept,
+        &mut planned,
+        ops,
+        only_changed,
+        masks,
+    )?;
+    if !placed && seals.is_empty() {
+        return Ok((MaskedFiles::default(), Vec::new()));
     }
     drop(planned);
     let kept = std::mem::take(&mut plan.kept);
@@ -122,13 +133,16 @@ pub(in crate::batch) fn mask_batch_ops(
     // A known value in a file names that file in the found-key notice (FIX 2780).
     known_note::note_known_file_keys_in_txn(store, wtxn, &files, at)?;
     put_file_marks_in_txn(store, wtxn, files, &minted, at)?;
+    // A seal that rewrites a claim reads each MACHINE candidate's pre-mask
+    // body before the minted pass rewrites any (FIX 11356).
+    let claims_before = seal_whole::claims_before(ops, &seals);
     // The minted pass places the same values the plan did (FIX 8644), in
     // the same texts: it takes their spans from the plan's log.
     let mut minted_pass = Masker {
         handles: minted.map(|(handle, _)| handle),
         minted: true,
         kept,
-        known,
+        known: known.clone(),
         known_only,
         shapes_read,
         text_log,
@@ -136,5 +150,11 @@ pub(in crate::batch) fn mask_batch_ops(
     };
     minted_pass.mask_ops(ops)?;
     let masked_claims = std::mem::take(&mut minted_pass.masked_claims);
+    // Each seal's value, as the minted pass left it, goes to custody whole.
+    seal_whole::mint_seals(&write, wtxn, ops, seals, known.as_deref(), at)?;
+    let masked_claims = match claims_before {
+        Some(before) => seal_whole::claims_rewritten(ops, before),
+        None => masked_claims,
+    };
     Ok((masked, masked_claims))
 }
