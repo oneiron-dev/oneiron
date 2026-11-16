@@ -161,7 +161,9 @@ fn a_class_only_grant_stands_on_its_mint() {
     let minted = minted_grant(scope, BTreeSet::from(["grant_standing_class".to_owned()]));
     let now = minted.vault.now_recorded_at();
     assert_eq!(
-        standing_grant_act(&minted.vault, minted.grant, now).expect("standing read"),
+        standing_grant_act(&minted.vault, minted.grant, now)
+            .expect("standing read")
+            .map(hex),
         Some(minted.act),
         "a class-only Grant stands on the owner's mint",
     );
