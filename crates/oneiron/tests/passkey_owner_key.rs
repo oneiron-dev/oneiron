@@ -61,8 +61,9 @@ use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
     DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerKeyEnrollment, OwnerPasskeyEnrollment, ROLE_AGENT,
-    ROLE_OWNER, machine_profile_proof_transcript, webauthn_assertion_envelope, webauthn_challenge,
+    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
+    ROLE_AGENT, ROLE_OWNER, machine_profile_proof_transcript, webauthn_assertion_envelope,
+    webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -73,6 +74,7 @@ use oneiron::test_doors::passkey_vouch_limits::{
     revoke_owner_key_signed_by,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron_authority::authority::machine_answer_revision;
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use sha2::{Digest as _, Sha256};
@@ -806,6 +808,134 @@ fn once_confirmed_the_passkey_vouched_key_answers_a_machine_as_the_owners() {
             MachineRole::Owned(MachineOwnership::Yours)
         ),
         "the confirmed key's machine answer counts"
+    );
+}
+
+/// The install key of the hosted node [`node_answer_proved_by`] registers.
+fn hosted_node_install() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[0x4E; 32])
+}
+
+/// The owner's device key registers a fresh hosted node, and the node
+/// carries its own answer `Owned(Yours)`, signed by its install key, with
+/// one proof cosign by `prover` (main's carried-answer proof, row
+/// CARRIER-OWNER-PROOF); true when the answer counted.
+fn node_answer_proved_by(hosted: &HostedVault, prover: &ed25519_dalek::SigningKey) -> bool {
+    let machine = oneiron::EntityId::now();
+    let node = hosted_node_install();
+    assert!(
+        answers_machine(
+            hosted,
+            &owner_device(),
+            machine,
+            &node,
+            MachineRole::HostedNode,
+            1
+        ),
+        "guard: the owner's device key registers the hosted node"
+    );
+    let heads = main_log_heads(&hosted.vault).expect("the main-log heads");
+    let [registration] = heads.as_slice() else {
+        panic!("guard: the registration is the one head: {heads:?}");
+    };
+    let vault_id = hosted
+        .vault
+        .authority_vault_id()
+        .expect("the vault id read")
+        .expect("a rooted vault");
+    let machine_key = node.verifying_key().to_bytes();
+    let encryption_key = || MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = node
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key,
+            MachineDeviceClass::Computer,
+            &encryption_key(),
+        ))
+        .to_bytes();
+    let owner = hosted
+        .proof
+        .actor_for_read(&hosted.vault)
+        .expect("the vault's owner");
+    let act = OwnerAct::by_owner(
+        owner,
+        OwnerActKind::MachineAnswer,
+        machine,
+        ActSurface::ThisInstall,
+        machine_answer_revision([*registration]),
+    );
+    let op = AuthorityOp::MachineProfile(MachineProfile {
+        machine,
+        owner,
+        machine_key,
+        device_class: MachineDeviceClass::Computer,
+        encryption_key: encryption_key(),
+        role: MachineRole::Owned(MachineOwnership::Yours),
+        revision: 2,
+        machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: Some(machine),
+        act: Some(act),
+    });
+    append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op,
+            signer: ed_key(&node),
+            cosigners: vec![ed_key(prover)],
+        }],
+        |key, transcript| {
+            if *key == ed_key(&node) {
+                node.sign(transcript).to_bytes().to_vec()
+            } else {
+                signs_as(key, transcript)
+            }
+        },
+    )
+    .unwrap_or_default()
+    .first()
+    .copied()
+    .unwrap_or(false)
+}
+
+/// Main's carried-answer proof meets the passkey limits (Engine ANSWER
+/// WEBPASSKEY-LIMITED-KEY-OWNER-PROOF = A): a key only the passkey vouched
+/// for gives no owner proof, so its cosign on a hosted node's own answer
+/// `Owned(Yours)` is no proof and the answer does not count. Otherwise the
+/// key would answer a machine as the owner's through a carrier, the act
+/// WEBPASSKEY-MACHINE-ANSWER = A bars it from signing.
+#[test]
+fn a_key_only_a_passkey_vouched_for_proves_no_carried_machine_answer() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        !node_answer_proved_by(&hosted, &host_held()),
+        "the limited key's cosign proves no carried answer"
+    );
+}
+
+/// Once a device key confirms it, the passkey-vouched key's cosign proves a
+/// carried answer as any owner-held key's does.
+#[test]
+fn once_confirmed_the_passkey_vouched_keys_cosign_proves_a_carried_machine_answer() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert!(
+        node_answer_proved_by(&hosted, &host_held()),
+        "the confirmed key's cosign proves the carried answer"
     );
 }
 
