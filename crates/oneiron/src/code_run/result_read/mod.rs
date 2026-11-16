@@ -25,6 +25,8 @@ mod query;
 mod redacted;
 mod run_body;
 mod search;
+#[cfg(oneiron_test_support)]
+mod search_test_door;
 mod shape;
 mod slice;
 mod unplaced;
@@ -33,6 +35,8 @@ pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
 use self::redacted::RedactedBody;
 use self::run_body::{LiveCutoff, RunBody};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::search_test_door::search_text_for_test;
 pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::batch::secret_scan::span_placed_for;
@@ -118,11 +122,14 @@ pub(crate) trait ResultBody {
     }
 }
 
-/// What one read may spend: the bytes of its reply, and the `[limits]`
-/// rows of the vault its body is in.
+/// What one read may spend: the bytes of its reply, the `[limits]` rows of
+/// the vault its body is in, and that vault owner's search context bound.
 struct ReadBounds<'w> {
     reply_bytes: usize,
     watch: &'w LimitWatch,
+    /// Bytes of context a search shows at most on each side of a match
+    /// (`code_run.result_search.max_context`).
+    search_max_context: usize,
 }
 
 impl ReadBounds<'_> {
