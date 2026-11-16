@@ -184,8 +184,7 @@ fn byname_shadow_ahead_of_genuine_responder_still_verifies() {
     let leaf_der = leaf_under(&ca, "ocsp-try-each-leaf");
     let shadow = test_ca("ocsp-try-each-ca");
     assert_eq!(
-        shadow.cert.tbs_certificate.subject,
-        ca.cert.tbs_certificate.subject,
+        shadow.cert.tbs_certificate.subject, ca.cert.tbs_certificate.subject,
         "the shadow carries the genuine responder's DN"
     );
     assert_ne!(
