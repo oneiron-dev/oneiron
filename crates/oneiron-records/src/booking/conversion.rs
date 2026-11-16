@@ -11,6 +11,7 @@ pub use crate::booking::conversion::ux::ReminderStep;
 pub use crate::booking::conversion::ux::ZonedBookingTime;
 use oneiron_verb_wire::booking::constraint::BookingError;
 use oneiron_verb_wire::booking::constraint::EventTypeKey;
+use oneiron_verb_wire::booking::constraint::FullDay;
 use oneiron_verb_wire::booking::constraint::RankedSlot;
 use serde::Deserialize;
 use serde::Serialize;
@@ -86,18 +87,23 @@ pub fn safe_asset_path(path: &str) -> bool {
         && !path.starts_with("/public/booking/")
 }
 
-/// A five-choice first view; the full Slots mask remains authoritative and
-/// accessible for see-more. The recommended slot is one of these five.
+/// The first view: the mask's first `max_visible` ranked slots, as the page's
+/// resolved conversion policy sets them (`max_visible_slots`, shipped 5). The
+/// full Slots mask remains authoritative and accessible for see-more. The
+/// recommended slot is one of the visible ones. The first view also shows
+/// every day a meeting cap filled as full, so a capped day reads as full
+/// rather than as a gap.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BookingSlotPreview {
     pub visible: Vec<RankedSlot>,
     pub recommended_start_utc: Option<u64>,
     pub remaining_count: usize,
+    pub full_days: Vec<FullDay>,
 }
 
-pub fn booking_slot_preview(mask: &SlotMask) -> BookingSlotPreview {
-    let visible: Vec<_> = mask.slots.iter().take(5).cloned().collect();
+pub fn booking_slot_preview(mask: &SlotMask, max_visible: usize) -> BookingSlotPreview {
+    let visible: Vec<_> = mask.slots.iter().take(max_visible).cloned().collect();
     let recommended_start_utc = visible
         .iter()
         .max_by(|a, b| {
@@ -109,7 +115,8 @@ pub fn booking_slot_preview(mask: &SlotMask) -> BookingSlotPreview {
     BookingSlotPreview {
         visible,
         recommended_start_utc,
-        remaining_count: mask.slots.len().saturating_sub(5),
+        remaining_count: mask.slots.len().saturating_sub(max_visible),
+        full_days: mask.full_days.clone(),
     }
 }
 
