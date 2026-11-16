@@ -81,34 +81,6 @@ pub(crate) async fn vault_consent_graduation_policy(
     .await
 }
 
-pub(crate) async fn vault_consent_graduation_policy_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: GraduationPolicySetRequest,
-) -> Listed<GraduationChanged> {
-    as_owner(
-        server,
-        auth,
-        "vault.consent.graduation.policy.set",
-        move |vault, owner| api::set_policy(vault, owner, input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_consent_graduation_policy_clear(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: GraduationPolicyClearRequest,
-) -> Listed<GraduationChanged> {
-    as_owner(
-        server,
-        auth,
-        "vault.consent.graduation.policy.clear",
-        move |vault, owner| api::clear_policy(vault, owner, input),
-    )
-    .await
-}
-
 pub(crate) async fn vault_consent_graduation_stats(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
