@@ -41,6 +41,24 @@ impl Memory<'_> {
         self.owner_authorship.as_ref()
     }
 
+    /// The owner proof this install's owner key mints for one ask word, on a
+    /// surface that answers for itself as this install's owner device
+    /// ([`Self::answering_as_owner_device`]); `None` on every other surface.
+    /// The one caller of [`crate::Vault::authenticate_owner_device`].
+    pub(crate) fn owner_device_word_proof(
+        &self,
+    ) -> crate::error::Result<Option<crate::consent::AuthenticatedOwner>> {
+        if !self.answers_as_owner_device
+            || self.host_origin.is_some()
+            || self.machine_signer.is_some()
+        {
+            return Ok(None);
+        }
+        self.vault
+            .authenticate_owner_device(self.actor, crate::store::GateDecisionId::now())
+            .map(Some)
+    }
+
     /// Where the owner's request reached this install
     /// ([`Self::with_owner_surface`]), for the audit record of his act:
     /// this install's own on a surface that writes for someone else, as
