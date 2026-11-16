@@ -104,7 +104,7 @@ impl Vault {
         let Some(policy) = resolution.pack_install_policy() else {
             return Ok(Some("pack install policy unavailable".into()));
         };
-        let rules = policy.effective(holder);
+        let rules = ScreenRules::new(policy.effective(holder), self, txn)?;
         if rules
             .removed_hashes
             .iter()
@@ -388,22 +388,51 @@ impl Vault {
 
     /// The pack install rules in force for `holder`, `None` when the policy
     /// manifest holds none.
-    fn connector_screen_rules(&self, holder: &str) -> Result<Option<EffectivePackInstallPolicy>> {
+    fn connector_screen_rules(&self, holder: &str) -> Result<Option<ScreenRules>> {
         let txn = self.store.env.read_txn()?;
         let resolution = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-        Ok(resolution
-            .pack_install_policy()
-            .map(|policy| policy.effective(holder)))
+        let Some(policy) = resolution.pack_install_policy() else {
+            return Ok(None);
+        };
+        Ok(Some(ScreenRules::new(policy.effective(holder), self, &txn)?))
     }
 }
 
 const POLICY_UNAVAILABLE: &str = "pack install policy unavailable";
 
+/// What each screened text is read against: the install policy in force for
+/// the holder, and the owner's bound on one text's size (FIX
+/// SCREENING-PER-TOOL-SKIP, PR D). It reads as the policy it holds.
+struct ScreenRules {
+    policy: EffectivePackInstallPolicy,
+    /// `pack_install.screen.text_max_bytes`: the largest screened text, in
+    /// bytes.
+    text_max_bytes: usize,
+}
+impl ScreenRules {
+    fn new(
+        policy: EffectivePackInstallPolicy,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Self> {
+        Ok(Self {
+            policy,
+            text_max_bytes: super::setting_keys::text_max_bytes_in_txn(vault, txn)?,
+        })
+    }
+}
+impl std::ops::Deref for ScreenRules {
+    type Target = EffectivePackInstallPolicy;
+    fn deref(&self) -> &EffectivePackInstallPolicy {
+        &self.policy
+    }
+}
+
 /// The first rule one listed tool trips, on its name, its description and
 /// its resolved input schema; `None` when it passes.
 fn screen_listed_tool(
     tool: &PackObservedTool,
-    rules: &EffectivePackInstallPolicy,
+    rules: &ScreenRules,
 ) -> Option<String> {
     let resolved = match ResolvedToolSchema::parse(&tool.input_schema) {
         Ok(schema) => schema,
@@ -420,7 +449,7 @@ fn screen_listed_tool(
 /// [`screen_listed_tool`] stops at the first of.
 fn listed_tool_rules(
     tool: &PackObservedTool,
-    rules: &EffectivePackInstallPolicy,
+    rules: &ScreenRules,
 ) -> BTreeSet<ScreenRule> {
     let mut tripped: BTreeSet<ScreenRule> = decoded_rules(&tool.name, rules).into_iter().collect();
     tripped.extend(decoded_rules(&tool.description, rules));
@@ -444,7 +473,7 @@ fn listed_tool_rules(
 
 fn screen_resolved_schema(
     schema: &ResolvedToolSchema,
-    rules: &EffectivePackInstallPolicy,
+    rules: &ScreenRules,
 ) -> Option<String> {
     let fields = match schema.text() {
         Ok(fields) => fields,
@@ -462,12 +491,12 @@ fn screen_resolved_schema(
     }
     None
 }
-fn decoded_rule(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
+fn decoded_rule(text: &str, rules: &ScreenRules) -> Option<&'static str> {
     decoded_rules(text, rules).first().map(|rule| rule.reason())
 }
 /// Every rule `text` trips: the secret shape, then [`text_rules`], then the
 /// known-bad patterns, the order [`decoded_rule`] answers the first of.
-fn decoded_rules(text: &str, rules: &EffectivePackInstallPolicy) -> Vec<ScreenRule> {
+fn decoded_rules(text: &str, rules: &ScreenRules) -> Vec<ScreenRule> {
     let normalized = ComposingNormalizer::new_nfkc().normalize(text);
     let mut tripped = Vec::new();
     if crate::batch::secret_scan::scan_file_content("", normalized.as_bytes()).is_some() {
@@ -479,7 +508,7 @@ fn decoded_rules(text: &str, rules: &EffectivePackInstallPolicy) -> Vec<ScreenRu
     }
     tripped
 }
-fn known_bad(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
+fn known_bad(text: &str, rules: &ScreenRules) -> Option<&'static str> {
     let lower = ComposingNormalizer::new_nfkc()
         .normalize(text)
         .to_lowercase();
@@ -489,7 +518,7 @@ fn known_bad(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static 
         .any(|pattern| lower.contains(&pattern.to_lowercase()))
         .then_some("known-bad pattern")
 }
-fn screen_parameter(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
+fn screen_parameter(text: &str, rules: &ScreenRules) -> Option<&'static str> {
     let lower = ComposingNormalizer::new_nfkc()
         .normalize(text)
         .to_lowercase();
@@ -499,16 +528,14 @@ fn screen_parameter(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'
         .any(|pattern| lower.contains(&pattern.to_lowercase()))
         .then_some("parameter-description injection")
 }
-fn screen_text(text: &str, rules: &EffectivePackInstallPolicy) -> Option<&'static str> {
+fn screen_text(text: &str, rules: &ScreenRules) -> Option<&'static str> {
     text_rules(text, rules).first().map(|rule| rule.reason())
 }
-/// The size bound of one screened text, in bytes.
-const TEXT_MAX_BYTES: usize = 16384;
 /// Every size, deception and hidden-instruction rule `text` trips, in the
 /// order [`screen_text`] answers the first of.
-fn text_rules(text: &str, rules: &EffectivePackInstallPolicy) -> Vec<ScreenRule> {
+fn text_rules(text: &str, rules: &ScreenRules) -> Vec<ScreenRule> {
     let mut tripped = Vec::new();
-    if text.len() > TEXT_MAX_BYTES {
+    if text.len() > rules.text_max_bytes {
         tripped.push(ScreenRule::TextBound);
     }
     if text.chars().any(|c| matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}')) {

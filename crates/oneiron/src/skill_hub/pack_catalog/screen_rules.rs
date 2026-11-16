@@ -58,8 +58,9 @@ pub struct ScreenRuleRow {
 /// Every screen rule, its reason and whether the owner may lift it on one
 /// tool. The one table a later ruling changes: every instruction and
 /// deception rule may be lifted (SCREENING-SKIP-OVERRIDE-SCOPE = A); an
-/// unresolved schema cannot install, and the text bound is a size limit
-/// that becomes an owner Setting rather than a per-tool lift. The
+/// unresolved schema cannot install, and the text bound is a size limit the
+/// owner sets for every text (`pack_install.screen.text_max_bytes`) rather
+/// than lifts per tool. The
 /// secret-shaped string (SCREENING-SECRET-OVERRIDE = B) turns liftable with
 /// the readers that honour [`OwnerAcceptedScreen::public_secret_shape`]:
 /// the secret lift census and the redacted export read the key record's
