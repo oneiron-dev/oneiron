@@ -13,6 +13,7 @@ use super::runner::{
 use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
+use crate::campaign::one_click_unsubscribe::one_click_unsubscribe_uri_in_txn;
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -20,6 +21,7 @@ use crate::gate::{
     ApprovalTarget, CampaignLegFacts, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles,
 };
+use crate::memory::campaign_records::CampaignSendMode;
 use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
     PreparedAuthorization, PreparedEffect, execute_outbound_effect,
@@ -56,6 +58,10 @@ pub(super) enum EnrollmentOutboundLeg {
     /// K11: no filed body, or the blob's latest version runs ahead of the
     /// accepted row); nothing was sent.
     BodyUnpinned,
+    /// A bulk campaign's email step carries List-Unsubscribe, and this host
+    /// mints no one-click target for it (ARCH-0059 #opt-out: a bulk send
+    /// without List-Unsubscribe blocks); nothing was sent.
+    ListUnsubscribeUnminted,
 }
 
 /// One outward leg's chokepoint result (FIX 6424 part 2a).
@@ -82,13 +88,18 @@ pub(super) enum CampaignEnvelopeBytes {
     /// The step's filed body does not pin to the program row (FIX 11513
     /// K11); nothing is sent.
     BodyUnpinned,
+    /// A bulk campaign's email step has no List-Unsubscribe target, so it
+    /// blocks (ARCH-0059 #opt-out); nothing is sent.
+    ListUnsubscribeUnminted,
 }
 
 /// Derives the v1 envelope bytes the outward leg freezes: the five base
 /// keys, never the raw body (FIX 11513), plus the three email keys
 /// (`subject`, `composed_at`, `sender_ref`) iff the step's channel is
-/// email (FIX 11641). Both resolutions are read-only fns of `(vault,
-/// event, step)`, so the membership leg calls this too and
+/// email (FIX 11641), plus `send_mode` and `list_unsubscribe` (the member's
+/// one-click link) iff the email step's campaign sends bulk (ARCH-0059
+/// #opt-out). Every resolution is a read-only fn of `(vault, event,
+/// step)`, so the membership leg calls this too and
 /// `enrollment_intent_id` hashes the bytes the leg freezes (FIX 11670).
 ///
 /// # Errors
@@ -130,17 +141,38 @@ pub(super) fn campaign_envelope_bytes_in_txn(
     else {
         return Ok(CampaignEnvelopeBytes::BodyUnpinned);
     };
+    // ARCH-0059 #opt-out (Engine ruling L3-02-SEND-MODE-SCOPE = A): a bulk
+    // send carries List-Unsubscribe, which the channel adapter injects, and
+    // a bulk send without it blocks. The header is a mail header, so the
+    // send mode governs email steps only. A bulk email step freezes the
+    // member's one-click link; on a vault that mints none it blocks here,
+    // before anything is frozen. A 1:1 step's envelope is unchanged, byte
+    // for byte.
+    let list_unsubscribe = if step.channel == EMAIL_CHANNEL
+        && campaign_send_mode_in_txn(vault, txn, event.campaign_ref)? == CampaignSendMode::Bulk
+    {
+        let Some(uri) =
+            one_click_unsubscribe_uri_in_txn(vault, txn, event.campaign_ref, event.entity_ref)?
+        else {
+            return Ok(CampaignEnvelopeBytes::ListUnsubscribeUnminted);
+        };
+        Some(uri)
+    } else {
+        None
+    };
     // The wire payload is the v1 envelope the channel sender decodes with
     // `deny_unknown_fields`, never the raw body: the five base keys, none
     // of the chokepoint-sniffed ones (FIX 11513), plus the email keys iff
-    // the step's channel is email (FIX 11641). `composed_at` is the
-    // event's detection time, never now(): a redrive must freeze the same
-    // bytes, or the ledger would mint a fresh intent — a second send.
+    // the step's channel is email (FIX 11641), plus the two bulk keys iff
+    // the email step is bulk. `composed_at` is the event's detection time,
+    // never now(): a redrive must freeze the same bytes, or the ledger would
+    // mint a fresh intent — a second send. The one-click link is a pure
+    // read of the vault's key, so it freezes the same bytes too.
     let envelope = if step.channel == EMAIL_CHANNEL {
         let Some(subject) = outbound.subject.as_ref() else {
             return Err(invalid("a campaign email step's subject is absent"));
         };
-        serde_json::json!({
+        let mut envelope = serde_json::json!({
             "target": target.target,
             "content_ref": content_ref,
             "counterparty_ref": target.party_key,
@@ -149,7 +181,15 @@ pub(super) fn campaign_envelope_bytes_in_txn(
             "subject": subject,
             "composed_at": event.detected_at,
             "sender_ref": step.sender_ref.to_hex(),
-        })
+        });
+        if let (Some(uri), Some(keys)) = (list_unsubscribe, envelope.as_object_mut()) {
+            keys.insert(
+                "send_mode".to_owned(),
+                CampaignSendMode::Bulk.as_str().into(),
+            );
+            keys.insert("list_unsubscribe".to_owned(), uri.into());
+        }
+        envelope
     } else {
         serde_json::json!({
             "target": target.target,
@@ -162,6 +202,21 @@ pub(super) fn campaign_envelope_bytes_in_txn(
     let envelope_bytes = serde_json::to_vec(&envelope)
         .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
     Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))
+}
+
+/// The send mode of the campaign `campaign_ref`; a campaign this vault does
+/// not hold sends 1:1, as every campaign did before send modes.
+fn campaign_send_mode_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    campaign_ref: EntityId,
+) -> Result<CampaignSendMode> {
+    Ok(
+        crate::campaign::surface::load_registered_campaign_in_txn(&vault.store, txn, campaign_ref)?
+            .map_or(CampaignSendMode::OneToOne, |record| {
+                record.definition.send_mode
+            }),
+    )
 }
 
 /// Runs the outward leg for a claimed enrollment attempt.
@@ -252,6 +307,16 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
             );
             super::held::observe_nothing_owed(vault, &event, &step);
             return Ok(EnrollmentOutboundLeg::BodyUnpinned);
+        }
+        CampaignEnvelopeBytes::ListUnsubscribeUnminted => {
+            tracing::warn!(
+                event_ref = %event.event_ref.to_hex(),
+                program_ref = %step.program_ref.to_hex(),
+                step_ref = %step.step_ref.to_hex(),
+                "a bulk campaign's email send has no List-Unsubscribe target, so it blocks; nothing is sent (ARCH-0059 #opt-out)"
+            );
+            super::held::observe_nothing_owed(vault, &event, &step);
+            return Ok(EnrollmentOutboundLeg::ListUnsubscribeUnminted);
         }
     };
     // ARCH-0059 #copy-review: the send carries its step's copy arm, recorded
@@ -401,6 +466,13 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender + ?Sized>(
             | EnrollmentOutboundLeg::MembershipNotReady
             | EnrollmentOutboundLeg::UnresolvableTarget
             | EnrollmentOutboundLeg::BodyUnpinned => EnrollmentLegDrive::NothingOwed,
+            // ARCH-0059 #opt-out: the send blocks, and the attempt fails with
+            // the reason, rather than completing as if nothing were owed.
+            EnrollmentOutboundLeg::ListUnsubscribeUnminted => {
+                return Err(IntentLedgerError::InvalidInput(
+                    "a bulk campaign email carries List-Unsubscribe, and this host mints no one-click unsubscribe link for it; nothing is sent (ARCH-0059 #opt-out)",
+                ));
+            }
             EnrollmentOutboundLeg::NotHomeNode(designation) => {
                 EnrollmentLegDrive::NotHomeNode(designation)
             }
@@ -602,7 +674,9 @@ pub(super) fn campaign_approval_snapshot_in_txn(
     let envelope = match campaign_envelope_bytes_in_txn(vault, txn, &frozen_event, &step, outbound)?
     {
         CampaignEnvelopeBytes::Resolved(bytes) => bytes,
-        CampaignEnvelopeBytes::UnresolvableTarget | CampaignEnvelopeBytes::BodyUnpinned => {
+        CampaignEnvelopeBytes::UnresolvableTarget
+        | CampaignEnvelopeBytes::BodyUnpinned
+        | CampaignEnvelopeBytes::ListUnsubscribeUnminted => {
             return Ok(None);
         }
     };
