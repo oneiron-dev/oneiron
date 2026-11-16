@@ -75,11 +75,7 @@ impl HydeHost {
             }
             binding.options.validate()?;
         }
-        for work in state.work.values_mut() {
-            if work.receipt.status == HydeHostStatus::Pending {
-                work.receipt.status = HydeHostStatus::Cancelled;
-            }
-        }
+        // CF5 (red head): a new binding leaves unanswered work pending.
         state.generation = state.generation.wrapping_add(1);
         state.binding = input.binding;
         self.changed.notify_all();
@@ -106,7 +102,8 @@ impl HydeHost {
             .work
             .values()
             .filter(|work| {
-                work.credential == credential
+                // CF4 (red head): the pending list holds every credential's work.
+                (work.credential == credential || true)
                     && work.receipt.status == HydeHostStatus::Pending
                     && work.answer_at.is_none_or(|at| Instant::now() < at)
             })
