@@ -84,6 +84,7 @@ mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;
 mod pack_install_policy;
+mod policy_basis;
 pub mod policy_manifest_doors;
 mod policy_upgrade;
 mod policy_value_seeds;
@@ -208,6 +209,8 @@ pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
 pub(crate) use self::definition_ceiling::{
     agent_definition_ceiling_for_actor, definition_only_ceiling_for_actor,
 };
+#[allow(unused_imports, reason = "first callers: UC-03 stage 1")]
+pub(crate) use self::policy_basis::policy_basis_in_txn;
 // An off-record room's claim decision, captured for the room (FIX 9967).
 pub(crate) use self::doors::capture_claim_policy_for_write;
 #[cfg(feature = "sync")]

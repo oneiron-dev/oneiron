@@ -35,6 +35,96 @@ impl GateOutcome {
     }
 }
 
+/// The outcome a Gate receipt records: what happened to the thing the row is
+/// about. A closed set of 12 words. Its stored form is the snake_case token, so
+/// a row written with one of the 11 words before `Noted` holds the same bytes
+/// as the plain string it held before this type.
+///
+/// [`GateOutcome`] stays the verdict of one gate evaluation: an evaluation can
+/// never return [`Self::Approved`], and the metrics arrays index by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateReceiptOutcome {
+    /// The engine's own rule let it go ahead.
+    Allow,
+    /// It is held until someone with the authority answers.
+    Pending,
+    /// The engine's own rule refused it.
+    Deny,
+    /// Someone with the authority said yes to it as it stood.
+    Approved,
+    /// Someone with the authority said yes to their own edited version.
+    ApprovedAmended,
+    /// Someone with the authority said no.
+    Rejected,
+    /// The ask aged out with no answer.
+    LetGo,
+    /// A newer ask or write replaced it.
+    Superseded,
+    /// Its opener withdrew it.
+    Retracted,
+    /// What it was about changed, so the ask no longer applies.
+    Invalidated,
+    /// A standing permission was ended.
+    Revoked,
+    /// A fact recorded for the audit trail. The row decides nothing.
+    Noted,
+}
+
+impl GateReceiptOutcome {
+    /// Every outcome, in declaration order.
+    pub const ALL: [Self; 12] = [
+        Self::Allow,
+        Self::Pending,
+        Self::Deny,
+        Self::Approved,
+        Self::ApprovedAmended,
+        Self::Rejected,
+        Self::LetGo,
+        Self::Superseded,
+        Self::Retracted,
+        Self::Invalidated,
+        Self::Revoked,
+        Self::Noted,
+    ];
+
+    /// The stored token, the same string `serde` writes.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Pending => "pending",
+            Self::Deny => "deny",
+            Self::Approved => "approved",
+            Self::ApprovedAmended => "approved_amended",
+            Self::Rejected => "rejected",
+            Self::LetGo => "let_go",
+            Self::Superseded => "superseded",
+            Self::Retracted => "retracted",
+            Self::Invalidated => "invalidated",
+            Self::Revoked => "revoked",
+            Self::Noted => "noted",
+        }
+    }
+
+    /// The thing this row is about went ahead with authority: the rule let it
+    /// go, or the one who answered said yes.
+    #[must_use]
+    pub const fn admits(self) -> bool {
+        matches!(self, Self::Allow | Self::Approved | Self::ApprovedAmended)
+    }
+}
+
+impl From<GateOutcome> for GateReceiptOutcome {
+    fn from(outcome: GateOutcome) -> Self {
+        match outcome {
+            GateOutcome::Allow => Self::Allow,
+            GateOutcome::Pending => Self::Pending,
+            GateOutcome::Deny => Self::Deny,
+        }
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateMetricReasonClass {
