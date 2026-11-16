@@ -30,6 +30,8 @@ pub use oneiron_schedule_contract::{
 };
 
 pub use self::arm::ScheduleView;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::arm::put_due_entry_for_test;
 pub(crate) use self::arm::{
     ScheduleCaller, erase_schedule_actor_in_txn, erase_schedule_subject_in_txn,
     rebuild_schedule_due_in_txn,
