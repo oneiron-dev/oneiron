@@ -8,6 +8,10 @@
 //! other members would read the hits, so a search there is refused before
 //! the provider is asked, and nothing is fetched or kept.
 //!
+//! A stretch on record keeps its hits in base, as a search outside a session
+//! does; one that goes back off record while the provider answers keeps
+//! nothing of that search in base (review round 2 of #8356, P1-2).
+//!
 //! Red on origin/main: no search entry takes a session, so every hit lands
 //! in base, whatever session the search ran in, a room's included.
 //!
@@ -25,8 +29,8 @@ use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::conversation::{ConversationBody, ConversationKind};
 use oneiron::off_record::OffRecordBackendClass;
 use oneiron::test_doors::mail_search_off_record::{
-    CountingSearchWire, base_holds_found_message, connect_search_mailbox, search_in_session,
-    session_reads_found_message,
+    CountingSearchWire, OffRecordFlipAtWholeRead, base_holds_found_message, connect_search_mailbox,
+    search_in_session, session_reads_found_message,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
@@ -183,5 +187,72 @@ fn search_in_a_room_stretch_is_refused_and_keeps_nothing() -> TestResult {
         "a refused search in a room's stretch kept the message in base"
     );
     session.close()?;
+    Ok(())
+}
+
+#[test]
+fn a_search_in_a_stretch_on_record_keeps_its_hit_in_base() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = fresh_vault(directory.path())?;
+    let now = now_sec();
+    let mailbox = connect_search_mailbox(&vault, now)?;
+    let wire = CountingSearchWire::new(now);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-mail-search-on-record", OffRecordBackendClass::Local)?;
+    session.flip_on_record_as(&mailbox.owner)?;
+
+    let report = search_in_session(&vault, &mailbox, &session, &wire)?;
+    assert_eq!(
+        (report.found, report.landed),
+        (1, 1),
+        "a search in a stretch on record did not keep its hit: {report:?}"
+    );
+    assert!(
+        base_holds_found_message(&vault, &mailbox)?,
+        "a search in a stretch on record did not keep its hit in base"
+    );
+    session.close()?;
+    assert!(
+        base_holds_found_message(&vault, &mailbox)?,
+        "the hit a stretch on record kept left base at close"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_stretch_back_off_record_while_the_provider_answers_keeps_no_hit_in_base() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = fresh_vault(directory.path())?;
+    let now = now_sec();
+    let mailbox = connect_search_mailbox(&vault, now)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-mail-search-flip-back", OffRecordBackendClass::Local)?;
+    session.flip_on_record_as(&mailbox.owner)?;
+    let wire = OffRecordFlipAtWholeRead::new(now, &session);
+
+    let searched = search_in_session(&vault, &mailbox, &session, &wire);
+    assert_eq!(
+        wire.whole_reads(),
+        1,
+        "FIXTURE: the provider read the message whole after the search began: {searched:?}"
+    );
+    if let Ok(report) = &searched {
+        assert_eq!(
+            report.landed, 0,
+            "a hit landed after its stretch went back off record: {report:?}"
+        );
+    }
+    assert!(
+        !base_holds_found_message(&vault, &mailbox)?,
+        "a search whose stretch went back off record while the provider answered kept its hit \
+         in base"
+    );
+    session.close()?;
+    assert!(
+        !base_holds_found_message(&vault, &mailbox)?,
+        "the hit is in base after the session closed"
+    );
     Ok(())
 }
