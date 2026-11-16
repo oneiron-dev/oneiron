@@ -23,6 +23,7 @@ use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
     ModelTierRef, ResponseFormat, TierPrecedence,
 };
+use oneiron_base::unix_millis_now;
 use oneiron_browser::{
     BrowserError, FieldWrite, FieldWriteError, FieldWriter, FieldWritten, TextCheck,
     TextCheckReply, TextVerdict,
@@ -153,7 +154,7 @@ impl FieldWriter for RunFieldWriter {
         // (FIX 8903); with none set, the call answers in its own time.
         let answered = match ask.until_ms {
             Some(until) => {
-                let left = until.saturating_sub(now_ms());
+                let left = until.saturating_sub(unix_millis_now());
                 receiver
                     .recv_timeout(std::time::Duration::from_millis(left))
                     .map_err(|error| match error {
@@ -250,15 +251,6 @@ fn writer_request(
         provider_options: BTreeMap::new(),
         host_segments: None,
     })
-}
-
-/// Now, in Unix milliseconds: the clock a subgoal's `until_ms` reads.
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// A Fill's text check (CUA E6): one `ai.verdict` of the run's caller, a

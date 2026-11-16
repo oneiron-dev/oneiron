@@ -171,7 +171,7 @@ impl Vault {
             match self.land_folder_batch(owner, landing, &alone, read, whole) {
                 Ok(_) => report.landed += 1,
                 Err(error) => {
-                    report.fail(error);
+                    report.fail(&note.path, error);
                     left_out.insert(note.path.as_str());
                 }
             }
@@ -406,14 +406,17 @@ impl Vault {
                     });
                 }
             }
+            // The owner deleted the note, a purge included (its raw row is
+            // gone, its marker stays): it is left as he left it, never
+            // counted as a refusal that a Drive source would read again.
             let raw = self.get_raw_in(&txn, &id)?;
-            if raw.is_none() {
-                // Never landed: the secret scan refused it when it was new.
-                report.fail("the file's note never landed");
-                return Ok(());
-            }
             if crate::deletion::row_deletion_marked(&self.store, &txn, &id, raw.as_deref())? {
                 report.removed += 1;
+                return Ok(());
+            }
+            if raw.is_none() {
+                // Never landed: the secret scan refused it when it was new.
+                report.fail(&file.path, "the file's note never landed");
                 return Ok(());
             }
             let archived = self.archive_tombstone_in_txn(&txn, &id)?.is_some();
@@ -632,7 +635,7 @@ impl Vault {
                 FolderFileState::Proposed { fork: None }
             }
             Err(error) => {
-                report.fail(error);
+                report.fail(&file.path, error);
                 return Ok(());
             }
         };
@@ -811,7 +814,7 @@ impl Vault {
                 report.name_only += 1;
                 report.retracted += 1;
             }
-            Held::Refused(error) => report.fail(error),
+            Held::Refused(error) => report.fail(&file.path, error),
         }
         Ok(())
     }

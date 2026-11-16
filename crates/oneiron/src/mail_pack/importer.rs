@@ -137,7 +137,10 @@ pub(super) fn copies(headers: &MailHeaders, newer_than: Option<u64>) -> bool {
 pub(super) static MAIL_SOURCE_STEPS: SourceSteps<EntityId> = SourceSteps::new();
 
 /// The digest of a change-feed page's first changes
-/// ([`MailHistoryApplied::digest`]).
+/// ([`MailHistoryApplied::digest`]). A relabeled message counts with the id
+/// of its last label record: a later label change to a message the step
+/// already read makes the page read again differ, and the next step applies
+/// it from its start (REVIEW-7782, REVIEW-7785 round 2).
 fn changes_digest(changes: &[MailHistoryChange]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     let word = |hasher: &mut blake3::Hasher, text: &str| {
@@ -170,9 +173,13 @@ fn changes_digest(changes: &[MailHistoryChange]) -> [u8; 32] {
                 hasher.update(&[3]);
                 word(&mut hasher, label);
             }
-            MailHistoryChange::Relabeled { provider_id } => {
+            MailHistoryChange::Relabeled {
+                provider_id,
+                history_id,
+            } => {
                 hasher.update(&[4]);
                 word(&mut hasher, provider_id);
+                word(&mut hasher, history_id);
             }
         }
     }
@@ -381,7 +388,7 @@ impl Step<'_> {
                 trash_or_spam: false,
             } => self.relabel(provider_id, labels, relist),
             MailHistoryChange::LabelGone { label } => self.label_gone(label),
-            MailHistoryChange::Relabeled { provider_id } => {
+            MailHistoryChange::Relabeled { provider_id, .. } => {
                 // Where the message stands now, read as its headers.
                 match self.wire.headers(&self.wire_source, provider_id)? {
                     Some(headers) if !headers.trash_or_spam => {

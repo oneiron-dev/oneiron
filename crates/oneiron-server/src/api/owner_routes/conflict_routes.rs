@@ -402,11 +402,7 @@ async fn settle(
                 ));
             }
         };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            });
+        let now = oneiron_base::unix_millis_now();
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
         let outcome = vault
@@ -502,11 +498,7 @@ async fn revert(
     let locality = auth.locality();
     let reverted = blocking(move || -> OwnerResult<SettlementReverted> {
         let resolved = entity_id("resolved", &request.resolved)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            });
+        let now = oneiron_base::unix_millis_now();
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
         let receipt = vault
