@@ -49,11 +49,19 @@ impl Vault {
                 let key = job.chunk_mut()?.idempotency_key.clone();
                 match connector.find(&key)? {
                     Some(resource) => {
-                        job.chunk_mut()?.resource = Some(resource);
+                        job.chunk_mut()?.resource = Some(resource.clone());
                         job.state = GpuJobState::Running;
-                        self.with_write_txn_grouped(|txn| {
+                        if !self.with_write_txn_grouped(|txn| {
                             self.put_gpu_job_in_txn(txn, &mut job, now_ms)
-                        })?;
+                        })? {
+                            let stored = self.stored_after_lost_write(
+                                &job.id,
+                                &key,
+                                Some(resource),
+                                connector,
+                            )?;
+                            return Ok(GpuJobStepReport::of(&stored));
+                        }
                         Ok(GpuJobStepReport::of(&job))
                     }
                     None => self

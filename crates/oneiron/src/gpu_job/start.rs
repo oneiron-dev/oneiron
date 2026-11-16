@@ -10,7 +10,7 @@ use crate::{EntityId, Vault};
 
 use super::{
     GPU_JOBS, GpuChunk, GpuConnectorError, GpuEndReason, GpuJob, GpuJobConnector, GpuJobError,
-    GpuJobPermits, GpuJobQuote, GpuJobState, GpuOffer, GpuOfferPin, seconds,
+    GpuJobPermits, GpuJobQuote, GpuJobState, GpuOffer, GpuOfferPin, GpuResourceRef, seconds,
 };
 
 /// The job a start writes, or why its write refused.
@@ -164,16 +164,39 @@ impl Vault {
         };
         let chunk = job.chunk_mut()?;
         chunk.dispatched = true;
-        if let Some(resource) = created {
-            chunk.resource = Some(resource);
+        if let Some(resource) = &created {
+            chunk.resource = Some(resource.clone());
             job.state = GpuJobState::Running;
         }
         if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
-            // Another write came first (a cancel): the stored row stands, and
-            // the chunk's end finds a resource this create made by its key.
-            return self.load_gpu_job(&job.id);
+            return self.stored_after_lost_write(&job.id, &key, created, connector);
         }
         Ok(job)
+    }
+
+    /// The stored row, after this host's write over `id` lost to another one
+    /// (a cancel, an erase). A resource this host made or found under the
+    /// chunk's `key` is terminated unless that row still steps it: an end
+    /// that found nothing has settled the chunk already, and no later step
+    /// would end it.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuJobError::Connector`] when the provider did not answer the
+    /// termination.
+    pub(super) fn stored_after_lost_write(
+        &self,
+        id: &EntityId,
+        key: &str,
+        resource: Option<GpuResourceRef>,
+        connector: &dyn GpuJobConnector,
+    ) -> Result<GpuJob, GpuJobError> {
+        let stored = self.load_gpu_job(id)?;
+        if let Some(resource) = resource.filter(|resource| !steps_resource(&stored, key, resource))
+        {
+            connector.terminate(&resource)?;
+        }
+        Ok(stored)
     }
 
     /// Holds a job whose chunk never reached its provider.
@@ -189,6 +212,17 @@ impl Vault {
         }
         Ok(job)
     }
+}
+
+/// Whether `job`'s stored row still steps the resource made under `key`: its
+/// current chunk is that key's and names the resource, or is reserved, so the
+/// next step finds the resource by its key.
+fn steps_resource(job: &GpuJob, key: &str, resource: &GpuResourceRef) -> bool {
+    job.chunk()
+        .filter(|chunk| chunk.idempotency_key == key)
+        .is_some_and(|chunk| {
+            chunk.resource.as_ref() == Some(resource) || job.state == GpuJobState::Reserved
+        })
 }
 
 /// The job with `quote`'s chunk added: a new job under the maximum it shows,
