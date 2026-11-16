@@ -51,6 +51,7 @@ mod anchor_marks;
 mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
+mod carrier_reading;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -270,6 +271,7 @@ pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
 };
+pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,

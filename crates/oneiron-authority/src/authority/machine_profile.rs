@@ -138,7 +138,9 @@ pub enum MachineRole {
 }
 
 impl MachineRole {
-    fn wire(self) -> &'static str {
+    /// The name the wire spells it by.
+    #[must_use]
+    pub fn wire(self) -> &'static str {
         match self {
             Self::Owned(MachineOwnership::Yours) => "yours",
             Self::Owned(MachineOwnership::WorkSchool) => "work_school",

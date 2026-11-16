@@ -1,6 +1,6 @@
 {
   "name": "vault.roots.requests.list",
-  "description": "The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only.",
+  "description": "The owner reads the root requests naming this install that have no result yet, each with its change, its receipt and the machine that carried it as this install reads its signing key, but those he cancelled or a newer one superseded.",
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "Vec<crate::task_verb::sdk::PendingRootRequestView>",
   "call": "crate::task_verb::sdk::list_root_requests_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.list\")?)?",

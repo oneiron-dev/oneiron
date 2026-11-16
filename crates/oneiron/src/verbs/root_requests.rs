@@ -4,7 +4,7 @@
 //! [`Vault::cancel_root_request`] (#3261, FIX 4739); and its siblings (FIX
 //! 5598): `vault.roots.requests.create` over [`Vault::request_root_change`]
 //! (`POST /v1/owner/roots/requests`), `vault.roots.requests.list` over
-//! [`Vault::pending_root_requests`] (`GET /v1/owner/roots/requests`) and
+//! [`Vault::pending_root_request_listing`] (`GET /v1/owner/roots/requests`) and
 //! `vault.owner_work.get` over [`Vault::owner_work_receipt`]
 //! (`GET /v1/owner/owner-work/{request}`). A server hands each the owner's
 //! in-request proof, as `/v1/owner` takes it, and where his say-so reached
@@ -151,12 +151,25 @@ pub fn cancel_root_request_as(
 }
 
 /// One root request naming this install with no result yet, as
-/// `vault.roots.requests.list` answers it: its change and its receipt.
+/// `vault.roots.requests.list` answers it: its change, its receipt, and the
+/// machine that carried it as this install's own records read the key that
+/// signed it ([`crate::authority::CarrierReading`]). A surface names who
+/// asked from the three carrier fields, never from the request's own words
+/// (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
+    /// The machine whose install key signed the request.
+    pub carrier: EntityId,
+    /// The role this install's records give that key on the carrier:
+    /// `yours`, `work_school`, `rented`, `hosted_node`, `execution_node`,
+    /// `removed` or `unanswered`. `None` when its records give it none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_role: Option<String>,
+    /// Whether this install trusts that key as one of the owner's machines.
+    pub carrier_is_yours: bool,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change
@@ -196,8 +209,8 @@ pub fn create_root_request_as(
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this
 /// install with no result yet, ascending by entry, but those the owner
-/// cancelled or a newer request superseded, through
-/// [`Vault::pending_root_requests`]. Ids only.
+/// cancelled or a newer request superseded, each with the machine that
+/// carried it, through [`Vault::pending_root_request_listing`]. Ids only.
 ///
 /// # Errors
 ///
@@ -207,11 +220,14 @@ pub fn list_root_requests_as(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<PendingRootRequestView>> {
     Ok(vault
-        .pending_root_requests(owner)?
+        .pending_root_request_listing(owner)?
         .into_iter()
-        .map(|(_, change, receipt)| PendingRootRequestView {
-            change: change.into(),
-            receipt: receipt.into(),
+        .map(|listed| PendingRootRequestView {
+            change: listed.change.into(),
+            receipt: listed.receipt.into(),
+            carrier: listed.carrier.machine,
+            carrier_role: listed.carrier.role.map(|role| role.wire().to_owned()),
+            carrier_is_yours: listed.carrier.is_mine,
         })
         .collect())
 }

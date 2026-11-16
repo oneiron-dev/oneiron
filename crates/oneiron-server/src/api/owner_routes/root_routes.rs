@@ -40,7 +40,7 @@ use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::authority::{RecoveryRootId, RootChange};
+use oneiron::authority::{MachineRole, RecoveryRootId, RootChange};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -60,7 +60,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/roots",
-                summary: "The roots this install sees: the one it pins, one page of foreign roots (after, limit) with next, the root a pin awaits, and this install's machine.",
+                summary: "The roots this install sees: the one it pins, one page of foreign roots (after, limit) with next, the root it awaits (with the pending root request that asks for it, if one does), and this install's machine.",
                 row: None,
                 shape: None,
             },
@@ -80,7 +80,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/roots/requests",
-                summary: "The root requests naming this install with no result yet, each with its change and receipt. Ids only.",
+                summary: "The root requests naming this install with no result yet, each with its change, its receipt and the machine that carried it as this install's own records read the key that signed it. Ids only.",
                 row: None,
                 shape: None,
             },
@@ -197,11 +197,22 @@ struct CancelRootRequest {
 }
 
 /// One root request pending on this install, as its target's surface shows
-/// it.
+/// it. `carrier`, `carrier_role` and `carrier_is_yours` are this install's
+/// own reading of the key that signed the request
+/// ([`oneiron::authority::CarrierReading`]): a prompt names who asked from
+/// them, never from the request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER
+/// = A).
 #[derive(Debug, Serialize)]
 struct PendingRootRequest {
     change: RootChangeWire,
     receipt: OwnerWorkView,
+    /// The machine whose install key signed the request, as hex.
+    carrier: String,
+    /// The role this install's records give that key on the carrier, as
+    /// `/machines/answer` names roles; none when its records give it none.
+    carrier_role: Option<&'static str>,
+    /// Whether this install trusts that key as one of the owner's machines.
+    carrier_is_yours: bool,
 }
 
 /// `POST /v1/owner/roots/requests`: records the owner's root change for the
@@ -268,7 +279,8 @@ async fn cancel(
 
 /// `GET /v1/owner/roots/requests`: the root requests naming this install
 /// with no result yet, ascending by entry, but those the owner cancelled or
-/// a newer request superseded. Ids only.
+/// a newer request superseded, each with the machine that carried it. Ids
+/// only.
 async fn pending(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -277,11 +289,14 @@ async fn pending(
     let pending = blocking(move || -> OwnerResult<Vec<PendingRootRequest>> {
         Ok(server
             .vault()
-            .pending_root_requests(&owner)?
+            .pending_root_request_listing(&owner)?
             .into_iter()
-            .map(|(_, change, receipt)| PendingRootRequest {
-                change: change.into(),
-                receipt: receipt.into(),
+            .map(|listed| PendingRootRequest {
+                change: listed.change.into(),
+                receipt: listed.receipt.into(),
+                carrier: listed.carrier.machine.to_hex(),
+                carrier_role: listed.carrier.role.map(MachineRole::wire),
+                carrier_is_yours: listed.carrier.is_mine,
             })
             .collect())
     })
@@ -311,12 +326,20 @@ struct ForeignRootWire {
     machines: usize,
 }
 
-/// The root a pin awaits, and whether it has arrived: pinning it again then
-/// finishes.
+/// The root this install awaits, and whether it has arrived. With no
+/// `request` it is the owner's own wait: he pinned the root here before
+/// this install could finish, and pinning it again then finishes. With a
+/// `request` a pending root request asks for it, and `GET /roots/requests`
+/// names the machine that carried that request: unless the root is the one
+/// `pinned`, the owner never pinned it here, and `arrived` says only that
+/// the root's row is stored.
 #[derive(Debug, Serialize)]
 struct AwaitedRootWire {
     root: String,
     arrived: bool,
+    /// The pending root request that asks for this root, 64 hex: its
+    /// receipt's `request`. None for the owner's own wait.
+    request: Option<String>,
 }
 
 /// `GET /v1/owner/roots`'s answer.
@@ -383,6 +406,7 @@ async fn roots(
             awaiting: view.awaiting.map(|awaited| AwaitedRootWire {
                 root: revision_hex(&awaited.root.0),
                 arrived: awaited.arrived,
+                request: awaited.request.as_ref().map(revision_hex),
             }),
         })
     })
