@@ -37,6 +37,7 @@
 
 use ed25519_dalek::Signer;
 use oneiron_authority::authority::verify_entry_signatures;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::WholeVaultDocumentManifest;
@@ -126,7 +127,7 @@ pub fn archive_provenance_transcript(
     transcript.extend_from_slice(vault_id);
     transcript.extend_from_slice(machine.as_bytes());
     transcript.extend_from_slice(machine_key);
-    transcript.extend_from_slice(blake3::hash(&encoded).as_bytes());
+    transcript.extend_from_slice(ContentHash::of(&encoded).as_bytes());
     Ok(transcript)
 }
 
