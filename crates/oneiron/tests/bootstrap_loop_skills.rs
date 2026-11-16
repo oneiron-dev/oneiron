@@ -13,8 +13,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::skill::SkillLifecycle;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::bootstrap_skills::{
-    admit_restored_default, agent_health_reviewer_revision, bootstrap_skill_id, judge_rubric_skill,
-    seed_bootstrap_skills_adding,
+    admit_restored_default, agent_health_reviewer_revision, bootstrap_seed_marker,
+    bootstrap_skill_id, coach_improver_skill, judge_rubric_skill, seed_bootstrap_skills_adding,
+    write_bootstrap_seed_marker,
 };
 use oneiron::test_doors::skill_hub_restore::restore_bootstrap_skills;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -23,6 +24,15 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const JUDGE: &str = "judge";
 const AGENT_HEALTH_REVIEW: &str = "agent-health-review";
+const IMPROVER: &str = "skill-optimize";
+/// The loop skills this engine ships (`skill_hub::bootstrap` FILES).
+const SHIPPED: [&str; 5] = [
+    "skill-optimize",
+    JUDGE,
+    "goal-intake",
+    "wake",
+    AGENT_HEALTH_REVIEW,
+];
 /// A loop skill a later engine ships, which this engine's seed set lacks.
 const LATER_NAME: &str = "later-loop-skill";
 const LATER_SKILL: &str = "---\nname: later-loop-skill\ndescription: A loop skill a later engine ships.\n---\n\nAnswer the loop's later step.\n";
@@ -148,6 +158,29 @@ fn a_restored_agent_health_review_is_the_policy_the_reviewer_loads() -> TestResu
     Ok(())
 }
 
+/// Red on main: the Coach's skill author loads the improver by its
+/// bootstrap id (coach_learning.rs `coach_improver_skill_id`), so the
+/// admitted restored improver is never the workflow it runs.
+#[test]
+fn a_restored_improver_is_the_workflow_the_coach_loads() -> TestResult {
+    let fixture = Fixture::open()?;
+    let seed = bootstrap_skill_id(IMPROVER)?;
+    assert_eq!(
+        coach_improver_skill(&fixture.vault).map_err(at("fresh improver"))?,
+        seed,
+        "a fresh vault's improver is the shipped one"
+    );
+    let restored = fixture.delete_and_restore(IMPROVER)?;
+    admit_restored_default(&fixture.vault, &restored, fixture.vault.now_recorded_at())
+        .map_err(at("admit the restored improver"))?;
+    assert_eq!(
+        coach_improver_skill(&fixture.vault).map_err(at("restored improver"))?,
+        restored,
+        "the admitted restored improver is the workflow the Coach loads"
+    );
+    Ok(())
+}
+
 /// Guard: a restored default stays a Candidate until it is admitted, and no
 /// loop pass loads a Candidate.
 #[test]
@@ -207,6 +240,69 @@ fn a_deleted_loop_skill_stays_deleted_when_a_later_one_is_seeded() -> TestResult
     assert!(
         fixture.vault.get_skill_record(&judge)?.is_none(),
         "the deleted shipped judge stays deleted"
+    );
+    Ok(())
+}
+
+/// Red on main (the marker stays as the older engine left it): a vault whose
+/// marker names no names (written before the names were recorded) is offered
+/// each shipped name once. The per-id guards keep the owner's changes: a
+/// deleted shipped skill stays deleted and a retired one stays retired. The
+/// marker then names every shipped name, and a second open rewrites nothing.
+#[test]
+fn an_old_marker_offers_each_name_once_and_keeps_the_owners_changes() -> TestResult {
+    let fixture = Fixture::open()?;
+    let judge = bootstrap_skill_id(JUDGE)?;
+    let reviewer = bootstrap_skill_id(AGENT_HEALTH_REVIEW)?;
+    assert!(fixture.vault.delete_entity(&judge).map_err(at("delete"))?);
+    let mut record = fixture
+        .vault
+        .get_skill_record(&reviewer)
+        .map_err(at("reviewer read"))?
+        .ok_or("the shipped reviewer is missing")?;
+    record.lifecycle_status = SkillLifecycle::Stale;
+    let now = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .update_skill_record(
+            &reviewer,
+            &record,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .map_err(at("retire the shipped reviewer"))?;
+    write_bootstrap_seed_marker(&fixture.vault, "0.0.0").map_err(at("old marker"))?;
+    seed_bootstrap_skills_adding(&fixture.vault, &[]).map_err(at("the next open"))?;
+    assert!(
+        fixture.vault.get_skill_record(&judge)?.is_none(),
+        "the deleted shipped judge stays deleted"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&reviewer)?
+            .ok_or("the retired reviewer is gone")?
+            .lifecycle_status,
+        SkillLifecycle::Stale,
+        "the retired shipped reviewer stays retired"
+    );
+    let marker = bootstrap_seed_marker(&fixture.vault)
+        .map_err(at("marker read"))?
+        .ok_or("no marker")?;
+    for name in SHIPPED {
+        assert!(
+            marker.lines().skip(1).any(|line| line == name),
+            "the marker names {name}: {marker:?}"
+        );
+    }
+    seed_bootstrap_skills_adding(&fixture.vault, &[]).map_err(at("a second open"))?;
+    assert_eq!(
+        bootstrap_seed_marker(&fixture.vault).map_err(at("marker reread"))?,
+        Some(marker),
+        "a second open rewrites nothing"
     );
     Ok(())
 }
