@@ -122,13 +122,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/points.rs` | src | m | 2 struct · 3 enum · 4 crate-vis | Coord, GeomPath, PathCommand, PathFill, PathPoint | A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as… |
 | `src/live/points/preset_sites.rs` | src | s | 2 crate-vis | — | Source-defined preset sites retained when Edit Points makes a freeform |
 | `src/live/points/preset_sites/data.rs` | src | generated | 1 crate-vis | — | — |
-| `src/live/pptx.rs` | src | XL | 23 struct · 7 enum · 27 fn · 3 re-export · 8 crate-vis | ApproveScope, AttributionIndex, ChangeKind, Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode +22 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
-| `src/live/pptx/chart.rs` | src | L | 2 struct · 4 enum · 2 fn · 3 re-export · 5 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
+| `src/live/pptx.rs` | src | m | 18 struct · 3 enum · 12 fn · 6 re-export · 7 crate-vis | Conflict, ConnectorEnd, DeckDiff, DeckNode, GeometryProps, HeldMedia, LiveDeck, NodeBinding +13 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/pptx/attribution.rs` | src | s | 1 struct · 2 fn | AttributionIndex | The attribution index: who made each visible thing of the live deck, rebuilt from the stamped operation log |
+| `src/live/pptx/chart.rs` | src | m | 2 struct · 4 enum · 2 fn · 3 re-export · 5 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
 | `src/live/pptx/chart/categories.rs` | src | m | 2 struct · 1 enum · 7 fn · 14 crate-vis | CategoryField, ChartCategories, ChartCategory | A chart's categories (ARCH-0077 :597, "Chart categories and series \| Ordered ids over one canonical dataset |
+| `src/live/pptx/chart/conflicts.rs` | src | m | 1 crate-vis | — | The conflicts of a chart both sides of a fork wrote (`conflicts`), and where each side moved a series among… |
 | `src/live/pptx/chart/families.rs` | src | m | 2 struct · 4 enum · 3 fn · 9 crate-vis | BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents | A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and… |
 | `src/live/pptx/chart/special.rs` | src | s | 2 struct · 3 enum · 12 crate-vis | OfPieType, SplitType, StockOrder, StockRoles, SurfaceBand | A live chart's stock, surface and of-pie settings (OF-510, FIX 3493 D9c), held on each plot's own… |
 | `src/live/pptx/chart_ops.rs` | src | m | 9 crate-vis | — | Chart edits applied by series and category identity; a whole chart written over the chart a node holds… |
 | `src/live/pptx/chart_ops/categories.rs` | src | m | 6 crate-vis | — | Category edits applied by point identity, a whole set written over the one a chart or series holds lowered… |
+| `src/live/pptx/deck_ops.rs` | src | m | 1 struct · 2 enum · 6 fn | ChangeKind, DeckOp, StampedOp | The deck operations: what one operation is (`DeckOp`), who made it (`StampedOp`), and applying it to the… |
+| `src/live/pptx/fork.rs` | src | s | 3 struct · 2 enum · 6 fn | ApproveScope, DeckFork, Landing, LandingReceipt, PreflightReport | A machine fork of the live deck and its landing: the fork's base and stamped operations (`DeckFork`), the… |
+| `src/live/pptx/import.rs` | src | s | 1 fn · 2 crate-vis | — | Importing a retained package into the live model (`LiveDeck::import`), and a retained shape's own geometry… |
 | `src/live/pptx/merge.rs` | src | m | 3 fn · 1 crate-vis | — | The three-way comparison of a fork's base, the head and its proposal, and the merge preflight over the… |
 | `src/live/pptx/table.rs` | src | m | 3 struct · 2 enum · 5 fn · 12 crate-vis | MergeFault, TableBinding, TableBody, TableEdit, TableMerge | A live table (ARCH-0077, "One deck, one document": "Movable lists of stable ids |
 | `src/live/pptx/table_ops.rs` | src | m | 3 fn · 4 crate-vis | — | Table edits applied by identity; a whole table written over the table a node holds (or a whole chart over a… |
@@ -159,7 +164,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native_patch/workbook.rs` | src | m | 18 crate-vis | — | The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the… |
 | `src/native_patch/workbook/cells.rs` | src | s | 1 crate-vis | — | A worksheet's cells written in place (FIX 7987): a written cell keeps its own attributes and children (its… |
 | `src/ooxml.rs` | src | m | 2 struct · 1 enum · 11 fn · 4 const | Node, XmlError, XmlTree | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
-| `src/opc_package.rs` | src | L | 2 struct · 1 enum · 12 fn · 1 const | OpcPackage, OpcPart, PartClass | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
+| `src/opc_package.rs` | src | m | 2 struct · 1 enum · 9 fn · 1 const · 1 re-export | OpcPackage, OpcPart, PartClass | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
+| `src/opc_package/read.rs` | src | m | 3 fn | — | Reading a package: the central directory, each entry's local record checked against its central entry, and… |
 | `src/opc_xml.rs` | src | s | 2 struct · 10 fn | Element, ExternalRelationship | Namespace-aware OPC and worksheet XML reads for the edit gate |
 | `src/pptx_comments/archive.rs` | src | s | 6 crate-vis | — | Retained ZIP records: unchanged entries keep compression, metadata and local bytes |
 | `src/pptx_comments/comments.rs` | src | s | 1 fn · 1 re-export | — | Modern PPTX comment topology and patch seam |
