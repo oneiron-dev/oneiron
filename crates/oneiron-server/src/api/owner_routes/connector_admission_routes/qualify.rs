@@ -178,7 +178,7 @@ fn listed_as_stamped(
     let screen = discovery
         .screen(vault, &catalog.name, &choices)?
         .unwrap_or_default();
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
+    let resolved = host::resolve(&discovery.tools, &screen.accepted).map_err(|_| unresolvable())?;
     let classes = slate
         .manifest()
         .iter()

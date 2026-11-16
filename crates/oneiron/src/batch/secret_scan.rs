@@ -19,6 +19,8 @@ pub(crate) use self::container::{
     ContainerReader, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
     is_sealed, scan_text_content,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::lift_history::census_hit_in_txn;
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
     SecretLiftClose, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt,

@@ -20,6 +20,16 @@ pub struct ResolvedConnectorManifest {
     /// refutes it: MCP admission declares it for every connector it admits.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     elicitation: bool,
+    /// The tools whose stored strings are public, owner-accepted at install:
+    /// the owner's "install it anyway" lifted a secret-shaped string in them
+    /// (RULING SCREENING-SECRET-OVERRIDE = B; FIX SCREENING-PER-TOOL-SKIP, PR
+    /// C2). Each names the digest of the tool's row as accepted
+    /// ([`public_row_digest`]); a row that no longer matches it is not public,
+    /// so a changed schema drops the mark. The secret lift census reads it
+    /// ([`Self::public_strings`]). Absent on every manifest without one, so
+    /// their bytes and hash are unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    public_secret_shape: BTreeMap<String, String>,
 }
 impl ResolvedConnectorManifest {
     /// Resolve local references and composition before any comparison or
@@ -58,7 +68,44 @@ impl ResolvedConnectorManifest {
         Ok(Self {
             tools,
             elicitation: false,
+            public_secret_shape: BTreeMap::new(),
         })
+    }
+    /// The same snapshot marking each tool `tools` names as public,
+    /// owner-accepted at install, bound to its row as it stands. A name the
+    /// manifest does not declare is left out.
+    #[must_use]
+    pub fn with_public_secret_shape<'n>(
+        mut self,
+        tools: impl IntoIterator<Item = &'n str>,
+    ) -> Self {
+        for name in tools {
+            if let Some(row) = self.tools.iter().find(|row| row.name == name) {
+                self.public_secret_shape
+                    .insert(row.name.clone(), public_row_digest(row));
+            }
+        }
+        self
+    }
+    /// The rows whose strings are public, owner-accepted at install: each
+    /// marked tool whose row still matches the digest it was accepted at.
+    pub fn public_secret_shape_tools(&self) -> impl Iterator<Item = &ConnectorToolSchema> {
+        self.tools.iter().filter(|row| {
+            self.public_secret_shape
+                .get(&row.name)
+                .is_some_and(|digest| *digest == public_row_digest(row))
+        })
+    }
+    /// Every string of the public rows ([`Self::public_secret_shape_tools`]):
+    /// each tool's name and each key and string value of its input schema,
+    /// the texts the pack install screen read when the owner accepted it.
+    pub fn public_strings(&self) -> BTreeSet<String> {
+        let mut strings = BTreeSet::new();
+        for row in self.public_secret_shape_tools() {
+            strings.insert(row.name.clone());
+            schema_strings(&row.input_schema, &mut strings);
+        }
+        strings
     }
     /// The same snapshot, declaring elicitation or not.
     #[must_use]
@@ -106,11 +153,47 @@ impl ResolvedConnectorManifest {
         Ok(*blake3::hash(&serde_json::to_vec(self).map_err(|_| invalid())?).as_bytes())
     }
     pub(crate) fn validate_snapshot(&self) -> Result<()> {
-        let resolved = Self::resolve(self.tools.clone())?.with_elicitation(self.elicitation);
+        let mut resolved = Self::resolve(self.tools.clone())?.with_elicitation(self.elicitation);
+        // A public mark names a declared tool; its digest is read where it
+        // is used, so a row that drifted from it reads as not public.
+        resolved.public_secret_shape = self
+            .public_secret_shape
+            .iter()
+            .filter(|(name, _)| resolved.tools.iter().any(|row| &row.name == *name))
+            .map(|(name, digest)| (name.clone(), digest.clone()))
+            .collect();
         if resolved != *self {
             return Err(invalid());
         }
         Ok(())
+    }
+}
+
+/// The digest a public mark binds: blake3 of the resolved row's JSON, as 64
+/// hex.
+fn public_row_digest(row: &ConnectorToolSchema) -> String {
+    let bytes = serde_json::to_vec(row).unwrap_or_default();
+    blake3::hash(&bytes).to_hex().to_string()
+}
+
+/// Each object key and string value in `schema`, at any depth.
+fn schema_strings(schema: &serde_json::Value, strings: &mut BTreeSet<String>) {
+    match schema {
+        serde_json::Value::String(text) => {
+            strings.insert(text.clone());
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                schema_strings(item, strings);
+            }
+        }
+        serde_json::Value::Object(entries) => {
+            for (key, value) in entries {
+                strings.insert(key.clone());
+                schema_strings(value, strings);
+            }
+        }
+        _ => {}
     }
 }
 

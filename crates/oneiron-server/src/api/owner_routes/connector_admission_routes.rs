@@ -396,7 +396,7 @@ fn register_connector(
         ..host::OwnerScreenChoices::default()
     };
     let screen = screened(vault, &name, &mut discovery, &request.tools, &choices)?;
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
+    let resolved = host::resolve(&discovery.tools, &screen.accepted).map_err(|_| unresolvable())?;
     let manifest = host::slate_manifest(&resolved, &discovery.tools, &request.tools)
         .with_owner_accepted(&screen.accepted);
     let slate_id = with_slate_drafter(server, owner, |drafter| {

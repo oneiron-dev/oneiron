@@ -87,7 +87,7 @@ fn refresh_connector(
         })
         .collect();
     classes.extend(request.tools);
-    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
+    let resolved = host::resolve(&discovery.tools, &screen.accepted).map_err(|_| unresolvable())?;
     let listed = host::slate_manifest(&resolved, &discovery.tools, &classes)
         .with_owner_accepted(&screen.accepted);
     if discovery.revision == pinned
