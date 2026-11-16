@@ -40,8 +40,12 @@ use crate::{EntityId, Error, Result, Vault};
 enum OwnAuthority {
     /// Nothing: the reader is no live owner and no standing agent.
     Absent,
-    /// The reader is a live owner of the vault.
-    Owner,
+    /// The reader is a live owner of the vault, read under this key of the
+    /// owner's: its own floor, or beside a key rebuilt under a saved lane's
+    /// floor basis that floor held to the rebuilt key's bounds
+    /// (`ScopedReadActorKey::bounded_owner_key`, blind review round 2 on
+    /// #8065).
+    Owner(Box<ScopedReadActorKey>),
     /// The reader is a live agent standing for "read": the Scope of each of
     /// its live Grants, each judged alone.
     Grants(Vec<Scope>),
@@ -55,7 +59,9 @@ fn own_authority_in(
     actor: EntityId,
 ) -> Result<OwnAuthority> {
     if is_live_owner_in(home, txn, &actor)? {
-        return Ok(OwnAuthority::Owner);
+        return Ok(OwnAuthority::Owner(Box::new(
+            ScopedReadActorKey::vault_owner(actor),
+        )));
     }
     let class = match live_entity_row_in_txn(home.store(), txn, &actor)?.live_type() {
         Some(ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
@@ -112,7 +118,7 @@ fn is_live_owner_in(
     }
 }
 
-/// `unit` read by `actor` under `own`, the authority it holds of its own:
+/// `unit` read under `own`, the authority its reader holds of its own:
 /// [`arrival::readable`]'s row prerequisites, the CLAIM read judged under the
 /// owner's key, or under `key` holding one Grant's Scope.
 fn own_readable(
@@ -120,16 +126,12 @@ fn own_readable(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
-    actor: EntityId,
     key: &ScopedReadActorKey,
     unit: &EntityId,
 ) -> Result<bool> {
     match own {
         OwnAuthority::Absent => Ok(false),
-        OwnAuthority::Owner => {
-            let owner = ScopedReadActorKey::vault_owner(actor);
-            arrival::readable(store, txn, policy, &owner, unit)
-        }
+        OwnAuthority::Owner(owner) => arrival::readable(store, txn, policy, owner, unit),
         OwnAuthority::Grants(scopes) => arrival::readable_with(store, txn, unit, |body, facets| {
             scopes.iter().any(|scope| {
                 crate::gate::scoped_read_claim_allowed_with_scope(
@@ -165,7 +167,7 @@ pub(super) fn own_authority_readable_in_txn(
     unit: &EntityId,
 ) -> Result<bool> {
     let own = own_authority_in(StandingHome::Vault(vault), txn, actor)?;
-    own_readable(&own, &vault.store, txn, policy, actor, bare_reader, unit)
+    own_readable(&own, &vault.store, txn, policy, bare_reader, unit)
 }
 
 /// One reader of a question's rows in one snapshot: its old key, judged first
@@ -201,7 +203,12 @@ impl<'a> Reader<'a> {
     /// key held to a Scope (a saved question's narrowed lane, OF-506) has
     /// none beside it, as the read lane's own alternatives leave such a key
     /// exactly as it is. A key rebuilt under a saved lane's grant basis has
-    /// no owner authority beside it (Sol F3 on #8065).
+    /// no owner authority beside it (Sol F3 on #8065), save one the owner's
+    /// floor may stand beside
+    /// (`ScopedReadActorKey::admits_owner_alternative`): its live-owner
+    /// reader reads under that floor held to the key's bounds, as the lane's
+    /// owner alternative does, never under the owner's own ungated key
+    /// (blind review round 2 on #8065).
     fn own_in(&self, txn: &heed::RoTxn<'_>) -> Result<&OwnAuthority> {
         if let Some(own) = self.own.get() {
             return Ok(own);
@@ -210,7 +217,12 @@ impl<'a> Reader<'a> {
             OwnAuthority::Absent
         } else {
             match own_authority_in(self.home, txn, self.actor)? {
-                OwnAuthority::Owner if self.key.owner_authority_withheld() => OwnAuthority::Absent,
+                OwnAuthority::Owner(_) if !self.key.admits_owner_alternative() => {
+                    OwnAuthority::Absent
+                }
+                OwnAuthority::Owner(_) if self.key.owner_authority_withheld() => {
+                    OwnAuthority::Owner(Box::new(self.key.bounded_owner_key(self.actor)))
+                }
                 own => own,
             }
         };
@@ -229,15 +241,7 @@ impl<'a> Reader<'a> {
         if arrival::readable(store, txn, policy, &self.key, unit)? {
             return Ok(true);
         }
-        own_readable(
-            self.own_in(txn)?,
-            store,
-            txn,
-            policy,
-            self.actor,
-            &self.key,
-            unit,
-        )
+        own_readable(self.own_in(txn)?, store, txn, policy, &self.key, unit)
     }
 
     /// The positive CLAIM gate alone (`gate::scoped_read_claim_allowed`)
@@ -267,9 +271,8 @@ impl<'a> Reader<'a> {
     ) -> Result<bool> {
         Ok(match self.own_in(txn)? {
             OwnAuthority::Absent => false,
-            OwnAuthority::Owner => {
-                let owner = ScopedReadActorKey::vault_owner(self.actor);
-                crate::gate::scoped_read_claim_allowed(policy, &owner, body, facets)
+            OwnAuthority::Owner(owner) => {
+                crate::gate::scoped_read_claim_allowed(policy, owner, body, facets)
             }
             OwnAuthority::Grants(scopes) => scopes.iter().any(|scope| {
                 crate::gate::scoped_read_claim_allowed_with_scope(
@@ -298,9 +301,8 @@ impl<'a> Reader<'a> {
         }
         Ok(match self.own_in(txn)? {
             OwnAuthority::Absent => false,
-            OwnAuthority::Owner => {
-                let owner = ScopedReadActorKey::vault_owner(self.actor);
-                crate::gate::scoped_read_record_allowed(policy, &owner, record)
+            OwnAuthority::Owner(owner) => {
+                crate::gate::scoped_read_record_allowed(policy, owner, record)
             }
             OwnAuthority::Grants(scopes) => scopes.iter().any(|scope| {
                 crate::gate::scoped_read_record_allowed_with_scope(
