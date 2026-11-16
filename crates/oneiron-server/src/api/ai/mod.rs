@@ -19,7 +19,7 @@ use oneiron::llm::{VaultRef, WorkerMode};
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::config::models::role_key;
-use crate::models::{QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
+use crate::models::{QuotaAnswerer, QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
 use crate::oneironer::TaggerSlot;
 use crate::server::SyncServer;
 
@@ -316,23 +316,15 @@ async fn answer_quota(
             "the admission credential is no longer live",
         );
     }
+    // The question's answer row keeps who answered (WAVE11-QUOTA-CANON).
+    let answerer = agent.map_or(QuotaAnswerer::Owner, QuotaAnswerer::Agent);
     match server.ai.model_runtime().answer_quota(
         &question,
         answer.choice,
         answer.fallback.as_deref(),
+        answerer,
     ) {
-        Ok(true) => {
-            // The answer keeps no receipt, so the agent's answer is logged.
-            if let Some(agent) = agent {
-                tracing::info!(
-                    agent = %agent.to_hex(),
-                    choice = quota_choice_wire_name(answer.choice),
-                    question = %question,
-                    "an agent answered a quota question",
-                );
-            }
-            StatusCode::NO_CONTENT.into_response()
-        }
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => refusal(
             StatusCode::NOT_FOUND,
             "no_such_question",

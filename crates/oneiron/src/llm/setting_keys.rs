@@ -20,11 +20,12 @@ fn quota_choice(item: &str) -> bool {
     )
 }
 
-/// The confirm sheet's line for letting an agent answer `top_up` or `pay_as_you_go` (or every
-/// answer, on a row that names none): the spend cap in force over the row's scope, every open
-/// root for the vault row and the roots over that agent's open attempts for an agent's row
-/// (RESTRICTION-WAVE-11-CAP-NOTE; CAP-SCOPE = B). The other answers spend nothing and state no
-/// line.
+/// The confirm sheet's line for letting an agent answer `top_up`, `pay_as_you_go` or
+/// `use_fallback` (or every answer, on a row that names none): the spend cap in force over the
+/// row's scope, every open root for the vault row and the roots over that agent's open attempts
+/// for an agent's row (RESTRICTION-WAVE-11-CAP-NOTE; CAP-SCOPE = B). `use_fallback` sets the
+/// standing fallback model, paid models included, so its loosening states the cap too
+/// (WAVE11-QUOTA-CANON). `wait` and `add_account` spend nothing and state no line.
 fn quota_answer_loosening_note(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -32,7 +33,7 @@ fn quota_answer_loosening_note(
     item: Option<&str>,
 ) -> Result<Option<String>> {
     match item {
-        None | Some("top_up" | "pay_as_you_go") => {
+        None | Some("top_up" | "pay_as_you_go" | "use_fallback") => {
             let agent = match scope {
                 SettingScope::Agent(agent) => Some(*agent),
                 _ => None,
@@ -56,8 +57,10 @@ crate::setting::setting_keys! {
     /// pays; the provider's own payment authentication stays where it is. An agent's row names
     /// one agent; the vault row opens every agent, and an agent's own row wins over it. A member
     /// is never let in by this key. Only the owner turns it on; an agent's change waits on the
-    /// owner's answer (restriction wave 11, census C17). The confirm sheet for turning on
-    /// `top_up` or `pay_as_you_go` states the spend cap in force, or "no cap", first.
+    /// owner's answer (restriction wave 11, census C17). `use_fallback` sets the standing fallback
+    /// model, paid models included (ARCH-0036:203: setting it is the permission). The confirm sheet
+    /// for turning on `top_up`, `pay_as_you_go` or `use_fallback` states the spend cap in force, or
+    /// "no cap", first. Each answer's row records who gave it, the owner or the agent.
     pub MODELS_QUOTA_AGENT_MAY_ANSWER: bool = "models.quota.agent_may_answer" {
         kind: Kind::new(owner_answers)
             .strictest(owner_answers)

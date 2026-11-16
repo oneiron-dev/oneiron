@@ -58,7 +58,9 @@ use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
-use oneiron_server::models::{QuotaChoice, QuotaQuestion};
+use oneiron_server::models::{
+    QuotaAnswerRecord, QuotaAnswerer, QuotaChoice, QuotaFallback, QuotaQuestion,
+};
 use oneiron_server::{build_app, server::SyncServer};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
@@ -729,6 +731,137 @@ fn a_quota_answer_the_owner_did_not_let_stays_refused() {
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT, "agent waits: {bytes:?}");
+
+        fixture.finish().await;
+    });
+}
+
+/// The fallback model a planted `use_fallback` question offers.
+const FALLBACK_MODEL: &str = "other/fallback-model@1";
+
+/// A question id in the form the runtime keeps: an offer's hex64 key.
+fn offer_question_id(seed: u8) -> String {
+    hex(&[seed; 32])
+}
+
+/// Plants one open quota question that offers `use_fallback` to
+/// [`FALLBACK_MODEL`] (and `wait`).
+fn plant_fallback_question(fixture: &Fixture, id: &str) {
+    let question = QuotaQuestion {
+        id: id.to_owned(),
+        asked_at: fixture.vault.now_recorded_at(),
+        provider: "fixture".to_owned(),
+        model: "fixture/model".to_owned(),
+        route: "fixture".to_owned(),
+        spent: SpentKind::Window,
+        resets_at: None,
+        choices: vec![QuotaChoice::Wait, QuotaChoice::UseFallback],
+        fallbacks: vec![QuotaFallback {
+            provider: "other".to_owned(),
+            model: FALLBACK_MODEL.to_owned(),
+        }],
+        account: None,
+    };
+    let bytes = rmp_serde::to_vec_named(&question).expect("encode the question");
+    fixture
+        .vault
+        .sync_state_put(&format!("models:offer-cooldown:v1:ask:{id}"), &bytes)
+        .expect("plant the question");
+}
+
+/// The answer body that names [`FALLBACK_MODEL`].
+fn use_fallback_body() -> Value {
+    json!({"choice": "use_fallback", "fallback": FALLBACK_MODEL})
+}
+
+/// The `use_fallback` item on at an agent's row lets that agent set the
+/// standing fallback (a payment loosening the owner turned on), and the
+/// question's answer row reads back that agent as the answerer
+/// (WAVE11-QUOTA-CANON).
+#[test]
+fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
+    run_on_engine_stack("wave11-quota-fallback-agent", || async {
+        let (fixture, a, _b) = setup().await;
+        set_quota_row(&fixture, "use_fallback", SettingScope::Agent(a.principal), true);
+        let id = offer_question_id(0xa1);
+        plant_fallback_question(&fixture, &id);
+
+        let (status, bytes) = post_bytes(
+            &fixture,
+            &format!("/v1/ai/quota/{id}"),
+            &a.token,
+            agent_binding(&fixture, &a),
+            use_fallback_body(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "agent uses the fallback: {bytes:?}");
+        assert_eq!(
+            fixture.vault.model_fallback(&id).expect("read the fallback").as_deref(),
+            Some(FALLBACK_MODEL),
+            "the standing fallback is set"
+        );
+
+        let record = QuotaAnswerRecord::read(&fixture.vault, &id)
+            .expect("read the answer row")
+            .expect("the answer row is kept");
+        assert_eq!(record.question, id);
+        assert_eq!(record.choice, QuotaChoice::UseFallback);
+        assert_eq!(record.fallback.as_deref(), Some(FALLBACK_MODEL));
+        assert_eq!(record.answered_by, QuotaAnswerer::Agent(a.principal));
+
+        fixture.finish().await;
+    });
+}
+
+/// With the `use_fallback` item at its default (off), the agent's answer is
+/// refused exactly as today and leaves no trace; the owner's answer then
+/// stands and its row reads back the owner as the answerer.
+#[test]
+fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
+    run_on_engine_stack("wave11-quota-fallback-default", || async {
+        let (fixture, a, _b) = setup().await;
+        let id = offer_question_id(0xb2);
+        plant_fallback_question(&fixture, &id);
+
+        let (status, body) = post(
+            &fixture,
+            &format!("/v1/ai/quota/{id}"),
+            &a.token,
+            agent_binding(&fixture, &a),
+            use_fallback_body(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "agent fallback: {body}");
+        assert_eq!(
+            body["error"]["code"].as_str(),
+            Some("owner_required"),
+            "today's code: {body}"
+        );
+        assert_eq!(
+            fixture.vault.model_fallback(&id).expect("read the fallback"),
+            None,
+            "no fallback is set"
+        );
+        assert_eq!(
+            QuotaAnswerRecord::read(&fixture.vault, &id).expect("read the answer row"),
+            None,
+            "a refused answer keeps no row"
+        );
+
+        let (status, bytes) = post_bytes(
+            &fixture,
+            &format!("/v1/ai/quota/{id}"),
+            &fixture.owner_token,
+            owner_binding(&fixture),
+            use_fallback_body(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "owner uses the fallback: {bytes:?}");
+        let record = QuotaAnswerRecord::read(&fixture.vault, &id)
+            .expect("read the answer row")
+            .expect("the answer row is kept");
+        assert_eq!(record.choice, QuotaChoice::UseFallback);
+        assert_eq!(record.answered_by, QuotaAnswerer::Owner);
 
         fixture.finish().await;
     });

@@ -468,17 +468,20 @@ impl OfferCooldowns {
         questions
     }
 
-    /// The owner's answer to question `id`: it closes the question, a
-    /// top-up or pay-as-you-go puts its offer back in rotation now, and
-    /// `use_fallback` keeps `fallback` (one of the question's fallbacks) as
-    /// where the offer's calls go while it is parked. `false` when no such
-    /// question is open, the choice is not one it offers, or a
+    /// The answer to question `id`, given by `answerer` (the owner, or an
+    /// agent his key lets give it): it closes the question, a top-up or
+    /// pay-as-you-go puts its offer back in rotation now, and `use_fallback`
+    /// keeps `fallback` (one of the question's fallbacks) as where the
+    /// offer's calls go while it is parked. The write that closes the
+    /// question keeps who answered ([`QuotaAnswerRecord`]). `false` when no
+    /// such question is open, the choice is not one it offers, or a
     /// `use_fallback` names no model it offers.
     pub fn answer(
         &self,
         id: &str,
         choice: QuotaChoice,
         fallback: Option<&str>,
+        answerer: QuotaAnswerer,
     ) -> oneiron::Result<bool> {
         let Some(vault) = &self.vault else {
             return Ok(false);
@@ -489,7 +492,7 @@ impl OfferCooldowns {
         let Some(question) = question.filter(|question| question.choices.contains(&choice)) else {
             return Ok(false);
         };
-        if choice == QuotaChoice::UseFallback {
+        let fallback = if choice == QuotaChoice::UseFallback {
             let Some(model) = fallback.filter(|model| {
                 question
                     .fallbacks
@@ -499,14 +502,28 @@ impl OfferCooldowns {
                 return Ok(false);
             };
             vault.set_model_fallback(&question.id, model)?;
-        }
+            Some(model.to_owned())
+        } else {
+            None
+        };
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
             if let Some(account) = &question.account {
                 account_park::unpark(vault, account)?;
             }
         }
-        vault.sync_state_delete(&question_key(&question.id))?;
+        let record = QuotaAnswerRecord {
+            question: question.id.clone(),
+            choice,
+            fallback,
+            answered_by: answerer,
+            answered_at: vault.now_recorded_at(),
+        };
+        vault.try_with_write_txn_grouped(|txn| {
+            record.put_in_txn(vault, txn)?;
+            vault.sync_state_delete_in_write_txn(txn, &question_key(&question.id))?;
+            Ok::<_, oneiron::Error>(())
+        })?;
         Ok(true)
     }
 

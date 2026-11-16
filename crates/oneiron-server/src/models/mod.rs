@@ -111,7 +111,9 @@ pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
 pub(crate) use cooldown::{HEALTH_REST_MAX_SECS, HEALTH_REST_SECS, HealthRestSettings};
-pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
+pub use cooldown::{
+    OfferCooldowns, QuotaAnswerRecord, QuotaAnswerer, QuotaChoice, QuotaFallback, QuotaQuestion,
+};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
