@@ -8,8 +8,10 @@
 //! `INGEST_HISTORY_SHARING_POLICY`. The first import of a container writes
 //! the policy; each later one sets its readers again, so a member the source
 //! no longer names reads none of the container's rows from that import on,
-//! as a group address's edited member list does. Each conversation lands
-//! under its own thread policy below the container's, as a mail thread does.
+//! as a group address's edited member list does. A contact the owner maps
+//! later reads the container's rows from then on (`members set`, in
+//! `members.rs`). Each conversation lands under its own thread policy below
+//! the container's, as a mail thread does.
 //! The Dreamer reads each such thread, as it reads every import: what it
 //! extracts lands Proposed under the import's review, held by lineage to
 //! the rows' readers.
@@ -27,7 +29,9 @@ use crate::{EntityId, Vault, source_audience};
 const POLICIES: SideTable<String, EntityId, Named> =
     SideTable::new(&side_table::INGEST_HISTORY_SHARING_POLICY);
 
-fn key(source: HistorySource, container: &str) -> String {
+/// The key of the sharing container `container` of `source`, in this
+/// module's table and in the member module's.
+pub(super) fn container_key(source: HistorySource, container: &str) -> String {
     format!("{}:{container}", source.source_id())
 }
 
@@ -61,9 +65,7 @@ pub(super) fn container_policy_in_txn(
         }
         readers.insert(*person);
     }
-    readers.insert(importer_person_in(vault, txn, actor)?.ok_or_else(|| {
-        MemoryError::bad_request("a shared conversation is imported by a person who reads it")
-    })?);
+    readers.insert(importer_reader_in(vault, txn, actor)?);
     let contacts: BTreeSet<&str> = sharing
         .members
         .iter()
@@ -74,7 +76,7 @@ pub(super) fn container_policy_in_txn(
         readers: u32::try_from(readers.len()).unwrap_or(u32::MAX),
         unmapped: u32::try_from(contacts.len()).unwrap_or(u32::MAX),
     };
-    let key = key(source, &sharing.container);
+    let key = container_key(source, &sharing.container);
     if let Some(policy) = POLICIES.get(&vault.store, txn, &key)? {
         source_audience::set_source_readers_in_txn(vault, txn, &policy, readers, actor, at)?;
         return Ok((policy, counts));
@@ -83,6 +85,41 @@ pub(super) fn container_policy_in_txn(
         source_audience::create_source_policy_in_txn(vault, txn, readers, false, actor, at)?;
     POLICIES.put(&vault.store, txn, &key, &policy)?;
     Ok((policy, counts))
+}
+
+/// Sets the readers of the sharing container whose key is `key`
+/// ([`container_key`]) again, in `txn`: the PERSONs `persons` and the
+/// importer `actor`'s own, as [`container_policy_in_txn`] sets them. Whether
+/// an import wrote the container's policy; one it never wrote is left.
+///
+/// # Errors
+///
+/// A bad request for an importer who stands for no PERSON; storage failures.
+pub(super) fn set_container_readers_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &str,
+    mut persons: BTreeSet<EntityId>,
+    actor: EntityId,
+    at: u64,
+) -> MemoryResult<bool> {
+    let Some(policy) = POLICIES.get(&vault.store, txn, &key.to_owned())? else {
+        return Ok(false);
+    };
+    persons.insert(importer_reader_in(vault, txn, actor)?);
+    source_audience::set_source_readers_in_txn(vault, txn, &policy, persons, actor, at)?;
+    Ok(true)
+}
+
+/// The importer `actor`'s own PERSON, who reads every container it imports.
+fn importer_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> MemoryResult<EntityId> {
+    importer_person_in(vault, txn, actor)?.ok_or_else(|| {
+        MemoryError::bad_request("a shared conversation is imported by a person who reads it")
+    })
 }
 
 /// The thread policy the conversation `native_id` lands under, below its
