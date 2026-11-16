@@ -137,7 +137,10 @@ fn resolve_hold_expiry(
     let session_key = &spec.session_key;
     let lease = &spec.lease;
     match lease {
-        HoldLeaseSpec::Ordinary => Ok((now_utc.saturating_add(DEFAULT_HOLD_TTL_SECS), None)),
+        HoldLeaseSpec::Ordinary => Ok((
+            oneiron_store::expiry::expires_at_saturating(now_utc, DEFAULT_HOLD_TTL_SECS),
+            None,
+        )),
         HoldLeaseSpec::CheckoutExtension {
             server_issued_lease,
         } => {
@@ -149,11 +152,12 @@ fn resolve_hold_expiry(
             if row.session_hash != session_digest(session_key) {
                 return Err(refused("checkout lease is bound to another session"));
             }
-            if row.expires_at <= now_utc {
+            if oneiron_store::expiry::is_expired(now_utc, row.expires_at) {
                 return Err(refused("checkout lease has expired"));
             }
             check_hold_lease_deposit(vault, txn, &row, spec.page_ref, &spec.event_type)?;
-            let capped = now_utc.saturating_add(MAX_CHECKOUT_HOLD_TTL_SECS);
+            let capped =
+                oneiron_store::expiry::expires_at_saturating(now_utc, MAX_CHECKOUT_HOLD_TTL_SECS);
             Ok((row.expires_at.min(capped), Some(digest)))
         }
     }

@@ -126,6 +126,7 @@ pub(crate) mod tests {
                     }],
                     preferred_hours: Vec::new(),
                 }],
+                flex_with_ordinary: false,
                 flex_windows: Vec::new(),
             },
         };

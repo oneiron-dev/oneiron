@@ -72,6 +72,7 @@ pub(crate) fn fixture_config(deposit: Option<DepositTerms>) -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
