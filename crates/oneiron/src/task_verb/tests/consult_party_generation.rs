@@ -204,6 +204,7 @@ fn replicas_observing_one_binding_record_one_generation() {
                     actor_generation,
                     assigned_generation,
                     occurred_at: LADDER_NOW,
+                    maker: None,
                 },
             )
         })
@@ -340,6 +341,7 @@ fn generations_with_no_binding_in_common_admit_nobody_unrooted() {
                     actor_generation: recorded,
                     assigned_generation: None,
                     occurred_at: LADDER_NOW,
+                    maker: None,
                 },
             )
         })

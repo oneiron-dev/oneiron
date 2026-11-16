@@ -404,6 +404,7 @@ impl Memory<'_> {
                     actor_generation: generation.clone(),
                     assigned_generation: None,
                     occurred_at: now,
+                    maker: None,
                 },
             )
             .map_err(MemoryError::from)?;

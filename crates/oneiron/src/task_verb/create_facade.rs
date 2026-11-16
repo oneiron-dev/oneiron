@@ -18,7 +18,7 @@ use crate::human_task::{register_human_followup_in_txn, resolve_native_human_rou
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::task_authority::{
-    TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker, put_task_authority_fact_in_txn,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
@@ -250,6 +250,7 @@ impl Memory<'_> {
                     actor_generation: None,
                     assigned_generation: None,
                     occurred_at: now,
+                    maker: None,
                 },
             )?;
         }
@@ -349,6 +350,9 @@ impl Memory<'_> {
     /// The realizing attempt is deliberately NOT part of this: a consult mints
     /// the CRDT-synced entity and nothing else, because a node-local lease can
     /// never reach a peer on another machine.
+    ///
+    /// A door with no uniqueness of its own mints under a store-clock nonce,
+    /// the id it minted at before a TASK's id committed to its maker.
     pub(super) fn mint_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -358,21 +362,26 @@ impl Memory<'_> {
         provenance: &Value,
         now: u64,
     ) -> MemoryResult<EntityId> {
-        self.mint_task_at_in_txn(
-            wtxn,
-            (self.vault().store.clock.entity_id()?, owner_ref),
-            validated,
-            label,
-            provenance,
-            now,
-        )
+        let maker = self.task_maker(self.vault().store.clock.entity_id()?);
+        self.mint_task_at_in_txn(wtxn, (maker, owner_ref), validated, label, provenance, now)
     }
 
-    /// Engine-selected id for an idempotent ask member. Never a public raw door.
+    /// This actor as the maker of a TASK minted under `nonce`: the door's own
+    /// uniqueness (FIX TASK-ID-COMMITS-TO-MAKER). With the owner it derives
+    /// the TASK's id ([`TaskMaker::task_ref`]).
+    pub(super) fn task_maker(&self, nonce: EntityId) -> TaskMaker {
+        TaskMaker {
+            maker_ref: self.actor(),
+            nonce,
+        }
+    }
+
+    /// Engine-selected nonce for an idempotent mint (an ask member, a settled
+    /// proposal). Never a public raw door.
     pub(super) fn mint_task_at_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        identity: (EntityId, EntityId),
+        identity: (TaskMaker, EntityId),
         validated: &ValidatedTaskCreate,
         label: Option<String>,
         provenance: &Value,
@@ -382,6 +391,10 @@ impl Memory<'_> {
     }
 
     /// [`Self::mint_task_at_in_txn`] carrying the TASK's typed brief (OF-220).
+    ///
+    /// `identity` is the maker commitment and the owner: the TASK lands at the
+    /// id they derive, and its Owner fact carries the commitment, so the fold
+    /// counts it only for this owner. The maker is this actor.
     #[expect(
         clippy::too_many_arguments,
         reason = "the mint's identity, shape, display, provenance and brief are each its own input"
@@ -389,14 +402,20 @@ impl Memory<'_> {
     pub(super) fn mint_task_with_brief_at_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        identity: (EntityId, EntityId),
+        identity: (TaskMaker, EntityId),
         validated: &ValidatedTaskCreate,
         label: Option<String>,
         provenance: &Value,
         brief: Option<super::brief::StoredBrief>,
         now: u64,
     ) -> MemoryResult<EntityId> {
-        let (task_ref, owner_ref) = identity;
+        let (maker, owner_ref) = identity;
+        if maker.maker_ref != self.actor() {
+            return Err(
+                Error::InvariantViolation("task mint names a maker other than its actor").into(),
+            );
+        }
+        let task_ref = maker.task_ref(owner_ref)?;
         if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
             return Err(MemoryError::bad_request("task mint id is already occupied"));
         }
@@ -442,6 +461,7 @@ impl Memory<'_> {
                 actor_generation: None,
                 assigned_generation: None,
                 occurred_at: now,
+                maker: Some(maker),
             },
         )?;
         // A consult's parties bear its authority (they move the ladder and
@@ -469,6 +489,7 @@ impl Memory<'_> {
                     actor_generation,
                     assigned_generation,
                     occurred_at: now,
+                    maker: None,
                 },
             )?;
         }

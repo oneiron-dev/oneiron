@@ -141,6 +141,7 @@ impl Memory<'_> {
                         actor_generation: None,
                         assigned_generation: None,
                         occurred_at: interrupted.interrupted_at,
+                        maker: None,
                     },
                 )?;
                 let generation = self

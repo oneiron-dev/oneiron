@@ -139,6 +139,8 @@ impl Vault {
             self.prepare_install_signing()?;
             let issuer = self.bootstrap_host_slip_issuer()?;
             self.ensure_host_root_slip(&issuer)?;
+            // The root adopts the task facts written before it (pass 28 R5).
+            self.adopt_unsigned_task_facts()?;
             issuer
         } else {
             // Never a refusal: a mismatch or a fault is warned, and the load

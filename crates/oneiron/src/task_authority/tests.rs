@@ -22,6 +22,7 @@ fn fact(task_ref: EntityId, kind: TaskAuthorityFactKind, actor_ref: EntityId) ->
         actor_generation: None,
         assigned_generation: None,
         occurred_at: 100,
+        maker: None,
     }
 }
 
@@ -66,6 +67,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         actor_generation: None,
         assigned_generation: None,
         occurred_at: 1_700_000_000,
+        maker: None,
     };
     let encoded = encode_task_authority_fact_body(&original);
     assert_eq!(

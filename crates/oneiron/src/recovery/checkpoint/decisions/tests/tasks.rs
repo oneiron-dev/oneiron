@@ -82,6 +82,7 @@ fn mint(
                 actor_generation: None,
                 assigned_generation: None,
                 occurred_at: 10,
+                maker: None,
             },
         )
     })

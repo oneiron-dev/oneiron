@@ -86,6 +86,7 @@ impl Memory<'_> {
                 actor_generation: generation,
                 assigned_generation: None,
                 occurred_at: now,
+                maker: None,
             },
         )?;
         Ok(())

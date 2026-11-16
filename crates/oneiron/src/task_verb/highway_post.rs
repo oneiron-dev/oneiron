@@ -29,7 +29,7 @@ use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::task_authority::{
-    TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    TaskAuthorityFact, TaskAuthorityFactKind, TaskMaker, put_task_authority_fact_in_txn,
 };
 use crate::task_type::TaskTypeRef;
 use crate::write_envelope::WriteActor;
@@ -37,7 +37,7 @@ use crate::write_envelope::WriteActor;
 use super::brief::{QueueTaskBrief, StoredBrief, brief_digest, hex32};
 use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CANCEL_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE,
-    TASK_POST_ID_DOMAIN, TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN,
+    TASK_POST_ID_DOMAIN, TASK_POST_STAMP_KEY,
 };
 use super::create_origin::{
     TaskCreateOrigin, proposal_origin_in, put_proposal_origin_in_txn, task_create_origin_in_txn,
@@ -331,7 +331,7 @@ fn take_in_txn(
     )?;
     vault.complete_deferred_claim_in_txn(wtxn, &proposal_ref, None, now, Some(agent))?;
     settle_task_proposal_in_txn(vault, wtxn, proposal_ref, Some(agent), now)?;
-    let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[proposal_ref.as_bytes()])?;
+    let task_ref = proposal_create::settled_task_ref(proposal_ref, &approved)?;
     vault.prove_task_actor_in_txn(wtxn, task_ref, &agent, TaskActorVerb::Accept)?;
     Ok(task_ref)
 }
@@ -377,6 +377,7 @@ pub(super) fn put_assignment_fact_in_txn(
                 actor_generation: None,
                 assigned_generation: None,
                 occurred_at: now,
+                maker: None,
             },
         )?;
     }
@@ -513,10 +514,8 @@ impl Memory<'_> {
         let now = self.vault().now_recorded_at();
         post.brief.admit_references(self, "tasks.create")?;
         admit_task_parent(self, post.parent_ref)?;
-        let task_ref = EntityId::derive(
-            TASK_POST_ID_DOMAIN,
-            &[self.actor().as_bytes(), key.stored.as_bytes()],
-        )?;
+        let maker = key.task_maker(self.actor())?;
+        let task_ref = maker.task_ref(self.actor())?;
         let (type_ref, stale_pins) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             observe_key_in(self.vault(), &txn, &post.intent_key, task_ref);
@@ -638,7 +637,7 @@ impl Memory<'_> {
             )?;
             self.mint_task_with_brief_at_in_txn(
                 wtxn,
-                (task_ref, self.actor()),
+                (maker, self.actor()),
                 &validated,
                 post.label.clone(),
                 &provenance,
