@@ -32,6 +32,7 @@ use crate::write_envelope::WriteActor;
 
 use super::model::{InboxBulkVerb, InboxBundleResolution, InboxGroup};
 use super::root_group::{OpenTray, RunGroups, root_group_card};
+use oneiron_contracts::cursor_text::parse_hex_cursor_vec;
 
 /// Which projection a group comes from.
 #[derive(
@@ -131,16 +132,10 @@ impl UnifiedInboxGroupCursor {
     /// Reads a token [`Self::to_token`] wrote; `None` for anything else.
     #[must_use]
     pub fn parse(token: &str) -> Option<Self> {
-        if token.len() < 18
-            || token.len() % 2 != 0
-            || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
+        let bytes = parse_hex_cursor_vec(token)?;
+        if bytes.len() < 9 {
             return None;
         }
-        let bytes: Vec<u8> = (0..token.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
-            .collect::<Option<_>>()?;
         Some(Self {
             newest: Reverse(u64::from_be_bytes(bytes[..8].try_into().ok()?)),
             kind: InboxGroupKind::of_byte(bytes[8])?,

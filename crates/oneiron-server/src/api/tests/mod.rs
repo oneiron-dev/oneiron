@@ -28,6 +28,7 @@ mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
+mod chat_retrieval_turn;
 mod companion;
 mod context_board_history;
 mod context_board_standing;
