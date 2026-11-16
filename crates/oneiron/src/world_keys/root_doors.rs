@@ -426,7 +426,7 @@ impl Vault {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
             carried_marks(fold, prepared, carry, me).map(drop)
         })?;
-        let predecessor = self.load_activation_predecessor()?;
+        let predecessor = self.load_activation_predecessor(owner)?;
         let (secret, request) = self.own_request()?;
         Ok((secret, request, predecessor))
     }
