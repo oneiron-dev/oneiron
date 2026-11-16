@@ -16,6 +16,9 @@
 //! oneiron/test-support,oneiron/test-hooks,oneiron-broker/test-support,tokio/test-util
 //! --test managed_start_escrow_recipients`.
 
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
+
 use std::collections::BTreeSet;
 use std::os::fd::IntoRawFd;
 use std::os::unix::fs::PermissionsExt;
