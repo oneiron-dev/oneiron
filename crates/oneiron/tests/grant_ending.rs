@@ -287,7 +287,7 @@ fn join(
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .expect("person proof");
     vault
-        .accept_shared_invitation(&proof, VAULT_ID, &invitation.id)
+        .accept_shared_invitation(&proof, VAULT_ID, &invitation)
         .expect("the person accepts");
     proof
 }

@@ -422,7 +422,7 @@ fn an_owner_batch_loads_its_available_install_key() {
     let dir = tempfile::tempdir().unwrap();
     let keystore = Arc::new(MemoryKeystore::default());
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
     vault.prepare_install_signing().unwrap();
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     vault
@@ -434,7 +434,7 @@ fn an_owner_batch_loads_its_available_install_key() {
     let on = turned_on(&revoked_at(&vault, id));
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
     let _owner = owner_proof(&vault, person);
     let entries = authority_entries(&vault);
     vault
