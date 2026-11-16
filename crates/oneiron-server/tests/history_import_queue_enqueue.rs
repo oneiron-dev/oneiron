@@ -240,3 +240,57 @@ fn valid_logs_still_queue() {
         "the transcript's entry: {entries:?}"
     );
 }
+
+/// A FIFO with no writer at a session log's name is refused at enqueue at
+/// once, with nothing queued: the open does not wait for a writer.
+#[test]
+fn fifo_at_a_log_name_is_refused_without_blocking() {
+    let home = Home::new();
+    let fifo = home
+        .dir
+        .path()
+        .join("projects")
+        .join("-Users-ana-code-garden-planner")
+        .join("7e1d1b8f-2222-4333-8444-a55566667777.jsonl");
+    let made = Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("test fixture");
+    assert!(made.success(), "mkfifo {}", fifo.display());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oneiron"))
+        .args(["import", "claude-code"])
+        .arg(&fifo)
+        .arg("--queue")
+        .arg("--config")
+        .arg(&home.config)
+        .env_remove("ONEIRON_VAULT_PATH")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("test fixture");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while child.try_wait().expect("test fixture").is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("queueing a FIFO with no writer blocked for 60 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let output = child.wait_with_output().expect("test fixture");
+    let stderr = stderr(&output);
+    assert!(
+        !output.status.success(),
+        "queueing the FIFO {} must be refused; stderr: {stderr}",
+        fifo.display()
+    );
+    assert!(
+        stderr.contains("is not a regular file"),
+        "the refusal must say the log is not a regular file; stderr is: {stderr}"
+    );
+    assert!(
+        home.entries().is_empty(),
+        "nothing refused may queue: {:?}",
+        home.entries()
+    );
+}
