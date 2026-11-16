@@ -4,9 +4,9 @@
   "input": "crate::core_write::CoreBatchWriteInput",
   "output": "crate::core_write::CoreBatchWriteReceipt",
   "call": "memory.core_batch_write(&input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

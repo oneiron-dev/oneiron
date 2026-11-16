@@ -4,9 +4,9 @@
   "input": "crate::authority::StepUpTotpResetRequest",
   "output": "crate::authority::StepUpTotpReset",
   "call": "crate::task_verb::sdk::reset_step_up_totp_as(memory.vault(), &memory.embedded_owner(\"vault.step_up.totp.reset\")?, input)?",
-  "host_door": true,
-  "host_door_lists": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "key_recovery",
   "admission": {

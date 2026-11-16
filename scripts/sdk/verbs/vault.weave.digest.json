@@ -4,9 +4,9 @@
   "input": "crate::claim::WeaveDigestRequest",
   "output": "Option<crate::claim::WeaveDigestView>",
   "call": "memory.weave_digest(None, &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {

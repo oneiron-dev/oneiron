@@ -7,6 +7,8 @@ use std::cell::Cell;
 
 use serde::{Deserialize, Serialize};
 
+use crate::register::Register;
+
 /// Bi-temporal interval represented as UNIX timestamps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeRange {
@@ -229,11 +231,15 @@ pub fn parse_temporal_expression(
 }
 
 /// What retrieval did with one temporal phrase of a query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("temporal.hint.status")]
 #[non_exhaustive]
 pub enum TemporalHintStatus {
-    /// Its range narrowed the occurred-time window.
+    /// Its range re-anchored the temporal search. A phrase of the query
+    /// never filters on occurred time; only a host window does.
     Used,
     /// The phrase reads as a time, but the parser cannot resolve it
     /// (`last several weeks`). Retrieval ran without it.
@@ -242,18 +248,6 @@ pub enum TemporalHintStatus {
     /// were recorded, so a filter to that range would drop the turns that
     /// planned it. Retrieval ran without it.
     Future,
-}
-
-impl TemporalHintStatus {
-    /// The wire spelling: `used`, `unresolved` or `future`.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Used => "used",
-            Self::Unresolved => "unresolved",
-            Self::Future => "future",
-        }
-    }
 }
 
 /// One temporal phrase read from a query.

@@ -10,6 +10,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door": true,
-  "host_door_proof": "owner"
+  "proof": "owner",
+  "door": "hand"
 }

@@ -4,8 +4,9 @@
   "input": "SkillLibraryForkRequest",
   "output": "crate::task_verb::sdk::SkillLibraryView",
   "call": "crate::task_verb::sdk::skill_library_fork_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fork\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
@@ -13,6 +14,5 @@
     "require_granted_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "skill_forker"
+  "openapi": true
 }

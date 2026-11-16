@@ -4,14 +4,14 @@
   "input": "crate::llm::RsiBudgetConfig",
   "output": "crate::llm::rsi_doors::RsiLineView",
   "call": "crate::llm::rsi_doors::configure_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.configure\")?, &input).map_err(crate::memory::MemoryError::from)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

@@ -6,13 +6,13 @@
   "scope": "Read",
   "act_class": "read",
   "call": "memory.claim_vetting_review_as_owner(&memory.embedded_owner(\"vault.claims.vetting\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

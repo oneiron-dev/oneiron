@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::OffRecordResultsRequest",
   "output": "crate::task_verb::sdk::OffRecordResultCards",
   "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.results.list\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "off_record",
+  "door": "hand",
+  "lists": true,
   "no_record": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "off_record"
+  "openapi": true
 }

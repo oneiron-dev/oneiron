@@ -72,9 +72,14 @@ and the hook boundary lifts it; the action registry offers no such row); `overla
 run bound to a session stages in its room; `session_read` names the room read (a `SessionRead`
 variant) a session-bound run serves through the room's view, an explicit field, never "every verb that
 writes nothing"; `run_surface` marks a run row the action registry serves, `memory` (no live run) or
-`live` (under the caller's live run's lease); and `host_door_proof` names the proof `door_admits` runs
-before a checked host door's hooks (in `host` for a host projection). The generator refuses a checked
-host door without one, and a new proof kind needs its arm in `door_admits`.
+`live` (under the caller's live run's lease); and `proof` gives a row its host door and names the proof
+rule the door admits on: one of the rules in `crates/oneiron-server/src/api/facade/host_doors/proofs.rs`,
+which the generated `HostDoorRow::admits` runs before the row's hooks, or `in_door` when the door proves
+its caller itself, after the hooks (`host_door_proof` and `host_door_precheck: false` in `host` for a host
+projection). `"door": "hand"` says the door fn is hand-written, and `lists` that the door answers with the
+rows it read. A new rule is a type in `proofs.rs` and its name in the generator's `PROOF_RULES`; a row in
+the old form (`host_door`, `host_door_proof`, `host_door_precheck`, `host_door_lists`) is refused, and
+`scripts/refactor/tools/door_rule_rows.py` rewrites it (UC-01 PR 0a).
 `refs` (OF-063) lists a row's typed record-ref slots as JSON pointers into its input,
 `*` taking every item of an array (`"refs": ["/edges/*/target_ref"]`). The row's
 generated engine fn calls `gate::record_references::admit_row_references` before the

@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::TrustedContactConcernRequest",
   "output": "crate::task_verb::sdk::TrustedContactConcernProposal",
   "call": "crate::task_verb::sdk::propose_trusted_contact_concern(memory, &memory.embedded_owner(\"vault.trusted_contacts.concern.propose\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Write",
   "act_class": "unstated",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "trusted_contact_person"
+  "openapi": true
 }

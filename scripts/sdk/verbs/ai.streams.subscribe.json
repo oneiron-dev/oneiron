@@ -4,13 +4,13 @@
   "input": "crate::llm::model_stream::ModelStreamSubscribe",
   "output": "crate::llm::model_stream::ModelStreamSubscribed",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.subscribe\", &input)?",
-  "host_door": true,
+  "proof": "owner",
+  "door": "hand",
   "openapi": true,
   "scope": "Read",
   "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "owner"
+  "section": false
 }

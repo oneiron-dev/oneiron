@@ -3,7 +3,7 @@
 
 use super::common::{rust_type, str_receiver};
 use super::emit_server::{CALL_HOME_DOORS, HOME_SERVER_DOORS, SOURCE_FEEDBACK_DOORS};
-use super::row_access::{flag, flag_in, get_is, item, json, method_name, shown, text};
+use super::row_access::{flag, flag_in, get_is, has_door, item, json, method_name, shown, text};
 use super::{Generator, RowId};
 use crate::error::GenerateError;
 use crate::py::json::dumps_str;
@@ -161,7 +161,7 @@ pub(crate) fn takes_task_work_turn(row: &Dict) -> Result<bool, GenerateError> {
     {
         return Ok(flag(row, "task_work"));
     }
-    if flag(row, "host_door")
+    if has_door(row)
         || flag(row, "server_door")
         || !super::row_access::context_is(row, "memory")
         || flag_in(row, "admission", "born_record_scope")?
@@ -222,7 +222,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         );
         body += &decode;
         body += OWNER_GRADE_EXPORT;
-    } else if flag(row, "host_door") {
+    } else if has_door(row) {
         // A host door answers from the server's own state, under the same credential the REST facade passes it.
         let session_arg = if flag(row, "host_door_session") {
             "actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, "
@@ -286,7 +286,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         );
         body += &lens_owner;
         body += &decode;
-        body += &if flag(row, "host_door_lists") {
+        body += &if flag(row, "lists") {
             format!(
                 "let (output, listed) = {door};\n// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\nserved.listed(crate::api::facade::host_doors::support::ListedRows::rows(listed));\nlet output = output.map_err({door_error})?;\n"
             )

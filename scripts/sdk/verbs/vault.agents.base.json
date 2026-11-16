@@ -4,8 +4,9 @@
   "input": "EmptyRequest",
   "output": "crate::task_verb::sdk::BaseAgentList",
   "call": "crate::task_verb::sdk::read_base_agents_as(memory.vault(), &memory.embedded_owner(\"vault.agents.base\")?)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "mcp_fields": {},
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

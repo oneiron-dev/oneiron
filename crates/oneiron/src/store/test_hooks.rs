@@ -87,12 +87,25 @@ pub(crate) struct TestHooks {
     /// The batches a dependent walk may still run after the transaction that
     /// marked it, as if the device stopped there; `None` runs them all.
     dependent_walk_batches: Mutex<Option<usize>>,
+    /// One-shot failure before this vault finishes its dependent walks.
+    fail_next_dependent_walks: AtomicBool,
     /// One-shot: the next served push ends once its backend has exited,
     /// before its landing, as if the process stopped there.
     pub(crate) stop_push_before_landing: AtomicBool,
 }
 
 impl TestHooks {
+    /// Makes this vault's next dependent-walk finish fail before any batch.
+    pub(crate) fn fail_next_dependent_walks(&self) {
+        self.fail_next_dependent_walks
+            .store(true, Ordering::Release);
+    }
+
+    /// Takes this vault's one-shot dependent-walk failure, leaving it unarmed.
+    pub(crate) fn take_dependent_walks_failure(&self) -> bool {
+        self.fail_next_dependent_walks.swap(false, Ordering::AcqRel)
+    }
+
     /// Lets this vault's dependent walks run `batches` more batches, then
     /// stop as a device that went down would.
     pub(crate) fn stop_dependent_walks_after(&self, batches: usize) {

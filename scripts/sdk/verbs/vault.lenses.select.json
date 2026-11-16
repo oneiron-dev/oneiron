@@ -4,8 +4,8 @@
   "input": "crate::lens::LensSelectRequest",
   "output": "crate::lens::LensSelection",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.select\", &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -14,5 +14,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_lists": true
+  "lists": true
 }

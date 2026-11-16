@@ -4,9 +4,9 @@
   "input": "crate::office_body::DeckPreviewRequest",
   "output": "crate::office_body::DeckPreview",
   "call": "memory.artifacts_body_deck_preview(&input, None)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {

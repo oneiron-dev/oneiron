@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::StewardshipRulePeriodSetRequest",
   "output": "crate::task_verb::sdk::EngineControlChangeEntry",
   "call": "crate::task_verb::sdk::set_stewardship_rule_period_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "engine_controller"
+  "section": false
 }
