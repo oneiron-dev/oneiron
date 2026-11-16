@@ -86,6 +86,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
+| `src/eval/phonetic.rs` | src | m | 1 crate-vis | — | `eval phonetic` (CROSS-ARCH-0013 §11): the cross-script name bench that decides whether a learned phonetic… |
 | `src/eval/route_calibration.rs` | src | s | 1 crate-vis | — | `eval route-calibration` (Engine row 22229, PR 2): the known-answer bench that gives route-conditioned… |
 | `src/eval/route_calibration/cases.rs` | src | s | 8 crate-vis | — | The bench's two operator inputs, each checked whole before any vault exists: the one standing question… |
 | `src/eval/route_calibration/house_read.rs` | src | s | 5 crate-vis | — | The house model's decision read as the ladder's escalation rung, built from the `--models-toml` file as the… |

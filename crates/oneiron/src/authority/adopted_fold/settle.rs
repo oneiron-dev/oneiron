@@ -257,14 +257,10 @@ pub(super) fn settle_tail(
         return Ok(None);
     }
     let revoke_facts = if withdrawal {
-        image.safety.revoke_facts.with_serial_actor_revokes(
-            image
-                .rows
-                .iter()
-                .map(|(hash, row)| (hash, &row.signer, row.seq)),
-            &judged,
-            &states,
-        )
+        image
+            .safety
+            .revoke_facts
+            .with_serial_actor_revokes(&judged, &states)
     } else {
         image.safety.revoke_facts.clone()
     };

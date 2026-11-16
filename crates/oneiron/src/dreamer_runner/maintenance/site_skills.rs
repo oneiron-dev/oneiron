@@ -601,7 +601,7 @@ const MAX_SKILL_HOLDER_SCAN_ENTRIES: usize = 100_000;
 /// The skill entities holding `skill_id`: a vault-wide scan that skips
 /// tombstones, legacy opaque bodies and superseded history. Stale and
 /// quarantined holders remain foreign collision blockers.
-fn skill_holders_in_txn(
+pub(super) fn skill_holders_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill_id: &str,

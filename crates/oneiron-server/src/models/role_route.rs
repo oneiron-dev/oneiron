@@ -199,6 +199,37 @@ impl ModelRuntime {
         self.route_role_with_pack(vault, role, seat, false)
     }
 
+    /// The one model an exact call of `role` sends now, and where this host
+    /// serves it: [`Self::route_role`]'s model when its ladder is that one
+    /// picked model; when the route walks a ladder (the seat's own, with no
+    /// manifest or pack binding the role, or a seat id a manifest pins),
+    /// the first of its rungs, in ladder order, that this host serves alone
+    /// within the route. An exact call never walks a ladder, so a seat id is
+    /// never its model (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED).
+    pub fn exact_route_role(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        seat: &Seat,
+    ) -> Result<(ModelId, ModelLocality), RoleRefusal> {
+        let route = self.route_role(vault, role, seat)?;
+        if route.ladder.is_exact() {
+            return Ok((route.model, route.locality));
+        }
+        let router = self.router.as_ref();
+        route
+            .ladder
+            .rung_models()
+            .find_map(|(model, _)| {
+                let (served, _) = router?.served(model)?;
+                (served <= route.locality).then(|| (model.clone(), served))
+            })
+            .ok_or(RoleRefusal::RouteNotServed {
+                model: route.model,
+                route: route.locality,
+            })
+    }
+
     fn route_role_with_pack(
         &self,
         vault: &Vault,
