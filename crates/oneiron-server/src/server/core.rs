@@ -131,9 +131,15 @@ pub struct SyncServer {
     pub(crate) retrieval_buffer: RetrievalMeterBuffer,
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
-    pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// Shared with the counts each call hands to the blocking pool
+    /// (`record_on_blocking_pool`), which outlive the call's borrow.
+    pub(crate) wire_telemetry: Arc<crate::wire_telemetry::WireTelemetry>,
     /// The mesh listener's sync streams in their own pressure check (FIX 7737).
     pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
+    /// How this process stands now (L8-11): ready until the event-loop
+    /// watchdog serve starts moves it; `/api/health`, `Ping` and the intake
+    /// gate read it.
+    pub(crate) process_readiness: Arc<crate::process_readiness::ProcessReadiness>,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
@@ -364,6 +370,7 @@ const _: fn(&SyncServer) = |server| {
         mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
         booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
+        process_readiness,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
@@ -487,6 +494,22 @@ impl SyncServer {
     /// each browser guest start, and read as it stands.
     pub(crate) fn browser_readiness(&self) -> &crate::config::browser::BrowserReadinessCell {
         &self.browser_readiness
+    }
+
+    /// This process's readiness, as its event-loop watchdog last moved it.
+    pub(crate) fn process_readiness(&self) -> &Arc<crate::process_readiness::ProcessReadiness> {
+        &self.process_readiness
+    }
+
+    /// Starts this process's event-loop watchdog (L8-11) on `settings`: a
+    /// probe task on the calling Tokio runtime, which must be the one that
+    /// serves the app, and a hang check on a thread of its own. It runs until
+    /// the returned guard drops.
+    pub fn start_process_watchdog(
+        &self,
+        settings: crate::process_readiness::ProcessHealthSettings,
+    ) -> crate::process_readiness::ProcessWatchdog {
+        crate::process_readiness::ProcessWatchdog::start(&self.process_readiness, settings)
     }
 
     /// Installs the host-owned published backend execution profile.

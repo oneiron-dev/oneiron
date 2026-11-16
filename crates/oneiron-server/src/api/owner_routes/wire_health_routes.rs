@@ -105,11 +105,11 @@ async fn outcome(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RecordOutcome>,
 ) -> OwnerReply<OutcomeRecorded> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let recorded = blocking(move || -> OwnerResult<OutcomeRecorded> {
         let unit = entity_id("unit", &request.unit)?;
-        let fact = wire_health::record_outcome(server.vault(), unit, &request.outcome)
+        let fact = wire_health::record_outcome(server.vault(), &owner, unit, &request.outcome)
             .map_err(|error| crate::owner::OwnerError::Invalid(error.to_string()))?;
         Ok(OutcomeRecorded {
             fact: fact.to_hex(),
