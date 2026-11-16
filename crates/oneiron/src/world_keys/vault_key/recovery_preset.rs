@@ -599,10 +599,13 @@ impl Vault {
         let (mut change, leave_marker) =
             self.release_box_hold_on_failure(written, held_box, hold_attempt, box_hold)?;
         change.mirror_pending = finish_or_pending(transition);
-        // Target Standard releases the box after the commit; a failure is
-        // answered as pending, never an error. An `Ok` release clears the
-        // leaving marker (a failure there is logged only); an `Err` keeps it.
-        if preset == RecoveryPreset::Standard {
+        // A write that left kit-only for Standard releases the box after the
+        // commit; a failure is answered as pending, never an error. An `Ok`
+        // release clears the leaving marker (a failure there is logged only);
+        // an `Err` keeps it. Standard to Standard changes nothing and sends
+        // nothing: a managed node's own preset always reads Standard, and the
+        // box follows the owner's kit-only fact there.
+        if preset == RecoveryPreset::Standard && change.previous.is_nobody_but_me() {
             match box_hold.hold_kit_only(false) {
                 Ok(()) => {
                     if let Some(attempt) = leave_marker {

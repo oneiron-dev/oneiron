@@ -1099,8 +1099,14 @@ fn a_standard_call_while_standard_writes_no_marker() {
         !change.box_recovery_needs_new_kit,
         "staying on Standard leaves the box's way back as it was"
     );
-    assert_eq!(*hold.calls.borrow(), vec![false]);
-    assert_eq!(*hold.seen.borrow(), vec![None]);
+    // Standard to Standard changes nothing and asks the box nothing: a
+    // managed node's own preset always reads Standard while the owner's
+    // kit-only fact says what the box holds.
+    assert!(
+        hold.calls.borrow().is_empty(),
+        "staying on Standard sends the box no release"
+    );
+    assert!(hold.seen.borrow().is_empty());
     assert_eq!(
         fixture
             .vault

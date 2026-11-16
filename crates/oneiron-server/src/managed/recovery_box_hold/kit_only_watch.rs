@@ -44,8 +44,18 @@ pub struct KitOnlyFact {
     pub entry: AuthorityEntryHash,
 }
 
-/// Reads the vault's latest kit-only fact: `None` when the owner never
-/// switched.
+/// Reads the vault's latest kit-only fact. The watch and the boot heal rely
+/// on this contract:
+/// - `Ok(None)` only when the fold admitted no kit-only fact (the owner never
+///   switched). A failure to read is an `Err`, never `None`: on `None` the
+///   boot heal falls back to this install's own preset, which reads
+///   `Standard` on a node.
+/// - The fact is the latest in fold order that the fold admitted as the
+///   owner's: an entry the fold refuses (an agent's, or one signed by an
+///   owner key it had revoked) never counts.
+/// - `entry` is the hash of that admitted entry, so the watch sends one hold
+///   per fact.
+/// - A later read never answers an older fact than an earlier read did.
 pub type KitOnlyFactRead =
     Arc<dyn Fn(&oneiron::Vault) -> oneiron::Result<Option<KitOnlyFact>> + Send + Sync>;
 
@@ -165,7 +175,8 @@ impl HypnosRecoveryBoxHold {
     /// Follows the owner's kit-only fact for the life of this process: one
     /// look at once, then one every `every`, until `stopped` resolves. Each
     /// look runs on a blocking thread, one at a time, and a stop ends the
-    /// watch between looks, never during one.
+    /// watch between looks, never during one; a stop that came before the
+    /// first look ends it with no look.
     pub(crate) fn follow_kit_only_fact(
         &self,
         vault: Arc<oneiron::Vault>,
@@ -179,7 +190,15 @@ impl HypnosRecoveryBoxHold {
         tokio::spawn(async move {
             let mut stopped = std::pin::pin!(stopped);
             let mut follow = KitOnlyFollow::default();
+            // The first look goes at once, but not past a stop that came first.
+            let mut wait = Duration::ZERO;
             loop {
+                tokio::select! {
+                    biased;
+                    () = &mut stopped => return,
+                    () = tokio::time::sleep(wait) => {}
+                }
+                wait = every;
                 let (hold, vault, admit, read) = (
                     Arc::clone(&hold),
                     Arc::clone(&vault),
@@ -202,11 +221,6 @@ impl HypnosRecoveryBoxHold {
                         KitOnlyFollow::default()
                     }
                 };
-                tokio::select! {
-                    biased;
-                    () = &mut stopped => return,
-                    () = tokio::time::sleep(every) => {}
-                }
             }
         })
     }

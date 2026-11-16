@@ -9,8 +9,9 @@ use super::*;
 /// after the no-write checks pass and before the write txn opens; its error
 /// refuses the switch with nothing written but the marker, after one
 /// best-effort `hold_kit_only(false)` while the vault still reads `Standard`,
-/// since an error can follow a hold that reached the box. Target `Standard` calls
-/// `hold_kit_only(false)` after the commit; its failure answers
+/// since an error can follow a hold that reached the box. A switch from kit-only
+/// to `Standard` calls `hold_kit_only(false)` after the commit (`Standard` to
+/// `Standard` calls nothing); its failure answers
 /// [`RecoveryPresetChange::box_release_pending`], never an error. A switch
 /// refused before the hold makes no hold call; one that fails after it sends
 /// `hold_kit_only(false)` once, best-effort, while the vault still reads

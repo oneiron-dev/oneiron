@@ -6,9 +6,10 @@
 //! appends and sends the matching hold through the supervisor relay: a new
 //! fact once, an acknowledged fact never again in the process, a failed
 //! hold again at the next look, nothing without a fact or while the vault
-//! is paused, and every hold after the boot heal. The boot heal sends the
-//! fact's choice over this install's own preset, and the preset switch
-//! holds the box through the hosted client when it runs here.
+//! is paused, nothing once stopped, and every hold after the boot heal. The
+//! boot heal sends the fact's choice over this install's own preset, and the
+//! preset switch holds the box through the hosted client when it runs here,
+//! but a `Standard` call on a vault already on `Standard` sends no release.
 //!
 //! The fact reader is the test's: the fold's reader comes with the switch's
 //! fact (OPUS-WAYBACK's fact PR).
@@ -181,6 +182,15 @@ fn assert_no_call(listener: &UnixListener) {
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
         other => panic!("no call reaches the supervisor, got {other:?}"),
     }
+}
+
+/// Binds a silent, nonblocking listener on `socket` again once the stub that
+/// held it has ended, so the test can tell that no later call reached it.
+fn rebind_silent(socket: &Path) -> UnixListener {
+    std::fs::remove_file(socket).expect("remove the ended stub's socket");
+    let listener = UnixListener::bind(socket).expect("bind the supervisor socket again");
+    listener.set_nonblocking(true).expect("nonblocking");
+    listener
 }
 
 #[test]
@@ -495,9 +505,71 @@ fn the_cadence_looks_at_once_follows_a_new_fact_and_ends_at_shutdown() {
         expected_line(false)
     );
     supervisor.join().expect("supervisor");
+    // The acknowledged fact is never sent again: no call over three more looks.
+    let silent = rebind_silent(&socket);
+    std::thread::sleep(Duration::from_millis(350));
+    assert_no_call(&silent);
     stop.send(()).expect("stop the watch");
     runtime
         .block_on(async { tokio::time::timeout(ANSWER, watch).await })
         .expect("the watch ends at shutdown")
         .expect("the watch task ends cleanly");
+}
+
+#[test]
+fn a_watch_stopped_before_its_first_look_reads_and_sends_nothing() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let fold = TestFold::new(Fold::Fact(fact(true, 1)));
+    let (_dir, socket, listener) = silent_supervisor();
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let watch = {
+        let _entered = runtime.enter();
+        follow_kit_only_fact(
+            &client,
+            Arc::clone(&vault),
+            fold.reader(),
+            Duration::from_millis(100),
+            std::future::ready(()),
+        )
+    };
+
+    runtime
+        .block_on(async { tokio::time::timeout(ANSWER, watch).await })
+        .expect("the watch ends")
+        .expect("the watch task ends cleanly");
+    assert_eq!(fold.reads(), 0, "a stopped watch reads no fact");
+    assert_no_call(&listener);
+}
+
+#[test]
+fn a_standard_call_on_a_standard_vault_sends_no_release_through_the_hosted_client() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    let (_dir, socket, listener) = silent_supervisor();
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    // what the preset route passes on a hosted vault, whose own preset
+    // always reads Standard
+    let box_hold: &dyn RecoveryBoxHold = &client;
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::Standard
+    );
+
+    let change = vault
+        .set_recovery_preset_as(
+            &owner_proof,
+            RecoveryPreset::Standard,
+            |_| panic!("staying on Standard draws no sheet"),
+            box_hold,
+        )
+        .expect("staying on Standard");
+    assert!(
+        !change.box_release_pending,
+        "no release was asked, so none is pending"
+    );
+    assert_no_call(&listener);
+    assert_eq!(vault.recovery_box_hold_pending().expect("marker"), None);
 }

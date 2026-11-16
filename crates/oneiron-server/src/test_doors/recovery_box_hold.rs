@@ -114,7 +114,8 @@ pub fn kit_only_watch(
 }
 
 /// Managed boot's cadence of the kit-only watch over `vault`: a look at once,
-/// then one every `every`, until `stopped` resolves. Needs a Tokio runtime.
+/// then one every `every`, until `stopped` resolves (a stop that came first
+/// ends it with no look). Needs a Tokio runtime.
 pub fn follow_kit_only_fact(
     client: &HypnosRecoveryBoxHold,
     vault: Arc<oneiron::Vault>,
