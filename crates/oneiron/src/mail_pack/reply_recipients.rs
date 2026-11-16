@@ -6,9 +6,11 @@
 //! confirms it owns (fix list row 20400). Every address is canonical and named
 //! once, To before Cc, in the order the headers name them, the first To
 //! winning over a later Cc. A reply that names no To recipient, a malformed
-//! address, a named group's members or more than [`MAX_REPLY_RECIPIENTS`]
-//! is refused, never cut. A list's address is one opaque recipient: no group
-//! is expanded into its members (fix list row 17642).
+//! address, a named group's members or more recipients than the owner's
+//! ceiling (`mail_calendar.reply.max_recipients`, [`MAX_REPLY_RECIPIENTS`]
+//! unless the owner sets another) is refused, never cut. A list's address is
+//! one opaque recipient: no group is expanded into its members (fix list row
+//! 17642).
 
 use super::gmail::{AddressPlace, address_list, address_places};
 use super::state::MailReplyHeaders;
@@ -16,9 +18,9 @@ use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use crate::outbound::{OutboundRecipient, OutboundRecipientRole};
 
-/// The most recipients one drafted reply names, To and Cc together. A reply
-/// is an answer to a conversation, not a mailing; a longer list is refused
-/// rather than cut.
+/// The most recipients one drafted reply names, To and Cc together, unless
+/// the owner sets another ceiling. A reply is an answer to a conversation,
+/// not a mailing; a longer list is refused rather than cut.
 pub(super) const MAX_REPLY_RECIPIENTS: usize = 50;
 
 /// Whether the address header whose entries are `entries`, as its provider
@@ -226,12 +228,13 @@ impl ReplyRecipientList<'_> {
 ///
 /// A reply to all of a message landed before its To and Cc were kept; a
 /// malformed address or a group's members; no To recipient but the
-/// mailbox's own; more than [`MAX_REPLY_RECIPIENTS`].
+/// mailbox's own; more than `max_recipients`, the owner's ceiling.
 pub(super) fn reply_recipients(
     parent: &MailReplyHeaders,
     own: &[String],
     reply_all: bool,
     cc: &[String],
+    max_recipients: usize,
 ) -> MemoryResult<Vec<OutboundRecipient>> {
     let mut list = ReplyRecipientList {
         own,
@@ -280,9 +283,9 @@ pub(super) fn reply_recipients(
             "the reply names no To recipient but this mailbox",
         ));
     }
-    if named.len() > MAX_REPLY_RECIPIENTS {
+    if named.len() > max_recipients {
         return Err(MemoryError::bad_request(format!(
-            "a reply names at most {MAX_REPLY_RECIPIENTS} recipients, To and Cc together"
+            "a reply names at most {max_recipients} recipients, To and Cc together"
         )));
     }
     Ok(named)

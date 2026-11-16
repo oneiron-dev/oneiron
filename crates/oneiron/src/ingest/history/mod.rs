@@ -54,6 +54,7 @@ pub use land::HistoryImportReport;
 pub(crate) use ledger::erase_message_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use ledger::landed_rows_in;
+pub use members::HistoryMemberAddress;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
 pub use review::history_import_review_id;
 pub(crate) use review::imported_evidence_in_txn;

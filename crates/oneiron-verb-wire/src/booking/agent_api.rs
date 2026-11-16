@@ -1,7 +1,7 @@
 //! Moved from `crates/oneiron/src/booking/agent_api.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::booking::constraint::RankedSlot;
+use crate::booking::constraint::{FullDay, RankedSlot};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -121,9 +121,10 @@ pub enum BookingBookResult {
 
 /// The closed response union.
 ///
-/// Availability projects ranked public slots and the flex flag and nothing
-/// else — no titles, descriptions, attendees, busy sources, or free/busy
-/// internals can be expressed here. Mutations project only action-safe opaque
+/// Availability projects ranked public slots, the flex flag and the days a
+/// meeting cap filled (date and cap only) and nothing else — no titles,
+/// descriptions, attendees, busy sources, or free/busy internals can be
+/// expressed here. Mutations project only action-safe opaque
 /// tokens.
 ///
 /// `Book` carries [`BookingBookResult`] directly, exactly as
@@ -138,6 +139,9 @@ pub enum BookingOperationResponse {
     Availability {
         slots: Vec<RankedSlot>,
         flex_used: bool,
+        /// Visitor-local days in the asked window that a meeting cap filled,
+        /// ascending by date.
+        full_days: Vec<FullDay>,
     },
     Book(BookingBookResult),
     Reschedule {
