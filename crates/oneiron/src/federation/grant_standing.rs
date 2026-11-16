@@ -531,7 +531,7 @@ fn engine_default_within_reach(
     id: EntityId,
     mut grant: FederationGrant,
 ) -> Result<Option<SharedGrantRow>> {
-    let Some(reach) = super::steward_reach_in(store, txn, grant.member_ref)? else {
+    let Some(reach) = super::base_agent_steward_reach_in(store, txn, grant.member_ref)? else {
         return Ok(None);
     };
     let ScopeAxis::Some(verbs) = &grant.authority_scope.verbs else {

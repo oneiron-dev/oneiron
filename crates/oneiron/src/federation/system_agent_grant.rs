@@ -59,9 +59,10 @@ use std::collections::BTreeSet;
 use super::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
     FederationGrantScope, Scope, ScopeAxis, decode_federation_grant_body,
-    encode_federation_grant_body, grant_scope, own_device_residence_scope,
+    decode_federation_grant_body_keyed, encode_federation_grant_body, grant_scope,
+    own_device_residence_scope,
 };
-use crate::authority::{ActSurface, AgentGrantAct};
+use crate::authority::{ActSurface, AgentGrantAct, AuthorityView};
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -69,7 +70,7 @@ use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 use crate::{TimeRange, Vault};
 
 mod narrowing;
@@ -320,20 +321,63 @@ fn steward_verbs_of(row: &FederationGrant) -> BTreeSet<String> {
     }
 }
 
-/// Base agent `agent`'s reach in `txn`: the meet of every grant row that
-/// stands as a Steward grant naming it ([`standing_steward_grant_in`]). The
-/// verbs are those every row gives, and each data axis is the narrowest any
-/// row holds, so a row can only narrow what the others give. A base agent's
-/// row counts only within the build's default table
-/// ([`within_default_table`], pass 28 R4). `None` while no such row stands:
-/// no host has stood the agent's grant on this vault, and its manifest rows
-/// decide.
+/// `agent`'s Steward reach in `txn`, for any actor. A base agent's is
+/// [`base_agent_steward_reach_in`]. Any other actor's is the meet of the
+/// Steward rows naming it that the verified fold stands behind
+/// ([`StewardRootFold::stands_behind`], pass 28 R4b): a row no counted act
+/// gives, or one whose terms are not its act's, gives nothing, as on the
+/// engine-controls door. `None` while no such row stands.
 pub(crate) fn steward_reach_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+) -> Result<Option<StewardReach>> {
+    if holds_system_agent_grant(agent) {
+        return base_agent_steward_reach_in(store, txn, agent);
+    }
+    // The fold is read once, at the first Steward row that names the actor.
+    let mut root_fold: Option<StewardRootFold> = None;
+    steward_rows_meet_in(store, txn, agent, |id, row| {
+        if root_fold.is_none() {
+            root_fold = Some(StewardRootFold::read_in_txn(store, txn)?);
+        }
+        match &root_fold {
+            Some(root_fold) => root_fold.stands_behind(store, txn, id, row),
+            None => Ok(false),
+        }
+    })
+}
+
+/// Base agent `agent`'s reach in `txn`: the meet of every grant row that
+/// stands as a Steward grant naming it ([`standing_steward_grant_in`]) within
+/// the build's default table ([`within_default_table`], pass 28 R4). `None`
+/// while no such row stands (no host has stood the agent's grant on this
+/// vault, and its manifest rows decide), and for an actor that is no base
+/// agent, whose rows count only through the fold ([`steward_reach_in`]). The
+/// fold's own reader of an engine-default row asks this one, so that read
+/// never reads the fold again.
+pub(crate) fn base_agent_steward_reach_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
 ) -> Result<Option<StewardReach>> {
-    let base_agent = holds_system_agent_grant(agent);
+    if !holds_system_agent_grant(agent) {
+        return Ok(None);
+    }
+    steward_rows_meet_in(store, txn, agent, |_, row| Ok(within_default_table(row)))
+}
+
+/// The meet of every grant row that stands as a Steward grant naming `agent`
+/// in `txn` ([`standing_steward_grant_in`]) and that `counts` counts: the
+/// verbs every such row gives, and each data axis the narrowest any such row
+/// holds, so a row can only narrow what the others give; the newest such row
+/// names the reach. `None` while no such row stands.
+fn steward_rows_meet_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    mut counts: impl FnMut(EntityId, &FederationGrant) -> Result<bool>,
+) -> Result<Option<StewardReach>> {
     let mut newest: Option<EntityId> = None;
     let mut met: Option<(BTreeSet<String>, Scope)> = None;
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)? {
@@ -341,7 +385,7 @@ pub(crate) fn steward_reach_in(
         let Some(row) = standing_steward_grant_in(store, txn, id, agent)? else {
             continue;
         };
-        if base_agent && !within_default_table(&row) {
+        if !counts(id, &row)? {
             continue;
         }
         let verbs = steward_verbs_of(&row);
@@ -359,6 +403,76 @@ pub(crate) fn steward_reach_in(
         verbs,
         scope,
     }))
+}
+
+/// What a Steward row naming an actor that is no base agent stands on, read
+/// once per reach (pass 28 R4b): the verified fold, the vault root such a row
+/// names ([`Vault::steward_root_scope_in_txn`]) and whether that root is a
+/// shared vault's. The root's shape never tells a shared vault from a
+/// personal one: the own-device residence is a `Vault` scope too.
+struct StewardRootFold {
+    fold: AuthorityView,
+    root: FederationGrantScope,
+    shared: bool,
+    now: u64,
+}
+
+impl StewardRootFold {
+    fn read_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        let creation = super::shared_vault_creation_for_store_in_txn(store, txn)?;
+        Ok(Self {
+            fold: crate::authority::authority_view_readonly_for_store_in_txn(
+                store,
+                store.privacy_posture,
+                txn,
+            )?,
+            root: creation
+                .as_ref()
+                .map_or_else(own_device_residence_scope, |shared| {
+                    FederationGrantScope::vault(shared.vault_id)
+                }),
+            shared: creation.is_some(),
+            now: store.clock.now_recorded_at(),
+        })
+    }
+
+    /// Whether the fold stands behind the live Steward row `id`, read as
+    /// `row`: a row on the root that, over a shared vault, stands in its
+    /// shape's families ([`super::shared_grant_row_in_fold`]: a member's
+    /// counted giving, the owner's counted mint); over this install's own
+    /// residence, the owner's counted Steward mint, term for term
+    /// ([`super::owner_agent_mint_in_fold`]). The engine-controls door reads
+    /// a Steward row the same way.
+    fn stands_behind(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        row: &FederationGrant,
+    ) -> Result<bool> {
+        if row.scope != self.root
+            || !row.is_live_at(self.now)
+            || !crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
+        {
+            return Ok(false);
+        }
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            return Ok(false);
+        };
+        if self.shared {
+            return Ok(super::shared_grant_row_in_fold(
+                store, &self.fold, txn, id, &raw.body, self.now,
+            )?
+            .is_some());
+        }
+        let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(&raw.body) else {
+            return Ok(false);
+        };
+        Ok(
+            super::owner_agent_mint_in_fold(&self.fold, id, &grant, terms_key.as_ref(), &self.root)
+                .is_some(),
+        )
+    }
 }
 
 /// One base agent's rows as the policy fold reads them from its grant.
@@ -386,7 +500,7 @@ pub(crate) fn steward_rows_rewrite(
     let mut rewrites = Vec::new();
     for agent in SystemAgent::ALL {
         let actor = agent.actor_id()?;
-        let Some(reach) = steward_reach_in(store, txn, actor)? else {
+        let Some(reach) = base_agent_steward_reach_in(store, txn, actor)? else {
             continue;
         };
         rewrites.push(StewardRows {
@@ -402,14 +516,14 @@ pub(crate) fn steward_rows_rewrite(
 /// The Steward grant in force for a base agent in `txn`: `None` while no
 /// row stands (the manifest rows decide), `Some(None)` for an opt-out, else
 /// the newest standing row. The agent's reach is the meet of every standing
-/// row ([`steward_reach_in`]), never this one row's alone.
+/// row ([`base_agent_steward_reach_in`]), never this one row's alone.
 pub(crate) fn steward_grant_of_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
 ) -> Result<Option<Option<EntityId>>> {
     Ok(
-        steward_reach_in(store, txn, agent)?.map(|reach| match reach.state() {
+        base_agent_steward_reach_in(store, txn, agent)?.map(|reach| match reach.state() {
             SystemAgentGrantState::OptedOut => None,
             SystemAgentGrantState::Minted { grant } => Some(grant),
         }),
