@@ -765,7 +765,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/legal_hold/use_limit.rs` | src | s | 1 struct | CooperativeRestriction | Moved from `crates/oneiron/src/store/legal_hold/use_limit.rs` (lib split R2: record types below the lib) |
 | `src/store/mod.rs` | src | s | 28 mod · 79 re-export · 2 crate-vis | — | — |
 | `src/store/open_gates/mod.rs` | src | s | 1 mod · 6 re-export | — | — |
-| `src/store/open_gates/open_version_keys.rs` | src | s | 1 struct · 5 const | DbManifestEntry | Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the… |
+| `src/store/open_gates/open_version_keys.rs` | src | m | 1 struct · 5 const | DbManifestEntry | Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the… |
 | `src/store/pack_predicate_rewrites.rs` | src | s | 1 struct · 1 enum | PackMigrationMap, PackPredicateRewrite | Moved from `crates/oneiron/src/store/pack_predicate_rewrites.rs` (lib split R2: record types below the lib) |
 | `src/store/pending_gate_consent/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/store/pending_gate_consent/records.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | PendingGateConsentGroup, PendingGateConsentRecord | Moved from `crates/oneiron/src/store/pending_gate_consent/records.rs` (lib split R2: record types below the… |
