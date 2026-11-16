@@ -49,14 +49,15 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::Memory;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, ReceiptActor};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::decision::GateOutcome;
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
 use super::manifest_authenticity::{manifest_is_quarantined, manifest_is_trusted};
-use super::{POLICY_SCHEMA_VERSION, resolve_policy_manifest};
+use super::{POLICY_SCHEMA_VERSION, policy_basis_in_txn, resolve_policy_manifest};
 
 const FIELDS: &[&str] = &[
     "schema_version",
@@ -197,31 +198,20 @@ fn record(
     actor: crate::WriteActor,
     manifest: EntityId,
     body: &[u8],
-    decision: (&str, Vec<String>),
+    decision: (GateReceiptOutcome, Vec<String>),
 ) -> Result<String> {
-    let mut receipt = GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: decision.0.to_owned(),
-        reason_codes: decision.1,
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: GateContentKind::PolicyManifest.as_str().to_owned(),
-        policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: None,
-        grant_ref: Some(format!("policy_manifest:{}", manifest.to_hex())),
-        diff_handle: blake3::hash(body).as_bytes().to_vec(),
-        read_frontier_hash: resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-    Ok(format!("gate:{}", receipt.decision_id.to_hex()))
+    let (outcome, reasons) = decision;
+    let mut receipt = GateReceipt::with_reasons(
+        outcome,
+        GateContentKind::PolicyManifest.as_str(),
+        reasons,
+        ReceiptActor::Row(actor),
+        blake3::hash(body).as_bytes().to_vec(),
+        policy_basis_in_txn(&vault.store, txn)?,
+    );
+    receipt.grant_ref = Some(format!("policy_manifest:{}", manifest.to_hex()));
+    let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+    Ok(format!("gate:{}", record.decision_id.to_hex()))
 }
 
 /// Replaces one field of the owner-trusted default manifest through the
@@ -270,7 +260,7 @@ pub(crate) fn rewrite_default_manifest_field_as_owner_in_txn(
         crate::WriteActor::new(actor, EdgeActorClass::Human),
         id,
         &body,
-        ("allow", vec![reason_code.to_owned()]),
+        (GateReceiptOutcome::Allow, vec![reason_code.to_owned()]),
     )
 }
 
@@ -334,7 +324,7 @@ pub fn put_policy_manifest_as_owner(
         vault.write_owner_policy_manifest_in_txn(owner, txn, id, data, crate::unix_seconds_now())?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
         let receipt_ref = record(vault, txn, crate::WriteActor::new(actor, EdgeActorClass::Human),
-            id, &body, ("allow", vec!["gate.allow.owner_policy_manifest".to_owned()]))?;
+            id, &body, (GateReceiptOutcome::Allow, vec!["gate.allow.owner_policy_manifest".to_owned()]))?;
         Ok(PolicyManifestReceipt {
             manifest: view_in_txn(vault, txn, id, &body)?,
             approval: PolicyCeiling::Auto,
@@ -410,7 +400,7 @@ pub fn put_policy_manifest_as_holder(
         vault.write_holder_policy_manifest_in_txn(holder, txn, id, data, now)?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
         let receipt_ref = record(vault, txn, crate::WriteActor::new(actor, EdgeActorClass::Human),
-            id, &body, ("allow", vec!["gate.allow.owner_policy_manifest".to_owned()]))?;
+            id, &body, (GateReceiptOutcome::Allow, vec!["gate.allow.owner_policy_manifest".to_owned()]))?;
         Ok(PolicyManifestReceipt {
             manifest: view_in_txn(vault, txn, id, &body)?,
             approval: PolicyCeiling::Auto,
@@ -485,7 +475,7 @@ pub fn propose_policy_manifest(
             id,
             &body,
             (
-                decision.outcome().as_str(),
+                decision.outcome().into(),
                 decision
                     .reason_codes()
                     .iter()
@@ -537,7 +527,10 @@ pub fn set_gate_checker_as_owner(
             crate::WriteActor::new(actor, EdgeActorClass::Human),
             super::default_policy_manifest_id()?,
             &data,
-            ("allow", vec!["gate.allow.owner_checker_role".to_owned()]),
+            (
+                GateReceiptOutcome::Allow,
+                vec!["gate.allow.owner_checker_role".to_owned()],
+            ),
         )?;
         Ok(GateCheckerReceipt {
             binding: input.binding.clone(),

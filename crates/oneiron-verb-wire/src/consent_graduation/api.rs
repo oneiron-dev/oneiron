@@ -22,18 +22,6 @@ pub struct GraduationPolicies {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraduationPolicySetRequest {
-    pub policy: GraduationPolicy,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraduationPolicyClearRequest {
-    pub scope_pattern: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GraduationChanged {
     pub changed: bool,
 }
