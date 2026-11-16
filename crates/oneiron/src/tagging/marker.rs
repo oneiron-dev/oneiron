@@ -238,8 +238,8 @@ pub(super) fn enqueue_marker_in_txn(
 /// successor id derived from the try it retries, stamped at `input.now`.
 ///
 /// The failed tries the trace history would keep stay in the ledger behind
-/// the new one: the newest [`TaggingTraceHistory::per_turn`], none older
-/// than [`TaggingTraceHistory::max_age_secs`]. The others are deleted and
+/// the new one: the newest [`TaggingTraceHistory::per_turn`], none whose age
+/// reaches [`TaggingTraceHistory::max_age_secs`]. The others are deleted and
 /// counted by the kept try behind them, so backoff and try numbers read on,
 /// a turn that keeps failing holds a bounded lineage, and its settlement
 /// prunes a bounded one.
@@ -266,7 +266,7 @@ pub(super) fn retry_marker_in_txn(
         wtxn,
         id,
         usize::try_from(history.per_turn).unwrap_or(usize::MAX),
-        now.saturating_sub(history.max_age_secs),
+        super::history::kept_since(now, history.max_age_secs),
     )?;
     Ok(())
 }
