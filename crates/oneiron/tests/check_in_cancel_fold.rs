@@ -2,8 +2,8 @@
 //! children rule is ARCH-0082 #children. The cancel's mode type is folded
 //! into `CheckInMode` with its wire tokens unchanged (`auto`, `full-access`,
 //! `manual`), and `manual` still proposes. An agent stops the children and
-//! forks it started, and their whole subtree, with no ask; a cancel of an
-//! agent it did not start stays a proposal.
+//! forks it started, and their whole subtree, with no ask; a cancel of a run
+//! it did not start stays a proposal.
 //!
 //! `cargo test --locked -p oneiron --all-features --test check_in_cancel_fold`.
 
