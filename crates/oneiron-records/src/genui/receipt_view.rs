@@ -3,6 +3,7 @@
 
 use crate::genui::consent_eval::non_empty;
 use oneiron_base::error::Result;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -52,21 +53,11 @@ pub enum ReceiptDeepLinkKind {
     Entity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("view.time.resolution")]
 pub enum ViewTimeResolution {
     Active,
     Revoked,
     Unavailable,
-}
-
-impl ViewTimeResolution {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Revoked => "revoked",
-            Self::Unavailable => "unavailable",
-        }
-    }
 }
