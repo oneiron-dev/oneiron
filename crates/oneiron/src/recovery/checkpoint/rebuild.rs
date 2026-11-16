@@ -254,6 +254,8 @@ pub(super) fn rebuild(
 
 /// Backfills that own their transactions run after the base index transaction.
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
+    // Restored PERSON rows bypassed the body staging that keeps their party keys.
+    crate::store::person_party_keys::backfill_person_party_key_index(vault, true)?;
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
     // Restored authority-log rows bypassed the Grant member index's writer.
     crate::federation::backfill_agent_grant_member_index(vault, true)?;
@@ -265,6 +267,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     vault.backfill_mesh_machine_endpoint_index(true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
+    // Restored campaign.member claims bypassed the member index's writer.
+    vault.backfill_campaign_member_index(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;
     crate::edit_distance::routing::rebuild_routing_projection(vault)?;
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;

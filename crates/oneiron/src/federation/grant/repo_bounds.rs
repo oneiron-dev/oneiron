@@ -24,7 +24,7 @@ pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
 
 /// The repo bounds a body carries; a malformed value refuses the body.
 pub(super) fn decode_body_entry(entries: &[(Value, Value)]) -> Result<Option<RepoAccessBounds>> {
-    optional_value(entries, KEY_REPO_BOUNDS)
+    optional_value(entries, KEY_REPO_BOUNDS)?
         .map(|value| decode_repo_bounds_value(value).ok_or_else(invalid_grant))
         .transpose()
 }

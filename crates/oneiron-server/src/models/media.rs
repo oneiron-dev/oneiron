@@ -25,10 +25,12 @@ use oneiron::{
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
     ModelTierRef, Vault,
 };
-use oneiron_llm_openai::{
-    OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
-    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+use oneiron_llm::openai_compat::{
+    OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod,
+    OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
+use oneiron_speech::tts::cartesia::CARTESIA_VERSION;
+use oneiron_speech::tts::hosted::HostedWire;
 use serde::Serialize;
 
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
@@ -39,7 +41,7 @@ use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
 use super::host_budgets::ModelHostBudgets;
-use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
+use super::hosted_speech::{HostedCloner, HostedSpeech};
 use super::http::{HttpReleaseError, KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, clone_connector, media_offer};
@@ -62,6 +64,8 @@ mod fit;
 // FIX 9511, 9513: a job's end and its delete, in one order.
 mod job_lifecycle;
 mod jobs;
+// L9-25: an OpenAI-compatible provider's family backends behind one router.
+mod openai_compat;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
@@ -81,6 +85,7 @@ pub(crate) use agent::AgentMediaCall;
 pub(crate) use run_line::JobSpendLedger;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+pub(in crate::models) use openai_compat::openai_compat_media;
 use run_line::{JobLine, ProgramLine};
 pub(in crate::models) use video_length::requested_video_ms;
 pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
@@ -646,14 +651,12 @@ fn media_backends(
             // OpenAI-compatible wire below.
             ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
-                Arc::new(
-                    OpenAiMediaBackend::new(
-                        MediaHttp { http },
-                        wire_models,
-                        provider.base_url.clone(),
-                    )
-                    .with_embed_shape(provider.embed_shape),
-                ) as Arc<dyn MediaBackend>
+                openai_compat_media(
+                    MediaHttp { http },
+                    wire_models,
+                    provider.base_url.clone(),
+                    provider.embed_shape,
+                )
             }),
         };
         match built {

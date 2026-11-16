@@ -74,10 +74,8 @@ mod session;
 mod speakable;
 mod stream;
 pub use stream::{VoiceStreamConfig, VoiceStreamFailure, drive_voice_stream};
-pub mod soniox;
 pub mod spilled_audio;
 
-pub mod tts_spikes;
 #[cfg(unix)]
 pub mod uds;
 pub mod voxcpm2;
@@ -95,7 +93,7 @@ pub use session::{
     SafeguardUpdate, VOICE_IDENTITY_ASK_SECONDS, VoiceCascadeSession, VoiceContainerBinding,
     VoiceSessionConfig,
 };
-pub use speakable::pieces as speakable_pieces;
+pub use speakable::{first_piece as speakable_first_piece, pieces as speakable_pieces};
 
 #[cfg(test)]
 mod tests;

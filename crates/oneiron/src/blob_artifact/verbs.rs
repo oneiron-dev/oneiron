@@ -133,6 +133,27 @@ pub struct ReleasedWait {
     pub released: bool,
 }
 
+/// The one version of an artifact an organ call reads (L4-15, L4-16), as a
+/// handle's own lane admitted it whole: the artifact, the version, and the
+/// rows that version is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedArtifactVersion {
+    pub artifact: EntityId,
+    pub version: u64,
+    /// The version's CLAIM and its content's ASSET.
+    pub rows: Vec<EntityId>,
+}
+
+impl AdmittedArtifactVersion {
+    /// The rows a door lists as read: the artifact, then the version's rows.
+    #[must_use]
+    pub fn sources(&self) -> Vec<EntityId> {
+        std::iter::once(self.artifact)
+            .chain(self.rows.iter().copied())
+            .collect()
+    }
+}
+
 /// A kept proposal: the version it became, the threads it moved, its
 /// receipt and the review it settled.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -942,21 +963,24 @@ impl Memory<'_> {
     }
 
     /// What a host runs an organ edit of an artifact under
-    /// (`vault.artifacts.image.edit`, L4-15): the artifact, read through this
-    /// handle's own lane as an artifact ask reads its target (FIX 1533), and
-    /// the actor its proposal is made by. The proposal's `run_ref` is checked
-    /// as its landing checks it, before any organ runs.
+    /// (`vault.artifacts.image.edit`, L4-15): the version it edits, `version`
+    /// or the head, admitted whole by this handle's own lane
+    /// ([`Self::artifact_version_admission`]), and the actor its proposal is
+    /// made by. The proposal's `run_ref` is checked as its landing checks it,
+    /// before any organ runs.
     ///
     /// # Errors
     ///
-    /// A malformed `artifact_ref`; an artifact the lane does not read, as
-    /// absent; a `run_ref` that is empty, past the run-ref bound, or holds a
-    /// secret.
+    /// A malformed `artifact_ref`; a `run_ref` that is empty, past the
+    /// run-ref bound, or holds a secret; an artifact or version the vault
+    /// does not hold, or one whose rows the lane does not all read, as
+    /// absent.
     pub fn artifacts_edit_admission(
         &self,
         artifact_ref: &str,
+        version: Option<u64>,
         run_ref: &str,
-    ) -> MemoryResult<(EntityId, WriteActor)> {
+    ) -> MemoryResult<(AdmittedArtifactVersion, WriteActor)> {
         let artifact = entity(artifact_ref)?;
         if run_ref.trim().is_empty() || run_ref.len() > super::BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
             return Err(
@@ -964,8 +988,57 @@ impl Memory<'_> {
             );
         }
         crate::batch::secret_scan::scan_metadata_field(run_ref)?;
+        Ok((
+            self.artifact_version_admission(artifact, version)?,
+            self.artifact_actor(),
+        ))
+    }
+
+    /// What a host shows an organ preview of an artifact under
+    /// (`vault.artifacts.image.preview`, L4-16): the version it shows,
+    /// `version` or the head, admitted whole by this handle's own lane
+    /// ([`Self::artifact_version_admission`]).
+    ///
+    /// # Errors
+    ///
+    /// A malformed `artifact_ref`; an artifact or version the vault does not
+    /// hold, or one whose rows the lane does not all read, as absent.
+    pub fn artifacts_preview_admission(
+        &self,
+        artifact_ref: &str,
+        version: Option<u64>,
+    ) -> MemoryResult<AdmittedArtifactVersion> {
+        self.artifact_version_admission(entity(artifact_ref)?, version)
+    }
+
+    /// The version of `artifact` an organ call reads, `version` or the head,
+    /// read whole through this handle's own lane before a byte is read, as
+    /// the export door reads a version for a credential with record caveats
+    /// (FIX 7645): the artifact, as an artifact ask reads its target (FIX
+    /// 1533), then the artifact beside that version's CLAIM and its
+    /// content's ASSET. The artifact covers its own version rows for the
+    /// records check alone (FIX 8245); every other check, a Grant's entity
+    /// types among them, judges each row. The organ is given that version
+    /// and no other, so a head that moves after this read changes nothing
+    /// the call reads (review of #7924).
+    fn artifact_version_admission(
+        &self,
+        artifact: EntityId,
+        version: Option<u64>,
+    ) -> MemoryResult<AdmittedArtifactVersion> {
         self.require_credential_reads(&[artifact])?;
-        Ok((artifact, self.artifact_actor()))
+        let Some((version, rows)) = self
+            .vault()
+            .blob_artifact_version_rows(&artifact, version)?
+        else {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        };
+        self.require_credential_version_reads(artifact, &rows)?;
+        Ok(AdmittedArtifactVersion {
+            artifact,
+            version,
+            rows,
+        })
     }
 
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its

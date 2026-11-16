@@ -60,8 +60,9 @@ pub(super) const USED: &str =
 /// invocation instead of meeting the misleading "already used".
 pub(super) const UNKNOWN: &str =
     "this invocation's ask was used but its call never finished; call again with a new invocation";
-/// The most bytes of a drained call's saved error message.
-pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
+#[doc(hidden)]
+pub(super) use oneiron_records::runtime_hooks::verb::ask::cut;
+
 /// The error a retry gets when a completed call's result was not retained.
 /// The call ran, and must not be sent again.
 pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
@@ -784,13 +785,4 @@ fn proceeds(result: &TaskAskResult) -> bool {
         }),
         _ => false,
     }
-}
-
-/// `text`, cut to `max` bytes on a character boundary.
-pub(super) fn cut(text: &str, max: usize) -> String {
-    let mut end = text.len().min(max);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_owned()
 }
