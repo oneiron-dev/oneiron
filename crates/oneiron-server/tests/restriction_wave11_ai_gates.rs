@@ -782,7 +782,12 @@ fn use_fallback_body() -> Value {
 fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
     run_on_engine_stack("wave11-quota-fallback-agent", || async {
         let (fixture, a, _b) = setup().await;
-        set_quota_row(&fixture, "use_fallback", SettingScope::Agent(a.principal), true);
+        set_quota_row(
+            &fixture,
+            "use_fallback",
+            SettingScope::Agent(a.principal),
+            true,
+        );
         let id = offer_question_id(0xa1);
         plant_fallback_question(&fixture, &id);
 
@@ -794,9 +799,17 @@ fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
             use_fallback_body(),
         )
         .await;
-        assert_eq!(status, StatusCode::NO_CONTENT, "agent uses the fallback: {bytes:?}");
         assert_eq!(
-            fixture.vault.model_fallback(&id).expect("read the fallback").as_deref(),
+            status,
+            StatusCode::NO_CONTENT,
+            "agent uses the fallback: {bytes:?}"
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .model_fallback(&id)
+                .expect("read the fallback")
+                .as_deref(),
             Some(FALLBACK_MODEL),
             "the standing fallback is set"
         );
@@ -838,7 +851,10 @@ fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
             "today's code: {body}"
         );
         assert_eq!(
-            fixture.vault.model_fallback(&id).expect("read the fallback"),
+            fixture
+                .vault
+                .model_fallback(&id)
+                .expect("read the fallback"),
             None,
             "no fallback is set"
         );
@@ -856,7 +872,11 @@ fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
             use_fallback_body(),
         )
         .await;
-        assert_eq!(status, StatusCode::NO_CONTENT, "owner uses the fallback: {bytes:?}");
+        assert_eq!(
+            status,
+            StatusCode::NO_CONTENT,
+            "owner uses the fallback: {bytes:?}"
+        );
         let record = QuotaAnswerRecord::read(&fixture.vault, &id)
             .expect("read the answer row")
             .expect("the answer row is kept");
@@ -933,7 +953,10 @@ fn a_top_up_records_its_answerer_on_every_question_it_closes() {
             assert_eq!(record.fallback, None);
             assert_eq!(record.answered_by, QuotaAnswerer::Owner);
         }
-        assert!(question_open(&fixture, &other), "another account's question stays open");
+        assert!(
+            question_open(&fixture, &other),
+            "another account's question stays open"
+        );
         assert_eq!(
             QuotaAnswerRecord::read(&fixture.vault, &other).expect("read the answer row"),
             None,
