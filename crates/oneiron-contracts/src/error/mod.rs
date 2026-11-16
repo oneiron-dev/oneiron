@@ -30,7 +30,9 @@ pub use self::legal_hold::{
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
 pub use self::record::{
-    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, RecordError, RoomLiveSpeakersHold,
+    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, OWNER_KEY_MEMBER_REASON_PREFIX,
+    OWNER_KEY_MOVE_NEXT_STEP, OWNER_KEY_MOVE_REFUSAL_TEXT, OWNER_KEY_MOVE_SUGGESTION,
+    OWNER_KEY_NEXT_STEP_REASON_PREFIX, OWNER_KEY_REQUIRED, RecordError, RoomLiveSpeakersHold,
     SEAL_STANDING_RECONCILE_TEXT,
 };
 pub use self::registry::RegistryError;
@@ -90,6 +92,9 @@ pub enum ErrorKind {
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.
     CheckpointPolicyRevisionStale,
+    /// An owner choice door could not prove the act the owner's on this
+    /// install.
+    OwnerKeyRequired,
     /// The owner's world recipient choice keeps rows from this destination.
     WorldRecipientLimit,
     /// A world's placement or a result's producing rows cannot be verified.
