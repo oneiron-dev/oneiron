@@ -418,3 +418,39 @@ fn an_agent_whose_grant_lists_no_select_verb_is_refused() {
         "the refused agent changed nothing"
     );
 }
+
+#[test]
+fn a_fork_through_a_deleted_definition_never_selects_its_roots_proposal() {
+    let fixture = rooted_vault();
+    let root = granted_agent(&fixture, "lineage-root", &[]);
+    let (lens_ref, compiled_hash) = propose(&fixture, root);
+    let middle = forked_agent(&fixture, "lineage-middle", root);
+    let grandchild = forked_agent(&fixture, "lineage-grandchild", middle);
+    grant_extra(&fixture, grandchild, &[ACTIVATE_AS]);
+    fixture
+        .vault
+        .batch()
+        .delete(&middle)
+        .commit()
+        .expect("the owner deletes the middle definition");
+    assert_eq!(
+        fixture
+            .vault
+            .get_agent_definition(&middle)
+            .expect("the deleted definition reads"),
+        None,
+        "the middle definition is gone"
+    );
+    let outsider = granted_agent(&fixture, "lineage-outsider", &[ACTIVATE_AS]);
+    owner_turns_on(&fixture, None);
+
+    // The middle id's pin still names the root, so the grandchild is the
+    // root's lineage although the row between them is gone.
+    let kin = assert_select_refused(&fixture, grandchild, &lens_ref, &compiled_hash);
+    assert_lineage_refused(&kin);
+    assert_eq!(selected(&fixture), None, "the refused fork changed nothing");
+
+    let receipt = select_as(&fixture, outsider, &lens_ref, &compiled_hash);
+    assert_eq!(receipt["decision"], json!("activated"), "{receipt}");
+    assert_eq!(selected(&fixture), Some(lens_ref), "the outsider selects");
+}

@@ -64,22 +64,23 @@ const SETTLING_LINEAGE_LIMIT: usize = 256;
 
 /// Every actor on the chains above `starts`, in `txn` (DEC-0006: "the
 /// opener's lineage and its forks never settle their own proposal"): each
-/// actor itself; for an agent, the definition it was born forked from and
-/// the agent whose dispatch spawned it as an attenuated fork (FIX 9559); for
-/// a try, the agent it dispatched and the try above it on its delegation
-/// chain ([`delegation_lineage_parent_in_txn`]). Two lineages that share an
-/// actor are one lineage: a parent, a child and two forks of one parent all
+/// actor itself; for an agent, the definition its id was born forked from,
+/// as the id's pin keeps it across a delete, and the try whose dispatch
+/// spawned it as an attenuated fork (FIX 9559); for a try, the agent it
+/// dispatched and the try its payload records above it. Two lineages that
+/// share an actor are one: a parent, a child and two forks of one parent all
 /// meet. No agent's chain reaches the owner, so the owner's lineage is the
 /// owner alone.
 ///
-/// `None` when the walk reads more than [`SETTLING_LINEAGE_LIMIT`] actors and
-/// tries: a lineage the engine cannot read whole is unknown, and a caller
-/// counts an unknown lineage as the opener's, as FIX 10693 does for frozen
-/// credential chains.
+/// `None` when the engine cannot read the lineage whole: a shell's pin that
+/// has not named its parent, a try the chain names that the queue no longer
+/// holds or whose payload does not decode, or more than
+/// [`SETTLING_LINEAGE_LIMIT`] actors and tries. A caller counts an unknown
+/// lineage as the opener's, as FIX 10693 does for frozen credential chains.
 ///
 /// # Errors
 ///
-/// Storage errors, and an agent definition that does not decode.
+/// Storage errors.
 pub(crate) fn settling_lineage_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -90,16 +91,17 @@ pub(crate) fn settling_lineage_in_txn(
     let mut tries = std::collections::BTreeSet::new();
     let mut pending = starts.to_vec();
     while let Some(next) = pending.pop() {
-        if actors.len() + tries.len() >= SETTLING_LINEAGE_LIMIT {
-            return Ok(None);
-        }
         match next {
             LineageStart::Actor(actor) => {
                 if !actors.insert(actor) {
                     continue;
                 }
-                if let Some(parent) = born_fork_parent_in_txn(vault, txn, &actor)? {
-                    pending.push(LineageStart::Actor(parent));
+                match crate::agent_def::born_lineage_in_txn(&vault.store, txn, &actor)? {
+                    crate::agent_def::BornLineage::Born(parent) => {
+                        pending.extend(parent.map(LineageStart::Actor));
+                    }
+                    crate::agent_def::BornLineage::NoAgent => {}
+                    crate::agent_def::BornLineage::Unread => return Ok(None),
                 }
                 if let Some(spawn) =
                     crate::agent_def::delegation_parent_in_txn(&vault.store, txn, &actor)?
@@ -112,36 +114,22 @@ pub(crate) fn settling_lineage_in_txn(
                     continue;
                 }
                 let Some(row) = queue.get_in_txn(txn, attempt)? else {
-                    continue;
+                    return Ok(None);
                 };
-                let target = super::record_dispatch_input(&row)
-                    .and_then(|input| input.target.agent_definition_ref().ok());
-                let above = match target {
-                    Some(target) => {
-                        pending.push(LineageStart::Actor(target));
-                        delegation_lineage_parent_in_txn(&vault.store, txn, &row, target)?
-                    }
-                    None => recorded_parent(&row),
+                let Ok(payload) = decode_dreamer_attempt_payload(&row.payload) else {
+                    return Ok(None);
                 };
-                pending.extend(above.map(LineageStart::Attempt));
+                if let Some(target) = super::record_dispatch_input(&row)
+                    .and_then(|input| input.target.agent_definition_ref().ok())
+                {
+                    pending.push(LineageStart::Actor(target));
+                }
+                pending.extend(payload.parent_attempt.map(LineageStart::Attempt));
             }
+        }
+        if actors.len() + tries.len() > SETTLING_LINEAGE_LIMIT {
+            return Ok(None);
         }
     }
     Ok(Some(actors))
-}
-
-/// The definition the agent at `actor` was born forked from; `None` for an
-/// actor that holds no agent definition, and for one born forked from none.
-fn born_fork_parent_in_txn(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    actor: &EntityId,
-) -> Result<Option<EntityId>> {
-    let is_agent_definition =
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, actor)?
-            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
-    if !is_agent_definition {
-        return Ok(None);
-    }
-    Ok(vault.read_agent_definition_in_txn(txn, actor)?.forked_from)
 }
