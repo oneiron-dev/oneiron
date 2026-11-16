@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantScope, MembershipStanding, Scope, ScopeAxis, decode_federation_grant_body,
+    FederationGrantRole, FederationGrantScope, MembershipStanding, Scope, ScopeAxis,
+    decode_federation_grant_body,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
@@ -16,7 +17,10 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 pub(super) struct DeleteAuthority {
     pub(super) actor: EntityId,
     pub(super) role: &'static str,
-    pub(super) grant: Option<EntityId>,
+    /// The Admin's live vault grant and its membership role, an Admin or a
+    /// Deputy (check-in judges the confirm under it, 2k5e); none for the
+    /// Owner.
+    pub(super) grant: Option<(EntityId, FederationGrantRole)>,
 }
 
 pub(super) fn require_delete_in_txn(
@@ -63,15 +67,15 @@ pub(super) fn require_delete_in_txn(
         if grant.member_ref != actor || grant.scope != scope {
             continue;
         }
-        if matches!(
-            vault.authenticated_grant_membership_in_txn(txn, scope, actor, id)?,
-            Some(MembershipStanding::Member { role, .. }) if role.is_admin()
-        ) && admits_operation(&grant.authority_scope)
+        if let Some(MembershipStanding::Member { role, .. }) =
+            vault.authenticated_grant_membership_in_txn(txn, scope, actor, id)?
+            && role.is_admin()
+            && admits_operation(&grant.authority_scope)
         {
             return Ok(DeleteAuthority {
                 actor,
                 role: "admin",
-                grant: Some(id),
+                grant: Some((id, role)),
             });
         }
     }
