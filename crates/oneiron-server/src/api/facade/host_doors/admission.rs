@@ -187,8 +187,9 @@ pub(in crate::api::facade) fn door_admits(
         }
         // `vault.cleanup.decide` (RESTRICTION-WAVE-10 C43): the owner's proof, or a credential
         // bound to an agent, which the door admits only while the owner's
-        // vault_cleanup.decide.owner_only is off and on a Grant naming the verb. Any other
-        // caller keeps the owner refusal.
+        // vault_cleanup.decide.owner_only is off, on a Grant naming the verb, and when the
+        // credential is bound to no invitation, record or channel. Any other caller keeps the
+        // owner refusal.
         Proof::CleanupDecider => {
             crate::api::facade::cleanup_doors::decider(server, auth, verb).map(drop)
         }
