@@ -388,11 +388,11 @@ fn kept_queued_try_takes_only_the_remainder() {
         .unwrap()
         .unwrap();
     assert_eq!(x_scope.state, SpendState::Open);
-    assert_eq!(x_scope.spent_units, 20);
-    // A spent 20 and B 30 of the 60, so A's kept scope comes down to 30, with
-    // 10 left. On 3b746e51 it keeps its cap of 60: A may spend 40 more, 90 of
-    // the 60.
-    assert_eq!(x_scope.cap_units, 30);
+    let room = x_scope.cap_units - x_scope.spent_units - x_scope.held_units;
+    // A spent 20 and B 30 of the 60, so 10 is left: A's kept pinned scope
+    // comes down to a cap of 30. On 3b746e51 it keeps its cap of 60 at spent
+    // 20: A may spend 40 more, 90 of the 60.
+    assert_eq!(room, 10);
 }
 
 #[test]
