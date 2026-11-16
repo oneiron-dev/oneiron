@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ARCH-0036 #adapters (owner card MED-1 = A): a crate exists only for a real
+# boundary, and each wire protocol is a module inside one family crate.
+# `oneiron-llm` holds the text model wires, so no `oneiron-llm-*` crate stands
+# apart from it. `oneiron-gen` holds the image, video and music job wires, so
+# no `oneiron-image-*` adapter crate stands apart from it, and the Gemini media
+# wire is no longer in `oneiron-llm`. `oneiron-speech` holds the speech wires,
+# so the Soniox ASR and Irodori/MOSS-local TTS wires are no longer in core's
+# voice cascade, and the server's speech rungs keep their sends but define no
+# vendor codec of their own (Cartesia, ElevenLabs, VoxCPM2 framing, Soniox
+# error codes). `oneiron-llm`'s OpenAI-compatible media wire keeps its shared
+# seam and its embeddings only: its image and video calls are `oneiron-gen`'s
+# and its speech and transcription calls `oneiron-speech`'s. The
+# `oneiron-image` organ is not a wire adapter and stays its own crate.
+#
+# Fails CLOSED: a missing or unreadable manifest fails the check. Reads the
+# manifests and the directory tree only, so it needs no cargo and no network.
+#
+# Usage: scripts/ci/check_adapter_families.sh [repository root]
+set -euo pipefail
+
+root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+
+python3 - "${root}" <<'PY'
+import pathlib
+import re
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    print("ERROR: check_adapter_families.sh needs Python 3.11 or later (tomllib)", file=sys.stderr)
+    sys.exit(1)
+
+root = pathlib.Path(sys.argv[1])
+crates = root / "crates"
+refused = []
+
+
+def package_name(manifest):
+    with open(manifest, "rb") as handle:
+        return tomllib.load(handle).get("package", {}).get("name")
+
+
+# The family crates: each must exist under its own name.
+FAMILIES = ("oneiron-llm", "oneiron-gen", "oneiron-speech")
+for family in FAMILIES:
+    manifest = crates / family / "Cargo.toml"
+    if not manifest.is_file():
+        refused.append(f"{manifest.relative_to(root)} is missing")
+    elif package_name(manifest) != family:
+        refused.append(f"{manifest.relative_to(root)} names package {package_name(manifest)!r}, not {family!r}")
+
+# No crate dir and no package outside a family may hold a wire that belongs to one.
+SPLIT_PREFIXES = ("oneiron-llm-", "oneiron-image-")
+for directory in sorted(path for path in crates.iterdir() if path.is_dir()):
+    if directory.name.startswith(SPLIT_PREFIXES):
+        refused.append(f"crates/{directory.name} stands apart from its family crate")
+    manifest = directory / "Cargo.toml"
+    if manifest.is_file():
+        name = package_name(manifest)
+        if name and name.startswith(SPLIT_PREFIXES):
+            refused.append(f"{manifest.relative_to(root)} names package {name!r}")
+
+# A wire that belongs to another family stays out of this one.
+FOREIGN_PATHS = (
+    ("crates/oneiron-llm/src/gemini/media.rs", "the Gemini media wire belongs to oneiron-gen"),
+    ("crates/oneiron-llm/src/gemini/media", "the Gemini media wire belongs to oneiron-gen"),
+    ("crates/oneiron/src/voice_cascade/soniox.rs", "the Soniox ASR wire belongs to oneiron-speech"),
+    ("crates/oneiron/src/voice_cascade/tts_spikes.rs", "the Irodori/MOSS-local TTS wire belongs to oneiron-speech"),
+    ("crates/oneiron/src/voice_cascade/tts_spikes", "the Irodori/MOSS-local TTS wire belongs to oneiron-speech"),
+    ("crates/oneiron-llm/src/openai_compat/image.rs", "the OpenAI-compatible image wire belongs to oneiron-gen"),
+)
+for path, reason in FOREIGN_PATHS:
+    if (root / path).exists():
+        refused.append(f"{path} exists: {reason}")
+
+# A host file keeps the send, the key, the permit and the spool; the codec it
+# speaks is oneiron-speech's, so the host defines none of these items.
+HOST_CODEC_ITEMS = (
+    ("crates/oneiron-server/src/models/hosted_speech.rs",
+     ("fn build", "fn parse", "const PCM_RATE", "const CARTESIA_VERSION", "enum HostedWire",
+      "struct VendorVoice", "fn url_safe", "fn joined_wav", "fn clip_part")),
+    ("crates/oneiron-server/src/models/voxcpm2_speech.rs",
+     ("enum TranscriptPlacement", "struct Transcript", "fn render_header", "fn escaped_len",
+      "fn header_pieces", "fn split_to_fit", "fn joined_wav_header")),
+    ("crates/oneiron-server/src/models/soniox.rs",
+     ("const RETRIABLE_ERROR_CODES", "const FINALIZE", "fn retriable_error")),
+)
+for path, items in HOST_CODEC_ITEMS:
+    host = root / path
+    if not host.is_file():
+        refused.append(f"{path} is missing")
+        continue
+    text = host.read_text(encoding="utf-8")
+    for item in items:
+        kind, name = item.split(" ")
+        pattern = rf"^\s*(?:pub(?:\([^)]*\))?\s+)?{kind}\s+{name}\b"
+        if re.search(pattern, text, re.MULTILINE):
+            refused.append(f"{path} defines `{item}`: the codec belongs to oneiron-speech")
+
+# The OpenAI-compatible media seam in oneiron-llm serves embeddings alone: an
+# image, video, speech or transcription call named there is another family's.
+FOREIGN_OPERATIONS = (
+    ("Image", "oneiron-gen"),
+    ("Video", "oneiron-gen"),
+    ("Speech", "oneiron-speech"),
+    ("Transcribe", "oneiron-speech"),
+)
+seam = root / "crates/oneiron-llm/src/openai_compat/media.rs"
+seam_files = [seam] + sorted((root / "crates/oneiron-llm/src/openai_compat/media").glob("**/*.rs"))
+if not seam.is_file():
+    refused.append("crates/oneiron-llm/src/openai_compat/media.rs is missing")
+for path in seam_files:
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    for operation, family in FOREIGN_OPERATIONS:
+        if re.search(rf"\bAiOperation::{operation}\b", text):
+            refused.append(
+                f"{path.relative_to(root)} names `AiOperation::{operation}`: that call belongs to {family}"
+            )
+
+# The image organ is a process boundary, not an adapter: it stays.
+organ = crates / "oneiron-image" / "Cargo.toml"
+if not organ.is_file() or package_name(organ) != "oneiron-image":
+    refused.append("crates/oneiron-image/Cargo.toml (the image organ) is missing")
+
+if refused:
+    print("ERROR: the adapter family layout (ARCH-0036 #adapters) does not hold:", file=sys.stderr)
+    for line in refused:
+        print(f"  {line}", file=sys.stderr)
+    sys.exit(1)
+print(f"adapter families: {', '.join(FAMILIES)}; no split adapter crate")
+PY

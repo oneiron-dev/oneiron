@@ -15,15 +15,12 @@
 //!    (`rescheduled` records `unknown`, never a fifth value); a recording drop
 //!    stores a blob and infers nothing.
 //!
-//! ## Known hole this file inherits (NOT owned by CAL-07)
+//! ## An unseeded vault, on purpose
 //!
-//! `gate::default_policy_manifest()` has no `calendar.` rule, so under the
-//! shipped default every calendar claim write is gate-pending — the hole
-//! `calendar_claims_are_gate_pending_under_the_default_policy_manifest`
-//! (tests/calendar_surface_oracle.rs, CAL-09) already pins, whose fix lives in
-//! `crates/oneiron/src/gate.rs`, a lane-wide CAL non-claim. These oracles
-//! therefore run on an unseeded vault, exactly like the CA-01 gate oracle: the
-//! subject here is the outcome layer's own laws, not the policy manifest's.
+//! These oracles run on an unseeded vault, exactly like the CA-01 gate oracle:
+//! the subject here is the outcome layer's own laws, not the policy manifest's.
+//! On a stock vault the manifest's `calendar.` rule lets an owner-attested or
+//! observed outcome land live; `tests/calendar_contract_wake.rs` pins that.
 
 use crate::common::entity as test_id;
 use oneiron::calendar::outcome::{
@@ -53,8 +50,8 @@ const EVENT_START: u64 = 1_754_400_000;
 const EVENT_END: u64 = EVENT_START + 3_600;
 
 /// An unseeded vault: keeps the claim write door open without a policy fixture,
-/// so these oracles measure CAL-07's laws rather than the missing `calendar.`
-/// rule in the default policy manifest (see the module note).
+/// so these oracles measure CAL-07's laws rather than the policy manifest's
+/// (see the module note).
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut config = VaultConfig::device();
@@ -411,10 +408,8 @@ fn gate_pending_outcome_head_is_superseded_not_left_beside_its_replacement() {
     let (_dir, vault) = temp_vault();
     let event_ref = event(&vault, EVENT_SEED);
 
-    // A `Proposed` outcome: invisible to readers, still a live head. On a
-    // default-seeded vault this is the ORDINARY state of a calendar claim write
-    // (no `calendar.` rule in the policy manifest — see the module note), not an
-    // exotic one.
+    // A `Proposed` outcome: invisible to readers, still a live head — the
+    // state of any outcome write that waits on its owner's consent.
     put_raw_claim(
         &vault,
         claim_id(EVENT_SEED, 0),

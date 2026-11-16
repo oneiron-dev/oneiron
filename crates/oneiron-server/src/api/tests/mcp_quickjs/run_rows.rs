@@ -72,21 +72,32 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
-    // 04edd1261e6 (#1365): a verb call is recorded as `self.verbs.call`, in
-    // the guest's order: the search, then the claim. The run's end comes
-    // first in the message: a failure line is cut.
+    // A run row's call is recorded under the row's own effect, in the guest's
+    // order: the search, then the claim (the a90ddad52eed run). Whether the
+    // claim was stored, then each step's effect and outcome, come first in
+    // the message: a failure line is cut.
     let structured = &body["result"]["structuredContent"];
+    let stored = mode.vault.get_claim(&claim).unwrap().is_some();
+    let steps: Vec<String> = structured["steps"]
+        .as_array()
+        .map(|steps| {
+            steps
+                .iter()
+                .map(|step| format!("{}: {}", step["effect"], step["outcome"]))
+                .collect()
+        })
+        .unwrap_or_default();
     assert_eq!(
-        verb_call_outcomes(&body),
+        step_outcomes(&body),
         [
-            verb_refusal("mcp_verb_not_bound"),
-            verb_refusal("mcp_verb_not_bound")
+            row_refusal("self.memory.search", "mcp_verb_not_bound"),
+            row_refusal("self.memory.put_claim", "mcp_verb_not_bound")
         ],
-        "result {} steps_run {} | {body}",
+        "claim stored {stored}; steps {steps:?}; result {} steps_run {} | {body}",
         structured["result"],
         structured["steps_run"]
     );
-    assert!(mode.vault.get_claim(&claim).unwrap().is_none(), "{body}");
+    assert!(!stored, "{body}");
 
     let named = seeded_test_entity_id(0x0024_65b4);
     register_bound_verb_mcp_actor(
@@ -96,17 +107,46 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
         &["execute_code", "vault.search", "vault.claims.put"],
     )
     .await;
+    // The claim's writer reads the PERSON it is about: a run row's subject
+    // resolves under the writer's own key (FIX 1214), which reads a record
+    // that is not a CLAIM only through a core:read grant. Else the put fails
+    // INVENTED_REFERENCE.
+    put_actor_read_grant(&mode.vault, named, None);
     let (_, body) = route_json(
         mode.server.clone(),
         run_request(named, "quickjs-rows-named", "quickjs-rows-named"),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
-    let outcomes = verb_call_outcomes(&body);
-    assert_eq!(outcomes.len(), 2, "{body}");
-    assert_eq!(outcomes[0]["kind"], "agent_verb", "{body}");
-    assert_eq!(outcomes[1]["kind"], "agent_verb", "{body}");
-    assert!(mode.vault.get_claim(&claim).unwrap().is_some(), "{body}");
+    // The claim step's whole outcome leads the message (its error and code
+    // when it fails): a failure line is cut.
+    let put_claim = row_outcome(&body, "self.memory.put_claim");
+    assert_eq!(
+        (
+            mode.vault.get_claim(&claim).unwrap().is_some(),
+            row_outcome(&body, "self.memory.search")["kind"].clone(),
+            put_claim["kind"].clone(),
+            step_outcomes(&body).len(),
+        ),
+        (true, json!("memory_search"), json!("memory_write"), 2),
+        "put_claim {put_claim} | {body}"
+    );
+}
+
+/// Each step's outcome, in the guest's order.
+fn step_outcomes(body: &Value) -> Vec<Value> {
+    body["result"]["structuredContent"]["steps"]
+        .as_array()
+        .unwrap_or_else(|| panic!("step log: {body}"))
+        .iter()
+        .map(|step| step["outcome"].clone())
+        .collect()
+}
+
+/// A run row's call the door refused, as the step log records it: the row's
+/// own effect, the door's stable code and no reason text.
+fn row_refusal(effect: &str, code: &str) -> Value {
+    json!({"kind": "denied", "effect": effect, "outcome": code, "reason_codes": []})
 }
 
 /// One field of a call outcome as the run's durable record keeps it.
@@ -128,7 +168,7 @@ fn recorded_field<'a>(outcome: &'a rmpv::Value, key: &str) -> Option<&'a str> {
 /// read lane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
-    let search = "await self.memory.search({query: 'heron lantern'});";
+    let search = "await vault.search({query: 'heron lantern'});";
     // Step 1 answers with nothing, so it speaks no trailing bubble: its
     // search is the one call of the step that meets the door.
     let scripts = vec![
@@ -251,7 +291,7 @@ async fn witness_on_turn(
 /// the agent's run finds the unscoped words and nothing of the relationship's.
 #[tokio::test]
 async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
-    let search = "await self.memory.search({query: 'heron lantern'}); finish('');";
+    let search = "await vault.search({query: 'heron lantern'}); finish('');";
     let mode = code_mode_server(vec![search.to_owned()]);
     let (speaker, agent) = (
         seeded_test_entity_id(0x0024_65c1),
