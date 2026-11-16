@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The Dreamer wake contract below the oneiron engine: wake triggers, requests and pass reports, deadlines and cancellation, the sieve recipe records, and the attempt progress and park vocabulary"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false

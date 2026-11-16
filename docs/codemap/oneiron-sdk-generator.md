@@ -14,17 +14,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `build.rs` | src | s | — | — | Sets `GENERATOR_SOURCE_DIGEST` (exposed as `oneiron_sdk_generator::GENERATOR_SOURCE_DIGEST`): a digest of… |
 | `src/catalog_fragment.rs` | src | L | 9 crate-vis | — | The code-mode catalog fragment and its revision (ONE-2510 S2) |
 | `src/error.rs` | src | s | 1 enum · 10 crate-vis | GenerateError | `GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python… |
-| `src/facade_types/index.rs` | src | L | 23 crate-vis | — | Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that… |
+| `src/facade_types/index.rs` | src | L | 24 crate-vis | — | Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that… |
 | `src/facade_types/inventory/census.rs` | src | s | 3 crate-vis | — | The `census` section of `Inventory`: how the rows' inputs and results read, fully typed, typed to an opaque… |
 | `src/facade_types/inventory/mod.rs` | src | m | 22 crate-vis | — | The declarations every facade root reaches, and the census of what they read as |
 | `src/facade_types/inventory/python.rs` | src | m | 7 crate-vis | — | The `Python` section of `Inventory`: the declarations as the Python stubs spell them (`facade_types.pyi`)… |
 | `src/facade_types/inventory/rust_ir.rs` | src | L | 3 crate-vis | — | The `Rust type -> IR` section of `Inventory`: a Rust type, field, struct or enum as its serde wire shape |
 | `src/facade_types/inventory/typescript.rs` | src | s | 2 crate-vis | — | The `TypeScript` section of `Inventory`: IR as TypeScript, and the declarations module (`facade-types.ts`) |
-| `src/facade_types/mod.rs` | src | m | 1 const · 46 crate-vis | — | The facade's wire types, read from the Rust serde types every facade row names |
+| `src/facade_types/mod.rs` | src | m | 1 const · 48 crate-vis | — | The facade's wire types, read from the Rust serde types every facade row names |
 | `src/facade_types/reader.rs` | src | L | 28 crate-vis | — | The Rust-text scanner (strings, char literals, comments, brackets), the attribute readers and the type parser |
 | `src/generate/common.rs` | src | L | 25 crate-vis | — | The shared boundary helpers every emitter calls, and `AGENT_VERBS_TS`, which `hand_declared('ts')` reads |
 | `src/generate/docs.rs` | src | s | 3 crate-vis | — | Port of packages/oneiron/scripts/agent-docs.py's `generated_artifacts` and `write`: the three agent-SDK… |
-| `src/generate/emit_core.rs` | src | L | 16 crate-vis | — | The Rust core outputs: `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs` (untangle slice 5.0a… |
+| `src/generate/emit_core.rs` | src | L | 17 crate-vis | — | The Rust core outputs: `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs` (untangle slice 5.0a… |
 | `src/generate/emit_http.rs` | src | s | 1 crate-vis | — | The one client artifact, `packages/oneiron-client/src/facade.ts`: the typed facade tree over an injected… |
 | `src/generate/emit_mcp.rs` | src | L | 16 crate-vis | — | The MCP dispatch (`agent_verb_dispatch.rs`, which `outputs()` prefixes with `HEADER` and `use super::*;`)… |
 | `src/generate/emit_native.rs` | src | s | 5 crate-vis | — | The native bindings: the napi `agent_verbs.rs` and the PyO3 `#[pymethods]` file, built by one loop of… |
@@ -37,6 +37,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/generate/row_access.rs` | src | s | 26 crate-vis | — | Python's operations on a verb row, as the Rust emitters perform them (G4a) |
 | `src/generate/rows.rs` | src | L | 2 crate-vis | — | The Python generator's module level: the verb rows' validation and the row sets, in source order |
 | `src/generate/uniffi.rs` | src | L | 14 crate-vis | — | The UniFFI verb surface (`facade_generated.rs`, one `export_facade!` arm per facade row) and its generated… |
+| `src/generate/wire_inputs.rs` | src | s | 6 crate-vis | — | Lib split W3-GEN: the verb rows whose input checks and input schemas `oneiron-verb-wire` emits, and each… |
 | `src/lib.rs` | src | s | 1 struct · 12 fn · 3 const · 3 re-export | Run | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… |
 | `src/main.rs` | src | L | — | — | The `oneiron-sdk-generator` binary: the Python generator's `main()`: its argument parsing, as Python's… |
 | `src/projection_rules.rs` | src | m | — | — | The projection rules and refusals a verb author depends on, checked on the generator's real outputs: on the… |

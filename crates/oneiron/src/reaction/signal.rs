@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 /// Largest page one call returns. A larger ask is served in pages of this
 /// size, each with the cursor of the next.
 pub const MAX_REACTION_SIGNAL_PAGE: usize = 1000;
-const CURSOR_BYTES: usize = 25;
+#[doc(hidden)]
+use oneiron_records::reaction::signal::CURSOR_BYTES;
 
 /// An explicit signal-read deadline expired; no partial feed was returned.
 #[derive(Debug, thiserror::Error)]
@@ -250,10 +251,15 @@ impl Vault {
             checkpoint()?;
             count.row();
             let record = edge?.target;
-            if !matches!(
-                self.get_entity_type_in_txn(&txn, &record)?,
-                Some(ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN)
-            ) {
+            let kind = self.get_entity_type_in_txn(&txn, &record)?;
+            if !matches!(kind, Some(ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN)) {
+                continue;
+            }
+            // An imported MESSAGE's AuthoredBy names who its source says
+            // spoke, never a message the person wrote here (FIX 15412).
+            if kind == Some(ENTITY_TYPE_MESSAGE)
+                && crate::memory::imported_message_in_txn(&self.store, &txn, &record)?
+            {
                 continue;
             }
             for row in reactions_on_in(self, &txn, &fold, record)? {

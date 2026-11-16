@@ -607,15 +607,8 @@ pub(crate) struct ConfirmExpiryPage {
     pub(crate) ended: bool,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub enum CriticalWriteConfirmResolution {
-    Cleared,
-    Retracted,
-    DemotedToProposed,
-    AlreadySettled,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::confirm::CriticalWriteConfirmResolution;
 
 /// Reconciles replicated claim input against the claim's owner-answer
 /// obligation (FIX 9603). The peer's bytes always land unchanged: a replica

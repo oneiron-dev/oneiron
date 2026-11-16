@@ -2,68 +2,16 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::frames::{DeltaRow, StreamConnectionId};
 use super::provenance::{
     ChildEvent, VerifiedDiaryReviewEvent, VerifiedOwnTaskEvent, VerifiedRoomWakeEvent,
 };
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum SubscriptionScope {
-    MyTasks,
-    MyChildren,
-    ConsultsToMe,
-    Memories,
-    Worlds,
-    Presence,
-    Counts,
-    /// A read of my diary waits on my review (FIX 2879).
-    DiaryReviews,
-    /// A room turn addresses me, or its thread's open TASK is mine (FIX
-    /// 15647).
-    RoomTurns,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::context_board::stream::events::SubscriptionScope;
 
-impl SubscriptionScope {
-    pub const ALL: [Self; 9] = [
-        Self::MyTasks,
-        Self::MyChildren,
-        Self::ConsultsToMe,
-        Self::Memories,
-        Self::Worlds,
-        Self::Presence,
-        Self::Counts,
-        Self::DiaryReviews,
-        Self::RoomTurns,
-    ];
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeliveryClass {
-    Wake,
-    Carrier,
-    OnDemand,
-}
-
-impl DeliveryClass {
-    pub const fn is_pushable(self) -> bool {
-        matches!(self, Self::Wake | Self::Carrier)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::events::DeliveryClass;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryPolicy<A> {
@@ -151,11 +99,8 @@ pub enum SubscriptionError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubscriptionReceipt {
-    pub connection: StreamConnectionId,
-    pub active: BTreeSet<SubscriptionScope>,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::events::SubscriptionReceipt;
 
 #[derive(Debug, Default)]
 pub struct RouteObservation {

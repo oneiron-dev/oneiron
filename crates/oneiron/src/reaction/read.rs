@@ -15,14 +15,8 @@ pub const REACTIONS_FIELD: &str = "reactions";
 const NAMED_REACTORS: usize = 2;
 const PERSON_NAME_KEYS: [&str; 2] = ["display_name", "name"];
 
-/// One glyph's live reactions, contributors in first-put order.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ReactionPill {
-    pub glyph: String,
-    pub count: usize,
-    pub by: Vec<EntityId>,
-    pub mine: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::reaction::read::ReactionPill;
 
 /// One claim of a (message, person, glyph) chain.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

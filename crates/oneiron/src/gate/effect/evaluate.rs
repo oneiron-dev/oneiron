@@ -596,12 +596,14 @@ fn judge_counterparty_policy(
             if connector_key::charter_block_drifted(block)? {
                 charter_wall = Some(
                     GateDecision::pending(vec![GateReasonCode::PendingCharterDrift])
-                        .with_receipt_reasons(["charter_drift"]),
+                        .with_receipt_reasons(["charter_drift"])
+                        .with_charter_stamp(block.approval_id),
                 );
             } else if never_list_matches() {
                 charter_wall = Some(
                     GateDecision::deny(GateReasonCode::DenyCharterNeverList)
-                        .with_receipt_reasons(["charter_never_list"]),
+                        .with_receipt_reasons(["charter_never_list"])
+                        .with_charter_stamp(block.approval_id),
                 );
             }
         }

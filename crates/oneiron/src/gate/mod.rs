@@ -118,10 +118,7 @@ pub(crate) use self::dreamer_grant::body_with_agent_derive_rows;
 // regression door (`test_doors::untangle_regressions`) read it here.
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
-pub(crate) use self::dreamer_grant::{
-    DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
-    dreamer_rows_held,
-};
+pub(crate) use self::dreamer_grant::{body_with_steward_rows, dreamer_rows_held};
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
@@ -306,11 +303,12 @@ pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 #[cfg(feature = "sync")]
 pub(crate) use self::witness_message::companion_author_pending;
 pub(crate) use self::witness_message::{
-    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
-    WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
-    check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
-    check_witness_message_ceiling_with_permit, check_witness_turn_ceiling,
-    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
+    WitnessMessageEnvelope, check_source_bound_witness_message_ceiling,
+    check_witness_message_ceiling, check_witness_message_ceiling_with_permit,
+    check_witness_turn_ceiling, validate_canonical_witness_message_body,
+    validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

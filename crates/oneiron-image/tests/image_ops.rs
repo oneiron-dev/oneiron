@@ -2,7 +2,10 @@
 //! plan, "Fixture and oracle gate"): crop and nearest resize land where the
 //! geometry says, EXIF orientation turns the canvas first, overlays stay
 //! editable until export, and unsupported or hostile input fails before any
-//! pixel buffer exists. Exports are decoded back by the codec crate alone.
+//! pixel buffer exists; `image.render` answers what open, each op and the
+//! export answer, in one call; `image.preview` answers that render scaled to
+//! fit its side bound (L4-16). Exports are decoded back by the codec crate
+//! alone.
 #![cfg(unix)]
 
 mod fixtures;
@@ -634,5 +637,346 @@ fn an_edit_never_returns_a_body_the_next_call_refuses() {
             &[]
         )),
         ErrorCode::BadRequest
+    );
+}
+
+/// `image.render`, named as text so this file also builds against an organ
+/// that does not offer it (the red run).
+const RENDER: &str = "image.render";
+
+/// One `image.render` op: its name as `op`, beside the op's own args.
+fn op(name: &str, args: Value) -> Value {
+    let Ok(mut pairs) = args.into_map() else {
+        panic!("an op's args are a map");
+    };
+    pairs.insert(0, ("op".into(), name.into()));
+    Value::Map(pairs)
+}
+
+fn render_args(ops: Vec<Value>, format: &str) -> Value {
+    map(vec![("ops", Value::Array(ops)), ("format", format.into())])
+}
+
+/// The answer of `image.open`, each `(verb, args)` in order on the body,
+/// then `image.export` to PNG, on one fresh organ.
+fn open_ops_export(steps: Vec<(&str, Value)>, source: &[InputBytes]) -> Answer {
+    let organ = ImageOrgan::default();
+    let mut edited = body(&call(&organ, VERB_OPEN, Value::Nil, None, source).expect("open"));
+    for (verb, args) in steps {
+        edited = body(&call(&organ, verb, args, Some(&edited), &[]).expect(verb));
+    }
+    call(
+        &organ,
+        VERB_EXPORT,
+        map(vec![("format", "png".into())]),
+        Some(&edited),
+        source,
+    )
+    .expect("export")
+}
+
+#[test]
+fn render_answers_what_open_then_each_op_then_export_answer_byte_for_byte() {
+    let (w, h) = (12, 10);
+    let source = [InputBytes::inline(
+        "image/png",
+        png(w, h, &pixels(w, h, coded), Extra::default()),
+    )];
+    let exported = open_ops_export(
+        vec![
+            (VERB_CROP, crop(1, 2, 8, 6)),
+            (VERB_RESIZE, resize(4, 3, "bilinear")),
+        ],
+        &source,
+    );
+    let ops = vec![
+        op("crop", crop(1, 2, 8, 6)),
+        op("resize", resize(4, 3, "bilinear")),
+    ];
+    // A fresh organ: the render decodes the source itself.
+    let rendered = match call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(ops, "png"),
+        None,
+        &source,
+    ) {
+        Ok(answer) => answer,
+        Err(err) => panic!("FAILBEFORE: the organ renders a whole edit in one call: {err}"),
+    };
+    assert_eq!(rendered, exported, "the same PNG, report and notes");
+    let [output] = rendered.outputs.as_slice() else {
+        panic!("a render makes one output");
+    };
+    assert_eq!(
+        (output.name.as_str(), output.media_type.as_str()),
+        ("image.png", "image/png")
+    );
+    assert_eq!(decode_png(&output.bytes).dimensions(), (4, 3));
+    let steps = field(field(&rendered.report, "body"), "steps")
+        .as_array()
+        .expect("the report carries the body it rendered");
+    assert_eq!(steps.len(), 2, "the crop and the resize");
+
+    // An untagged JPEG: the same warning and losses as its export.
+    let jpeg = [InputBytes::inline(
+        "image/jpeg",
+        fixtures::jpeg_flat(8, 6, [200, 40, 40], None),
+    )];
+    let exported = open_ops_export(vec![(VERB_CROP, crop(1, 1, 4, 3))], &jpeg);
+    let rendered = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(vec![op("crop", crop(1, 1, 4, 3))], "png"),
+        None,
+        &jpeg,
+    )
+    .expect("render the jpeg");
+    assert_eq!(rendered, exported);
+    assert!(
+        rendered
+            .notes
+            .warnings
+            .iter()
+            .any(|warning| warning == "untagged_read_as_srgb"),
+        "{:?}",
+        rendered.notes
+    );
+}
+
+#[test]
+fn render_refuses_what_no_edit_takes() {
+    let bytes = png(4, 4, &pixels(4, 4, coded), Extra::default());
+    let source = [InputBytes::inline("image/png", bytes.clone())];
+    let organ = ImageOrgan::default();
+    let render = |args: Value, inputs: &[InputBytes]| call(&organ, RENDER, args, None, inputs);
+    let whole = || op("crop", crop(0, 0, 4, 4));
+    assert_eq!(
+        code(render(render_args(vec![whole(); 257], "png"), &source)),
+        ErrorCode::BadRequest,
+        "FAILBEFORE: a render of more than 256 ops is a bad request"
+    );
+    assert!(
+        render(render_args(vec![whole(); 256], "png"), &source).is_ok(),
+        "256 ops render"
+    );
+    assert!(
+        render(render_args(Vec::new(), "png"), &source).is_ok(),
+        "no op exports the source as it is"
+    );
+    assert_eq!(
+        code(render(render_args(vec![whole()], "jpeg"), &source)),
+        ErrorCode::Unsupported
+    );
+    let annotate = op("annotate", map(vec![]));
+    assert_eq!(
+        code(render(render_args(vec![annotate], "png"), &source)),
+        ErrorCode::BadRequest,
+        "a render op is a crop or a resize"
+    );
+    assert_eq!(
+        code(render(render_args(vec![crop(0, 0, 2, 2)], "png"), &source)),
+        ErrorCode::BadRequest,
+        "an op names itself"
+    );
+    assert_eq!(
+        code(render(
+            render_args(vec![op("crop", crop(3, 3, 2, 2))], "png"),
+            &source
+        )),
+        ErrorCode::BadRequest,
+        "a crop past the canvas"
+    );
+    assert_eq!(
+        code(render(render_args(vec![whole()], "png"), &[])),
+        ErrorCode::BadRequest,
+        "no source"
+    );
+    let two = [
+        InputBytes::inline("image/png", bytes.clone()),
+        InputBytes::inline("image/png", bytes),
+    ];
+    assert_eq!(
+        code(render(render_args(vec![whole()], "png"), &two)),
+        ErrorCode::BadRequest,
+        "two sources"
+    );
+    let deep = [InputBytes::inline("image/png", fixtures::png_rgb16(2, 2))];
+    assert_eq!(
+        code(render(
+            render_args(vec![op("crop", crop(0, 0, 1, 1))], "png"),
+            &deep
+        )),
+        ErrorCode::Unsupported,
+        "a 16-bit PNG, as open refuses it"
+    );
+}
+
+/// `image.preview`, named as text so this file also builds against an organ
+/// that does not offer it (the red run).
+const PREVIEW: &str = "image.preview";
+
+fn preview_args(ops: Vec<Value>, max_side: u32) -> Value {
+    map(vec![
+        ("ops", Value::Array(ops)),
+        ("max_side", max_side.into()),
+    ])
+}
+
+#[test]
+fn preview_answers_the_render_scaled_to_fit_its_side_bound() {
+    let (w, h) = (40, 20);
+    let source = [InputBytes::inline(
+        "image/png",
+        png(w, h, &pixels(w, h, coded), Extra::default()),
+    )];
+    // A 32 x 16 crop is past a 16 pixel bound: one bilinear resize to
+    // 16 x 8 follows it, the aspect kept.
+    let previewed = match call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(vec![op("crop", crop(4, 2, 32, 16))], 16),
+        None,
+        &source,
+    ) {
+        Ok(answer) => answer,
+        Err(err) => panic!("FAILBEFORE: the organ previews a version in one call: {err}"),
+    };
+    let rendered = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(
+            vec![
+                op("crop", crop(4, 2, 32, 16)),
+                op("resize", resize(16, 8, "bilinear")),
+            ],
+            "png",
+        ),
+        None,
+        &source,
+    )
+    .expect("render the crop and the fit");
+    assert_eq!(
+        previewed, rendered,
+        "the same PNG, report and notes as the render of the crop and the fit"
+    );
+    let [output] = previewed.outputs.as_slice() else {
+        panic!("a preview makes one output");
+    };
+    assert_eq!(output.media_type, "image/png");
+    assert_eq!(decode_png(&output.bytes).dimensions(), (16, 8));
+
+    // A canvas inside the bound is not scaled: the render of its ops.
+    let fits = call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(vec![op("crop", crop(0, 0, 12, 10))], 16),
+        None,
+        &source,
+    )
+    .expect("preview a canvas that fits");
+    let rendered = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(vec![op("crop", crop(0, 0, 12, 10))], "png"),
+        None,
+        &source,
+    )
+    .expect("render the crop");
+    assert_eq!(fits, rendered, "a canvas that fits is drawn as rendered");
+    let steps = field(field(&fits.report, "body"), "steps")
+        .as_array()
+        .expect("the report carries the body it drew");
+    assert_eq!(steps.len(), 1, "the crop alone");
+
+    // No op shows the version itself, fitted.
+    let whole = call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(Vec::new(), 20),
+        None,
+        &source,
+    )
+    .expect("preview the version as it is");
+    let [output] = whole.outputs.as_slice() else {
+        panic!("a preview makes one output");
+    };
+    assert_eq!(decode_png(&output.bytes).dimensions(), (20, 10));
+
+    // A thin canvas keeps at least one pixel on its short side.
+    let thin = [InputBytes::inline(
+        "image/png",
+        png(50, 3, &pixels(50, 3, coded), Extra::default()),
+    )];
+    let fitted = call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(Vec::new(), 16),
+        None,
+        &thin,
+    )
+    .expect("preview a thin canvas");
+    let [output] = fitted.outputs.as_slice() else {
+        panic!("a preview makes one output");
+    };
+    assert_eq!(decode_png(&output.bytes).dimensions(), (16, 1));
+}
+
+#[test]
+fn preview_refuses_what_no_render_takes_and_a_side_bound_out_of_range() {
+    let bytes = png(4, 4, &pixels(4, 4, coded), Extra::default());
+    let source = [InputBytes::inline("image/png", bytes)];
+    let organ = ImageOrgan::default();
+    let preview = |args: Value, inputs: &[InputBytes]| call(&organ, PREVIEW, args, None, inputs);
+    let whole = || op("crop", crop(0, 0, 4, 4));
+    assert_eq!(
+        code(preview(preview_args(vec![whole()], 15), &source)),
+        ErrorCode::BadRequest,
+        "FAILBEFORE: a side bound under 16 pixels is a bad request"
+    );
+    assert_eq!(
+        code(preview(preview_args(vec![whole()], 2049), &source)),
+        ErrorCode::BadRequest,
+        "a side bound over 2048 pixels"
+    );
+    assert!(
+        preview(preview_args(vec![whole()], 16), &source).is_ok(),
+        "16 pixels previews"
+    );
+    assert!(
+        preview(preview_args(vec![whole()], 2048), &source).is_ok(),
+        "2048 pixels previews"
+    );
+    assert_eq!(
+        code(preview(preview_args(vec![whole(); 257], 64), &source)),
+        ErrorCode::BadRequest,
+        "more than 256 ops"
+    );
+    assert_eq!(
+        code(preview(
+            map(vec![("ops", Value::Array(Vec::new()))]),
+            &source
+        )),
+        ErrorCode::BadRequest,
+        "a preview names its side bound"
+    );
+    assert_eq!(
+        code(preview(
+            preview_args(vec![op("annotate", map(vec![]))], 64),
+            &source
+        )),
+        ErrorCode::BadRequest,
+        "a preview op is a crop or a resize"
+    );
+    assert_eq!(
+        code(preview(preview_args(vec![whole()], 64), &[])),
+        ErrorCode::BadRequest,
+        "no source"
+    );
+    let deep = [InputBytes::inline("image/png", fixtures::png_rgb16(2, 2))];
+    assert_eq!(
+        code(preview(preview_args(Vec::new(), 64), &deep)),
+        ErrorCode::Unsupported,
+        "a 16-bit PNG, as open refuses it"
     );
 }

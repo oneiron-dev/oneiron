@@ -18,19 +18,11 @@ pub use crate::gate::weave_grant::{
     AutoWeaveGrantRequest, AutoWeaveWriterClass, mint_auto_weave_grant,
 };
 
-/// Approve the exact engine-emitted effect digest, never a caller's description.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ApproveOnceRequest {
-    pub effect_digest: String,
-}
-
-/// Deny the exact effect the engine emitted, with the same digest grammar as approval.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DenyConsentRequest {
-    pub effect_digest: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::consent::lifecycle::{
+    ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, DenyConsentRequest,
+    DisclosureBoundRequest, DisclosureEnvelopeRequest, RevokeGrantRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -44,41 +36,6 @@ pub struct CreateStandingGrantRequest {
 pub enum StandingGrantBound {
     Action(ActionBoundRequest),
     Disclosure(DisclosureBoundRequest),
-}
-
-/// Actor (a lineage for stop-asking), action class and bounded envelope.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ActionBoundRequest {
-    pub actor: String,
-    pub class: String,
-    pub envelope: ActionEnvelopeRequest,
-}
-
-/// Project and audience selectors, pinned to that project, with a per-use cap.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ActionEnvelopeRequest {
-    pub project: String,
-    pub audience: Vec<String>,
-    /// A reviewed batch's count; absent for a standing no-press grant.
-    /// Zero leaves every send needing the person's press.
-    #[serde(default)]
-    pub budget: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DisclosureBoundRequest {
-    pub audience: Vec<String>,
-    pub class: String,
-    pub envelope: DisclosureEnvelopeRequest,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DisclosureEnvelopeRequest {
-    pub selectors: Vec<String>,
 }
 
 impl StandingGrantBound {
@@ -110,13 +67,6 @@ impl StandingGrantBound {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RevokeGrantRequest {
-    /// The standing grant's bound digest, as emitted by its receipt or registry.
-    pub grant: String,
-}
-
 /// The existing Gate receipt, not a second settlement ledger.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +90,11 @@ pub struct ConsentActReceipt {
     /// ref, even beside a receipt. Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_by: Option<String>,
+    /// The check-in decision of the Owner's own act on a catastrophe row: a
+    /// bypass grant's creation goes on the Owner's own proof and records it
+    /// (2k4; P25-SHAPE Q1 = A; owner-own-acts). Absent on every other act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<ConsentReceipt> for ConsentActReceipt {
@@ -152,6 +107,7 @@ impl From<ConsentReceipt> for ConsentActReceipt {
             diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             already_revoked: false,
             revoked_by: None,
+            check_in: None,
         }
     }
 }
@@ -215,6 +171,7 @@ pub fn revoke(
             grant_ref: Some(grant),
             already_revoked: revocation.already_revoked,
             revoked_by: revocation.revoked_by,
+            check_in: None,
         },
     })
 }
@@ -246,6 +203,7 @@ pub fn revoke_as_grantee(
             grant_ref: Some(grant),
             already_revoked: revocation.already_revoked,
             revoked_by: revocation.revoked_by,
+            check_in: None,
         },
     })
 }
