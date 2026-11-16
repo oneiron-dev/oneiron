@@ -1503,6 +1503,25 @@ fn a_person_logs_consent_for_their_own_voice_and_the_owner_any_subjects() {
             !status.is_success(),
             "a consent dated an hour ahead is refused: {status} {body}"
         );
+        // Not even a minute ahead (REVIEW-9224 P1): a withdrawal the subject
+        // then logs at the vault's time would be dated before the grant, and the
+        // grant would outlive it.
+        let (status, body) = served
+            .post(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "minute-ahead-consent",
+                    now + 60,
+                    Some(counterparty),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a consent dated a minute ahead is refused: {status} {body}"
+        );
 
         assert!(
             served.consent_notices().is_empty(),
