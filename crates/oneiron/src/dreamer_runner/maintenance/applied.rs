@@ -24,7 +24,8 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
@@ -360,13 +361,10 @@ fn record_finding_in_txn(
         APPLY_REASON,
         target,
         finding_revision.to_vec(),
-        now,
     );
     receipt.context = decision_context::applied(vault, &*txn, target, attempt);
     receipt.grant_ref = grant.map(|grant| grant.to_hex());
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     APPLIED.put(
         &vault.store,
         txn,
@@ -407,18 +405,9 @@ pub(super) fn record_project_tree_fork_in_txn(
     }
     let mut key = Vec::new();
     target.encode_into(&mut key);
-    let mut receipt = decision(
-        actor,
-        MAINTENANCE_APPLY_KIND,
-        APPLY_REASON,
-        target,
-        key,
-        now,
-    );
+    let mut receipt = decision(actor, MAINTENANCE_APPLY_KIND, APPLY_REASON, target, key);
     receipt.context = decision_context::applied(vault, &*txn, target, Some(attempt));
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     APPLIED.put(
         &vault.store,
         txn,
@@ -465,7 +454,6 @@ pub(super) fn close_with_parent_in_txn(
     child: EntityId,
     parent: MaintenanceTarget,
     owner: WriteActor,
-    now: u64,
 ) -> Result<()> {
     let target = MaintenanceTarget::Finding(child);
     let Some(mut row) = APPLIED.get(&vault.store, &*txn, &target)? else {
@@ -485,12 +473,9 @@ pub(super) fn close_with_parent_in_txn(
         REVERT_REASON,
         target,
         handle,
-        now,
     );
     receipt.context = decision_context::answering(vault, &*txn, row.receipt);
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     row.reverted = Some(MaintenanceRevert {
         target,
         restored: Vec::new(),
@@ -537,35 +522,26 @@ fn listed(target: MaintenanceTarget, row: AppliedRow) -> AppliedMaintenance {
     }
 }
 
-/// One approved Gate receipt by `actor`, naming `target`'s claim when it is
-/// a finding; `diff_handle` is never empty.
+/// One approved Gate receipt draft by `actor`, naming `target`'s claim when
+/// it is a finding; `diff_handle` is never empty. It reads no policy. The
+/// store mints the id and the time.
 pub(super) fn decision(
     actor: WriteActor,
-    kind: &str,
+    kind: &'static str,
     reason: &str,
     target: MaintenanceTarget,
     diff_handle: Vec<u8>,
-    now: u64,
-) -> GateDecisionRecord {
-    GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: "approved".to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: target.finding().map(|id| *id.as_bytes()),
-        grant_ref: None,
+) -> GateReceipt {
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        kind,
+        reason,
+        ReceiptActor::Row(actor),
         diff_handle,
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    }
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = target.finding();
+    receipt
 }
 
 impl Vault {
@@ -636,11 +612,9 @@ impl Vault {
                 REVERT_REASON,
                 target,
                 row.receipt.as_bytes().to_vec(),
-                now,
             );
             receipt.context = decision_context::answering(self, &*txn, row.receipt);
-            self.store
-                .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+            let receipt = self.store.record_gate_receipt_in_txn(txn, receipt)?;
             out.receipt_ref = format!("gate:{}", receipt.decision_id.to_hex());
             row.reverted = Some(out.clone());
             // No inverse-membership sync (FIX 10376): a revert stamps the
