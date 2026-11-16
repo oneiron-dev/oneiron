@@ -285,6 +285,22 @@ impl SyncServerConfig {
         self.runtime.mode.usage_mode()
     }
 
+    /// The host this vault answers on under `*.localhost` (APP-HOST = A):
+    /// `<name>.localhost`, and each app at `<app>--<name>.localhost`, on the
+    /// artifact listener's port. `None` on a managed vault (its internal
+    /// authority alone), with no vault name, or for a name the artifact
+    /// listener does not serve, as `api::artifact_app` reads them. Serve names
+    /// it on the operator's own log at start; the unauthenticated
+    /// `/api/health` names no vault (FIX LOCALHOST-HOST-DISCOVERY).
+    pub fn local_artifact_vault_host(&self) -> Option<String> {
+        use oneiron_vault_contract::artifact_origin::{ArtifactHost, LOCAL_ARTIFACT_DOMAIN};
+        if self.artifact_internal_vault_id.is_some() {
+            return None;
+        }
+        let name = self.artifact_vault_name.as_deref()?.to_ascii_lowercase();
+        ArtifactHost::vault(name).name(LOCAL_ARTIFACT_DOMAIN)
+    }
+
     pub fn validate(&self) -> Result<(), oneiron::Error> {
         super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
         if self.ephemeral_timeout_ms <= 0 {

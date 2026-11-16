@@ -216,6 +216,13 @@ vault id, rewrites the request's Host and URI authority to that internal
 authority, and composes every public URL: no public name reaches the vault,
 and no response names the internal one.
 
+A plain serve that names its vault also answers on `*.localhost`, with no
+artifact domain configured: `<name>.localhost:<artifact_port>/<artifact>/...`
+and `<app>--<name>.localhost:<artifact_port>/...`. Serve names both on its own
+log at start (`artifacts answer on *.localhost`); the unauthenticated
+`/api/health` names no vault. The bare `localhost` keeps `/a/`, so the vault
+name `localhost` is refused.
+
 Managed wake-ledger reports also carry logical `artifact_origins`: `vault`
 and `app` with an `artifact_id` from stored published pointers whose labels
 fit the existing per-app host codec. Preview pointers are excluded. These are
