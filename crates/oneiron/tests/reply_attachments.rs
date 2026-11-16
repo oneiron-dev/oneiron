@@ -12,12 +12,33 @@
 //! Google one. `imap_reply_with_files_waits_for_the_size_check_runner`
 //! (an IMAP mailbox, slice 3c) is red on slice 3b, which refuses files from
 //! an IMAP mailbox outright, without asking its submission server.
+//!
+//! `reply_attachment_whose_words_come_from_an_unreadable_source_is_refused`
+//! (FIX-LIST MAIL-ATTACHMENT-CLAMP-WORD-SOURCES, RULING CLAMP-7741 = B) is red
+//! at 6f9c1251742c: a file that quotes a `conversation.summary` over a Tier-A
+//! note is judged on the summary's own row, so the draft lands. On the head
+//! the clamp follows the summary's words to the note and refuses the reply.
 
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use oneiron::commitment_wake::COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND;
+use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
+use oneiron::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+};
+use oneiron::test_doors::disclosure_word_sources::{
+    install_shipped_policy_with_ordinary_predicate, mark_tier_a,
+};
 use oneiron::test_doors::reply_attachments as doors;
-use oneiron::{Vault, VaultConfig};
+use oneiron::write_envelope::claim_body::encode_claim_body;
+use oneiron::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
+    TimeRange, Vault, VaultConfig, WriteActor,
+};
+use rmpv::Value;
+use serde_json::json;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -130,6 +151,152 @@ fn imap_reply_with_files_waits_for_the_size_check_runner() -> TestResult {
     assert!(
         refusal.contains("mail_blocking_runner_missing"),
         "the refusal names the missing size check runner: {refusal}"
+    );
+    Ok(())
+}
+
+/// A note the owner wrote in a conversation of its own: the record a
+/// summary's words come from.
+fn side_note(vault: &Vault, owner: EntityId) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let receipt = host.conversations_create(&ConversationCreateInput {
+        id: None,
+        occurred_start: None,
+        occurred_end: None,
+        learned_at: None,
+        body: json!({}),
+        text: None,
+    })?;
+    let note = host.conversations_records_append(&DagRecordAppendInput {
+        conversation: receipt.id,
+        parent: None,
+        reply_to: None,
+        containing_turn: None,
+        addr: None,
+        to: None,
+        advance: true,
+        body: json!({"txt": "the side note", "speaker": "user"}),
+        text: None,
+        occurred_start: None,
+        occurred_end: None,
+        learned_at: None,
+        session: None,
+        quote: None,
+        thread_audience: None,
+    })?;
+    Ok(EntityId::from_hex(&note.id)?)
+}
+
+/// An artifact whose version 1 quotes the claim `source` (stored as
+/// `source_body`) as a reminder wording does (FIX 4997): the source as its
+/// one input and the stored body's BLAKE3 as its params hash, under the
+/// wording attempt's identity and run prefix. Version 2 is a plain upload.
+fn quoting_artifact(
+    vault: &Vault,
+    owner: EntityId,
+    source: EntityId,
+    source_body: &ClaimBody,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let at = vault.now_recorded_at();
+    let occurred = TimeRange { start: at, end: at };
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new("report.txt", "text/plain"),
+        occurred,
+        at,
+    )?;
+    let made_by = MadeBy {
+        inputs: vec![MadeByInput {
+            row: source,
+            role: MadeByInputRole::Input,
+        }],
+        process: MadeByProcess {
+            actor: owner,
+            class: MadeByClass::Concluded,
+            identity: COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND.to_owned(),
+            version: "1".to_owned(),
+            params_hash: blake3::hash(&encode_claim_body(source_body)?)
+                .to_hex()
+                .to_string(),
+        },
+        at,
+        trigger: None,
+    };
+    vault.append_blob_artifact_version_made_by(
+        &artifact,
+        None,
+        FIRST_VERSION,
+        &BlobVersionProvenance::AgentRun {
+            run_ref: format!("commitment-reminder-wording:{}", artifact.to_hex()),
+        },
+        &made_by,
+        actor,
+        occurred,
+        at,
+    )?;
+    let at = vault.now_recorded_at();
+    vault.append_blob_artifact_version(
+        &artifact,
+        SECOND_VERSION,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+    Ok(artifact)
+}
+
+/// A file that quotes a summary is shown only with every record the
+/// summary's words came from: once the note it covers is Tier A, a reply
+/// naming that file is refused whole, though the summary's own row is
+/// still readable.
+#[test]
+fn reply_attachment_whose_words_come_from_an_unreadable_source_is_refused() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open_vault(directory.path())?;
+    let seeded = doors::seed_gmail_thread(&vault, now_sec()?)?;
+    // The test writes the summary through the raw claim door, which the
+    // shipped policy parks at the criticality floor for an undeclared
+    // predicate.
+    install_shipped_policy_with_ordinary_predicate(&vault, "conversation.summary")?;
+    let note = side_note(&vault, seeded.owner)?;
+    let summary = EntityId::now();
+    let summary_body = ClaimBody::new(
+        "conversation.summary",
+        ClaimSubject::Entity(seeded.owner),
+        Value::Map(vec![
+            ("text".into(), "The side note, summarised.".into()),
+            (
+                "covers".into(),
+                Value::Array(vec![Value::Binary(note.as_bytes().to_vec())]),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    let at = vault.now_recorded_at();
+    vault.put_claim(
+        &summary,
+        &summary_body,
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+    let artifact = quoting_artifact(&vault, seeded.owner, summary, &summary_body)?;
+    mark_tier_a(&vault, &note)?;
+
+    let drafted =
+        doors::draft_reply_with_file(&vault, seeded.owner, &seeded.thread_ref, artifact, 1);
+
+    let Err(refusal) = drafted else {
+        panic!("a reply whose file quotes a summary of a Tier-A note is refused, not drafted");
+    };
+    assert!(
+        refusal.contains("attachment 1 may not be shown to")
+            && refusal.contains("the reply is refused whole"),
+        "the refusal is the disclosure clamp's, for the quoting file: {refusal}"
     );
     Ok(())
 }
