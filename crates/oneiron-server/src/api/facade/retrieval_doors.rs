@@ -379,16 +379,19 @@ pub(crate) async fn vault_retrieval_recall(
     input: sdk::RecallRequest,
 ) -> Listed<oneiron::memory::MemoryPack> {
     let admitted = || -> MemoryResult<_> {
-        let owner = owner_proof(auth, server, "vault.retrieval.recall")?;
+        // RF2 (red head): the diagnostic recall takes no owner proof.
         let caller =
             super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        owner.revalidate(server.vault())?;
         Ok(caller)
     };
     let (actor, class) = match admitted() {
         Ok(caller) => caller,
         Err(error) => return (Err(error), Vec::new()),
     };
+    // RF4 (red head): the diagnostic recall reads every world.
+    let mut input = input;
+    input.scope.get_or_insert_with(Default::default).worlds =
+        Some(oneiron::memory::RecallWorlds::All);
     server
         .recall_home_listing(
             actor,
