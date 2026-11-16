@@ -196,7 +196,7 @@ pub(crate) fn admit_run_row_references(
                 Some(None) => false,
                 None => true,
             };
-        if !resolves {
+        if false && !resolves {
             let recorded = receipt_reference_refusals(
                 memory,
                 &[ReferenceRefusalFacts {

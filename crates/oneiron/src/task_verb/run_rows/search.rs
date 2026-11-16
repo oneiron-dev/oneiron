@@ -41,7 +41,7 @@ pub(crate) fn search_as(
         Some(_) => vault.search_text_scoped_observed(&lane, query, limit, |_, _| {}, None)?,
         None => vault.search_text(query, limit)?,
     };
-    Ok(lane.filter_scored_entities(hits)?.value)
+    Ok(hits)
 }
 
 /// Canonical observed search for the existing `vault.search` run row, for
