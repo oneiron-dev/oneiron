@@ -14,8 +14,10 @@
 //!   walk for every key ([`oneiron_setting_contract::decide`]); every read says which row
 //!   decided it.
 //! - Set: [`Vault::set_setting`], one door whose power is checked live in its write: the owner
-//!   sets every key; a live holder of the key's `engine.controls` class sets a key of that class;
-//!   a subject tightens its own row; anyone else's change waits on a check-in.
+//!   sets every key; an agent whose live owner Grant lists the key's own line
+//!   (`settings.set:<key>`), or a live holder of the key's `engine.controls` class, sets the
+//!   key's value rows inside the owner's; a subject tightens its own row; anyone else's change,
+//!   and an agent's widening, waits on a check-in.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
 //! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`.
@@ -36,6 +38,8 @@ pub use oneiron_setting_contract::{
     SettingSource, SettingSync, SettingValue, higher_is_tighter, lower_is_tighter,
 };
 
+#[cfg(feature = "sync")]
+pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
 pub use self::change::SettingChange;
 pub(crate) use self::change::{
@@ -47,16 +51,33 @@ pub(crate) use self::change::{
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
 pub(crate) use self::read::{SettingListFilter, SettingReader, reader_reads_key_in_txn};
-pub use self::set::{SetSetting, SetSettingOutcome, SettingCaller};
+pub(crate) use self::set::run_after_commit;
+pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;
 use crate::check_in::ActClass;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::EngineControlClass;
+
+/// The Grant line that makes an agent a holder of one key (DESIGN 1.2 step 3): it sets the key's
+/// value rows inside the owner's, and its widening asks the user (AUTH-1 = A). A Grant lists it
+/// as a verb, matched exactly.
+#[must_use]
+pub fn set_line(key: &str) -> String {
+    format!("settings.set:{key}")
+}
+
+/// The Grant line that lets an agent read one key whole.
+#[must_use]
+pub fn get_line(key: &str) -> String {
+    format!("settings.get:{key}")
+}
 
 /// Who may set a key without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetBy {
-    /// The owner alone. These are owner acts, and stay owner acts unless the owner grants them.
+    /// The owner alone. These are owner acts, and stay owner acts unless the owner grants them:
+    /// a Grant line names one key ([`set_line`]).
     Owner,
     /// The owner, and a live holder of this `engine.controls` class.
     Class(EngineControlClass),
@@ -74,8 +95,15 @@ pub struct ItemDomain {
 }
 
 /// The one hook a key may run in the write that changes it: re-arm a schedule, clear parks that
-/// wait on the key.
+/// wait on the key, or refuse the change on state the value's own check cannot see. It runs only
+/// on an applied change, after its rows are put; its `Err` fails the whole write, so neither row
+/// lands and the caller sees that error. A row that arrives by sync or a restore never passes
+/// through it, so a refusal here needs its reader to hold the same line.
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
+
+/// The one hook a key may run once the write that changed it has committed: wake a host that
+/// reads the key (a reader woken inside the write would see the last commit's value).
+pub type OnCommitted = fn(&Vault);
 
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
@@ -98,6 +126,9 @@ pub struct SettingSpec {
     pub restore: Restore,
     pub sync: SettingSync,
     pub on_change: Option<OnChange>,
+    /// Run after the commit of each write that applied a change to the key (not on an equal
+    /// value, not on a change that waits on a check-in).
+    pub after_commit: Option<OnCommitted>,
 }
 
 impl SettingSpec {
@@ -116,6 +147,7 @@ impl SettingSpec {
         restore: Restore::Live,
         sync: SettingSync::Vault,
         on_change: None,
+        after_commit: None,
     };
 
     /// Whether a row may sit at `kind`.
@@ -194,14 +226,21 @@ pub trait ValueKind: Sync {
     /// Whether `a` is at least as tight as `b`; `None` without a direction or when either does
     /// not decode.
     fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool>;
+    /// `stored` with every mention of the erased entity `id` taken out, when the key names how
+    /// ([`Kind::erase_mentions`]) and `stored` mentions it; `None` otherwise.
+    fn erase_mentions_in(&self, stored: &EncodedValue, id: EntityId) -> Option<EncodedValue> {
+        let _ = (stored, id);
+        None
+    }
 }
 
 /// The typed [`ValueKind`] of a key whose value is a `T`: its default, and optionally its
-/// strictest value and its tighter direction.
+/// strictest value, its tighter direction and how an erase takes an entity out of a value.
 pub struct Kind<T> {
     default: fn() -> T,
     strictest: Option<fn() -> T>,
     tighter: Option<fn(&T, &T) -> bool>,
+    erase_mentions: Option<fn(&T, EntityId) -> Option<T>>,
 }
 
 impl<T: SettingValue> Kind<T> {
@@ -212,6 +251,7 @@ impl<T: SettingValue> Kind<T> {
             default,
             strictest: None,
             tighter: None,
+            erase_mentions: None,
         }
     }
 
@@ -230,6 +270,17 @@ impl<T: SettingValue> Kind<T> {
     pub const fn tighter(self, tighter: fn(&T, &T) -> bool) -> Self {
         Self {
             tighter: Some(tighter),
+            ..self
+        }
+    }
+
+    /// This kind, whose value may name entities: `erase(value, id)` is the value with `id` taken
+    /// out, or `None` when the value does not name it. An erase of `id` rewrites each stored row
+    /// of the key in place with it, and writes no change row (the change rows that name `id` go).
+    #[must_use]
+    pub const fn erase_mentions(self, erase: fn(&T, EntityId) -> Option<T>) -> Self {
+        Self {
+            erase_mentions: Some(erase),
             ..self
         }
     }
@@ -296,6 +347,12 @@ impl<T: SettingValue> ValueKind for Kind<T> {
     fn is_tighter(&self, a: &EncodedValue, b: &EncodedValue) -> Option<bool> {
         let tighter = self.tighter?;
         Some(tighter(&Self::decode(a)?, &Self::decode(b)?))
+    }
+
+    fn erase_mentions_in(&self, stored: &EncodedValue, id: EntityId) -> Option<EncodedValue> {
+        let erase = self.erase_mentions?;
+        // The erase must land whatever the value's check says of the rest: encode, never refuse.
+        EncodedValue::encode(&erase(&Self::decode(stored)?, id)?).ok()
     }
 }
 
