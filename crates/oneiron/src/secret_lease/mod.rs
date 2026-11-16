@@ -147,8 +147,6 @@ use self::files::path_swap_hook;
 use self::storage::{receipt_fault_hook, registration_fault_hook};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SECRET-LEASE-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

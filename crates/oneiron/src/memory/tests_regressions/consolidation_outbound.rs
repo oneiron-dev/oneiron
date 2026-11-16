@@ -86,12 +86,14 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0x53; 16]).unwrap().to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,
                 "mid-consolidation note",
             )],
             occurred_at: 2003,
+            assertions: Default::default(),
         })
         .expect("source write never queues behind derived work");
 
@@ -112,16 +114,17 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
         }])
         .expect("writeback commit");
     assert_eq!(writeback.len(), 1);
+    let crate::memory::CommitOutcome::Landed(landed) = &writeback[0] else {
+        panic!("generated writeback lands: {:?}", writeback[0]);
+    };
     assert_eq!(
-        writeback[0].approval, "proposed",
+        landed.approval, "proposed",
         "generated writeback never lands auto"
     );
-    assert!(writeback[0].receipt_ref.starts_with("gate:"));
+    assert!(landed.receipt_ref.starts_with("gate:"));
     let receipts = facade.receipts(50).expect("receipts");
     assert!(
-        receipts
-            .iter()
-            .any(|r| r.receipt_ref == writeback[0].receipt_ref),
+        receipts.iter().any(|r| r.receipt_ref == landed.receipt_ref),
         "writeback receipt resolvable via receipts()"
     );
     assert!(
@@ -268,10 +271,20 @@ fn seed_claims_force_proposed_with_per_element_receipts() {
         ])
         .expect("seed");
     assert_eq!(receipts.len(), 3);
-    assert_eq!(receipts[0].approval, "proposed", "seed forces proposed");
-    assert!(receipts[0].receipt_ref.starts_with("gate:"));
-    assert_eq!(receipts[1].approval, "rejected");
-    assert_eq!(receipts[2].approval, "proposed");
+    let crate::memory::CommitOutcome::Landed(first) = &receipts[0] else {
+        panic!("first seed lands: {:?}", receipts[0]);
+    };
+    assert_eq!(first.approval, "proposed", "seed forces proposed");
+    assert!(first.receipt_ref.starts_with("gate:"));
+    assert!(
+        matches!(receipts[1], crate::memory::CommitOutcome::Refused { .. }),
+        "violating seed element is refused: {:?}",
+        receipts[1]
+    );
+    let crate::memory::CommitOutcome::Landed(third) = &receipts[2] else {
+        panic!("third seed lands: {:?}", receipts[2]);
+    };
+    assert_eq!(third.approval, "proposed");
 
     let pending = facade.pending_writes(50).expect("pending");
     assert_eq!(pending.len(), 2, "both landed seeds park for consent");
@@ -308,6 +321,7 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
         trigger_ref: "session:send-now".to_owned(),
         job_ref: Some("brief:party".to_owned()),
         occurred_at: Some(3000),
+        mention: None,
     };
     let receipt = facade.schedule_outbound(&draft).expect("schedule");
     assert!(receipt.intent_ref.starts_with("intent:"));
@@ -384,6 +398,7 @@ fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
         trigger_ref: "session:pigeon".to_owned(),
         job_ref: None,
         occurred_at: Some(4000),
+        mention: None,
     };
 
     let err = facade
@@ -437,6 +452,7 @@ fn schedule_outbound_dedupe_recovers_original_gate_decision_ref() {
         trigger_ref: "session:recover".to_owned(),
         job_ref: None,
         occurred_at: Some(5000),
+        mention: None,
     };
 
     let first = facade.schedule_outbound(&draft).expect("first schedule");

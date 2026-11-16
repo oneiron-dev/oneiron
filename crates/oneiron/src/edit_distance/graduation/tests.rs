@@ -142,16 +142,19 @@ fn the_write_door_re_validates_a_row_the_caller_assembled_by_hand() {
             scope_pattern: WILDCARD_PATTERN.to_owned(),
             required_streak: 0,
             posterior_guard: 0.0,
+            snooze_backoff_seconds: DEFAULT_SNOOZE_BACKOFF_SECONDS,
         },
         ThresholdRow {
             scope_pattern: "send_email/client_followup".to_owned(),
             required_streak: 5,
             posterior_guard: 0.5,
+            snooze_backoff_seconds: DEFAULT_SNOOZE_BACKOFF_SECONDS,
         },
         ThresholdRow {
             scope_pattern: WILDCARD_PATTERN.to_owned(),
             required_streak: 5,
             posterior_guard: 1.5,
+            snooze_backoff_seconds: DEFAULT_SNOOZE_BACKOFF_SECONDS,
         },
     ] {
         assert!(
@@ -203,6 +206,7 @@ fn a_malformed_stored_row_is_a_typed_error_never_a_waived_threshold() {
         scope_pattern: WILDCARD_PATTERN.to_owned(),
         required_streak: 0,
         posterior_guard: 0.5,
+        snooze_backoff_seconds: DEFAULT_SNOOZE_BACKOFF_SECONDS,
     };
     let data = encode_row(&stored, "test row").expect("encode");
     vault

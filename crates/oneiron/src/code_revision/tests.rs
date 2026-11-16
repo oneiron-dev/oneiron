@@ -126,6 +126,7 @@ fn put_claim_entity_unchecked(
             end: learned_at,
         },
         learned_at,
+        0,
         data,
     );
 

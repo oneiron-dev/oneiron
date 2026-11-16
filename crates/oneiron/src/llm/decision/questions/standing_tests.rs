@@ -1,18 +1,16 @@
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
-    DecisionRung,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
+    DecisionQuestionInput, DecisionRung,
 };
 use crate::{EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-fn definition(unit: EntityId, text: &str) -> QuestionDefinition {
-    QuestionDefinition {
-        question: DecisionQuestion {
-            id: EntityId::now(),
-            version: 1,
+fn definition(unit: EntityId, text: &str) -> QuestionDefinitionInput {
+    QuestionDefinitionInput {
+        question: DecisionQuestionInput {
             text: text.into(),
             class: DecisionClass::Judgment,
             contract: AnswerContract::Noul,
@@ -35,6 +33,12 @@ fn definition(unit: EntityId, text: &str) -> QuestionDefinition {
         delivery: "nightly".into(),
         learning: false,
         binding: None,
+        criteria: QuestionCriteria::default(),
+        audience: QuestionAudience::Asker,
+        posture: None,
+        media: QuestionMedia::default(),
+        deadline_ms: None,
+        artifacts: Vec::new(),
     }
 }
 
@@ -46,6 +50,7 @@ fn input(unit: EntityId) -> StandingAnswer {
         evidence: vec![unit],
         providers: vec![],
         paired: Vec::new(),
+        rule: None,
         source_frontier: [0; 32],
     }
 }
@@ -141,7 +146,7 @@ fn standing_backfill_keeps_receipts_by_immutable_version_after_edit_and_pause() 
     }
     grant(&vault, principal)?;
     let actor = WriteActor::new(principal, EdgeActorClass::Human);
-    let first = create_question(&vault, principal, definition(unit, "Old wording?"), 10)?;
+    let first = create_question(&vault, actor, definition(unit, "Old wording?"), 10)?;
     let id = first.definition.question.id;
     let v1 = backfill_standing_answer(
         &vault,
@@ -157,15 +162,8 @@ fn standing_backfill_keeps_receipts_by_immutable_version_after_edit_and_pause() 
     assert_eq!(v1.decision.receipt.principal, principal);
     let mut one_off = definition(unit, "One off?");
     one_off.activation = QuestionActivation::OneOff;
-    assert!(edit_question(&vault, principal, id, 1, one_off, 12).is_err());
-    let second = edit_question(
-        &vault,
-        principal,
-        id,
-        1,
-        definition(unit, "New wording?"),
-        12,
-    )?;
+    assert!(edit_question(&vault, actor, id, 1, one_off, 12).is_err());
+    let second = edit_question(&vault, actor, id, 1, definition(unit, "New wording?"), 12)?;
     assert_eq!(second.definition.question.version, 2);
     assert_eq!(
         read_question(&vault, principal, id, Some(1))?,
@@ -242,12 +240,12 @@ fn standing_backfill_rejects_out_of_scope_and_invalid_answers_without_writing() 
             b"fixture",
         )?;
     }
-    let id = create_question(&vault, owner, definition(unit, "Question?"), 1)?
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let id = create_question(&vault, actor, definition(unit, "Question?"), 1)?
         .definition
         .question
         .id;
     grant(&vault, owner)?;
-    let actor = WriteActor::new(owner, EdgeActorClass::Human);
     let mut bad = prepared(&vault, owner, id, 1, actor, unit)?;
     bad.unit = other;
     assert!(backfill_standing_answer(&vault, owner, id, 1, actor, bad.clone(), 2).is_err());
@@ -312,7 +310,7 @@ fn live_note_edits_advance_the_source_pin_and_old_provider_work_is_refused() -> 
     grant(&vault, owner)?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
     let unit = vault.create_note("opinion/take", "unfinished", actor)?;
-    let id = create_question(&vault, owner, definition(unit, "Complete?"), 10)?
+    let id = create_question(&vault, actor, definition(unit, "Complete?"), 10)?
         .definition
         .question
         .id;
@@ -375,14 +373,14 @@ fn private_diary_and_foreign_scope_are_not_admitted() -> TestResult {
         "private",
         WriteActor::new(author, EdgeActorClass::Human),
     )?;
-    let id = create_question(&vault, owner, definition(diary, "Private?"), 10)?
+    let id = create_question(&vault, actor, definition(diary, "Private?"), 10)?
         .definition
         .question
         .id;
     assert!(standing_source_frontier(&vault, owner, id, 1, actor, diary, &[diary]).is_err());
     assert!(backfill_standing_answer(&vault, owner, id, 1, actor, input(diary), 11).is_err());
     let own = vault.create_note("opinion/take", "visible before floor", actor)?;
-    let own_question = create_question(&vault, owner, definition(own, "Allowed?"), 12)?
+    let own_question = create_question(&vault, actor, definition(own, "Allowed?"), 12)?
         .definition
         .question
         .id;
@@ -418,7 +416,7 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
     fact.source = Some(crate::claim::ClaimSource::Imported);
     vault.put_claim(&evidence, &fact, TimeRange { start: 1, end: 1 }, 1)?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
-    let id = create_question(&vault, owner, definition(unit, "Answer?"), 10)?
+    let id = create_question(&vault, actor, definition(unit, "Answer?"), 10)?
         .definition
         .question
         .id;
@@ -470,6 +468,7 @@ fn real_secret_custody_cannot_be_supplemental_evidence() -> TestResult {
         name: "standing-fixture-key".into(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"fixture secret".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1_700_000_000,
@@ -480,7 +479,7 @@ fn real_secret_custody_cannot_be_supplemental_evidence() -> TestResult {
         declared_paths: vec![".secrets/api.key".into()],
         policy_floor_snapshot: SecretCustodyFloor::default(),
     })?;
-    let id = create_question(&vault, owner, definition(unit, "Classify?"), 10)?
+    let id = create_question(&vault, actor, definition(unit, "Classify?"), 10)?
         .definition
         .question
         .id;
@@ -530,7 +529,7 @@ fn supplemental_claim_evidence_taint_scope_and_revisions_are_preserved() -> Test
         rmpv::Value::Boolean(true),
     )]));
     vault.put_claim(&evidence, &imported, TimeRange { start: 1, end: 1 }, 1)?;
-    let id = create_question(&vault, owner, definition(unit, "Fact?"), 10)?
+    let id = create_question(&vault, actor, definition(unit, "Fact?"), 10)?
         .definition
         .question
         .id;
@@ -575,7 +574,7 @@ fn note_unit_and_evidence_require_record_project_and_sensitivity_grants() -> Tes
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
     let note = vault.create_note("opinion/take", "document source", actor)?;
     grant(&vault, owner)?;
-    let note_question = create_question(&vault, owner, definition(note, "Note?"), 1)?
+    let note_question = create_question(&vault, actor, definition(note, "Note?"), 1)?
         .definition
         .question
         .id;
@@ -603,7 +602,7 @@ fn note_unit_and_evidence_require_record_project_and_sensitivity_grants() -> Tes
     assert!(
         backfill_standing_answer(&vault, owner, note_question, 1, actor, input(note), 2).is_err()
     );
-    let claim_question = create_question(&vault, owner, definition(claim, "Claim?"), 1)?
+    let claim_question = create_question(&vault, actor, definition(claim, "Claim?"), 1)?
         .definition
         .question
         .id;
@@ -660,7 +659,7 @@ fn mixed_source_sensitivity_never_downgrades_a_kept_answer() -> TestResult {
         };
         let unit = EntityId::now();
         vault.put_claim(&unit, &make(unit_band), TimeRange { start: 1, end: 1 }, 1)?;
-        let q = create_question(&vault, owner, definition(unit, "Sensitive?"), 10)?
+        let q = create_question(&vault, actor, definition(unit, "Sensitive?"), 10)?
             .definition
             .question
             .id;
@@ -722,7 +721,7 @@ fn migrated_non_note_document_edits_invalidate_pre_provider_pins() -> TestResult
         actor,
         &DocAuthorization::Owner(&authority),
     )?;
-    let question = create_question(&vault, owner, definition(unit, "Done?"), 10)?
+    let question = create_question(&vault, actor, definition(unit, "Done?"), 10)?
         .definition
         .question
         .id;
@@ -787,19 +786,23 @@ fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() ->
         .witness(&WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
+            thread_audience: None,
             occurred_at: 1,
+            assertions: Default::default(),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "relationship source".into(),
+                parts: None,
                 metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
         })?;
     let actor = WriteActor::new(principal, EdgeActorClass::Agent);
-    let id = create_question(&vault, principal, definition(message, "Relationship?"), 2)?
+    let id = create_question(&vault, actor, definition(message, "Relationship?"), 2)?
         .definition
         .question
         .id;
@@ -824,6 +827,7 @@ fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() ->
             revoked_at: None,
             expires_at: Some(u64::MAX),
             authority_scope: crate::federation::scope_codec::read_preset(),
+            companion_bounds: None,
         },
     )?;
     assert!(
@@ -851,10 +855,8 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
     use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
     for backfill in [false, true] {
         let clock = crate::ports::ManualClock::new(1_000);
-        let config = VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        };
+        let mut config = VaultConfig::device();
+        config.store_clock = clock.bundle();
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), config)?;
         let owner = EntityId::now();
@@ -868,15 +870,19 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
             .witness(&WitnessTurn {
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: None,
+                thread_audience: None,
                 occurred_at: 1,
+                assertions: Default::default(),
                 messages: vec![WitnessMessage {
                     id: Some(message.to_hex()),
                     author: WitnessAuthor::User,
                     message_type: "dialogue".into(),
                     content: "expiring source".into(),
+                    parts: None,
                     metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
             })?;
         vault.create_access_grant(
@@ -890,10 +896,11 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
                 revoked_at: None,
                 expires_at: Some(2_000),
                 authority_scope: crate::federation::scope_codec::read_preset(),
+                companion_bounds: None,
             },
         )?;
         let actor = WriteActor::new(principal, EdgeActorClass::Agent);
-        let id = create_question(&vault, principal, definition(message, "Expiring?"), 2)?
+        let id = create_question(&vault, actor, definition(message, "Expiring?"), 2)?
             .definition
             .question
             .id;

@@ -148,6 +148,7 @@ fn push_credential(now: VaultInstant) -> DoorCredential {
 fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
     PushedBlob {
         path: path.to_owned(),
+        tip_raw_path: None,
         oid: "b".repeat(40),
         content: lines
             .iter()
@@ -268,6 +269,8 @@ fn is_scan_failure(err: &CredentialDoorError) -> bool {
     matches!(err, CredentialDoorError::ScanFailure { .. })
 }
 
+// FIX [LIBTEST-QUARANTINE-CREDENTIAL-DOOR-TESTS-ITEMS]: retired behaviour, not a port (1 errors: E0599): CredentialDoorError::BinaryContentRejected is gone since every pushed byte is scanned (G7-BINARY = A, FIX 6871); rewrite to the scanned-binary disposition or delete, then drop this gate
+#[cfg(any())]
 fn is_binary_rejected(err: &CredentialDoorError) -> bool {
     matches!(err, CredentialDoorError::BinaryContentRejected { .. })
 }
@@ -676,7 +679,7 @@ fn a_detector_hit_rejects_with_a_valueless_lift_proposal() {
     let blobs = [blob("src/config.rs", &[b"// fine", DETECTED_LINE])];
 
     let verdict = scan(&door, &blobs).expect("the scan produced a verdict");
-    let DoorScanVerdict::Rejected { proposals } = verdict else {
+    let DoorScanVerdict::Rejected { proposals, .. } = verdict else {
         panic!("a detector hit must reject the push");
     };
 
@@ -698,6 +701,8 @@ fn a_pushed_blob_debug_never_prints_added_bytes() {
     assert!(!printed.contains("ghp_"));
 }
 
+// FIX [LIBTEST-QUARANTINE-CREDENTIAL-DOOR-TESTS-ITEMS]: retired behaviour, not a port (1 errors: E0599): CredentialDoorError::BinaryContentRejected is gone since every pushed byte is scanned (G7-BINARY = A, FIX 6871); rewrite to the scanned-binary disposition or delete, then drop this gate
+#[cfg(any())]
 #[test]
 fn binary_lines_reject_typed_whatever_their_entropy_or_magic() {
     let (_tmp, _vault, door) = door_fixture();
@@ -726,6 +731,8 @@ fn binary_lines_reject_typed_whatever_their_entropy_or_magic() {
     }
 }
 
+// FIX [LIBTEST-QUARANTINE-CREDENTIAL-DOOR-TESTS-ITEMS]: retired behaviour, not a port (0 errors: none; calls is_binary_rejected): CredentialDoorError::BinaryContentRejected is gone since every pushed byte is scanned (G7-BINARY = A, FIX 6871); rewrite to the scanned-binary disposition or delete, then drop this gate
+#[cfg(any())]
 #[test]
 fn binary_content_dominates_a_detector_hit_in_the_same_blob() {
     let (_tmp, _vault, door) = door_fixture();
@@ -960,10 +967,8 @@ fn a_lease_claimed_late_in_a_second_is_admitted_at_once() {
     let second = crate::unix_seconds_now();
     let clock = crate::store::ports::ManualClock::new(second);
     let tmp = tempfile::tempdir().expect("temp dir");
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..Default::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let vault = Arc::new(Vault::open(tmp.path(), config).expect("open vault"));
     // The authority clock reads the time late in `second`; then the caller's
     // clock turns to the next second, and it claims and redeems at once.

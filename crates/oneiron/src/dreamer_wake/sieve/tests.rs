@@ -365,7 +365,9 @@ fn a_head_swap_at_one_checkpoint_reads_the_new_tags_names() {
     // The served head swaps at the same checkpoint and the turn is tagged
     // again: the same input, tagger, save path and parameters.
     vault
-        .with_write_txn(|txn| crate::tagging::mark_turn_in_txn(&vault, txn, turn))
+        .with_write_txn(|txn| {
+            crate::tagging::mark_turn_in_txn(&vault, txn, turn, ExtractionWork::Bulk)
+        })
         .expect("mark");
     let after = tag("bbbbbbbbbbbbbbbb", vec!["Ada"]);
     assert_eq!(vault.sieve_pass(NOW + 1).expect("pass").turns_read, 1);
@@ -469,12 +471,12 @@ fn words_the_dreamer_may_not_read_give_no_span_until_a_grant_lets_it() {
 /// twice.
 #[test]
 fn a_flood_is_read_pass_after_pass_within_the_bound() {
-    const BOUND: u32 = 32 * 1024;
+    const BOUND: u64 = 32 * 1024;
     let dir = tempfile::tempdir().expect("dir");
     let mut vault = open(dir.path(), false);
     let text = "アリス 2026-10-12 ".repeat(20_000);
     let turn = witness(&vault, "78787878787878787878787878787878", &text);
-    let spans_of = |vault: &Vault| -> Vec<(u32, u32)> {
+    let spans_of = |vault: &Vault| -> Vec<(u64, u64)> {
         let mut spans: Vec<_> = vault
             .sieve_queue(usize::MAX)
             .expect("queue")

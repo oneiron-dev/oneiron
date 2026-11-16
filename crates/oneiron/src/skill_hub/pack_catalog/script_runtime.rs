@@ -611,7 +611,5 @@ impl CredentialResolver for PackCredentialResolver {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-PACK-CATALOG-SCRIPT-RUNTIME-TESTS]: the lib test target's type check fails here (10 errors: E0061 x10); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

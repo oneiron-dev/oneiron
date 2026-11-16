@@ -30,8 +30,6 @@ mod store;
 mod types;
 mod wake_park;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-RUNNER-TESTS]: the lib test target's type check fails here (9 errors: E0063 x5, E0061 x2, E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
