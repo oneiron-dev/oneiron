@@ -21,9 +21,17 @@ doctest = false
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
 # Default features only: the sans-IO codecs, no network client. The hosted
-# speech replies read a refusal as any OpenAI-compatible provider's status.
+# speech replies read a refusal as any OpenAI-compatible provider's status, and
+# the OpenAI-compatible speech and transcription legs send over the provider's
+# shared media client.
 oneiron-llm = { version = "0.1.0", path = "../oneiron-llm" }
+# A transcription's inference receipts read from its usage.
+serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# The OpenAI-compatible tests' budget lease (`BudgetLease::for_test`).
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-hooks"] }
 
 [lints]
 workspace = true

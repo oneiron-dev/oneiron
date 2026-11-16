@@ -145,25 +145,15 @@ impl OpenAiHttp {
         let events = self
             .http
             .post_sse_leased(&request.path, &request.headers, &body, lease);
-        let frames = futures_util::stream::unfold(
-            Frames {
-                transport: self,
-                target,
-                execution,
-                tie,
-                worker: observed,
-                answering: None,
-                inference,
-                observed_terminal: false,
-                events: Box::pin(events),
-                served: None,
-                saw_usage: false,
-                finished: false,
-                closed: false,
-            },
-            Frames::next,
-        );
-        Ok(Box::pin(frames))
+        Ok(chat_frames(
+            Answering::Http(self),
+            target,
+            execution,
+            tie,
+            observed,
+            inference,
+            events,
+        ))
     }
 }
 
@@ -434,6 +424,61 @@ fn carry_timings(body: &mut JsonValue) {
     }
 }
 
+/// Where a stream's answering identity comes from.
+pub(super) enum Answering<'a> {
+    /// The HTTP route's resolver, for the launch that answered there.
+    Http(&'a OpenAiHttp),
+    /// A brokered stream, from no origin this server fetches a manifest
+    /// from: the launch epoch alone.
+    Brokered,
+}
+
+impl Answering<'_> {
+    /// The identity the stream's own last `model` names on this source.
+    async fn resolve(
+        &self,
+        returned: Option<&str>,
+        target: Option<&str>,
+    ) -> Option<AnsweringIdentity> {
+        match self {
+            Self::Http(transport) => transport.answering(returned, target).await,
+            Self::Brokered => returned.and_then(AnsweringIdentity::epoch_only),
+        }
+    }
+}
+
+/// The stream as the adapter reads it, from either transport, with the
+/// served model on its usage.
+pub(super) fn chat_frames<'a, S>(
+    source: Answering<'a>,
+    target: Option<String>,
+    execution: Option<CacheDigest>,
+    tie: Option<Tie>,
+    worker: Option<InferenceWorker>,
+    inference: InferenceUsage,
+    events: S,
+) -> OpenAiCompatProviderStream<'a>
+where
+    S: futures_util::Stream<Item = Result<SseItem, HttpReleaseError>> + Send + 'a,
+{
+    let frames = Frames {
+        answering_source: source,
+        target,
+        execution,
+        tie,
+        worker,
+        answering: None,
+        inference,
+        observed_terminal: false,
+        events: Box::pin(events),
+        served: None,
+        saw_usage: false,
+        finished: false,
+        closed: false,
+    };
+    Box::pin(futures_util::stream::unfold(frames, Frames::next))
+}
+
 /// The stream as the adapter reads it, with the served model on its usage.
 ///
 /// A usage chunk may omit `model`, so it takes the last one named. A stream
@@ -443,13 +488,15 @@ fn carry_timings(body: &mut JsonValue) {
 /// any finish gets nothing, so it still ends as a cut.
 ///
 /// The receipt's identity is what this stream's own last `model` names
-/// (FIX 7895), never another stream's or a discovered one. Each chunk with a
-/// usage object, a usage-only last chunk included, gets the llama.cpp
-/// receipt its timings or that alias give (FIX 8314). The adapter keeps the
-/// last usage it reads; the lease retains every valid native member, with
-/// terminal observations deduplicated against the returned receipts.
+/// (FIX 7895), never another stream's or a discovered one, resolved by the
+/// HTTP route's resolver or, for a brokered stream, by the launch epoch
+/// alone. Each chunk with a usage object, a usage-only last chunk included,
+/// gets the llama.cpp receipt its timings or that alias give (FIX 8314).
+/// The adapter keeps the last usage it reads; the lease retains every valid
+/// native member, with terminal observations deduplicated against the
+/// returned receipts.
 struct Frames<'a, S> {
-    transport: &'a OpenAiHttp,
+    answering_source: Answering<'a>,
     /// The configured wire id the call sent.
     target: Option<String>,
     /// The execution mode of the request the call sent (FIX 8329).
@@ -493,8 +540,8 @@ where
                 return None;
             };
             let answering = self
-                .transport
-                .answering(self.answering.as_deref(), self.target.as_deref())
+                .answering_source
+                .resolve(self.answering.as_deref(), self.target.as_deref())
                 .await;
             if !self.inference.saw_native_key {
                 carry_chat_evidence(&mut carrier, answering.as_ref(), self.execution.as_ref());
@@ -553,8 +600,8 @@ where
                 carry_timings(&mut chunk);
                 // Only a chunk with usage gets a receipt.
                 let answering = if chunk.get("usage").is_some_and(JsonValue::is_object) {
-                    self.transport
-                        .answering(self.answering.as_deref(), self.target.as_deref())
+                    self.answering_source
+                        .resolve(self.answering.as_deref(), self.target.as_deref())
                         .await
                 } else {
                     None
