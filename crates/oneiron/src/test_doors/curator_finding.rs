@@ -12,6 +12,8 @@
 //! - [`open_conflict_with_retract_finding`] opens a conflict whose retained
 //!   alternative is such a finding, for
 //!   `tests/retained_curator_keep_restriction.rs`.
+//! - [`approve_finding_unapplied`] approves such a finding as the owner with
+//!   its rung unapplied, for `tests/curator_approved_apply_restriction.rs`.
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
@@ -83,6 +85,52 @@ fn retract_value_in(vault: &Vault, txn: &heed::RoTxn<'_>, target: EntityId) -> R
         "action": { "kind": "retract" },
     })
     .to_string())
+}
+
+/// Approves the curator finding `finding` as the owner, with its rung
+/// unapplied: the state an approval leaves when the rung does not apply with
+/// it (`Vault::apply_approved_curator_in_savepoint` logs the failure, or
+/// finds a demotion parked on the target), which the nightly pass then
+/// applies. The approval lands as an owner's approval lands
+/// (`ClaimMaterialization::apply_owner_approval`); nothing else of the
+/// settlement runs.
+///
+/// # Errors
+///
+/// The vault's, and a `finding` that is no stored proposal.
+pub fn approve_finding_unapplied(vault: &Vault, finding: EntityId) -> Result<()> {
+    use crate::batch::{BatchOp, ClaimMaterialization, ENTITY_METADATA_HEADER_LEN};
+
+    let owner = crate::write_envelope::WriteActor::new(
+        crate::vault::embedded_owner_actor_id()?,
+        crate::edge::EdgeActorClass::Human,
+    );
+    vault.with_write_txn_grouped(|txn| {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, &finding)?
+            .ok_or(Error::EntityNotFound)?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        let mut body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if body.approval != ClaimApprovalStatus::Proposed {
+            return Err(Error::InvalidClaimBody("the finding is no proposal"));
+        }
+        body.approval = ClaimApprovalStatus::Approved;
+        let put = BatchOp::Put {
+            id: finding,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at: header.learned_at,
+            row_version: None,
+            data: crate::claim::encode_claim_body(&body)?,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        ClaimMaterialization::apply_owner_approval(vault, txn, put, true, owner, None)
+    })
 }
 
 /// Opens a conflict over `member` whose one retained alternative is the
