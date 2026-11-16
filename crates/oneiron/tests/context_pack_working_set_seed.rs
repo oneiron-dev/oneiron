@@ -3,7 +3,8 @@
 //! serves them first, in the caller's order, before the ranked fill. Each ref
 //! is admitted on its own: a superseded claim resolves forward (to a CLAIM
 //! alone), a dead, out-of-scope or out-of-query ref is dropped while the rest
-//! still seed, the fill never repeats a seed, the seeds take at most half of a
+//! still seed, a seed whose edge names a row the pack cannot serve is
+//! dropped, the fill never repeats a seed, the seeds take at most half of a
 //! serialized pack's token budget, an ASSET crosses as a handle, a projected
 //! JSON pack keeps the seeds first, and an unseeded pack is today's pack.
 //!
@@ -453,4 +454,29 @@ fn a_projected_json_pack_keeps_the_working_set_first() {
         projected.stats.working_set.served,
         vec![fixture.carried[1], fixture.carried[0]]
     );
+}
+
+/// A seed whose edge names a row the pack cannot serve (here one that does
+/// not exist) is dropped with its edges; the rest still seed and the pack
+/// builds (review of #8037, round 1).
+#[test]
+fn a_seed_whose_edge_names_an_unservable_row_is_dropped() {
+    let fixture = fixture();
+    let missing = fixture_id(0x7D);
+    fixture
+        .vault
+        .put_edge(&fixture.carried[0], EdgeKind::Mentions, &missing, 1.0)
+        .expect("an edge to a row that does not exist");
+    let pack = fixture
+        .builder()
+        .include_edges(true)
+        .working_set(&fixture.carried)
+        .expect("working set")
+        .run()
+        .expect("the pack builds without that seed");
+    let mut expected = vec![fixture.carried[1]];
+    expected.extend(fixture.fill);
+    assert_eq!(fixture.rows(&pack), expected, "the seed is dropped");
+    assert_eq!(pack.stats.working_set.served, vec![fixture.carried[1]]);
+    assert_eq!(pack.stats.working_set.dropped, 1);
 }
