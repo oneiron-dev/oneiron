@@ -41,6 +41,8 @@ pub(crate) use self::comm_widen::{
     comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) mod comm_widen_test_door;
 mod context;
 mod continuation;
 pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
@@ -102,6 +104,9 @@ pub(crate) use self::run_task::{
 pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::run_task::{proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn};
+mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;

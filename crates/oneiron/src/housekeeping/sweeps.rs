@@ -183,6 +183,18 @@ pub(super) fn run(
             }
         }
         HousekeepingSweep::OAuthExpiry => return oauth_rows(vault, now, deadline),
+        HousekeepingSweep::EsignTokenExpiry => {
+            let (walk, cursor) = esign_walk(vault, deadline, cursor, |documents| {
+                vault.sweep_esign_tokens(documents, now)
+            })?;
+            return Ok(walk.run(cursor, |documents, removed, failed| {
+                SweepWork::EsignTokens {
+                    documents,
+                    removed,
+                    failed,
+                }
+            }));
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
