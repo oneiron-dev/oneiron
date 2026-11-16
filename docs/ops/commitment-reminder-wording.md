@@ -93,10 +93,11 @@ unchanged.
 A model, source, configuration, budget, or filing error schedules a new try
 through the native retry door. `attempt_count` fences a lease; it is not a retry
 counter and does not impose a cutoff. The tries so far are the attempt's retry
-lineage (`AttemptQueue::retry_chain_depth`), and a lineage that does not read
-waits the full hour. A hold that never clears, such as a persona the route names
-but the host does not configure, therefore adds one try an hour once the wait
-reaches its cap, not one per backoff. A payload that does not decode ends its
+lineage plus this one (`AttemptQueue::retry_chain_depth` + 1), and a lineage
+that does not read waits the cap: one hour, or the setting itself when it is
+longer. A hold that never clears, such as a persona the route names but the host
+does not configure, therefore adds one try per cap once the wait reaches it, not
+one per backoff. A payload that does not decode ends its
 attempt with a warning instead: its bytes never change, so a retry could only
 fail the same way, and the send reads the fixed wording. Error stages are stored
 without prompt or reminder text in logs.
