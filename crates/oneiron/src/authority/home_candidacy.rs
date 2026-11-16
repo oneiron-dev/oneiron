@@ -72,7 +72,7 @@ impl DeclaredHomeCandidacy {
 /// declaration of it replaced, and every one a later one replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct HomeCandidacyState {
-    live: PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
+    live: PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
     replaced: PersistentSet<AuthorityEntryHash>,
 }
 

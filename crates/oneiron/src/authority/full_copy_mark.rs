@@ -50,7 +50,7 @@ pub(crate) struct DeclaredFullCopyMark {
 /// it replaced, and every one a later one replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FullCopyMarkState {
-    live: PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredFullCopyMark>>,
+    live: PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, DeclaredFullCopyMark>>,
     replaced: PersistentSet<AuthorityEntryHash>,
 }
 

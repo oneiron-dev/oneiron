@@ -117,7 +117,7 @@ pub(super) struct OwnerWorkState {
     revoked: PersistentSet<EntityId>,
     /// Each root request's cancels with effect, by the request's entry
     /// (`cancel`).
-    cancels: PersistentMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    cancels: PersistentMap<AuthorityEntryHash, PersistentSet<AuthorityEntryHash>>,
     /// Each export secret request the owner's mark with effect says he
     /// imported the supplement of (`import_mark`, FIX 12062).
     imported: PersistentSet<AuthorityEntryHash>,
@@ -608,7 +608,7 @@ pub(super) fn folded_owner_work(
             .collect(),
         refused: work.refused.to_btree_set(),
         revoked: work.revoked.to_btree_set(),
-        cancels: work.cancels.to_btree_map(),
+        cancels: crate::authority::fold_state::to_btree_set_map(&work.cancels),
         imported: work.imported.to_btree_set(),
     }
 }
