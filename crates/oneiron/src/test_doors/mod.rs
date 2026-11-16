@@ -170,6 +170,8 @@ pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 #[cfg(feature = "sync")]
+pub mod sync_checkpoint_pins;
+#[cfg(feature = "sync")]
 pub mod sync_parted_row_binding;
 pub mod task_ask_role_routing;
 pub mod tray_answered_removal;
