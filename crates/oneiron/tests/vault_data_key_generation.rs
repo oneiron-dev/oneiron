@@ -74,7 +74,7 @@ fn a_checkpoint_sealed_after_a_new_generation_does_not_open_with_the_old_key() {
     let vault = keyed_vault(&directory.path().join("vault"));
     // Our own keystore, so the Device positive control is ours.
     let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
     let device = device_wrap(&vault);
     vault
         .set_vault_key_password(PASSWORD, None)
@@ -419,7 +419,7 @@ fn a_custody_head_published_before_a_new_generation_does_not_open_with_the_key_a
     let directory = tempfile::tempdir().expect("tempdir");
     let vault = keyed_vault(&directory.path().join("vault"));
     let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
     let device = device_wrap(&vault);
     register_custody_secret(&vault);
     let folder = directory.path().join("custody");
@@ -450,7 +450,7 @@ fn the_first_custody_pass_after_a_new_generation_seals_the_head_again_under_the_
     let directory = tempfile::tempdir().expect("tempdir");
     let vault = keyed_vault(&directory.path().join("vault"));
     let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
     let device = device_wrap(&vault);
     register_custody_secret(&vault);
     let folder = directory.path().join("custody");
