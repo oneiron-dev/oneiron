@@ -497,7 +497,7 @@ pub(super) async fn handle_window_sync(
                 (&key, &doc),
                 update,
                 inserts,
-                write_auth,
+                DeviceWriteRecheck::Credential(write_auth),
             )
             .await;
             // The burst core's batch ends as the landing went (L7-41): landed,
@@ -586,6 +586,18 @@ pub(super) struct LandedDeviceUpdate {
     pub(super) settled_positions: Option<oneiron::sync::OwnDevicePositionImport>,
 }
 
+/// What the writer that persists an own device's update judges again
+/// before its bytes append.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DeviceWriteRecheck<'a> {
+    /// The Write credential of the socket that sent it, when one bound it.
+    Credential(Option<&'a CoreAuth>),
+    /// The retained batch the home's drain replays, which no socket sent:
+    /// still held, and its device's authority as the burst core held it
+    /// ([`oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn`]).
+    Retained(&'a oneiron::sync::federation_burst::DeviceBurstWork),
+}
+
 /// Lands an own device's admitted window `update` at its home. A copy edit
 /// lands on its source first and is admitted again as the source edit it is
 /// (FIX 7608 slice 4); a ruled hold persists, imports and relays nothing, its
@@ -596,8 +608,8 @@ pub(super) struct LandedDeviceUpdate {
 /// home's drain lands, which no socket sent (L7-41). `inserts` are the
 /// entity ids the update's history inserts as its admission read them, which
 /// owe a compaction when one names a row hard-deleted here (census L6-05); a
-/// translated copy's admission reads its own. `write_auth`, when given, is
-/// rechecked in the writer that persists the update.
+/// translated copy's admission reads its own. `recheck` is what the writer
+/// that persists the update judges again.
 ///
 /// # Errors
 /// The copy translation's store failure; a translated update the window
@@ -610,7 +622,7 @@ pub(super) async fn land_device_update(
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
     inserts: oneiron::sync::window::UpdateInserts,
-    write_auth: Option<&CoreAuth>,
+    recheck: DeviceWriteRecheck<'_>,
 ) -> Result<Option<LandedDeviceUpdate>, DeviceLandingError> {
     let admitted = oneiron::sync::selector::admit_repo_sync_frame(
         server.vault.as_ref(),
@@ -660,9 +672,14 @@ pub(super) async fn land_device_update(
     let (positions, imported) = oneiron::sync::window::with_live_window_turn(
         server.reassert_manager.materializer(),
         || -> Result<_, ProtocolError> {
-            server
-                .persist_imported_update(key, &persisted, &inserts, &landings, write_auth)
-                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
+            match recheck {
+                DeviceWriteRecheck::Credential(auth) => {
+                    server.persist_imported_update(key, &persisted, &inserts, &landings, auth)
+                }
+                DeviceWriteRecheck::Retained(work) => server
+                    .persist_retained_device_update(key, &persisted, &inserts, &landings, work),
+            }
+            .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             let positions = oneiron::sync::prepare_own_device_push_positions(
                 server.vault(),
                 machine,

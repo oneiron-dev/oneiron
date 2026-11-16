@@ -38,6 +38,7 @@ use oneiron::sync::federation_burst::{
 use oneiron::sync::{WindowKey, put_selector_test_federation_grant};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::burst_receipt_stored_shape::decode_burst_receipt_row;
+use oneiron::test_doors::device_burst_work_stands::device_burst_work_stands;
 use oneiron::{EntityId, Vault, VaultConfig};
 use tempfile::TempDir;
 
@@ -484,6 +485,74 @@ fn a_held_burst_ends_stale_once_another_residence_grant_of_its_holder_expires() 
     assert_eq!(
         home.receipt_of(&device, &batch_ref)?.state,
         FederationBurstWorkState::StaleAuthority
+    );
+    Ok(())
+}
+
+#[test]
+fn a_handed_back_burst_no_longer_stands_once_its_grant_narrows() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let owner = home.vault.ensure_embedded_owner_actor()?;
+    let grant_id = EntityId::now();
+    let grant = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+    );
+    put_selector_test_federation_grant(&home.vault, &grant_id, &grant, NOW)?;
+    let slip = [0x46; 32];
+    home.mint_slip_under(slip, 3_600, Some(grant_id))?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    let batch_ref = home.hold_burst(&device)?;
+
+    // Two seconds on, the drain's read hands the burst back, and it stands
+    // as that read judged it.
+    home.clock.set(NOW + 2);
+    let due = ready_device_work(&home.vault)?;
+    let [work] = due.as_slice() else {
+        return Err(format!("one burst is handed back: {due:?}").into());
+    };
+    assert!(device_burst_work_stands(&home.vault, work)?);
+
+    // While the home loads the window, the owner narrows the grant in place:
+    // the writer that would persist the replay finds the batch no longer
+    // standing, so it lands nothing, and the drain's next pass ends it.
+    let mut narrowed = grant.clone();
+    narrowed.authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(EntityId::now())]));
+    put_selector_test_federation_grant(&home.vault, &grant_id, &narrowed, NOW + 2)?;
+    assert!(
+        !device_burst_work_stands(&home.vault, work)?,
+        "a handed-back burst whose grant narrowed since does not stand in the persist's writer"
+    );
+    assert!(ready_device_work(&home.vault)?.is_empty());
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::StaleAuthority
+    );
+    Ok(())
+}
+
+#[test]
+fn a_handed_back_burst_no_longer_stands_once_its_batch_has_ended() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let slip = [0x47; 32];
+    home.mint_slip(slip, 3_600)?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    home.hold_burst(&device)?;
+    home.clock.set(NOW + 2);
+    let due = ready_device_work(&home.vault)?;
+    let [work] = due.as_slice() else {
+        return Err(format!("one burst is handed back: {due:?}").into());
+    };
+    assert!(device_burst_work_stands(&home.vault, work)?);
+
+    // Another pass ended the batch first: it is no longer held, so this
+    // replay's writer persists nothing of it.
+    work.complete(&home.vault)?;
+    assert!(
+        !device_burst_work_stands(&home.vault, work)?,
+        "a burst whose batch has ended does not stand in the persist's writer"
     );
     Ok(())
 }

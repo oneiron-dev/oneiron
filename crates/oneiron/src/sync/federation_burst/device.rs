@@ -13,8 +13,10 @@ use super::{
     corrupt, hash_grant_pacts,
 };
 use crate::authority::{PeerMachine, WorldPrivacyView};
+use crate::federation::decode_federation_grant_body;
+use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::sync::WindowKey;
-use crate::vault::live_entity_row_in_txn;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Error, Result, Vault};
 
 /// An own device as its connection proved it, in the order its home reads
@@ -173,11 +175,12 @@ impl DevicePeer {
     /// its connection: the live row of each grant the arm may have judged it
     /// under (the slip's own grant, and every grant of the slip's holder
     /// under the residence selector's scope, which the selector names), with
-    /// the pacts that bind each, and the worlds kept off the device's
-    /// machine. The held work keeps no selector, so the drain cannot judge
-    /// its rows again; any edit of one of these since, a narrowing in place
-    /// included, ends the work `StaleAuthority` before it lands. A widening
-    /// ends it too, and the device sends its update again.
+    /// whether it confers now as the arm judges a grant's end, the pacts that
+    /// bind each, and the worlds kept off the device's machine. The held work
+    /// keeps no selector, so the drain cannot judge its rows again; any edit
+    /// of one of these since, a narrowing in place included, and any of those
+    /// grants expired since end the work `StaleAuthority` before it lands. A
+    /// widening ends it too, and the device sends its update again.
     fn hash_write_authority_in(
         &self,
         hash: &mut blake3::Hasher,
@@ -204,16 +207,28 @@ impl DevicePeer {
             }
             None => {}
         }
+        // A grant's end is judged on the grant clock, as the slip's own
+        // grant is (`folded_slip_stands_in_txn`): its expiry passing changes
+        // no row, so whether it confers is hashed too (#9226 review).
+        let now = vault.grant_judgement_secs_in_txn(txn)?;
         hash.update(b"grants");
         hash.update(&(grants.len() as u64).to_be_bytes());
         for grant in grants {
             hash.update(grant.as_bytes());
-            let live = live_entity_row_in_txn(&vault.store, txn, &grant)?.is_live();
-            match vault.get_raw_in(txn, &grant)?.filter(|_| live) {
+            let row = live_entity_row_in_txn(&vault.store, txn, &grant)?;
+            match vault.get_raw_in(txn, &grant)?.filter(|_| row.is_live()) {
                 Some(raw) => {
                     hash.update(b"live");
                     hash.update(&(raw.len() as u64).to_be_bytes());
                     hash.update(&raw);
+                    let confers = match &row {
+                        LiveEntityRow::Live {
+                            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                            body,
+                        } => decode_federation_grant_body(body)?.confers_at(now),
+                        _ => false,
+                    };
+                    hash.update(&[u8::from(confers)]);
                 }
                 None => {
                     hash.update(b"gone");
@@ -296,6 +311,26 @@ impl DeviceBurstWork {
     #[must_use]
     pub fn batch_ref(&self) -> String {
         blake3::Hash::from(self.work.id).to_hex().to_string()
+    }
+
+    /// Whether the batch still stands in `txn` as [`ready_device_work`]
+    /// handed it back: still held under its key, and its device's authority
+    /// digest the one it was held under. The drain judged both in its own
+    /// read, before its home loaded the window; the home judges them again
+    /// in the writer that persists the update's bytes, so a grant narrowed,
+    /// expired or revoked, a world kept off the device, or the batch ended or
+    /// erased in between lands nothing (#9226 review).
+    ///
+    /// # Errors
+    /// A store error, or a held row that does not decode.
+    pub fn stands_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        let held = match vault.store.sync_queue.get(txn, &self.work.key())? {
+            Some(value) => DeferredWork::decode(&value)?.id == self.work.id,
+            None => false,
+        };
+        Ok(held
+            && BurstPeer::Device(&self.peer).authority_digest_in_txn(vault, txn)?
+                == self.work.authority_digest)
     }
 
     /// Ends the batch landed: its receipt reads `Imported`.

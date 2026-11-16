@@ -59,6 +59,7 @@ pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;
+pub mod device_burst_work_stands;
 pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;

@@ -119,6 +119,39 @@ impl SyncServer {
         )
     }
 
+    /// [`Self::persist_imported_update`] for an own device's retained update
+    /// that the home's drain replays (L7-41). No socket sent it, so no Write
+    /// credential is rechecked: the writer requires instead that `work` still
+    /// stands as the burst core handed it back
+    /// ([`DeviceBurstWork::stands_in_txn`]): still held, its device's
+    /// authority unchanged. A batch that no longer stands persists nothing,
+    /// and the drain's next pass ends it (#9226 review).
+    ///
+    /// [`DeviceBurstWork::stands_in_txn`]: oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn
+    pub(crate) fn persist_retained_device_update(
+        &self,
+        key: &WindowKey,
+        update_bytes: &[u8],
+        inserts: &oneiron::sync::window::UpdateInserts,
+        landings: &oneiron::sync::selector::RepoSyncLandings,
+        work: &oneiron::sync::federation_burst::DeviceBurstWork,
+    ) -> Result<u64, oneiron::Error> {
+        server_state::persist_admitted_window_update(
+            &self.vault,
+            key,
+            update_bytes,
+            inserts,
+            landings,
+            |txn| {
+                work.stands_in_txn(&self.vault, txn)
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "a retained device batch's standing did not read");
+                        false
+                    })
+            },
+        )
+    }
+
     /// Evicts a window doc from the live manager registry.
     ///
     /// Used when an accepted update fails to import into the loaded doc: the
