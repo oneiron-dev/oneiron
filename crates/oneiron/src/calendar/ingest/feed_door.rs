@@ -215,7 +215,9 @@ pub fn observe_poll(
 
 /// The owner's inbound-safeguard dial (CAL-09): the owner's own keyed value
 /// at [`CALENDAR_SAFEGUARD_CONFIG_KEY`], its last dotted segment the key and
-/// the rest its namespace. Absent, or anything but `true`, is off.
+/// the rest its namespace. A keyed value is a JSON object, so the dial is on
+/// when that object's field named by the key is `true` (`{"enabled": true}`).
+/// Absent, or anything else, is off.
 pub fn inbound_safeguard_enabled(memory: &Memory<'_>) -> MemoryResult<bool> {
     let mut segments: Vec<String> = CALENDAR_SAFEGUARD_CONFIG_KEY
         .split('.')
@@ -224,9 +226,9 @@ pub fn inbound_safeguard_enabled(memory: &Memory<'_>) -> MemoryResult<bool> {
     let key = segments.pop().unwrap_or_default();
     let item = memory.key_value_get(&KeyValueAddress {
         namespace: segments,
-        key,
+        key: key.clone(),
     })?;
-    Ok(item.is_some_and(|item| item.value == serde_json::Value::Bool(true)))
+    Ok(item.is_some_and(|item| item.value.get(&key) == Some(&serde_json::Value::Bool(true))))
 }
 
 /// One poll of an installed feed as its owner, recorded on the feed: the

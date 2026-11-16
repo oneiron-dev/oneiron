@@ -83,6 +83,13 @@ pub struct ScopedReadActorKey {
     /// Set on every key that names a base agent (untangle 6.3, X04); see
     /// [`Self::for_engine_actor`].
     system_agent: Option<EntityId>,
+    /// Set only on a credential's key whose reader is neither the vault's
+    /// owner nor one of its own agents reading on its own; see
+    /// [`Self::homed_unnamed`].
+    home_unnamed: bool,
+    /// The room such a key's reader was found standing in when the key came
+    /// to read inside it; see [`Self::standing_in_room_in`].
+    pub(super) standing_room: Option<EntityId>,
 }
 
 pub use crate::settings::CallerLocality;
@@ -405,6 +412,8 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent,
+            home_unnamed: false,
+            standing_room: None,
         })
     }
 
@@ -449,6 +458,8 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent: None,
+            home_unnamed: false,
+            standing_room: None,
         }
     }
 
@@ -651,11 +662,111 @@ impl ScopedReadActorKey {
     /// Read inside `room`'s signed facets as each snapshot finds them, as a
     /// turn in it does (FIX 643): a named-room read outside a turn keeps every
     /// other term it has. Like every facet bound, it only narrows, and the
-    /// owner's key reads past it.
+    /// owner's key reads past it. Naming a room drops any room standing the
+    /// key held: [`Self::standing_in_room_in`] finds it again or not.
     #[must_use]
     pub(crate) fn within_room_facets(mut self, room: EntityId) -> Self {
         self.room_facets = Some(room);
+        self.standing_room = None;
         self
+    }
+
+    /// Read as a reader homed in no conversation of this vault (DEC-0006
+    /// `#home-clearance`; RULING L5-02-UNNAMED-HOME = A, RULING
+    /// SECREAD-HOME-READ-DOORS = B): every read door that serves a
+    /// credential of neither the vault's owner nor one of its own agents
+    /// reading on its own builds its key so, and the key then reads no CLAIM
+    /// stamped with any band but public unless it reads inside a room of this
+    /// vault, a room turn's or a named room's facets
+    /// ([`Self::reads_homed_unnamed`]). The home binds the reader, not only
+    /// the assembly routes. It only narrows: every check the key already
+    /// makes still runs.
+    #[must_use]
+    pub fn homed_unnamed(mut self) -> Self {
+        self.home_unnamed = true;
+        self
+    }
+
+    /// Whether this key withholds stamped claims ([`Self::homed_unnamed`]):
+    /// its reader is homed in no conversation of this vault and it reads
+    /// inside no room of this vault it stands in. A room turn's key was bound
+    /// by a host that found its reader standing in the room; a named room
+    /// lifts the home only for the room [`Self::standing_in_room_in`] found
+    /// the reader standing in, so a reader that can read a room's record but
+    /// is not in the room lifts nothing by naming it.
+    pub(crate) fn reads_homed_unnamed(&self) -> bool {
+        self.home_unnamed
+            && self.room_turn.is_none()
+            && !self
+                .room_facets
+                .is_some_and(|room| self.standing_room == Some(room))
+    }
+
+    /// This key, marked as standing in `room` when it is homed in no
+    /// conversation of this vault ([`Self::homed_unnamed`]) and its reader
+    /// stands in `room` as `txn` reads it
+    /// ([`crate::context_board::room_stander_in`]: a member, a live Ready
+    /// join, a leader chat's actor, or the host). Reading inside that room's
+    /// facets then reads its stamped claims, as a turn in the room does, and
+    /// each serving snapshot finds it standing there again
+    /// ([`Self::room_standing_lapsed_in`]). A reader not standing in `room`
+    /// keeps no standing. Any other key is returned as it is.
+    ///
+    /// # Errors
+    /// A store failure reading the room.
+    pub(crate) fn standing_in_room_in(
+        mut self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+    ) -> crate::error::Result<Self> {
+        if !self.home_unnamed {
+            return Ok(self);
+        }
+        self.standing_room = None;
+        let Ok(reader) = EntityId::from_hex(&self.actor_ref) else {
+            return Ok(self);
+        };
+        if crate::context_board::room_stander_in(vault, txn, room, reader)? {
+            self.standing_room = Some(room);
+        }
+        Ok(self)
+    }
+
+    /// Whether this key reads stamped claims only by a room standing that
+    /// `txn` no longer finds ([`Self::standing_in_room_in`]): its reader was
+    /// standing in the named room when the key came to read inside it, and
+    /// in this serving snapshot it is not, or its id does not read. Every
+    /// CLAIM admission that serves a stamped claim asks this in its own
+    /// snapshot, so a lane kept past a lost membership, a closed Ready join
+    /// or a moved host withholds them again, as a key built then would. A key
+    /// that reads through no such standing answers `false`.
+    ///
+    /// # Errors
+    /// A store failure reading the room.
+    pub(crate) fn room_standing_lapsed_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<bool> {
+        let Some(room) = self.standing_room else {
+            return Ok(false);
+        };
+        if !self.home_unnamed || self.room_turn.is_some() || self.room_facets != Some(room) {
+            return Ok(false);
+        }
+        let Ok(reader) = EntityId::from_hex(&self.actor_ref) else {
+            return Ok(true);
+        };
+        Ok(!crate::context_board::room_stander_in(
+            vault, txn, room, reader,
+        )?)
+    }
+
+    /// Whether [`Self::homed_unnamed`] built this key, inside a room or not:
+    /// what a saved lane and a key fingerprint keep of it.
+    pub(crate) fn is_homed_unnamed(&self) -> bool {
+        self.home_unnamed
     }
 
     /// Read only rows in `worlds`, each where `record_world_in` places it: a
@@ -814,7 +925,14 @@ impl ScopedReadActorKey {
         authority.verbs = ["read".to_owned()].into_iter().collect();
         key.authority = Some(authority);
         key.proof = Some(proof.clone());
-        Some(key.require_relationship_grants(Some(holder)))
+        // The view-only holder is neither the vault's owner nor one of its
+        // own agents: outside a room turn, a brief's pins read no stamped
+        // claim for it (DEC-0006 `#home-clearance`; RULING
+        // SECREAD-HOME-READ-DOORS = B).
+        Some(
+            key.require_relationship_grants(Some(holder))
+                .homed_unnamed(),
+        )
     }
 
     /// A renderer-confined credential's share, never a resident key's.
