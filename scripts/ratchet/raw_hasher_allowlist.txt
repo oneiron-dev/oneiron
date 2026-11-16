@@ -19,6 +19,7 @@ crates/oneiron-code-check/src/wasm.rs sha256  # wasm component pin minted by com
 crates/oneiron-docedit/src/emit/oracle_cases.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
 crates/oneiron-docedit/src/live/oracle_run/record.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
 crates/oneiron-organ-host/src/seal/binding.rs sha256  # PDF ByteRange and CMS signed-attribute digests that PDF readers recompute
+crates/oneiron-organ-host/src/seal/evidence.rs sha256  # RFC 3161 timestamp imprints, CMS message digest (RFC 5652) and ESS signing-certificate-v2 hash (RFC 5035) that the TSA and PDF readers fix
 crates/oneiron-seal/src/native/cms/der.rs sha256  # CMS message digest (RFC 5652)
 crates/oneiron-seal/src/native/profile/material/ocsp.rs sha256  # OCSP CertID issuer name and key hashes (RFC 6960)
 crates/oneiron-server/src/ai_host/training_pack/wire.rs sha256  # training-pack pins that scripts/training_pack/worker.py mints and checks
