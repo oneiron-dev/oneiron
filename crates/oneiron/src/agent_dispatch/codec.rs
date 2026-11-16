@@ -358,6 +358,33 @@ pub(crate) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispa
     decode_agent_dispatch_input(&payload.input).ok()
 }
 
+/// The spawn parent that `record`'s own stored parent link derives, in
+/// `txn`: the definition its parent attempt's dispatch targets, as the
+/// dispatch writer derives it when it freezes a child
+/// (`AgentDispatcher::spawn_parent_in_txn`). `None` for a root, and for a
+/// parent attempt this machine does not hold or that is no agent dispatch.
+///
+/// # Errors
+///
+/// Storage errors, and a parent dispatch whose target names no definition.
+pub(crate) fn record_spawn_parent_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<EntityId>> {
+    let Some(parent) = decode_dreamer_attempt_payload(&record.payload)
+        .ok()
+        .and_then(|payload| payload.parent_attempt)
+    else {
+        return Ok(None);
+    };
+    crate::attempt_queue::AttemptQueue::new(vault)
+        .get_in_txn(txn, parent)?
+        .and_then(|row| record_dispatch_input(&row))
+        .map(|input| input.target.agent_definition_ref())
+        .transpose()
+}
+
 pub(super) fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchStatus> {
     if status.payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(

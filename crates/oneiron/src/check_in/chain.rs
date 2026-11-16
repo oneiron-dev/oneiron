@@ -133,11 +133,15 @@ impl<'a> VerifiedChain<'a> {
 
 /// The spawn parent of `memory`'s caller, in `txn`: the agent whose attempt
 /// spawned the caller's running attempt, as that attempt's stored dispatch
-/// input froze it at spawn. The attempt is the one the caller's host bound
-/// from its live lease (`Memory::task_host`), read again here while it
-/// still holds that lease and runs as the caller.
+/// input froze it at spawn and its own stored parent link derives it again
+/// ([`crate::agent_dispatch::record_spawn_parent_in_txn`]). The attempt is
+/// the one the caller's host bound from its live lease (`Memory::task_host`),
+/// read again here while it still holds that lease and runs as the caller.
 /// `None` for a caller with no such attempt, a lapsed lease, an attempt that
 /// runs as another actor, or a root run (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL).
+/// `None` too for a frozen spawn parent that the parent link does not derive:
+/// handover enqueues a replicated run TASK's payload as it came, so the
+/// frozen field alone proves no parent (Engine RULING U09-ASTRA-F1 = A).
 ///
 /// # Errors
 ///
@@ -158,7 +162,11 @@ pub(crate) fn caller_spawn_parent_in_txn(
     if input.target.agent_definition_ref()? != memory.actor() {
         return Ok(None);
     }
-    Ok(input.spawn_parent)
+    let Some(frozen) = input.spawn_parent else {
+        return Ok(None);
+    };
+    let derived = crate::agent_dispatch::record_spawn_parent_in_txn(memory.vault(), txn, &record)?;
+    Ok((derived == Some(frozen)).then_some(frozen))
 }
 
 impl RungResolver for VerifiedChain<'_> {

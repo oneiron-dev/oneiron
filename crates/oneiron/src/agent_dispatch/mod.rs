@@ -177,7 +177,9 @@ pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
     decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
+pub(crate) use self::codec::{
+    attempt_task_type_ref, attempt_team_stamp, record_dispatch_input, record_spawn_parent_in_txn,
+};
 pub use self::dispatch::AgentDispatcher;
 pub(crate) use self::dispatch::AgentSpawnAdmission;
 pub use self::leader_planner::VaultLeaderTeamPlanner;
