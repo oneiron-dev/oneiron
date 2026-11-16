@@ -21,8 +21,9 @@ pub(crate) use private_sources::{
     private_threads_readable_with_read_in,
 };
 
-/// Immutable ledger snapshots, keyed by the version read in the caller's
-/// transaction. Reusing a ScopedRead after a kick cannot reuse stale authority.
+/// Immutable ledger snapshots of unindexed rooms, keyed by the version read
+/// in the caller's transaction. Reusing a ScopedRead after a kick cannot
+/// reuse stale authority.
 #[derive(Default)]
 pub(crate) struct AudienceCache {
     rows: BTreeMap<(EntityId, u64), Vec<MembershipRow>>,
@@ -93,8 +94,35 @@ pub(crate) fn anchors_own_windows_admit_in(
 }
 
 impl AudienceCache {
+    /// Whole membership ledgers this cache read, one per (room, revision)
+    /// of an unindexed room; an indexed room reads none.
     pub(crate) fn ledger_reads(&self) -> usize {
         self.ledger_reads
+    }
+
+    /// The whole membership ledger of the unindexed `room` at its revision
+    /// in `txn`, read once per (room, revision) per read pass.
+    fn ledger_rows_in(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+    ) -> Result<&[MembershipRow]> {
+        let revision = membership::revision_in(&vault.store, txn, room)?;
+        if !self.rows.contains_key(&(room, revision)) {
+            if self.rows.len() >= 1024 {
+                self.rows.clear();
+            }
+            self.rows.insert(
+                (room, revision),
+                membership::rows_in(&vault.store, txn, room)?,
+            );
+            self.ledger_reads = self.ledger_reads.saturating_add(1);
+        }
+        self.rows
+            .get(&(room, revision))
+            .map(Vec::as_slice)
+            .ok_or(Error::CorruptedIndex("audience snapshot"))
     }
 
     /// Whether the own-entry memo may be served and kept for `txn`,
@@ -381,28 +409,27 @@ impl AudienceCache {
                     return Ok(false);
                 }
             } else {
-                let revision = membership::revision_in(&vault.store, txn, room)?;
-                if !self.rows.contains_key(&(room, revision)) {
-                    if self.rows.len() >= 1024 {
-                        self.rows.clear();
-                    }
-                    self.rows.insert(
-                        (room, revision),
-                        membership::rows_in(&vault.store, txn, room)?,
-                    );
-                    self.ledger_reads = self.ledger_reads.saturating_add(1);
-                }
-                let rows = self
-                    .rows
-                    .get(&(room, revision))
-                    .ok_or(Error::CorruptedIndex("audience snapshot"))?;
+                // An indexed room serves each person's windows from its
+                // per-participant index (ARCH-0052 :215, #7907); only an
+                // unindexed room reads and folds its whole ledger.
+                let rows = if super::membership_index::indexed_revision_in(&vault.store, txn, room)?
+                    .is_some()
+                {
+                    None
+                } else {
+                    Some(self.ledger_rows_in(vault, txn, room)?)
+                };
+                let windows_of = |person: EntityId| match rows {
+                    Some(rows) => membership::windows_rows(rows, person),
+                    None => membership::person_windows_in(&vault.store, txn, room, person),
+                };
                 // A seat's own read meets its own window alone (FIX 5667):
                 // another member's join from now on never narrows it. A
                 // reader with no seat here, a host or one on a Ready join,
                 // meets every member's, as a held turn does.
                 let mut seat = None;
                 if let Some(reader) = personal
-                    && membership::windows_rows(rows, reader)?
+                    && windows_of(reader)?
                         .last()
                         .is_some_and(|window| window.to.is_none())
                 {
@@ -421,7 +448,7 @@ impl AudienceCache {
                     // (OF-417); it is re-proved here, never cached, and so
                     // is a private thread's Owner or Admin with no seat here
                     // (FIX 5638): a seated one keeps its window (FIX 6268).
-                    let windows = membership::windows_rows(rows, *person)?;
+                    let windows = windows_of(*person)?;
                     let seated = windows.last().is_some_and(|window| window.to.is_none());
                     if !windows.iter().any(|w| w.contains(h.occurred_start))
                         && !attendee::speaker_entry_covers_in(
