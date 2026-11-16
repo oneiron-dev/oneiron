@@ -17,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, HOST_ISSUER_SEED_BYTES, HostSlipIssuer};
 use serde_json::{Value, json};
 
@@ -73,8 +74,8 @@ impl Store {
                 Ok((Self::Spawned { server, vault }, agent, info))
             }
             Mode::InProcess => {
-                let (served, root, issuer) = InProcess::start(dir)?;
-                let agent = Agent::host_root(http, &served.base, root, issuer)?;
+                let (served, slip, key) = InProcess::start(dir)?;
+                let agent = Agent::holder(http, &served.base, slip, key)?;
                 let info = Server {
                     mode: "in_process",
                     bin: None,
@@ -167,26 +168,23 @@ fn recall_body(query: &str, grade: &str, limit: usize, as_of: u64) -> Value {
 fn texts(pack: &Value) -> Vec<Vec<String>> {
     pack["items"]
         .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| {
-                    std::iter::once(&item["value_text"])
-                        .chain(
-                            item["cited_messages"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .map(|m| &m["value_text"]),
-                        )
-                        .filter_map(Value::as_str)
-                        .filter(|text| !text.is_empty())
-                        .map(str::to_owned)
-                        .collect()
-                })
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            std::iter::once(&item["value_text"])
+                .chain(
+                    item["cited_messages"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|m| &m["value_text"]),
+                )
+                .filter_map(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
                 .collect()
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 /// Every question of every life at every grade, each at the end of its own
@@ -302,8 +300,8 @@ pub(super) fn measure(plan: &Plan, lives: &[Life]) -> Result<(Server, System), S
 }
 
 /// What the in-process server thread hands back once it is listening: its
-/// base URL, the host root slip and the issuer that rooted the vault.
-type Rooted = (String, CapabilitySlip, Arc<HostSlipIssuer>);
+/// base URL, and the vault owner's slip with the key that holds it.
+type Rooted = (String, CapabilitySlip, SigningKey);
 
 /// The engine served in this process, on its own engine-sized runtime.
 struct InProcess {
@@ -314,7 +312,8 @@ struct InProcess {
 
 /// Opens the vault, roots it with a host issuer the bench draws (the vault
 /// holds no keystore, so the server roots nothing; `fleet/workload.rs` roots
-/// its vault the same way), and binds a loopback listener.
+/// its vault the same way), mints the vault owner its slip, and binds a
+/// loopback listener.
 async fn root_in_process(
     dir: &Path,
 ) -> Result<(tokio::net::TcpListener, axum::Router, Rooted), String> {
@@ -334,9 +333,26 @@ async fn root_in_process(
     );
     let seed: [u8; HOST_ISSUER_SEED_BYTES] = rand::random();
     let issuer = HostSlipIssuer::from_seed(&seed).map_err(|e| format!("host issuer: {e}"))?;
-    let root = vault
+    // The owner calls on a slip of its own, as `fleet/wire.rs` mints its
+    // agents': the recall door's read lane builds a read key only for a
+    // credential whose holder is the bound actor, so the root's holder
+    // (`host`) is refused 403 there (`memory/credential_key.rs`). Minted from
+    // the root's claims, it keeps the root's full scope.
+    let mut claims = vault
         .ensure_host_root_slip(&issuer)
-        .map_err(|e| format!("host root slip: {e}"))?;
+        .map_err(|e| format!("host root slip: {e}"))?
+        .claims;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|e| format!("embedded owner: {e}"))?;
+    let key = SigningKey::from_bytes(&rand::random());
+    claims.slip_id = rand::random();
+    claims.holder_ref = owner.to_hex();
+    claims.binding_key = key.verifying_key().to_bytes();
+    claims.actor_class = Some("human".into());
+    let slip = vault
+        .mint_capability_slip(&issuer, claims)
+        .map_err(|e| format!("owner slip: {e}"))?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind loopback: {e}"))?;
@@ -349,7 +365,7 @@ async fn root_in_process(
     Ok((
         listener,
         oneiron_server::build_app(server),
-        (base, root, Arc::new(issuer)),
+        (base, slip, key),
     ))
 }
 
@@ -399,7 +415,7 @@ fn serve_in_process(
 }
 
 impl InProcess {
-    fn start(dir: &Path) -> Result<(Self, CapabilitySlip, Arc<HostSlipIssuer>), String> {
+    fn start(dir: &Path) -> Result<(Self, CapabilitySlip, SigningKey), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -410,14 +426,14 @@ impl InProcess {
             .spawn(move || serve_in_process(&owned, &ready_tx, stop_rx))
             .map_err(|e| format!("in-process server thread: {e}"))?;
         match ready_rx.recv() {
-            Ok(Ok((base, root, issuer))) => Ok((
+            Ok(Ok((base, slip, key))) => Ok((
                 Self {
                     base,
                     stop: Some(stop_tx),
                     thread: Some(thread),
                 },
-                root,
-                issuer,
+                slip,
+                key,
             )),
             Ok(Err(error)) => {
                 let _ = thread.join();

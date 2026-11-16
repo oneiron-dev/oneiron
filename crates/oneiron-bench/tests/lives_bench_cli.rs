@@ -91,10 +91,11 @@ fn rows<'r>(system: &'r Value, grade: &str) -> Vec<&'r Value> {
 fn row<'r>(rows: &[&'r Value], life: &str, qid: &str) -> &'r Value {
     let found = rows
         .iter()
+        .copied()
         .filter(|row| row["life"] == life && row["qid"] == qid)
         .collect::<Vec<_>>();
     assert_eq!(found.len(), 1, "one row for {life} {qid}");
-    *found[0]
+    found[0]
 }
 
 #[test]
