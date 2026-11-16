@@ -28,9 +28,9 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[path = "check_in/fixture.rs"]
+#[path = "../../check_in/fixture.rs"]
 mod fixture;
-#[path = "check_in/ladder.rs"]
+#[path = "../../check_in/ladder.rs"]
 mod ladder;
 
 use fixture::{DIGEST, Fixture, T0, request};
