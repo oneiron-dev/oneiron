@@ -20,15 +20,17 @@ const HOSTED_FOLD_REROOT: &str = "a ReRoot by a key the host does not hold revok
 /// owner key stamped as the host's (`ROLE_CLOUD` or `CloudCustodial`, the
 /// stamp a hosted vault's root carries, [`HostSlipIssuer::root_device`]),
 /// unless `signer` carries that stamp itself: the host's own move, as
-/// [`Vault::recover_cloud_account`] signs it, still serves. Every door that
-/// writes a ReRoot meets it in the one writer
-/// ([`Vault::apply_signed_re_root_with_joins`] and the moves signed here).
-/// It reads the fold alone, never this install's posture, so a device's
-/// replica of a hosted vault or a stopped hosted vault opened under another
-/// posture refuses alike, and a self-hosted vault, whose root carries no
-/// cloud stamp, never does. A ReRoot imported with a history is judged by
-/// the fold alone (FIX [HOSTED-REROOT-FOLD-RULE]).
-pub(super) fn refuse_re_root_of_a_serving_host(
+/// [`Vault::recover_cloud_account`] signs it, still serves. The ReRoot writer
+/// meets it ([`Vault::apply_signed_re_root_with_joins`] and the moves signed
+/// here), and each admission door that stages a ReRoot meets it against the
+/// fold before that row: the signed-history import, the authority-log puts,
+/// and the replicated validator. It reads the fold alone, never this
+/// install's posture, so a device's replica of a hosted vault or a stopped
+/// hosted vault opened under another posture refuses alike, and a self-hosted
+/// vault, whose root carries no cloud stamp, never does. Rows already stored,
+/// a replica without this engine, and a gap-closing import's rows stay open
+/// under the fold rule (FIX [HOSTED-REROOT-FOLD-RULE]).
+pub(crate) fn refuse_re_root_of_a_serving_host(
     fold: &AuthorityFold,
     signer: &AuthorityKey,
 ) -> Result<()> {
@@ -43,6 +45,17 @@ pub(super) fn refuse_re_root_of_a_serving_host(
         return Err(authority_refused(HOSTED_FOLD_REROOT));
     }
     Ok(())
+}
+
+/// The signer of `entry` when it is a ReRoot this vault does not hold yet
+/// (`resident` false), which an admission door judges before it stages the
+/// row.
+pub(crate) fn arriving_re_root_signer(
+    entry: &AuthorityLogEntry,
+    resident: bool,
+) -> Option<AuthorityKey> {
+    (!resident && matches!(entry.op, AuthorityOp::ReRoot { .. }))
+        .then(|| entry.signer_key().clone())
 }
 
 impl Vault {

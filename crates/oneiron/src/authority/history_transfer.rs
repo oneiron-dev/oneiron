@@ -13,6 +13,8 @@ mod page;
 
 pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
 
+mod re_root_staging;
+
 pub(super) fn history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -330,7 +332,6 @@ impl Vault {
         history_root(&merged, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
-        let mut ops = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
         // signer's lower sequences, whatever order the caller gave.
@@ -340,37 +341,32 @@ impl Vault {
             .map(|(_, (_, entry))| entry)
             .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
-        for (hash, bytes, _) in
-            super::import_order::import_order(stored, &resident, own_roots, decoded)
-        {
+        let ordered = super::import_order::import_order(stored, &resident, own_roots, decoded);
+        let mut rows = Vec::with_capacity(ordered.len());
+        for (hash, bytes, entry) in ordered {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
+            let re_root_signer =
+                super::recovery::arriving_re_root_signer(&entry, resident.contains(&hash));
+            rows.push((
+                BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                    occurred: TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    learned_at: now,
+                    row_version: None,
+                    data: bytes,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 },
-                learned_at: now,
-                row_version: None,
-                data: bytes,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
+                re_root_signer,
+            ));
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut txn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows)?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
@@ -516,7 +512,7 @@ impl Vault {
     /// Marks authority `rows` this write stages for the vault's loaded
     /// windows, in the write (FIX 11993, as FIX 11821 does for an import), so
     /// a crash before the announcement still mirrors them.
-    fn mark_authority_rows_in_txn(
+    pub(super) fn mark_authority_rows_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         rows: &BTreeSet<EntityId>,
