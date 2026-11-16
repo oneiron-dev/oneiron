@@ -49,7 +49,9 @@ pub struct MailReplyDraftRequest {
     pub reply_all: bool,
     /// More recipients in Cc, each one bare address (`name@example.com`). A
     /// list's address is one recipient; no group is expanded. To, Cc and
-    /// these together name at most 50 recipients; more is refused, not cut.
+    /// these together name at most the owner's ceiling
+    /// (`mail_calendar.reply.max_recipients`, 50 unless the owner sets
+    /// another); more is refused, not cut.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc: Vec<String>,
     /// The caller's key for this draft: the same key with the same body and
