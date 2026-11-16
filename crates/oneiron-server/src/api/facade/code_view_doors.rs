@@ -4,7 +4,7 @@ use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::memory::code_view_doors::*;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 use std::sync::Arc;
@@ -37,11 +37,11 @@ pub(crate) async fn vault_code_views_get(
     auth: &CoreAuth,
     input: CodeViewRequest,
 ) -> Listed<CodeWorkingView> {
-    as_owner(
+    view_editor_listing(
         server,
         auth,
         "vault.code.views.get",
-        move |memory, owner| memory.code_view_get_as(owner, input),
+        move |memory, proof| memory.code_view_get_as_editor(&proof, input),
     )
     .await
 }
@@ -52,18 +52,18 @@ pub(crate) async fn vault_code_views_read(
     input: CodeViewReadRequest,
 ) -> Listed<CodeViewFileBytes> {
     // An MCP tool reads repo bytes masked (FIX 7608, ASK 1); the owner's
-    // own door reads them as stored.
+    // own door reads them as stored; a view-bound Grant reads them masked
+    // always (VIEW-BOUND-READ = A).
     let tool = crate::api::mcp_gateway::skill_execution::mcp_call_in_scope();
-    as_owner(
+    view_editor_listing(
         server,
         auth,
         "vault.code.views.read",
-        move |memory, owner| {
-            if tool {
-                memory.code_view_read_projected_as(owner, input)
-            } else {
-                memory.code_view_read_as(owner, input)
+        move |memory, proof| match proof {
+            CodeViewEditProof::Owner(owner) if tool => {
+                memory.code_view_read_projected_as(&owner, input)
             }
+            proof => memory.code_view_read_as_editor(&proof, input),
         },
     )
     .await
@@ -139,15 +139,16 @@ fn view_edit_lane(auth: &CoreAuth) -> MemoryResult<()> {
     auth.require_lane_record_scope().map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            "a channel-bound credential reaches no working view edit door",
+            "a channel-bound credential reaches no working view editor's door",
             &[],
         )
     })
 }
 
-/// The check the view edit row's door runs before its pre chain
-/// (`door_admits`): the lane guard, then a credential that binds a
-/// principal. A host root alone binds none. Its Grant is the engine's.
+/// The check the view editor rows' doors (`vault.code.views.edit`, `.get`
+/// and `.read`) run before their pre chain (`door_admits`): the lane guard,
+/// then a credential that binds a principal. A host root alone binds none.
+/// Its Grant is the engine's.
 pub(super) fn view_editor_admits(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -155,6 +156,48 @@ pub(super) fn view_editor_admits(
 ) -> MemoryResult<()> {
     view_edit_lane(auth)?;
     super::owner_binding::facade_caller_or(server, auth, || not_a_view_editor(verb)).map(drop)
+}
+
+/// A view editor's read door (VIEW-BOUND-READ = A): its caller bound as the
+/// edit door binds its own, the owner's proof when the credential carries
+/// one, else the engine's Grant arm, run on that credential's own lane. The
+/// owner's proof keeps the unrestricted record scope his view reads have
+/// always asked; the Grant arm's bounds are its view and its globs.
+async fn view_editor_listing<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    read: impl FnOnce(&Memory<'_>, CodeViewEditProof) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    let bound = || {
+        view_edit_lane(auth)?;
+        let caller =
+            super::owner_binding::facade_caller_or(server, auth, || not_a_view_editor(verb))?;
+        let proof = match super::owner_binding::facade_owner(server, auth, verb) {
+            Ok(owner) => {
+                auth.require_unrestricted_record_scope().map_err(|_| {
+                    MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        format!(
+                            "{verb} takes the owner's credential with no record-scope narrowing"
+                        ),
+                        &["Present the owner's own verified, unattenuated credential."],
+                    )
+                })?;
+                CodeViewEditProof::Owner(owner)
+            }
+            Err(_) => CodeViewEditProof::Grant,
+        };
+        Ok::<_, MemoryError>((caller, proof))
+    };
+    let (caller, proof) = match bound() {
+        Ok(bound) => bound,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    credential_listing(server, auth, caller, verb, move |_, _, memory| {
+        read(&memory, proof)
+    })
+    .await
 }
 
 /// `vault.code.views.edit` (row 6 WORKING-VIEW-EDIT): the caller bound from
