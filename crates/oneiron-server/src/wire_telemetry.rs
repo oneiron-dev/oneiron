@@ -473,6 +473,10 @@ impl WireTelemetry {
         }
         self.save_limit_questions()
     }
+    /// Writes the thresholds manifest with no owner proof. Only the unit
+    /// tests and the `test_doors::wire_thresholds` door call it, so the build
+    /// without `--cfg oneiron_test_support` leaves it out (FIX 23188).
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         self.write_thresholds(thresholds, |txn| {
             self.vault

@@ -56,9 +56,9 @@ fn owner_thresholds_write_stays() {
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     assert!(
-        source
-            .lines()
-            .any(|line| line.trim().starts_with("pub(crate) fn set_thresholds_as_owner(")),
+        source.lines().any(|line| line
+            .trim()
+            .starts_with("pub(crate) fn set_thresholds_as_owner(")),
         "the owner's thresholds write ({}) is gone: production keeps its owner-proofed writer",
         path.display()
     );
