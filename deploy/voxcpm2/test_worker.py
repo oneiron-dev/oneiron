@@ -153,14 +153,14 @@ class WorkerTest(unittest.TestCase):
                 "register": "neutral", "reference_revision": "a" * 32,
                 "limits": self.limits, "warm": self.worker.target()}
 
-    def replace_worker(self, model, limits):
+    def replace_worker(self, model, limits, worker_class=Worker):
         self.conn.close()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
         self.limits = limits
         self.model = model
-        self.worker = Worker(model, "pinned-checkpoint", self.tmp.name, "t" * 32, limits)
+        self.worker = worker_class(model, "pinned-checkpoint", self.tmp.name, "t" * 32, limits)
         self.server = BoundedHTTPServer(("127.0.0.1", 0), handler_for(self.worker),
                                         limits["upload_read_deadline_ms"])
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -421,6 +421,70 @@ class WorkerTest(unittest.TestCase):
             self.assertEqual(error["type"], "error")
             self.assertEqual(error["generation"], generation)
             self.assertEqual(error["code"], "invalid_request")
+            self.assertEqual(self.model.calls, [])
+            ws.send_close()
+            self.assertEqual(ws.recv_frame()[0], 0x8)
+        finally:
+            ws.close()
+        self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
+
+    def test_voice_socket_echoes_a_unicode_register_within_the_ceiling(self):
+        # 6,000 CJK characters: 18,000 bytes as UTF-8, as the client sends its
+        # target, but 36,000 as ASCII escapes, past the 32,768-byte ceiling
+        # the client reads the reply under.
+        ws = VoiceSocket(self.server.server_port)
+        try:
+            self.assertEqual(ws.handshake()[0], 101)
+            ws.recv_json()
+            generation = 1
+            target = self.target()
+            target["register"] = "\u4e2d" * 6000
+            transcript = "ref"
+            wav = b"RIFF0000WAVEfmt "
+            start = {"type": "start", "generation": generation, "target": target,
+                     "transcript_bytes": len(transcript.encode()), "reference_bytes": len(wav)}
+            ws.send_text(json.dumps(start, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            ws.send_binary(transcript.encode())
+            ws.send_binary(wav)
+            op, payload = ws.recv_frame()
+            self.assertEqual(op, 0x1)
+            self.assertLessEqual(len(payload), self.limits["max_header_bytes"])
+            started = json.loads(payload)
+            self.assertEqual(started["type"], "started")
+            self.assertEqual(started["target"], target)
+            ws.send_text({"type": "end", "generation": generation})
+            self.assertEqual(ws.recv_json(), {"type": "done", "generation": generation})
+            ws.send_close()
+            self.assertEqual(ws.recv_frame()[0], 0x8)
+        finally:
+            ws.close()
+        self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
+
+    def test_voice_socket_refuses_a_start_whose_reply_cannot_fit(self):
+        # A supervised reply carries the worker's own pins beside the echoed
+        # target, so a target that fits the ceiling can leave the reply past it.
+        class PinnedWorker(Worker):
+            def answer_meta(self, target):
+                return {**super().answer_meta(target), "launch_manifest": "m" * 30000}
+
+        self.replace_worker(self.model, self.limits, PinnedWorker)
+        ws = VoiceSocket(self.server.server_port)
+        try:
+            self.assertEqual(ws.handshake()[0], 101)
+            ws.recv_json()
+            generation = 1
+            target = self.target()
+            target["register"] = "x" * 2500
+            transcript = "ref"
+            wav = b"RIFF0000WAVEfmt "
+            ws.send_text({"type": "start", "generation": generation, "target": target,
+                          "transcript_bytes": len(transcript.encode()),
+                          "reference_bytes": len(wav)})
+            ws.send_binary(transcript.encode())
+            ws.send_binary(wav)
+            error = ws.recv_json()
+            self.assertEqual(error, {"type": "error", "generation": generation,
+                                     "code": "invalid_request"})
             self.assertEqual(self.model.calls, [])
             ws.send_close()
             self.assertEqual(ws.recv_frame()[0], 0x8)

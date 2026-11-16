@@ -136,8 +136,8 @@ class Worker:
         minimum_target = {"voice_id": "x", "register": "x",
                           "owner": "0" * 32, "reference_revision": "0" * 64}
         minimum_target.update(warm=self.target(), limits=minimum_limits)
-        managed = len(json.dumps(self.answer_meta(minimum_target),
-                                 separators=(",", ":")).encode())
+        managed = len(json.dumps(self.answer_meta(minimum_target), ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8"))
         if self.limits["max_header_bytes"] < managed:
             raise ValueError(f"max_header_bytes {self.limits['max_header_bytes']} is below "
                              f"the managed reply header's {managed} bytes")
@@ -404,6 +404,17 @@ def handler_for(worker):
                                 elif (not reference_bytes.startswith(b"RIFF")
                                       or reference_bytes[8:12] != b"WAVE"):
                                     error = "invalid_request"
+                        started = None
+                        if error is None:
+                            # The echo is compact UTF-8, as the client sent its
+                            # target, and the whole reply is held to the call's
+                            # effective ceiling, as the client reads it: one
+                            # that cannot fit is refused before anything is held.
+                            started = json.dumps(
+                                {"type": "started", "generation": generation, **answer},
+                                ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                            if len(started) > target["limits"]["max_header_bytes"]:
+                                error = "invalid_request"
                         if error is not None:
                             self._ws_send(WS_OP_TEXT, json.dumps(
                                 {"type": "error", "generation": generation, "code": error},
@@ -436,8 +447,7 @@ def handler_for(worker):
                             continue
                         held = {"generation": generation, "dir": directory, "path": path,
                                 "transcript": transcript_text, "target": target}
-                        started = {"type": "started", "generation": generation, **answer}
-                        self._ws_send(WS_OP_TEXT, json.dumps(started, separators=(",", ":")).encode())
+                        self._ws_send(WS_OP_TEXT, started)
                         continue
                     if kind == "text":
                         text_value = message.get("text")

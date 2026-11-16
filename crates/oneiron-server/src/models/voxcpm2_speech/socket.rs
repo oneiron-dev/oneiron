@@ -187,8 +187,13 @@ impl VoiceSocket {
         self.socket.send(message).await.map_err(socket_error)
     }
 
-    /// The binary frame an `audio` header announced: exactly its byte count.
+    /// The binary frame an `audio` header announced: exactly its byte count,
+    /// at most [`AUDIO_FRAME_MAX_BYTES`]. The socket's own bound can be wider
+    /// (a metadata ceiling past it), so an audio frame is held to its own.
     async fn read_binary(&mut self, announced: u64) -> LlmResult<Vec<u8>> {
+        if announced > AUDIO_FRAME_MAX_BYTES as u64 {
+            return Err(FatalLlmError::EmptyResponse.into());
+        }
         loop {
             match self.next_message().await? {
                 Message::Binary(bytes) => {
