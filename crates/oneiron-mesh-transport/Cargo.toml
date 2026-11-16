@@ -15,6 +15,7 @@ sync = ["oneiron/sync"]
 
 [dependencies]
 oneiron = { path = "../oneiron" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 tokio = { version = "1", features = ["io-util", "sync", "rt", "macros", "time"] }
 iroh = { git = "https://github.com/oneiron-dev/iroh", rev = "17c0612f80f78f5288e97b818b1360ae6ea0a51a", optional = true, default-features = false, features = ["tls-ring"] }
 futures-util = { version = "0.3", optional = true }

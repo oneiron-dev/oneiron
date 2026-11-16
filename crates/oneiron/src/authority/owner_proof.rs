@@ -392,6 +392,27 @@ impl AuthorityFold {
         Ok(())
     }
 
+    /// Whether the roster rule alone trusts `machine` as the owner's machine
+    /// under the install key `key`: the landing gate's "the carrier is the
+    /// owner's machine" ([`super::owner_choice::owner_choice_landing`]) as a
+    /// door reads it off this fold, in the roster view (no pin, none of this
+    /// install's holds or staleness).
+    ///
+    /// This fold also holds each removal proved on a branch it dropped,
+    /// which an entry's parents may not hold. There it reads not mine where
+    /// the gate would read mine; the same removal refuses the machine as a
+    /// carrier ([`super::owner_act_signer_admits`]), so a door that signs
+    /// never reaches the gate in that state.
+    #[must_use]
+    pub(crate) fn carrier_is_mine_by_roster(&self, machine: EntityId, key: &[u8; 32]) -> bool {
+        self.machine(machine).is_some_and(|folded| {
+            folded
+                .roster_view()
+                .trusted_under(&MachineAdmitter::Roster)
+                .is_some_and(|trusted| trusted.profile.machine_key == *key)
+        })
+    }
+
     /// What the vault asks of its owner on this fold (the owner's ruling
     /// AUTH-5): whether an act a carrier that is not the owner's machine
     /// delivers needs an owner key's proof, and on a hosted vault the value
@@ -448,5 +469,53 @@ impl crate::Vault {
         self.checkpoint_root_signers()
             .into_iter()
             .find(|signer| fold.proves_owner_acts(&signer.root(), hosted))
+    }
+
+    /// The owner-key refusal for an owner choice whose door appends no entry
+    /// in `txn`: the fold then has no entry to judge, and
+    /// [`AuthorityFold::refuse_waiting_choice`] nothing to ask about. An
+    /// owner cutover of a repository under no portable id is one: it signs no
+    /// cut (FIX ORIGIN-CUTOVER-UNBOUND-REPO-NO-OWNER-PROOF).
+    ///
+    /// It refuses where a choice this install carried in `txn` would wait:
+    /// the vault asks for an owner key
+    /// ([`AuthorityFold::owner_key_requirement`]), this handle holds no key
+    /// that proves for the owner ([`Self::owner_proof_signer`], the proof
+    /// every choice door signs with), and this install is not the owner's
+    /// machine ([`AuthorityFold::carrier_is_mine_by_roster`], under the
+    /// install key it would sign the choice with). It adds no rule: the
+    /// three are the landing gate's own readings
+    /// ([`super::owner_choice::owner_choice_landing`]). A choice only an
+    /// owner key may make is not its to judge, and neither is a carrier's
+    /// standing: where a door that signs refuses for want of a carrier, this
+    /// asks only its three readings.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::OwnerKeyRequired`]; the log's read
+    /// errors; the install key's, where the first two readings do not
+    /// already answer.
+    pub(crate) fn refuse_unprovable_owner_choice_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<()> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let asks = matches!(
+            fold.owner_key_requirement(),
+            OwnerKeyRequirement::Required { .. }
+        );
+        if !asks || self.owner_proof_signer(&fold).is_some() {
+            return Ok(());
+        }
+        let machine = crate::identity::read_machine_id_in_txn(self, txn)?;
+        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?;
+        let mine = machine.zip(key).is_some_and(|(machine, key)| {
+            fold.carrier_is_mine_by_roster(machine, &key.verifying_key().to_bytes())
+        });
+        if mine {
+            return Ok(());
+        }
+        Err(crate::error::Error::Record(
+            crate::error::RecordError::OwnerKeyRequired,
+        ))
     }
 }

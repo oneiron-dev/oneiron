@@ -99,10 +99,10 @@ pub(super) fn apply_op(
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. } => {}
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
-        // grant-travel, owner-choice, home-candidacy, agent-grant-act,
-        // policy-setting, export-act, owner-work (a custody permit piece
-        // among them), membership-execution and world-key arms return before
-        // reaching here.
+        // grant-travel, owner-choice, home-candidacy, full-copy-mark,
+        // agent-grant-act, policy-setting, export-act, owner-work (a custody
+        // permit piece among them), membership-execution and world-key arms
+        // return before reaching here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
@@ -114,6 +114,7 @@ pub(super) fn apply_op(
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
@@ -125,6 +126,17 @@ pub(super) fn apply_op(
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => {}
+        // Only a counted root appointment applies, onto its proof fold's merge
+        // (`root_appointment_judge::Recovered`; the fold refuses every other
+        // one before any op applies): every roster key is revoked and the
+        // successor starts its own custody line, with no admitter edge from
+        // the anchor (PLAN v3 E1).
+        AuthorityOp::RootAppointment(RootAppointment { successor, .. }) => {
+            for device in state.roster.values_mut() {
+                device.revoked = true;
+            }
+            upsert_device(state, successor, None);
+        }
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
         AuthorityOp::OwnerHandover(_) => {}
@@ -713,7 +725,7 @@ pub(super) fn upsert_device(
     super::owner_proof::remember_owner_key(state, &device.key);
 }
 
-fn revoke_key(state: &mut FoldState, key: &AuthorityKey) {
+pub(super) fn revoke_key(state: &mut FoldState, key: &AuthorityKey) {
     state
         .roster
         .entry(key.clone())

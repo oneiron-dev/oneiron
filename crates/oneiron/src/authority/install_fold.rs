@@ -44,6 +44,7 @@ pub(super) fn fold_as_install(
             local.observations.map(|observations| &observations.policy),
         ),
         pin: local.pin,
+        appointments: None,
     };
     let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);
     let context = FoldContext {
@@ -325,8 +326,7 @@ impl NoVouch {
                     .get(hash)
                     .zip(floors.get(hash))
                     .is_some_and(|(entry, floor)| {
-                        entry.seq < *floor
-                            && !super::entry_transition::lands_restriction_only(&entry.op)
+                        entry.seq < *floor && super::entry_transition::floor_refuses(&entry.op)
                     })
             };
             observations.vouched.iter().any(refused) || (removal && floors.keys().any(refused))

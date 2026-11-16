@@ -47,6 +47,7 @@ mod fold_suggestions;
 pub mod fork_promote;
 pub mod honesty;
 pub mod identity;
+mod idle_return_tables;
 pub mod judge_label_rechecks;
 mod layout_suggestions;
 pub(crate) mod optimize;
@@ -59,6 +60,7 @@ pub use applied::{
     MaintenanceRevert, MaintenanceTarget,
 };
 pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
+pub use idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
@@ -328,6 +330,9 @@ pub(crate) fn execute(
         }
         coach::COACH_LAYOUT_SUGGESTIONS_FACET => {
             layout_suggestions::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET => {
+            idle_return_tables::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
