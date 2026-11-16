@@ -6,6 +6,9 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::memory::{
     Memory, MemoryResult, RecallEffort, RecallRequest, RecallRerank, RecallRerankHost,
     RerankDocument, RerankEgress, RerankScores, WitnessAuthor, WitnessMessage, WitnessTurn,
@@ -300,11 +303,14 @@ fn gen_id(rng: &mut StdRng) -> EntityId {
     }
 }
 
-/// Witnesses `settings.records` turns as the owner and links them with `settings.edges_per_record`
-/// `Mentions` edges each, ~30% in-topic. Returns the record texts. Setup, not timed.
+/// Witnesses `settings.records` turns as the owner, each message in the message space `space`
+/// (so a reader holding a `MessagesRead` grant on it reads them), and links them with
+/// `settings.edges_per_record` `Mentions` edges each, ~30% in-topic. Returns the record texts.
+/// Setup, not timed.
 fn build_corpus(
     vault: &Vault,
     owner: EntityId,
+    space: EntityId,
     settings: &Settings,
     rng: &mut StdRng,
 ) -> Result<Vec<String>, WalkShareError> {
@@ -332,7 +338,7 @@ fn build_corpus(
                 message_type: "dialogue".to_owned(),
                 content: text.clone(),
                 parts: None,
-                metadata: None,
+                metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
                 quote: None,
@@ -456,7 +462,24 @@ fn run_with(
         b"ppr-walk-share agent",
     )?;
     vault.install_read_permit_for_test(WriteActor::new(agent, EdgeActorClass::Agent))?;
-    let texts = build_corpus(&vault, owner, settings, &mut rng)?;
+    // A permit alone reads no message: a message with no space is the owner's, and one in a
+    // space needs a MessagesRead grant on it (the fleet bench's own setup, fleet/workload.rs).
+    let space = gen_id(&mut rng);
+    vault.create_access_grant(
+        &gen_id(&mut rng),
+        &AccessGrant {
+            authority_scope: oneiron::federation::Scope::top(),
+            principal_ref: agent,
+            scope: AccessGrantScope::Messages { space_ref: space },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: vault.now_recorded_at(),
+            revoked_at: None,
+            expires_at: None,
+            companion_bounds: None,
+        },
+    )?;
+    let texts = build_corpus(&vault, owner, space, settings, &mut rng)?;
     let queries = gen_queries(&mut rng, &texts, settings.cases);
     let readers = [
         ("owner", vault.memory(owner, EdgeActorClass::Human)),
@@ -545,10 +568,10 @@ fn summary(rows: &[CallRow], settings: &Settings) -> serde_json::Value {
             "agent": reader_summary(rows, "agent"),
             "corpus": {
                 "records": settings.records,
-                "edges": settings.records.saturating_mul(settings.edges_per_record),
+                "requested_edges": settings.records.saturating_mul(settings.edges_per_record),
                 "seed": settings.seed,
             },
-            "note": "stub reranker (no model latency): the share is an upper bound for a recall with a real reranker; recall_at_door runs the pipeline without a session; recall_in_session runs the same pipeline (memory/recall/admission.rs:164)",
+            "note": "stub reranker (no model latency): the share is an upper bound for a recall with a real reranker. A paid High recall_at_door runs the retrieval pipeline twice per call (capture and scored passes); recall_in_session runs one pass of the same pipeline (memory/recall/admission.rs:164), so compare the share, not per-call times or walk counts. requested_edges counts edge writes; repeated pairs upsert",
         }
     })
 }
@@ -598,8 +621,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 mod tests {
     use super::*;
 
-    /// N=60, K=3, C=1, R=1 over a thread-local timer: each reader has one error-free row, an
-    /// expand walk ran per row, and no row's walks outlast its wall time.
+    /// N=60, K=3, C=1, R=1 over a thread-local timer: each reader has one error-free row that
+    /// recalls the corpus, an expand walk ran per row, and no row's walks outlast its wall time.
     #[test]
     fn smoke_times_both_walks_within_wall() {
         let timer = WalkTimer::new();
@@ -624,6 +647,7 @@ mod tests {
                 "walks within wall: {row:?}",
             );
             assert_ne!(row.expand_walks, 0, "an expand walk ran: {row:?}");
+            assert_ne!(row.results, 0, "the reader recalls the corpus: {row:?}");
         }
         let text = String::from_utf8(jsonl).expect("utf-8 jsonl");
         assert_eq!(text.lines().count(), 3, "two rows and a summary");
