@@ -255,6 +255,7 @@ fn an_owner_pen_walks_in_from_now_and_the_notice_names_it() -> TestResult {
             thread_ref: root.to_hex(),
             person_ref: pen.to_hex(),
             history: ThreadAudienceHistory::Full,
+            check_in_ref: None,
         })
         .expect("walk-in: the Owner pen adds itself with Full while the switch is OFF");
     assert_eq!(
@@ -350,6 +351,7 @@ fn an_admin_pen_walks_in_only_while_the_switch_is_on() -> TestResult {
                 thread_ref: root.to_hex(),
                 person_ref: pen.to_hex(),
                 history: ThreadAudienceHistory::Full,
+                check_in_ref: None,
             })
     };
     let switched_off = vault
@@ -446,6 +448,7 @@ fn an_agent_without_standing_still_cannot_walk_in() -> TestResult {
             thread_ref: root.to_hex(),
             person_ref: pen.to_hex(),
             history: ThreadAudienceHistory::Full,
+            check_in_ref: None,
         })
         .expect_err("refusal: the pen without standing adds itself");
     assert_eq!(
