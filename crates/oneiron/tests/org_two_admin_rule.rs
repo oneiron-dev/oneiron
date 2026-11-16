@@ -29,8 +29,9 @@
 //!   housekeeping pass lapses it with the notice: it never ran.
 //! - An Admin's lone admin ruling refuses with the hold's reason while the
 //!   rule is on (no held verb fronts it); an Owner's goes.
-//! - An Admin's held Steward add never lands, even on an Owner's approve: an
-//!   approval lifts only the rule, and the Steward role is an Owner's to give.
+//! - An Admin's Steward add never lands: the Steward role is an Owner's to
+//!   give, so the door refuses it before the rule could hold it, and nothing
+//!   waits for an approve (an approval lifts only the rule).
 //!
 //! The Astra review of #8482 (lanes/engine-tools/astra-reviews/
 //! unbuilt-b1c-8482-two-admin) added seven:
@@ -522,8 +523,10 @@ fn two_admin_second_approval_lands_the_act() {
         org.approve(org.owner, &held).is_err(),
         "a landed act lands once"
     );
-    // The invitee's accept is the invitee's own act, never held.
-    accept(&org.vault, newcomer, Role::Member);
+    // The invitee's accept is the invitee's own act, never held: the host
+    // key is bound to the invitee for it, as a rooted vault admits only a
+    // bound writer.
+    org.as_person(newcomer, || accept(&org.vault, newcomer, Role::Member));
 }
 
 #[test]
@@ -728,6 +731,9 @@ fn an_approve_cut_short_before_its_write_lapses_with_a_notice() {
 #[test]
 fn an_admins_lone_ruling_refuses_while_the_rule_is_on() {
     let org = Org::new();
+    // A ruling is stored at its caller's time, and the ruling guard admits
+    // it only under a grant that had started by then: the Admins' grants
+    // start at their accept, so the ruling takes the wall clock.
     let ruling = |by: EntityId, value: &str| {
         org.as_person(by, || {
             org.vault.append_admin_ruling(
@@ -735,7 +741,7 @@ fn an_admins_lone_ruling_refuses_while_the_rule_is_on() {
                 SHARED,
                 "setting",
                 json!(value),
-                2,
+                now_secs(),
             )
         })
     };
@@ -754,7 +760,7 @@ fn an_admins_lone_ruling_refuses_while_the_rule_is_on() {
 }
 
 #[test]
-fn an_admins_held_steward_add_never_lands_by_an_owners_approve() {
+fn an_admins_steward_add_refuses_before_any_hold() {
     let org = Org::new();
     org.owner_sets("org.two_admin", json!(true));
     let newcomer = org.newcomer();
@@ -772,15 +778,36 @@ fn an_admins_held_steward_add_never_lands_by_an_owners_approve() {
             )
         })
     };
-    let held = held_id(&steward_add(org.admin).expect_err("held"));
-
-    org.approve(org.owner, &held)
-        .expect_err("the Steward role is no Admin's to give, so an approve cannot land it");
-    assert_eq!(
-        org.held_as(org.owner, &held).status,
-        HeldAdminActStatus::Open
+    // The Steward role is no Admin's to give (an Admin's AddMember power
+    // never reaches it), so the door refuses before the rule could hold the
+    // act: nothing is stored to approve, and no one is invited.
+    let refusal = steward_add(org.admin).expect_err("an Admin gives no Steward role");
+    assert_eq!(refusal.code, "FORBIDDEN", "{refusal:?}");
+    assert!(
+        refusal
+            .message
+            .contains("only an owner of the vault gives the Steward or Deputy role"),
+        "{refusal:?}"
     );
-    assert!(!org.invited_by(newcomer, org.owner));
+    assert!(!held_by_the_rule(&refusal), "no hold: {refusal:?}");
+    assert!(
+        org.as_person(org.owner, || {
+            read_held_admin_acts(
+                &org.vault,
+                &proof(&org.vault, org.owner),
+                oneiron::task_verb::sdk::SharedVaultRequest { vault_id: SHARED },
+            )
+        })
+        .expect("an Owner lists the held acts")
+        .is_empty(),
+        "no held act"
+    );
+    assert!(
+        org.notices(org.owner, NOTIFICATION_PRODUCER_ADMIN_ACT_HELD)
+            .is_empty(),
+        "no ask"
+    );
+    assert!(!org.invited_by(newcomer, org.admin));
     steward_add(org.owner).expect("an Owner gives the Steward role at once");
     assert!(org.invited_by(newcomer, org.owner));
 }
