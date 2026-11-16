@@ -85,6 +85,61 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// Stages the batch's ops in the caller's transaction under a same-transaction
+    /// claim-gate preflight through `checker`, for a caller whose write commits or
+    /// aborts the transaction itself.
+    ///
+    /// `checker` is already admitted: its turn was taken before the write opened (FIX
+    /// 8751), so the preflight's consults use that turn and never wait in the checker's
+    /// line inside the write. On the preflight's error nothing is applied and the caller
+    /// aborts its savepoint, which discards the denial's receipt with everything else;
+    /// on success phase 2 reuses the preflight's decision ids, appends no second
+    /// decision row and consults nothing.
+    ///
+    /// The returned receipts were recorded deferred, so the caller counts them only
+    /// after its write has committed, never inside.
+    ///
+    /// Sound for batches whose `ClaimCandidate` ops reach phase-2 gating as the
+    /// preflight judged them: between this entry and that gating the agent-authored
+    /// puts only rewrite raw `AGENT_DEF` puts, the federated puts only rewrite raw
+    /// puts, the comm projector only takes raw `CLAIM` puts, and the lane's admission
+    /// only reads. Internal lexical-hint ops and text ops pass ungated, as in the
+    /// owning commit.
+    pub(crate) fn apply_with_checker_preflight(
+        mut self,
+        wtxn: &mut RwTxn<'_>,
+        checker: &crate::llm::BoundedAutoChecker,
+    ) -> Result<Vec<crate::gate::RecordedClaimGateDecision>> {
+        if let Some(error) = self.validation_error.take() {
+            return Err(error);
+        }
+        let mut staged_decisions = Vec::<crate::gate::RecordedClaimGateDecision>::new();
+        let mut preflight_gate_decision_ids = std::collections::HashMap::new();
+        super::preflight::preflight_gate_decisions_in_txn(
+            &self.vault.store,
+            &self.ops,
+            wtxn,
+            &mut staged_decisions,
+            &mut preflight_gate_decision_ids,
+            Some(checker),
+            self.origin,
+            &self.caller_envelopes,
+            self.owner_authored.as_ref(),
+            &self.births,
+            false,
+        )?;
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true)
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
+            None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+            None,
+            None,
+        )?;
+        Ok(staged_decisions)
+    }
+
     /// Local actor-bound batch: every direct record and reducer-touched parent
     /// is captured from the operation set, then gated before commit.
     pub(crate) fn apply_actor(

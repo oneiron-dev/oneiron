@@ -57,19 +57,23 @@ pub(super) enum LandingError {
     Abort(Error),
 }
 
-/// The caller's landing purpose and provenance, beside its evidence and fence.
-pub(super) struct VerifiedLandingOptions {
+/// The caller's landing purpose and provenance, beside its evidence, fence and checker.
+pub(super) struct VerifiedLandingOptions<'a> {
     /// The caller's provenance, replacing native's when present.
     pub(super) provenance: Option<rmpv::Value>,
     /// Whether this commit is an extraction attempt binding's.
     pub(super) extraction_binding_commit: bool,
+    /// The commit's admitted write-gate auto-checker, or none.
+    pub(super) auto_checker: Option<&'a crate::llm::BoundedAutoChecker>,
 }
 
 /// Lands one verified `candidate` with `evidence` under `fence` in the
 /// caller's savepoint `txn`: native's preparation with the caller's
-/// `provenance`, the imported check, the shared landing and the read back
-/// with the landed check. Takes `supersedes` as the candidate carries it.
-/// A blank run is refused first, as `promote_one_answering` refuses it.
+/// `provenance`, the imported check, the shared landing through the commit's
+/// admitted checker, and the read back with the landed check. Takes `supersedes` as the
+/// candidate carries it. A blank run is refused first, as `promote_one_answering` refuses it.
+/// Answers the landed approval with the landing's gate receipts, which the caller queues
+/// only after the savepoint holding the landing has committed.
 ///
 /// # Errors
 ///
@@ -82,9 +86,15 @@ pub(super) fn land_verified_candidate(
     candidate: PromotionCandidate,
     evidence: Option<&VerifiedEvidenceSet>,
     fence: Option<&ConsolidationFence>,
-    options: VerifiedLandingOptions,
+    options: VerifiedLandingOptions<'_>,
     txn: &mut heed::RwTxn<'_>,
-) -> std::result::Result<ClaimApprovalStatus, LandingError> {
+) -> std::result::Result<
+    (
+        ClaimApprovalStatus,
+        Vec<crate::gate::RecordedClaimGateDecision>,
+    ),
+    LandingError,
+> {
     use LandingError::{Abort, Refusal};
     use LandingRefusal::{Gate, Imported, LandingRefused};
     // A blank run would hide the write from every Dreamer-run reader: the
@@ -123,17 +133,21 @@ pub(super) fn land_verified_candidate(
     if prepared.imported && !options.extraction_binding_commit {
         return Err(Refusal(Imported));
     }
-    if let Err(error) = crate::dreamer_promotion::land_prepared_promotion_in_txn(
+    let landing_receipts = match crate::dreamer_promotion::land_prepared_promotion_checked_in_txn(
         vault,
         run,
         &prepared,
         claim_candidate,
-        fence,
-        options.extraction_binding_commit,
+        crate::dreamer_promotion::PromotionLanding {
+            fence,
+            record_output: options.extraction_binding_commit,
+            checker: options.auto_checker,
+        },
         txn,
     ) {
-        return Err(landing_error(error));
-    }
+        Ok(receipts) => receipts,
+        Err(error) => return Err(landing_error(error)),
+    };
     let stored = {
         let save_read: &heed::RoTxn<'_> = txn;
         match vault.get_claim_in_txn(save_read, &prepared.claim_id) {
@@ -146,7 +160,7 @@ pub(super) fn land_verified_candidate(
             .ok()
     });
     match landed {
-        Some(approval) => Ok(approval),
+        Some(approval) => Ok((approval, landing_receipts)),
         None => Err(Refusal(LandingRefused)),
     }
 }
@@ -162,10 +176,13 @@ pub(super) struct VerifiedAttachment<'a> {
     pub(super) fence: &'a ConsolidationFence,
     pub(super) provenance: rmpv::Value,
     pub(super) extraction_binding_commit: bool,
+    /// The commit's admitted write-gate auto-checker, or none.
+    pub(super) auto_checker: Option<&'a crate::llm::BoundedAutoChecker>,
 }
 
-/// Attaches inside the batch's savepoint, with no checker or conflict answers.
-/// Imported words cannot attach: native holds that head without changing support.
+/// Attaches inside the batch's savepoint with the commit's admitted checker and no
+/// conflict answers. Imported words cannot attach: native holds that head without
+/// changing support.
 pub(super) fn attach_verified_candidate(
     vault: &Vault,
     run: &DreamerRunContext,
@@ -215,7 +232,7 @@ pub(super) fn attach_verified_candidate(
             attempt: run.attempt_id,
             record_outputs: attachment.extraction_binding_commit,
         },
-        None,
+        attachment.auto_checker,
         &reader,
         crate::own_rate::auto_write_rate(),
         &mut None,

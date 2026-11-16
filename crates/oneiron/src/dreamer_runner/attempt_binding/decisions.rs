@@ -184,6 +184,20 @@ pub trait DreamerDecisionLender: Send + Sync {
     ) -> MemoryResult<Option<crate::llm::model_step::ModelStepReceipt>> {
         Ok(None)
     }
+
+    /// Lends the host's write-gate auto-checker for this attempt's commits.
+    ///
+    /// The default lends nothing, so attempts without a checker loan keep the gate's
+    /// verdicts without a second opinion. A lender lends the checker's worker and its
+    /// one fair line; the attempt takes its turn before its write opens, and the host
+    /// keeps both.
+    ///
+    /// # Errors
+    ///
+    /// The host's own lending failures.
+    fn lend_auto_checker(&self) -> MemoryResult<Option<crate::llm::BoundedAutoChecker>> {
+        Ok(None)
+    }
 }
 
 impl DreamerAttemptBinding {

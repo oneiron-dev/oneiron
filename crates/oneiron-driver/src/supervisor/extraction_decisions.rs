@@ -3,6 +3,7 @@
 //! Verdict reads and generation steps share the original attempt's guard and charge tally.
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use oneiron::dreamer_consolidation::{
     ConsolidationDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall,
@@ -210,5 +211,18 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
             runtime: &resources.runtime,
         })
         .map(Some)
+    }
+
+    /// Lends the pass's write-gate auto-checker with the pass's deadline, formed as native's
+    /// `accept_until` forms it; none when the resources hold none. No recheck of the gate:
+    /// that gate guards the verdict and extraction model routes, the checker is neither, and
+    /// native hands the same checker to its sink with no such check.
+    fn lend_auto_checker(&self) -> MemoryResult<Option<oneiron::llm::BoundedAutoChecker>> {
+        let Some(checker) = self.resources.decisions.checker.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some(checker.with_deadline(
+            Instant::now() + Duration::from_millis(self.deadline.remaining_ms()),
+        )))
     }
 }

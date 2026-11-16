@@ -320,6 +320,7 @@ pub(super) fn stage_in_txn(
     };
     let provenance = rmpv::Value::Map(derive_provenance(context, &item.local));
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    let mut landing_receipts: Vec<crate::gate::RecordedClaimGateDecision> = Vec::new();
     let result = if let Some(head) = attachment {
         attach_verified_candidate(
             vault,
@@ -332,6 +333,7 @@ pub(super) fn stage_in_txn(
                 fence: &fence,
                 provenance,
                 extraction_binding_commit: context.extraction_binding_commit,
+                auto_checker: context.auto_checker,
             },
         )
         .map(|rows| (rows, None, head, CANDIDATE_ATTACHED))
@@ -345,14 +347,22 @@ pub(super) fn stage_in_txn(
             VerifiedLandingOptions {
                 provenance: Some(provenance),
                 extraction_binding_commit: context.extraction_binding_commit,
+                auto_checker: context.auto_checker,
             },
             &mut savepoint,
         )
-        .map(|approval| (vec![claim_id], Some(approval), claim_id, CANDIDATE_ALLOWED))
+        .map(|(approval, receipts)| {
+            landing_receipts = receipts;
+            (vec![claim_id], Some(approval), claim_id, CANDIDATE_ALLOWED)
+        })
     };
     let (rows, approval, about, reason) = match result {
         Ok(outcome) => {
             savepoint.commit()?;
+            context
+                .post_commit_receipts
+                .borrow_mut()
+                .extend(landing_receipts);
             outcome
         }
         Err(LandingError::Refusal(LandingRefusal::Gate(reasons))) => {

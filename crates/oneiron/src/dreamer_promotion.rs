@@ -72,7 +72,8 @@ pub(crate) use scoped::{
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
 use writer::promote_one;
 pub(crate) use writer::{
-    PromotionRejection, land_prepared_promotion_in_txn, prepare_promotion, verify_landed_body,
+    PromotionLanding, PromotionRejection, land_prepared_promotion_checked_in_txn,
+    land_prepared_promotion_in_txn, prepare_promotion, verify_landed_body,
 };
 
 use crate::Vault;
