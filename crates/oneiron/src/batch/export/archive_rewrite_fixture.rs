@@ -4,6 +4,8 @@
 //! and the reader judges the rewritten rows themselves.
 use std::io::{Read as _, Write as _};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest};
 use crate::error::{Error, Result};
 
@@ -101,7 +103,7 @@ where
         .ok_or_else(|| invalid("record file not listed"))?;
     record.rows = rewritten.len() as u64;
     record.bytes = content.len() as u64;
-    record.blake3 = crate::entity_id::bytes_to_hex_lower(blake3::hash(&content).as_bytes());
+    record.blake3 = crate::entity_id::bytes_to_hex_lower(ContentHash::of(&content).as_bytes());
     members[index].1 = content;
     members[manifest_index].1 = serde_json::to_vec(&manifest).map_err(|_| invalid("manifest"))?;
     write_members(&members)

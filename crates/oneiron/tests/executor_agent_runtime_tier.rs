@@ -460,12 +460,11 @@ fn guest_agents_put_reaches_the_leased_host_and_fences_stale_leases() -> Result<
         _ => unreachable!("authoring call"),
     };
     assert!(
-        author_doors::put_for_author_with_scope_from_leased(
+        author_doors::put_for_author_from_leased(
             &vault,
             &author_id,
             &after_close,
             &definition,
-            false,
             Some(&relet),
             TimeRange { start: 33, end: 33 },
             33,
