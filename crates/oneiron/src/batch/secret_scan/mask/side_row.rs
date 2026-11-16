@@ -40,8 +40,8 @@ use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::super::{
-    FieldRule, REASON_DETECTED, SecretScanMode, scan_write_tree_with_rule, secret_scan_error,
-    secret_scan_mode_in_txn,
+    FieldRule, REASON_DETECTED, SecretScanMode, off_record_fresh_key_refusal,
+    scan_write_tree_with_rule, secret_scan_error, secret_scan_mode_in_txn,
 };
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
@@ -380,6 +380,7 @@ pub(super) fn admit_decided_parts(
         mode: secret_scan_mode_in_txn(base, &*wtxn)?,
         decides: Some(&base.store),
         door,
+        off_record: false,
     };
     let origins = vec![(origin(place, key)?, place); parts.len()];
     let (mut seed, pass) = (Lifted::default(), Pass::default());
@@ -398,17 +399,21 @@ struct Scope<'a> {
     /// The custody door the plan's new records go through; `None` mints
     /// none.
     door: Option<CustodyWrite<'a>>,
+    /// Whether the writer's target is an off-record room's view (FIX 2329):
+    /// a refusal of a fresh secret names the remedy.
+    off_record: bool,
 }
 
 impl<'a> Scope<'a> {
     /// A writer's own target, which decides with the custody door it holds
-    /// and mints through it.
+    /// and mints through it. A room's view holds no door and decides with
+    /// its base's custody (FIX 2329), as a reply published there does.
     fn of(dbs: &'a impl SideTableDbs, wtxn: &RwTxn<'_>) -> Result<Self> {
-        let door = dbs.side_custody();
         Ok(Self {
             mode: secret_scan_mode_in_txn(dbs, wtxn)?,
-            decides: door.as_ref().map(|door| door.store),
-            door,
+            decides: dbs.side_decides(),
+            door: dbs.side_custody(),
+            off_record: dbs.side_off_record(),
         })
     }
 }
@@ -475,6 +480,7 @@ pub(super) fn plan_seeded_parts(
         mode: secret_scan_mode_in_txn(vault, &*wtxn)?,
         decides: Some(&vault.store),
         door: None,
+        off_record: false,
     };
     let pass = Pass {
         known: Some(known),
@@ -561,7 +567,8 @@ fn admitted(
     drop(planned);
     // With no door nothing is minted (FIX 6647): a plan that needs a new
     // record refuses with the door's reason, and one that placed only
-    // values custody already holds takes their handles, minting none.
+    // values custody already holds takes their handles, minting none. In an
+    // off-record room's row the refusal names the remedy (FIX 2329).
     match &scope.door {
         Some(door) => {
             let at = crate::ports::recorded_at_in_txn(door.store, wtxn)?;
@@ -569,7 +576,12 @@ fn admitted(
                 .adopt(plan.mint(door, wtxn, at)?.map(|(handle, _)| handle));
         }
         None if !plan.found.is_empty() => {
-            return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
+            let refusal = refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED));
+            return Err(if scope.off_record {
+                off_record_fresh_key_refusal(refusal)
+            } else {
+                refusal
+            });
         }
         None => {}
     }

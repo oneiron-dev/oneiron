@@ -67,6 +67,20 @@ pub(crate) async fn vault_code_proposal_submit(
     .await
 }
 
+pub(crate) async fn vault_code_proposal_submit_bundle(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalBundleSubmitRequest,
+) -> Listed<CodeProposalSubmitted> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_submit_bundle",
+        move |memory, owner| memory.code_proposal_submit_bundle_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_proposal_rereview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
