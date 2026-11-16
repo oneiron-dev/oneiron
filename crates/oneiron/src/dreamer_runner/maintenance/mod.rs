@@ -83,6 +83,8 @@ use super::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
+#[cfg(oneiron_test_support)]
+pub(crate) use applied::claim_revision_in_txn;
 pub(crate) use curator::PROPOSAL_PREDICATE as CURATOR_PROPOSAL_PREDICATE;
 pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;

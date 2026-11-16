@@ -75,15 +75,11 @@ pub fn emit_retract_finding(vault: &Vault, target: EntityId) -> Result<EntityId>
 /// body `target` holds in `txn`: its rung, `target` and `source_hash`, as
 /// JSON text.
 fn retract_value_in(vault: &Vault, txn: &heed::RoTxn<'_>, target: EntityId) -> Result<String> {
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &target)?
-        .ok_or(Error::EntityNotFound)?;
-    let body = raw
-        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-        .filter(|body| !body.is_empty())
+    let revision = crate::dreamer_runner::maintenance::claim_revision_in_txn(vault, txn, &target)?
         .ok_or(Error::EntityNotFound)?;
     Ok(serde_json::json!({
         "target": target.to_hex(),
-        "source_hash": blake3::hash(body).to_hex().to_string(),
+        "source_hash": blake3::Hash::from(revision).to_hex().to_string(),
         "action": { "kind": "retract" },
     })
     .to_string())
