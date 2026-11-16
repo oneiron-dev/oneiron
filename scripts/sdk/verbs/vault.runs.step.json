@@ -4,8 +4,9 @@
   "input": "crate::llm::model_step::SettledStepRequest",
   "output": "Option<crate::llm::model_step::SettledStepView>",
   "call": "crate::snapshot_read::settled_step_embedded(memory, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "lane_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "run_reader"
+  "openapi": true
 }

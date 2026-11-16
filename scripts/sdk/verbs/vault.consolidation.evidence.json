@@ -6,12 +6,12 @@
   "scope": "Read",
   "act_class": "read",
   "call": "memory.consolidation_evidence_as_owner(&memory.embedded_owner(\"vault.consolidation.evidence\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "owner"
+  "section": false
 }

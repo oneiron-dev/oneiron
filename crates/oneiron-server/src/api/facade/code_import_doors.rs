@@ -34,12 +34,6 @@ fn not_an_importer(verb: &str) -> MemoryError {
     )
 }
 
-/// The check an import row's door runs before its pre chain
-/// (`door_admits`): a credential that binds a principal.
-pub(super) fn imports_admit(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
-    super::owner_binding::facade_caller_or(server, auth, || not_an_importer(verb)).map(drop)
-}
-
 /// The bound caller, its proof and the transport its credential lends.
 type Importer = (
     (EntityId, EdgeActorClass),

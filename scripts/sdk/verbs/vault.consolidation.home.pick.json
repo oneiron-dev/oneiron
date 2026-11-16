@@ -4,8 +4,9 @@
   "input": "crate::dreamer_runner::ConsolidationHomePickRequest",
   "output": "crate::dreamer_runner::ConsolidationHomePickReceipt",
   "call": "crate::dreamer_runner::consolidation_home_pick_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.pick\")?, crate::authority::ActSurface::ThisInstall, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_surface": true,
   "scope": "Write",
   "act_class": "reversible_work",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

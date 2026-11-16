@@ -28,6 +28,9 @@ pub(super) fn host() -> Host {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    // The handle holds the host's root as a serving host does, so the owner
+    // acts it carries are proven (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer.duplicate().unwrap()));
     Host {
         _dir: dir,
         vault,
@@ -118,6 +121,8 @@ fn only_the_owners_yours_makes_a_machine_mine() {
         let folded = host
             .vault
             .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
+            .unwrap()
+            .into_standing()
             .unwrap();
         assert_eq!(folded.is_mine(None), mine, "{role:?}");
         assert_eq!(is_mine(&host.vault, request.machine), mine, "{role:?}");
@@ -224,6 +229,8 @@ fn a_removed_machine_never_comes_back() {
             MachineRole::Removed,
             None,
         )
+        .unwrap()
+        .into_standing()
         .unwrap();
     assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
@@ -548,6 +555,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 /// The vault a restore replaced, activated as a side vault of its
 /// replacement, is a second live vault: it joins as a new machine, and only
 /// the replacement answers as the machine both were (wp-keys I8).
+#[cfg(unix)]
 #[test]
 fn an_activated_archive_joins_as_a_new_machine() {
     let (_dir, vault, request) = enrolled_machine(host());
@@ -567,12 +575,7 @@ fn an_activated_archive_joins_as_a_new_machine() {
     .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
-        .swap_in_replacement(&replacement, || {
-            let between = home.with_extension("exchange");
-            std::fs::rename(&home, &between)?;
-            std::fs::rename(&staged, &home)?;
-            std::fs::rename(&between, &staged)
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .unwrap();
     drop((vault, replacement));
     let replacement = Vault::open(&home, VaultConfig::default()).unwrap();
@@ -642,6 +645,7 @@ fn pair_and_bind(
             request,
         )
         .unwrap();
+    let folded = folded.into_standing().unwrap();
     assert!(folded.is_mine(None));
     let address = MeshMachineAddress {
         endpoint_key: transport.verifying_key().to_bytes(),

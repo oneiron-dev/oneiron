@@ -4,12 +4,12 @@
   "input": "crate::blob_artifact::ArtifactAdmitSubmit",
   "output": "crate::blob_artifact::ArtifactAskOutcome",
   "call": "memory.artifacts_admit(&input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {},
   "section": false,
-  "openapi": true,
-  "host_door_proof": "artifact_asker"
+  "openapi": true
 }

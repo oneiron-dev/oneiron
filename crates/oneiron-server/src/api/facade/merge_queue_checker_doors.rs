@@ -107,18 +107,6 @@ fn review_policy_lane(auth: &CoreAuth) -> MemoryResult<()> {
     })
 }
 
-/// The check a review policy row's door runs before its pre chain
-/// (`door_admits`): the lane guard, then a credential that binds a
-/// principal. A host root alone binds none. Its Grant is the engine's.
-pub(super) fn review_policy_admits(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    verb: &str,
-) -> MemoryResult<()> {
-    review_policy_lane(auth)?;
-    super::owner_binding::facade_caller_or(server, auth, || not_a_policy_caller(verb)).map(drop)
-}
-
 /// One review policy door: the caller bound from its own credential, the
 /// Owner's proof when it carries one, and `act` run on that credential's
 /// own lane.

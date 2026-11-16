@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::SharedMemberRoleRequest",
   "output": "crate::federation::SharedActExecutionReceipt",
   "call": "crate::task_verb::sdk::change_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.change\")?, None, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

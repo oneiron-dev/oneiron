@@ -4,9 +4,9 @@
   "input": "crate::llm::run_admission::resident_doors::SetResidentShareRequest",
   "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
   "call": "crate::llm::run_admission::resident_doors::set_resident_share_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

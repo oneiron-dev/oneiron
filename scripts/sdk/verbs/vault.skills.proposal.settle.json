@@ -4,9 +4,9 @@
   "input": "HubSkillProposalSettleRequest",
   "output": "crate::task_verb::sdk::HubSkillProposalSettled",
   "call": "crate::task_verb::sdk::hub_skill_proposal_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.proposal.settle\")?, &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

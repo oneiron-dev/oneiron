@@ -4,14 +4,14 @@
   "input": "crate::task_verb::sdk::WorkspaceMemberOnboardRequest",
   "output": "crate::workspace_roster::MemberOnboardingOutcome",
   "call": "crate::task_verb::sdk::onboard_workspace_member_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.members.onboard\")?, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "member_add",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "shared_person"
+  "openapi": true
 }

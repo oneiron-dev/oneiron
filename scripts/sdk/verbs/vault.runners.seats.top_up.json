@@ -4,14 +4,14 @@
   "input": "crate::dispatch_byoa::RunnerSeatCreditTopUpRequest",
   "output": "crate::dispatch_byoa::RunnerSeatTopUpReceipt",
   "call": "memory.vault().top_up_runner_seat_as_owner(&memory.embedded_owner(\"vault.runners.seats.top_up\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

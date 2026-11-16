@@ -27,7 +27,7 @@ use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
-use crate::lens_frames::CardOwner;
+use crate::lens_frames::{CardOwner, HeldCardProof};
 use crate::server::SyncServer;
 
 /// `vault.weave.link.wrong`: a live person labels a link in their own
@@ -146,25 +146,6 @@ pub(in crate::api::facade) fn person_lens(
     Ok((proof, caller))
 }
 
-/// The check the weave lens and digest doors run first, which `verb` `does`
-/// for: the host preflight, then the bound person or agent. The facade runs
-/// it before their pre chain (FIX 1817).
-pub(in crate::api::facade) fn own_caller(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    verb: &str,
-    does: &str,
-) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::owner_binding::host_preflight(server, auth)?;
-    super::facade_actor(server, auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} {does}"),
-            &["Present a person's or an agent's own credential."],
-        )
-    })
-}
-
 /// The owner's live proof, for a label `act` in the owner lens.
 fn owner_lens(
     server: &SyncServer,
@@ -270,24 +251,26 @@ pub(crate) async fn vault_weave_digest(
     .await;
     let answer = framed.and_then(|framed| {
         framed
-            .map(|framed| hold_weave_digest(server, auth, framed))
+            .map(|framed| hold_weave_digest(server, auth, framed, HeldCardProof::CallerRead))
             .transpose()
     });
     (answer, listed)
 }
 
 /// A served period, its lens lowered and the lens's frame held for `auth`'s
-/// events on the card before the answer leaves.
+/// events on the card before the answer leaves, under the `proof` its read
+/// ran on.
 pub(crate) fn hold_weave_digest(
     server: &SyncServer,
     auth: &CoreAuth,
     framed: WeaveDigestFramed,
+    proof: HeldCardProof,
 ) -> MemoryResult<WeaveDigestView> {
     let (view, frame) = framed.lower();
     if let (Some(frame), Some(card)) = (frame, &view.lens) {
         server
             .lens_frames
-            .record(auth, frame, card.render.clone())?;
+            .record(auth, frame, card.render.clone(), proof)?;
     }
     Ok(view)
 }
