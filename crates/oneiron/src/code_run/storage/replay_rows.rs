@@ -8,7 +8,10 @@ use super::super::codec::{
     encode_code_run_replay_item, encode_code_run_replay_record, join_canonical, split_canonical,
     validate_bridge_call, validate_code_run_replay_record, validate_raw_output,
 };
-use super::super::replay::{CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding};
+use super::super::replay::{
+    CodeRunBridgeCall, CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord,
+    CodeRunResultBinding,
+};
 use super::super::wait_rows::{keep_wait_rows, wait_rows};
 use crate::side_table::{
     self, CodecError, Erased, Raw, RawValue, SideKey, SideTable, SideTableDbs,
@@ -100,6 +103,22 @@ fn note_written(len: usize) {
 #[cfg(oneiron_test_support)]
 pub(crate) fn written_bytes() -> u64 {
     WRITTEN_BYTES.with(|bytes| bytes.get())
+}
+
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static READ_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(oneiron_test_support)]
+fn note_read(len: usize) {
+    READ_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(len as u64)));
+}
+
+/// This thread's total read replay bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn read_bytes() -> u64 {
+    READ_BYTES.with(|bytes| bytes.get())
 }
 
 /// A codec error as the seam reports it: a value error as itself, a row shape as its table's.
@@ -247,6 +266,8 @@ fn family_items(
         if key.run != *run || key.family != family {
             return Err(Error::CorruptedIndex("code-run replay item key"));
         }
+        #[cfg(oneiron_test_support)]
+        note_read(bytes.len());
         items.push((key.index, bytes));
     }
     if items.len() as u64 != count {
@@ -425,6 +446,34 @@ pub(crate) fn stored_len(
     Ok(joined_bytes(dbs, txn, run)?.map(|bytes| bytes.len()))
 }
 
+/// A present replay row: a split head still to join, or a marker's whole record already decoded.
+enum PresentRow {
+    /// A split head; the caller joins its items.
+    Head(ReplayHead),
+    /// A marker row's whole record.
+    Whole(CodeRunReplayRecord),
+}
+
+/// `run`'s present replay row, if any: the borrowed head read, a retired marker refused before any
+/// decode, a head as [`PresentRow::Head`], any other value decoded whole.
+fn present_row(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<PresentRow>> {
+    let Some(raw) = HEADS.get_borrowed(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    #[cfg(oneiron_test_support)]
+    note_read(raw.len());
+    let key = HEADS.key_bytes(run);
+    let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
+    match HEADS.decode_value(raw) {
+        Ok(head) => Ok(Some(PresentRow::Head(head))),
+        Err(_) => decode(raw).map(|record| Some(PresentRow::Whole(record))),
+    }
+}
+
 /// Reads `run`'s replay record, answering `ResponseErased` for a retired marker before any decode.
 ///
 /// # Errors
@@ -435,17 +484,124 @@ pub(crate) fn present(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<CodeRunReplayRecord>> {
-    let Some(raw) = HEADS.get_borrowed(dbs, txn, run)? else {
+    let Some(row) = present_row(dbs, txn, run)? else {
         return Ok(None);
     };
-    let key = HEADS.key_bytes(run);
-    let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
-    match HEADS.decode_value(raw) {
-        Ok(head) => {
+    match row {
+        PresentRow::Head(head) => {
             let whole = assemble(dbs, txn, run, &head)?;
             decode(&whole).map(Some)
         }
-        Err(_) => decode(raw).map(Some),
+        PresentRow::Whole(record) => Ok(Some(record)),
+    }
+}
+
+/// `run`'s four replay family counts in [`ReplayFamily::ALL`] order, if present.
+///
+/// # Errors
+///
+/// Storage errors, `ResponseErased` for a retired marker, and a row that does not decode.
+pub(crate) fn present_counts(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<[u64; 4]>> {
+    let Some(row) = present_row(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    match row {
+        PresentRow::Head(head) => Ok(Some(head.counts)),
+        PresentRow::Whole(record) => {
+            let count = |len: usize| {
+                u64::try_from(len).map_err(|_| Error::ArithmeticOverflow("code-run replay count"))
+            };
+            Ok(Some([
+                count(record.bridge_calls.len())?,
+                count(record.step_checkpoints.len())?,
+                count(record.outputs.len())?,
+                count(record.bindings.len())?,
+            ]))
+        }
+    }
+}
+
+/// One stored item's bytes as exactly one MessagePack value: a value that does not read, or
+/// bytes left after it, are corrupted.
+fn item_value(bytes: &[u8]) -> Result<rmpv::Value> {
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::CorruptedIndex("code-run replay item bytes"))?;
+    if !cursor.is_empty() {
+        return Err(Error::CorruptedIndex("code-run replay item bytes"));
+    }
+    Ok(value)
+}
+
+/// One stored output item's bytes as the whole decode reads one output element: the same value
+/// decode and the same check.
+fn decode_output_item(bytes: &[u8]) -> Result<CodeRunRawOutput> {
+    let output = decode_raw_output(&item_value(bytes)?)?;
+    validate_raw_output(&output)?;
+    Ok(output)
+}
+
+/// `run`'s replay outputs, if present, without reading the other families.
+///
+/// # Errors
+///
+/// Storage errors, `ResponseErased` for a retired marker, and a row that does not decode.
+pub(crate) fn present_outputs(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<Vec<CodeRunRawOutput>>> {
+    let Some(row) = present_row(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    match row {
+        PresentRow::Head(head) => {
+            let items = family_items(dbs, txn, run, ReplayFamily::Outputs, head.counts[2])?;
+            items
+                .iter()
+                .map(|bytes| decode_output_item(bytes))
+                .collect::<Result<Vec<_>>>()
+                .map(Some)
+        }
+        PresentRow::Whole(record) => Ok(Some(record.outputs)),
+    }
+}
+
+/// One stored bridge-call item's bytes as the whole decode reads one bridge call: the same value
+/// decode and the same check.
+fn decode_bridge_call_item(bytes: &[u8]) -> Result<CodeRunBridgeCall> {
+    let call = decode_bridge_call(&item_value(bytes)?)?;
+    validate_bridge_call(&call)?;
+    Ok(call)
+}
+
+/// `run`'s replay bridge calls, if present, without reading the other families.
+///
+/// # Errors
+///
+/// Storage errors, `ResponseErased` for a retired marker, and a row that does not decode.
+pub(crate) fn present_bridge_calls(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<Vec<CodeRunBridgeCall>>> {
+    let Some(row) = present_row(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    match row {
+        PresentRow::Head(head) => {
+            let items = family_items(dbs, txn, run, ReplayFamily::BridgeCalls, head.counts[0])?;
+            items
+                .iter()
+                .map(|bytes| decode_bridge_call_item(bytes))
+                .collect::<Result<Vec<_>>>()
+                .map(Some)
+        }
+        PresentRow::Whole(record) => Ok(Some(record.bridge_calls)),
     }
 }
 
@@ -910,13 +1066,7 @@ pub(crate) fn put_append(
         let Some(stored_bytes) = ITEMS.get_bytes(dbs, wtxn, &key)? else {
             return Err(Error::CorruptedIndex("code-run replay item index"));
         };
-        let mut cursor = stored_bytes.as_slice();
-        let value = rmpv::decode::read_value(&mut cursor)
-            .map_err(|_| Error::CorruptedIndex("code-run replay item bytes"))?;
-        if !cursor.is_empty() {
-            return Err(Error::CorruptedIndex("code-run replay item bytes"));
-        }
-        let mut kept = decode_bridge_call(&value)?;
+        let mut kept = decode_bridge_call(&item_value(&stored_bytes)?)?;
         if let Some(rows) = wait_rows(&call.outcome) {
             keep_wait_rows(&mut kept.outcome, &rows);
         }

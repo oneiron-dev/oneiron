@@ -705,11 +705,11 @@ impl<'a> HostSelfDispatcher<'a> {
         // again; a later distinct void has a higher generation and re-wakes.
         let mut observed = 0;
         if let Some(run_id) = run_id
-            && let Some(record) = vault.get_code_run_replay_record(&run_id)?
+            && let Some(calls) = vault.code_run_replay_bridge_calls(&run_id)?
         {
             let request =
                 super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
-            for call in &record.bridge_calls {
+            for call in &calls {
                 // Observed generations are an outcome fact of the dispatched
                 // wait: compare against the effective request (FIX 1442), by
                 // its identity once an erase took its words (FIX 6534).

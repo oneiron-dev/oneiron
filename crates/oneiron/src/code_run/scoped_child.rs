@@ -435,10 +435,9 @@ impl ScopedChildCallContext<'_, '_> {
         }
         let storage = &self.dispatcher.storage;
         let Some(output) = storage
-            .get_code_run_replay_record(&source.owner)?
-            .and_then(|record| {
-                record
-                    .outputs
+            .code_run_replay_outputs(&source.owner)?
+            .and_then(|outputs| {
+                outputs
                     .into_iter()
                     .find(|output| output.path == source.path && output.handle == source.handle)
             })

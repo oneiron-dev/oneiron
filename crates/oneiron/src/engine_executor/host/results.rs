@@ -773,12 +773,9 @@ pub(super) fn recorded_output(
     path: &str,
     handle: &str,
 ) -> Result<Option<CodeRunRawOutput>> {
-    Ok(storage
-        .get_code_run_replay_record(&run)?
-        .and_then(|record| {
-            record
-                .outputs
-                .into_iter()
-                .find(|output| output.path == path && output.handle == handle)
-        }))
+    Ok(storage.code_run_replay_outputs(&run)?.and_then(|outputs| {
+        outputs
+            .into_iter()
+            .find(|output| output.path == path && output.handle == handle)
+    }))
 }

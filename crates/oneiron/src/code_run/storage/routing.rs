@@ -638,6 +638,39 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// The step checkpoints `run_id`'s replay record holds, if present: the narrow count on the
+    /// canonical vault, the composed record's count on a session.
+    pub(crate) fn code_run_replay_checkpoint_count(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<u64>> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_replay_checkpoint_count(run_id),
+            Self::Session(binding) => {
+                let Some(record) = binding.get_replay_record(run_id)? else {
+                    return Ok(None);
+                };
+                Ok(Some(u64::try_from(record.step_checkpoints.len()).map_err(
+                    |_| crate::Error::ArithmeticOverflow("code-run replay count"),
+                )?))
+            }
+        }
+    }
+
+    /// The outputs `run_id`'s replay record holds, if present: the narrow read on the canonical
+    /// vault, the composed record's outputs on a session.
+    pub(crate) fn code_run_replay_outputs(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunRawOutput>>> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_replay_outputs(run_id),
+            Self::Session(binding) => Ok(binding
+                .get_replay_record(run_id)?
+                .map(|record| record.outputs)),
+        }
+    }
+
     /// Compare-and-puts a replay append on the run's route, with no heal tally.
     pub(crate) fn put_code_run_replay_record_if_generation(
         &self,
