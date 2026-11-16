@@ -525,8 +525,8 @@ fn a_held_lane_narrows_as_its_holders_grants_are_revoked() {
 }
 
 /// FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS (RULING GRANT-COMBINE Q1 = A): a lane
-/// held past a revoke stops listing, and walking into, the revoked Grant's
-/// world. The key it was built with still names both Grants' worlds; the
+/// held past a revoke stops listing the revoked Grant's world (the listing
+/// and a walk into a world ask the same `world_visible`). The key it was built with still names both Grants' worlds; the
 /// listing judges the holder's Grants that stand in its own snapshot.
 #[test]
 fn a_held_lane_stops_listing_a_revoked_grants_world() {

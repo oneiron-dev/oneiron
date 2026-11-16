@@ -543,7 +543,13 @@ impl ScopedRead<'_> {
             // One agent Grant alone must hold it too (FIX
             // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
             return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling())
-                && self.one_grant_alternative_holds_shell_in(txn, id, raw, &position)?);
+                && self.one_grant_alternative_holds_shell_in(
+                    txn,
+                    &super::access_gate::HeldAuthority::for_request(None),
+                    id,
+                    raw,
+                    &position,
+                )?);
         }
         let kept = match self.session_view {
             Some(view) => scope_for_blob(view, txn, *id, raw)?,
@@ -557,7 +563,12 @@ impl ScopedRead<'_> {
         });
         Ok(
             crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &position)
-                && self.one_grant_alternative_admits_record_in(txn, policy, &position)?,
+                && self.one_grant_alternative_admits_record_in(
+                    txn,
+                    &super::access_gate::HeldAuthority::for_request(None),
+                    policy,
+                    &position,
+                )?,
         )
     }
 

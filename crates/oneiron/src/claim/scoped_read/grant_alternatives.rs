@@ -91,20 +91,28 @@ impl ScopedRead<'_> {
     /// position here; one bound by no standing Grant, none. The key's world
     /// ceiling is the caller's to check.
     ///
+    /// The holder's Grants are read once per serving txn in `authority`, as
+    /// the row gate reads them.
+    ///
     /// # Errors
     /// `holds`'s, or a store, fold or clock failure reading the holder's
     /// Grants.
     fn one_grant_alternative_holds_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
         mut holds: impl FnMut(&Scope) -> Result<bool>,
     ) -> Result<bool> {
         let standing = self
             .actor_key
             .agent_grant_holder()
-            .map(|holder| self.vault.agent_grant_read_bounds_in_txn(rtxn, holder))
-            .transpose()?
-            .flatten();
+            .map(|holder| {
+                authority.grants().bounds_of(holder, || {
+                    self.vault.agent_grant_read_bounds_in_txn(rtxn, holder)
+                })
+            })
+            .transpose()?;
+        let standing = standing.as_deref().and_then(|bounds| bounds.as_deref());
         let kept = self.actor_key.grant_alternatives();
         if kept.is_none() && standing.is_none() {
             return Ok(true);
@@ -129,7 +137,7 @@ impl ScopedRead<'_> {
             .authority_scope()
             .cloned()
             .unwrap_or_else(Scope::top);
-        for bound in &standing {
+        for bound in standing {
             if holds(&ScopedReadActorKey::read_authority(&own.meet(bound)))? {
                 return Ok(true);
             }
@@ -151,9 +159,11 @@ impl ScopedRead<'_> {
         world: Option<EntityId>,
     ) -> Result<bool> {
         let position = super::actor_key::record_world_scope(world);
-        self.one_grant_alternative_holds_in(rtxn, |alternative| {
-            Ok(holds_world(&position, alternative))
-        })
+        self.one_grant_alternative_holds_in(
+            rtxn,
+            &HeldAuthority::for_request(None),
+            |alternative| Ok(holds_world(&position, alternative)),
+        )
     }
 
     /// Whether one Grant alone holds the deleted shell `raw` of `id` at the
@@ -165,11 +175,12 @@ impl ScopedRead<'_> {
     pub(super) fn one_grant_alternative_holds_shell_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
         id: &EntityId,
         raw: &[u8],
         position: &Scope,
     ) -> Result<bool> {
-        self.one_grant_alternative_holds_in(rtxn, |alternative| {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
             if !holds_world(position, alternative) {
                 return Ok(false);
             }
@@ -190,23 +201,46 @@ impl ScopedRead<'_> {
     }
 
     /// Whether one Grant alone admits a read of the record position `record`
-    /// under `policy`, as a proof of that Grant would: a deleted TASK's kept
-    /// stamp, a kept loop decision's position, or every position at once for
-    /// deletion metadata.
+    /// under `policy`, as a proof of that Grant would at the record door: a
+    /// deleted TASK's kept stamp, a kept loop decision's position with no
+    /// claim, or every position at once for deletion metadata.
     ///
     /// # Errors
     /// A store, fold or clock failure reading the holder's Grants.
     pub(super) fn one_grant_alternative_admits_record_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
         policy: &crate::gate::PolicyManifestResolution,
         record: &Scope,
     ) -> Result<bool> {
-        self.one_grant_alternative_holds_in(rtxn, |alternative| {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
             Ok(crate::gate::scoped_read_record_allowed_with_scope(
                 policy,
                 &self.actor_key,
                 record,
+                Some(alternative),
+            ))
+        })
+    }
+
+    /// [`Self::one_grant_alternative_admits_record_in`] at the claim door: a
+    /// kept loop decision's claim `view`, judged as its base check judges it.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure reading the holder's Grants.
+    pub(super) fn one_grant_alternative_admits_claim_view_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+        policy: &crate::gate::PolicyManifestResolution,
+        view: &crate::gate::ClaimReadView<'_>,
+    ) -> Result<bool> {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            Ok(crate::gate::scoped_read_claim_view_allowed(
+                policy,
+                &self.actor_key,
+                view,
                 Some(alternative),
             ))
         })
