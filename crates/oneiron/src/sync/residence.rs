@@ -24,11 +24,13 @@ mod kit_fetch;
 mod machine_history;
 mod pad_custody;
 mod policy;
+mod predict;
 mod prune;
 mod publication_access;
 mod recall_scope;
 mod sealed_updates;
 mod search;
+mod secret_same_value;
 mod window_index;
 mod world_base_rows;
 mod world_eviction;
@@ -92,7 +94,8 @@ pub use custody::{
 };
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
-    finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
+    directive_states_in_txn, finish_residence_directive_in_txn, pending_residence_directives,
+    residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
@@ -123,6 +126,9 @@ pub use policy::{
 pub(crate) use policy::{
     device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
+pub use predict::PredictedResidenceAnswer;
+#[cfg(oneiron_test_support)]
+pub(crate) use predict::WithholdingNodes;
 pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
@@ -145,6 +151,7 @@ pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,
 };
+pub use secret_same_value::secret_same_value_residence_exchange;
 pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
