@@ -169,6 +169,15 @@ impl GrantLines {
     pub(super) fn end(&mut self, grant: EntityId, hash: AuthorityEntryHash) {
         self.ends.entry(grant).or_default().insert(hash);
     }
+
+    /// The Grants the counted act `hash` ended.
+    pub(super) fn ended_by(&self, hash: &AuthorityEntryHash) -> BTreeSet<EntityId> {
+        self.ends
+            .iter()
+            .filter(|(_, ends)| ends.contains(hash))
+            .map(|(grant, _)| *grant)
+            .collect()
+    }
 }
 
 /// What the counted acts say of one Grant, as this install counts them.

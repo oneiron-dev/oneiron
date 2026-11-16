@@ -16,8 +16,7 @@ use super::*;
 /// root request or the owner's cancel of
 /// one ([`closes_root_work`], FIX 5584), nor a root request's result
 /// ([`answers_root_work`], FIX 5649), nor an act that gives or ends a Grant
-/// on its grant line (pass 28 R1): the owner's agent Grant mint or revoke, a
-/// slip grant revoke and a membership execution record. An end lost with an
+/// on its grant line ([`on_grant_line`], pass 28 R1). An end lost with an
 /// unrelated row would let the Grant's row stand again, and a giving lost so
 /// would take an honest Grant away. `kind_of` reads the kind of the owner
 /// work request signed as a hash from the request's own row, where the fold
@@ -40,10 +39,23 @@ pub(super) fn refolds(
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::PolicySettingSet(_)
-                | AuthorityOp::AgentGrantAct(_)
-                | AuthorityOp::SlipGrantRevoke { .. }
-                | AuthorityOp::MembershipExecution(_)
         )
+        || on_grant_line(op)
+}
+
+/// An act that gives or ends a Grant on its grant line (pass 28 R1): the
+/// owner's agent Grant mint or revoke, a slip grant revoke and a membership
+/// execution record. Folded again, it folds before the rows crossed above
+/// it, as a root request does, so a giving or end above it there reads it: a
+/// stand-in built without it would leave a later giving on the same Grant
+/// beside it, unordered, and the Grant would stand on neither.
+fn on_grant_line(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::AgentGrantAct(_)
+            | AuthorityOp::SlipGrantRevoke { .. }
+            | AuthorityOp::MembershipExecution(_)
+    )
 }
 
 /// A root request, or the owner's cancel of one (CALLS "FIX 5584 refold
@@ -103,7 +115,7 @@ pub(super) fn carried_request_kind(
 /// signed on the crossed row's parents instead (Wonder P2 round 2, W1). A
 /// root request, cancel or root request's result folded again folds before
 /// the rows crossed above it, so what descends from it reads it (FIX 5584,
-/// 5649).
+/// 5649), and so does an act on a grant line (pass 28 R1).
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -161,9 +173,12 @@ pub(super) fn refold_world_edits(
         // standing-in states, before any row crossed above it: a cancel or
         // newer request there so finds the request it closes (FIX 5584), and
         // a request recovered here keeps the result recovered after it (FIX
-        // 5649). One that does not fold stands for its parents' merge, as
-        // every other crossed row does.
-        if (closes_root_work(&entry.op) || answers_root_work(&entry.op, kind_of))
+        // 5649). So does an act on a grant line ([`on_grant_line`]). One
+        // that does not fold stands for its parents' merge, as every other
+        // crossed row does.
+        if (closes_root_work(&entry.op)
+            || answers_root_work(&entry.op, kind_of)
+            || on_grant_line(&entry.op))
             && selected.contains(&hash)
         {
             let parents = parent_states(entry, states, &stand_ins);
