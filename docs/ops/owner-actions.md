@@ -464,6 +464,13 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Its conversations come back as your own words. An archive of words you and your companion did not
+speak imports with `--speakers foreign` (`ArchiveSpeakers::Foreign`, through
+`Vault::import_whole_vault_archive_from_with_speakers`): each user, companion or
+assistant message and turn lands as a counterparty's, its original author kept beside it, and
+system notices stay. Each message, turn and conversation it lands is marked foreign, so none of it
+ever counts as your own history. An archive imported again takes the choice it was imported with;
+the other is refused.
 The Owner's whole-vault export keeps credentials, those in skill source files and in JSON bodies
 included; scoped and contact exports null them. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
@@ -1467,6 +1474,12 @@ with other people only their own messages drop. Agents' own work always counts. 
 does not allow opt-outs the `PUT` is refused (409, "this vault does not allow opt-outs") and a
 choice already made is kept but ignored.
 
+Leaving their messages out works from any machine. Letting them back in (`"leave_out": false`)
+widens what is shared, so the vault asks for more: once the vault holds an owner key, a machine
+that is not the owner's and holds no owner key refuses it (409, state `owner_key_required`) and
+stores nothing; the person makes that choice on an owner device. A vault with no owner key takes
+it from any machine, as before.
+
 Turning the setting off, or opting out, stops new sharing: held offers are refused at release, and
 nothing already shared is withdrawn; it follows the intake's retention. A deleted conversation or
 message, a world turned private and a person's erasure still withdraw what was shared.
@@ -1991,6 +2004,33 @@ on.
 A request with no editor token, from a client that is not this page, keeps
 the old public bounds: 3 MiB layouts, 16 MiB PDFs, and two free slots with
 60 requests a minute, else 429.
+
+## A signer's session
+
+A signing invitation is a reusable link, `/sign#<capability>`. When the signer opens it,
+the page removes the capability from the address bar and trades it once at
+`POST /sign/exchange` for a single-use exchange. A form POST to `/sign/session` uses that
+exchange at once and opens a signing session: a cookie (`oneiron-sign-session-<ceremony>`,
+Secure, HttpOnly, SameSite=Strict, path `/sign`) that the page itself cannot read, and the
+page lands at `/sign?ceremony=<ceremony>`. The ceremony id comes from the link and grants
+nothing on its own. Every later call of the ceremony names it and carries only that
+cookie, so a page acts only on the document it shows, even when the signer opens another
+invitation in another tab. The link's signing window, its token cap and its
+revocation still apply on every call. A browser keeps a Secure cookie only over HTTPS (or on
+`localhost`), so serve the signing page over HTTPS.
+
+Opening the link again, in another tab or on another device, opens a new session and ends
+the earlier one. The server keeps sessions in memory, so a restart ends them all; the signer
+reopens the link. A session ends when its link's signing window closes, and the server
+drops a session that has ended even if the signer never comes back. Ending a session never
+ends the link. Set the lifetimes in `[limits]`:
+
+```toml
+[limits]
+esign_exchange_seconds = 120            # an exchange not used by then opens nothing
+# esign_session_idle_seconds = 1800     # unset: no idle end of its own
+# esign_session_absolute_seconds = 43200 # unset: no absolute end of its own
+```
 
 ## The vault key on a new host
 

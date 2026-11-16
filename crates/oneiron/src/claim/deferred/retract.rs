@@ -8,7 +8,7 @@
 use super::{DEFERRED, DeferredAction, DeferredClaim, Parker, body_hash, park};
 use crate::error::GateError;
 use crate::gate::PolicyCriticality;
-use crate::store::GateDecisionId;
+use crate::store::{GateDecisionId, ReceiptActor};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// What an author's retract of its own claim did.
@@ -118,8 +118,7 @@ impl Vault {
                 == PolicyCriticality::Critical,
         };
         let parker = Parker {
-            actor_class: author.actor_class().gate_actor_class().to_owned(),
-            actor_ref: Some(author.entity_ref().to_hex()),
+            actor: ReceiptActor::Row(author),
             run: None,
             created_at: now,
         };

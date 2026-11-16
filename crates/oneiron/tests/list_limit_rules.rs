@@ -144,7 +144,9 @@ fn owner_key(vault: &Vault) -> Result<ScopedReadActorKey, Box<dyn std::error::Er
     let challenge = b"list-limit-rules";
     let proof = issuer.binding_proof(&slip, challenge)?;
     let verified = vault.verify_capability_slip(&issuer.public_key(), &slip, challenge, &proof)?;
-    Ok(ScopedReadActorKey::from_verified_slip(&verified)?)
+    let key = ScopedReadActorKey::from_verified_slip(&verified)
+        .ok_or("the owner slip grants no read verb")?;
+    Ok(key)
 }
 
 fn changes_from(start: FeedStart) -> FeedSubscribeRequest {

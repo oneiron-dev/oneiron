@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 
 pub(super) use super::entry_transition_predicates::{
-    active_participant_keys, entry_is_retired, has_authority_consent, lands_restriction_only,
-    op_is_retired_device_op,
+    active_participant_keys, changes_roster, entry_is_retired, floor_refuses,
+    has_authority_consent, lands_restriction_only, op_is_retired_device_op,
 };
 
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
@@ -67,7 +67,10 @@ pub(super) fn fold_entry_state(
     // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_fold::NoVouch`).
+    // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
+    // refuses a roster row, which vouches for its own signer's rows below it
+    // that a floor refuses (`changes_roster`, `floor_refuses`); its signer's
+    // own order binds it below.
     let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
@@ -75,7 +78,7 @@ pub(super) fn fold_entry_state(
     let vouched = context
         .floor_vouched
         .is_some_and(|vouched| vouched.contains(&hash));
-    if past_floor && !vouched && !lands_restriction_only(&entry.op) {
+    if past_floor && !vouched && floor_refuses(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     let restriction_only = lands_restriction_only(&entry.op)
@@ -133,6 +136,7 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            held_machine_answers: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
@@ -152,6 +156,7 @@ pub(super) fn fold_entry_state(
             refused_export_acts: BTreeSet::new(),
             agent_carried_acts: BTreeMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
+            full_copy_mark: super::full_copy_mark::FullCopyMarkState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -455,6 +460,21 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // A machine's full-copy mark, signed by its own install key the same
+    // way, with no owner act: it states what the machine holds (L7-47).
+    if let AuthorityOp::FullCopyMark(mark) = &entry.op {
+        if let Err(issue) = super::full_copy_mark::apply_full_copy_mark(
+            &mut state,
+            entry,
+            mark,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // The owner's enrollment of a device's own owner signing key: an owner
     // root signs it and his act's carrier cosigns it (FIX 4920), so its own
     // judge reads the roster before the generic participant rule.
@@ -689,6 +709,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
