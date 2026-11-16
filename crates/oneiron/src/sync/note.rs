@@ -30,10 +30,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::deletion::window_document_format::FORMAT_KEY;
 const FORMAT: &[u8] = b"proposal-values-v3";
-/// The explainer a bundle that lost a member keeps, as the erase leaves it:
-/// it can quote what left.
-const REDACTED: &str = "redacted";
-const MAPS: [&str; 5] = [
+#[doc(hidden)]
+use oneiron_records::sync::note::REDACTED;
+
+pub(in crate::sync) const MAPS: [&str; 5] = [
     "documents",
     "document_heads",
     "head_move_receipts",

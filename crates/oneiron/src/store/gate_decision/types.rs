@@ -6,6 +6,7 @@ pub use oneiron_store::gate_decision::types::*;
 use super::context::GateDecisionContext;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::side_table::SideKey;
+use crate::store::gate_reason::GateReceiptOutcome;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -38,6 +39,19 @@ pub struct GateDecisionRecord {
     /// is the only writer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redacted_at: Option<u64>,
+}
+
+impl GateDecisionRecord {
+    /// The outcome this row records, read through the one table
+    /// (`GateReceiptOutcome::from_stored`, by this row's `content_kind`): a
+    /// closed word as written, a word written before UC-03 stage 1f as its
+    /// writer's closed word, `None` only for a word in neither table. Readers
+    /// match it with no wildcard arm. The stored field stays a string until
+    /// the launch reset (UC-03 2-1b).
+    #[must_use]
+    pub fn gate_outcome(&self) -> Option<GateReceiptOutcome> {
+        GateReceiptOutcome::from_stored(&self.outcome, &self.content_kind)
+    }
 }
 
 /// Private TXN1 recovery data for a deletion authority record. The target and
