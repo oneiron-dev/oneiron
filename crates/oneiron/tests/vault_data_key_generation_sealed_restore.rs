@@ -51,7 +51,7 @@ fn a_copy_restored_beside_after_an_uncommitted_act_reopens_under_its_own_mirror(
     let mut config = VaultConfig::device();
     config.page_seal = Some(live_seal.clone());
     let vault = Vault::open(&path, config).expect("reopen the sealed vault");
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
     let checkpoint = directory.path().join("checkpoint");
     vault
         .snapshot_checkpoint(&checkpoint, 100)
