@@ -140,7 +140,7 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
-        let authored = authored_fallback(response);
+        let authored = authored_fallback(response) || wire::is_relation_reply(response);
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
