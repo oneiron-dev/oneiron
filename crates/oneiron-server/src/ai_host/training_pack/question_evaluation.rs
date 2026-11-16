@@ -11,7 +11,7 @@ use oneiron::{Error, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::oneironer::QuestionHead;
+use crate::oneironer::{QuestionHead, training_pin};
 
 pub(super) mod calibration;
 
@@ -223,11 +223,11 @@ pub(super) fn evaluate(
         confusion[usize::from(answer)][usize::from(prediction.yes())] += 1;
         probabilities.push((probability, answer));
         uncalibrated.push((calibration::yes_probability(raw, 1.0), answer));
-        let bytes = oneiron::llm::canonical_json_bytes(&row.input)
-            .map_err(|_| invalid("question input could not be encoded"))?;
+        let input_blake3 =
+            training_pin(&row.input).map_err(|_| invalid("question input could not be encoded"))?;
         cases.push(CaseLog {
             row: row.row,
-            input_blake3: *blake3::hash(&bytes).as_bytes(),
+            input_blake3,
             answer: row.label.answer,
             prediction,
             logits: raw,

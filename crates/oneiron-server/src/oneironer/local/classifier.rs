@@ -4,7 +4,8 @@
 use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::{Linear, VarBuilder, linear};
 use oneiron::training_pack::{CheckpointFileKind, CheckpointUpload, QuestionTarget};
-use serde::Deserialize;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
@@ -106,9 +107,22 @@ impl QuestionTokenizer {
         input: &Value,
     ) -> anyhow::Result<[u8; 32]> {
         let windows = self.windows(&question.render_target_text(input)?)?;
-        let bytes = oneiron::llm::canonical_json_bytes(&windows)?;
-        Ok(*blake3::hash(&bytes).as_bytes())
+        Ok(training_pin(&windows)?)
     }
+}
+
+/// A training pin taken again on the server: plain BLAKE3 of the value's sorted JSON,
+/// under the vault's own purpose (`purposes::training_pack::PIN`), which the Python
+/// worker's `_digest` takes too. A question's definition, a probe's token windows and a
+/// held-out case's input are pinned so, and a target, a run's export check and a
+/// verifier log keep the pins, so it keeps its bytes (K, PLAN-UC-04 stage 6.4c). Each
+/// value is JSON or token ids, which hold no NaN or infinity, so none needs the vault's
+/// refusal of one.
+pub(crate) fn training_pin(value: &impl Serialize) -> serde_json::Result<[u8; 32]> {
+    let bytes = oneiron::llm::canonical_json_bytes(value)?;
+    Ok(LegacyDigest::new(purposes::training_pack::PIN)
+        .raw(&bytes)
+        .finish())
 }
 
 #[derive(Deserialize)]
@@ -166,12 +180,12 @@ impl QuestionHead {
             "renderer": question.renderer,
             "output_model": question.output_model,
         });
-        let definition = oneiron::llm::canonical_json_bytes(&question.definition)?;
+        let definition_pin = training_pin(&question.definition)?;
         anyhow::ensure!(
             export.model == question.output_model
                 && manifest.model == question.output_model.as_str()
                 && manifest.target == target
-                && blake3::hash(&definition).as_bytes() == &question.definition_blake3
+                && definition_pin == question.definition_blake3
                 && manifest.format == CLASSIFIER_FORMAT
                 && manifest.recipe == RECIPE
                 && manifest.renderer == oneiron::training_pack::QUESTION_RENDERER

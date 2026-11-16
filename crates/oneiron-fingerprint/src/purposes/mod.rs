@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { broker, drafter, skill, testing, training_pack, web_fetch }
+areas! { broker, drafter, mcp, meeting_audio, skill, testing, training_pack, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

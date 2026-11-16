@@ -31,6 +31,8 @@ use crate::owner::{hooked_row, imports, local_owner, memory_refusal, note_import
 
 mod control_commands;
 mod meeting_audio;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::meeting_audio::digest_for_test as meeting_audio_digest_for_test;
 pub use self::meeting_audio::{MeetingTranscriptArgs, meeting_transcript};
 mod doctor;
 mod pack_commands;

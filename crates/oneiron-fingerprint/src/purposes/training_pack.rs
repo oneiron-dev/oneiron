@@ -5,6 +5,11 @@
 //! and role swaps store the pins; dispatch, completion and promotion compare them; and the
 //! Python training worker (`scripts/training_pack/worker.py`) takes the definition,
 //! load-set and probe pins again. So they keep their bytes (K, PLAN-UC-04 stage 6.4a).
+//!
+//! The server takes three of them again under the same purpose (`oneironer::training_pin`,
+//! stage 6.4c): its question-head loader checks a target's definition pin, its parity
+//! check reproduces a probe's token pin, and its held-out evaluation pins each case's
+//! input for the verifier log.
 
 purposes! {}
 

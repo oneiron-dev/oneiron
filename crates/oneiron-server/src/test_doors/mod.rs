@@ -8,6 +8,7 @@ pub mod big_rung;
 pub mod booking_turn_line;
 pub mod build_server;
 pub mod coach_round;
+pub mod fingerprint_keep_server_json_digests;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lfs_install_line;

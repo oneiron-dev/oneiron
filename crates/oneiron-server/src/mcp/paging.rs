@@ -3,6 +3,7 @@
 use super::endpoint_args::McpPageRequest;
 use super::surface::{MCP_PAGE_ITEM_CAP, MCP_RESULT_TTL_MS};
 use oneiron::context_board::BoardStreamFrame;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
@@ -485,7 +486,9 @@ pub fn mcp_canonical_json(value: &Value) -> String {
 /// mechanics, not producer-query identity: a continuation may omit `page`, use
 /// a different limit, or add its cursor without changing the bound arguments.
 /// Nested objects are recursively canonicalized before hashing, so insertion
-/// order is not an identity axis.
+/// order is not an identity axis. The server keeps the digest with each
+/// continuable page and mints its cursor over it, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 6.4c).
 #[must_use]
 pub fn mcp_page_argument_digest<T: Serialize>(arguments: &T) -> [u8; 32] {
     let mut value =
@@ -494,11 +497,10 @@ pub fn mcp_page_argument_digest<T: Serialize>(arguments: &T) -> [u8; 32] {
         object.remove("page");
     }
     let canonical = mcp_canonical_json(&value);
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.mcp.page-arguments.v2");
-    hasher.update(&(canonical.len() as u64).to_be_bytes());
-    hasher.update(canonical.as_bytes());
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::mcp::PAGE_ARGUMENTS)
+        .len_u64_be(canonical.len())
+        .raw(canonical.as_bytes())
+        .finish()
 }
 
 /// [`mcp_page_argument_digest`] of a generated verb call whose
@@ -525,8 +527,11 @@ pub(crate) fn mcp_page_argument_digest_held<T: Serialize>(
     // content's own string in its place.
     let placeholder = mcp_canonical_json(&value).len() as u64;
     let len = placeholder.saturating_sub(2).saturating_add(content_len);
+    // `purposes::mcp::PAGE_ARGUMENTS` written by hand: the content streams
+    // through the call-JSON writer, which takes a BLAKE3 hasher (PLAN-UC-04
+    // stage 7 moves the two together).
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.mcp.page-arguments.v2");
+    hasher.update(purposes::mcp::PAGE_ARGUMENTS.tag().as_bytes());
     hasher.update(&len.to_be_bytes());
     oneiron::receipt::write_call_json_with_member_path(
         &mut hasher,

@@ -158,6 +158,8 @@ mod owner;
 pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner::meeting_audio_digest_for_test;
 pub(crate) use owner::page_seal_at;
 pub use owner::reminder_route;
 pub use owner::widen_proposals;
