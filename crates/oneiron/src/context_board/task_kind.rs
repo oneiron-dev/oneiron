@@ -1,9 +1,12 @@
+use oneiron_contracts::register::Register;
+
 use crate::error::{Error, RecordError, Result};
 
 /// Shape discriminator on the typed TASK body. Absent on a schema-v1 row,
 /// where it means [`TaskKind::Standard`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("task.kind")]
 pub enum TaskKind {
     Standard,
     Consult,
@@ -11,16 +14,6 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    /// Stable wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::Consult => "consult",
-            Self::Reconciliation => "reconciliation",
-        }
-    }
-
     /// The OF-543 seed-type hint this shape contributes to placement. A
     /// hint only: placement (`crate::task_type`) makes the one call, and a
     /// standard task carries no hint.
@@ -34,13 +27,7 @@ impl TaskKind {
     }
 
     pub(crate) fn from_token(token: &str) -> Result<Self> {
-        match token {
-            "standard" => Ok(Self::Standard),
-            "consult" => Ok(Self::Consult),
-            "reconciliation" => Ok(Self::Reconciliation),
-            _ => Err(Error::Record(RecordError::InvalidTaskBody(
-                "tasks.body.kind",
-            ))),
-        }
+        <Self as Register>::named(token)
+            .ok_or_else(|| Error::Record(RecordError::InvalidTaskBody("tasks.body.kind")))
     }
 }

@@ -304,13 +304,13 @@ impl Memory<'_> {
                 "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
             ));
         }
-        // A consult past its deadline is the expiry sweep's to settle, even
+        // A consult at or past its deadline is the expiry sweep's to settle, even
         // before the sweep has run: the engine's clock decides, never the
         // reported completion time. An identical replay was answered above.
         if consult_kind.is_some()
             && body
                 .ttl
-                .is_some_and(|ttl| ttl.deadline_at < self.vault().store.clock.now_recorded_at())
+                .is_some_and(|ttl| ttl.deadline_at <= self.vault().store.clock.now_recorded_at())
         {
             return Err(consult_refusal(
                 MEMORY_CODE_INVALID_STATE,
@@ -448,10 +448,12 @@ impl Memory<'_> {
         ) {
             return answer;
         }
-        // The owner proof the host bound for a direct request. An attendee
-        // ask admits a word, and cuts on it, only under that proof; every
-        // other ask ignores it.
-        let owner = self.answer_owner_proof();
+        // The owner proof the host bound for a direct request, or on an
+        // owner-device surface the one this install's owner key mints for
+        // this word. An attendee ask admits a word, and cuts on it, only
+        // under that proof; every other ask ignores it.
+        let owner = self.word_owner_proof()?;
+        let owner = owner.as_deref();
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = self
                 .ask_group_named_in(txn, handle.group_ref)?
@@ -497,6 +499,52 @@ impl Memory<'_> {
         Ok(answer)
     }
 
+    /// Admits `word` on `handle`'s ask and completes the addressed member,
+    /// exactly as [`Self::tasks_answer`] does, but settles nothing: the ask
+    /// waits for a later cut. Test door only
+    /// (`test_doors::ask_answer_proof::admit_word_unsettled`): it pins that a
+    /// first-word cut of an ask that asks one party needs that party's proof
+    /// in the cutting transaction. No verb-hook session answers here, and no
+    /// peer-result signal is sent.
+    ///
+    /// # Errors
+    ///
+    /// The admission's, as `tasks_answer` answers it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn admit_ask_word_unsettled(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+    ) -> MemoryResult<super::TaskAskAnswer> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .admit_ask_word_unsettled(handle, word);
+        }
+        self.require_answers_in_own_name()?;
+        let owner = self.answer_owner_proof();
+        self.with_verified_actor_write_txn(|txn| {
+            let group = self
+                .ask_group_named_in(txn, handle.group_ref)?
+                .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+            let now = self.vault().store.clock.now_recorded_at();
+            let answer = super::ask_record::admit_word(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                &group,
+                self.write_actor(),
+                word,
+                owner,
+                now,
+            )?;
+            if word.inform_for.is_none() && word.companion_for.is_none() {
+                complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
+            }
+            Ok(answer)
+        })
+    }
+
     /// The checks [`Self::tasks_answer`] meets before it records `word`, in
     /// one read transaction: nothing is recorded, no member completes and no
     /// ask settles. `Ok(false)` for an ask a verb hook's session holds, which
@@ -516,6 +564,7 @@ impl Memory<'_> {
         {
             return Ok(false);
         }
+        let owner = self.word_owner_proof()?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         self.verify_actor_write_in_txn(&txn)?;
         let group = self
@@ -528,7 +577,7 @@ impl Memory<'_> {
             &group,
             self.write_actor(),
             word,
-            self.answer_owner_proof(),
+            owner.as_deref(),
             self.vault().store.clock.now_recorded_at(),
         )?;
         Ok(true)
@@ -558,9 +607,9 @@ pub(super) fn complete_ask_member_in_txn(
     now: u64,
 ) -> MemoryResult<()> {
     let mut body = consult_body_in_txn(vault, txn, answer.task_ref)?;
-    // A member consult past its deadline on the engine clock is the expiry
+    // A member consult at or past its deadline on the engine clock is the expiry
     // sweep's to settle. The word still counts under the ask's own cutoff.
-    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at < now);
+    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at <= now);
     if !overdue && body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
         body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
