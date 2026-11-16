@@ -3,7 +3,7 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v34 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
+/// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
 /// stored authority-log rows keep their bytes and can change meaning. A
 /// row's sequence floor comes from its signer's rows in its scope, not from
 /// the order they arrived in, and no row is refused for its floor: a granting
@@ -13,6 +13,15 @@ pub const MAX_DBS: u32 = 32;
 /// before it no longer decodes (the authority fold schema moves with it). No
 /// old-meaning reader or migration is provided (the lead's M-1 stored-change
 /// rule, path "loud").
+///
+/// v34 (row HOSTED-ROOT-REVOKES-OWNER-KEY): stored authority-log rows keep
+/// their bytes and change meaning. A `RevokeDevice` of an owner key counts
+/// only with an owner key's proof, as its signer or a cosign, so a revoke the
+/// custodial root signed alone (a hosted membership move's, or one written by
+/// hand) is refused, the key stays live, and every row above the revoke is
+/// refused with it (a refused revoke is no row the fold crosses). The
+/// authority fold schema moves 41 -> 42 with it. No old-meaning reader or
+/// migration is provided (the lead's M-1 stored-change rule, path "loud").
 ///
 /// v33 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
 /// authority-log rows keep their bytes and change meaning. A carried machine
@@ -185,7 +194,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 34;
+pub const STORAGE_ABI_VERSION: u16 = 35;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
