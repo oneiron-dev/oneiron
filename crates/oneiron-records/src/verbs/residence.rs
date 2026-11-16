@@ -38,16 +38,6 @@ pub enum ResidenceModeAnswer {
     Queued(ResidenceQueued),
 }
 
-/// `vault.residence.index`'s answer: the machine's thin index, or the
-/// directive queued for it. `state` says which; an applied answer carries
-/// [`ResidenceIndex`]'s fields beside it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ResidenceIndexAnswer {
-    Applied(ResidenceIndex),
-    Queued(ResidenceQueued),
-}
-
 /// `vault.residence.prune`'s answer: what the prune dropped on the
 /// machine, or the directive queued for it. `state` says which; an applied
 /// answer carries [`ResidencePruned`]'s fields beside it.
@@ -85,12 +75,6 @@ pub struct ResidenceIndexEntry {
 pub struct ResidenceIndexWindowView {
     pub window: String,
     pub items: Vec<ResidenceIndexEntry>,
-}
-
-/// The machine's thin index, window by window.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResidenceIndex {
-    pub windows: Vec<ResidenceIndexWindowView>,
 }
 
 /// What a prune dropped on the machine.

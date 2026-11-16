@@ -69,9 +69,8 @@ pub struct ResidenceWorldsRequest {
 
 #[doc(hidden)]
 pub use oneiron_records::verbs::residence::{
-    ResidenceIndex, ResidenceIndexAnswer, ResidenceIndexEntry, ResidenceIndexWindowView,
-    ResidenceModeAnswer, ResidenceModeChanged, ResidencePruneAnswer, ResidencePruned,
-    ResidenceQueued,
+    ResidenceIndexEntry, ResidenceIndexWindowView, ResidenceModeAnswer, ResidenceModeChanged,
+    ResidencePruneAnswer, ResidencePruned, ResidenceQueued,
 };
 
 /// `vault.residence.worlds`'s answer: the pick the machine follows now, or
@@ -98,6 +97,16 @@ pub struct ResidenceWorldsPicked {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ResidenceOpenAnswer {
     Applied(Box<ResidenceOpened>),
+    Queued(ResidenceQueued),
+}
+
+/// `vault.residence.index`'s answer: the machine's thin index, or the
+/// directive queued for it. `state` says which; an applied answer carries
+/// [`ResidenceIndex`]'s fields beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResidenceIndexAnswer {
+    Applied(ResidenceIndex),
     Queued(ResidenceQueued),
 }
 
@@ -161,6 +170,12 @@ impl ResidenceOpened {
             },
         }
     }
+}
+
+/// The machine's thin index, window by window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResidenceIndex {
+    pub windows: Vec<ResidenceIndexWindowView>,
 }
 
 #[cfg(feature = "sync")]
