@@ -57,7 +57,7 @@ pub(crate) use strength_observations::{
     classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
     strength_observations_page_bound,
 };
-// The integration tests' doors name a cited source's version as a caller's
-// read serves it (untangle 6.7a).
-#[cfg(oneiron_test_support)]
+// The derive Person item reads a cited TURN's text as its actor's read
+// serves it, and the integration tests' doors name a cited source's version
+// the same way (untangle 6.7a).
 pub(crate) use source_version::source_version_in_txn;
