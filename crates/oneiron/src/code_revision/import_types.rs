@@ -19,8 +19,8 @@ use crate::error::{ArtifactError, Error, Result};
 
 /// The engine-owned predicate of an import manifest.
 pub(crate) use crate::store::code_import_manifest::IMPORT_MANIFEST_PREDICATE;
-/// The engine-owned predicate of an untouched-byte import approval.
-pub(crate) const IMPORT_APPROVAL_PREDICATE: &str = "repo.import_approval";
+#[doc(hidden)]
+pub(crate) use oneiron_records::code_revision::import_types::IMPORT_APPROVAL_PREDICATE;
 
 const APPROVAL_DOMAIN: &[u8] = b"oneiron:code-import-approval:v1";
 

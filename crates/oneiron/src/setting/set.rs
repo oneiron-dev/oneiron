@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{ActSurface, Direction, Permitted};
+use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey};
 
 use super::change::record_change_in_txn;
@@ -827,31 +828,24 @@ fn check_in_scope(scope: &SettingScope) -> CheckInScope {
 
 /// The digest a proposal binds and its yes names (DESIGN 1.5, "A proposal binds what it will
 /// write"): the row's key, the value it would hold, a seed's weight, and the stored bytes of the
-/// row it replaces, so an approval spends only over the row it was asked over. BLAKE3, key
-/// derived from `oneiron setting set v2`.
+/// row it replaces, so an approval spends only over the row it was asked over. A fingerprint
+/// under [`purposes::setting::SET_EFFECT_V2`]; each optional part writes its presence first.
 fn effect_digest(change: &Change<'_>, replaced: Option<&[u8]>) -> [u8; 32] {
-    let key = change.key.encode();
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron setting set v2");
-    hasher.update(&(key.len() as u64).to_be_bytes());
-    hasher.update(&key);
+    let mut digest = Fingerprinter::new(purposes::setting::SET_EFFECT_V2);
+    digest.part(&change.key.encode());
     match change.value {
-        None => hasher.update(&[0]),
-        Some(value) => hasher
-            .update(&[1])
-            .update(&(value.0.len() as u64).to_be_bytes())
-            .update(&value.0),
+        None => digest.flag(false),
+        Some(value) => digest.flag(true).part(&value.0),
     };
-    if let Some(weight) = change.weight_runs {
-        hasher.update(&[2]).update(&weight.to_bits().to_be_bytes());
-    }
+    match change.weight_runs {
+        None => digest.flag(false),
+        Some(weight) => digest.flag(true).u64(weight.to_bits()),
+    };
     match replaced {
-        None => hasher.update(&[3, 0]),
-        Some(bytes) => hasher
-            .update(&[3, 1])
-            .update(&(bytes.len() as u64).to_be_bytes())
-            .update(bytes),
+        None => digest.flag(false),
+        Some(bytes) => digest.flag(true).part(bytes),
     };
-    *hasher.finalize().as_bytes()
+    digest.finish().into_bytes()
 }
 
 /// Opens, or finds, the check-in `agent`'s change waits on, under its own live owner Grant that

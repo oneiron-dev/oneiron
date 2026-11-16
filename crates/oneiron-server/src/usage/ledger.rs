@@ -49,7 +49,7 @@ impl UsageLedger {
                     source,
                     origin,
                     cost,
-                    recorded_at: now_secs(),
+                    recorded_at: unix_seconds_now(),
                     source_rows,
                 },
             )
@@ -70,7 +70,7 @@ impl UsageLedger {
             source,
             origin,
             cost,
-            recorded_at: now_secs(),
+            recorded_at: unix_seconds_now(),
             source_rows,
         })
     }

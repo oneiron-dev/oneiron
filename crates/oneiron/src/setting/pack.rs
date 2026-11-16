@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_contracts::fingerprint::{ContentHash, Fingerprinter, purposes};
 use oneiron_setting_contract::{ChangeDirection, Order, RowKey};
 
 use super::change::record_change_in_txn;
@@ -225,54 +226,45 @@ fn lost(spec: &SettingSpec, pack: &str) -> Result<LayerDefault> {
     })
 }
 
-/// The digest of `pack`'s defaults: the pack's name, then each key's name and default's bytes,
-/// in name order, each length-prefixed.
+/// The digest of `pack`'s defaults: a fingerprint under
+/// [`purposes::setting::PACK_DEFAULTS`] of the pack's name, the count of its defaults, then each
+/// key's name and default's bytes, in name order.
 fn defaults_digest(pack: &str, defaults: &[(&'static SettingSpec, EncodedValue)]) -> String {
     let mut sorted: Vec<&(&'static SettingSpec, EncodedValue)> = defaults.iter().collect();
     sorted.sort_by_key(|(spec, _)| spec.name);
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron setting pack defaults v1");
-    hasher
-        .update(&(pack.len() as u64).to_be_bytes())
-        .update(pack.as_bytes());
+    let mut digest = Fingerprinter::new(purposes::setting::PACK_DEFAULTS);
+    digest.part(pack.as_bytes()).u64(sorted.len() as u64);
     for (spec, value) in sorted {
-        hasher
-            .update(&(spec.name.len() as u64).to_be_bytes())
-            .update(spec.name.as_bytes())
-            .update(&(value.0.len() as u64).to_be_bytes())
-            .update(&value.0);
+        digest.part(spec.name.as_bytes()).part(&value.0);
     }
-    hasher.finalize().to_hex().to_string()
+    digest.finish().to_hex()
 }
 
-/// The digest of a stored layer row's bytes: what a proposal names as the row it replaces.
+/// The digest of a stored layer row's bytes: what a proposal names as the row it replaces. The
+/// row's content hash; the proposal binds the key beside it.
 fn row_digest(bytes: &[u8]) -> String {
-    blake3::Hasher::new_derive_key("oneiron setting pack row v1")
-        .update(bytes)
-        .finalize()
-        .to_hex()
-        .to_string()
+    ContentHash::of(bytes).to_hex()
 }
 
-/// The digest of a proposal: the pack, the defaults digest it was made under, and each waiting
-/// default with the row it replaces.
+/// The digest of a proposal: a fingerprint under [`purposes::setting::PACK_PROPOSAL`] of the
+/// pack, the defaults digest it was made under, the count of waiting defaults, then each with
+/// the row it replaces.
 fn proposal_digest(pack: &str, digest: &str, defaults: &[ProposedDefault]) -> String {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron setting pack proposal v1");
-    hasher
-        .update(&(pack.len() as u64).to_be_bytes())
-        .update(pack.as_bytes())
-        .update(digest.as_bytes());
+    let mut fingerprint = Fingerprinter::new(purposes::setting::PACK_PROPOSAL);
+    fingerprint
+        .part(pack.as_bytes())
+        .part(digest.as_bytes())
+        .u64(defaults.len() as u64);
     for proposed in defaults {
-        hasher
-            .update(&(proposed.key.len() as u64).to_be_bytes())
-            .update(proposed.key.as_bytes())
-            .update(&(proposed.value.0.len() as u64).to_be_bytes())
-            .update(&proposed.value.0);
+        fingerprint
+            .part(proposed.key.as_bytes())
+            .part(&proposed.value.0);
         match &proposed.replaced {
-            None => hasher.update(&[0]),
-            Some(replaced) => hasher.update(&[1]).update(replaced.as_bytes()),
+            None => fingerprint.flag(false),
+            Some(replaced) => fingerprint.flag(true).part(replaced.as_bytes()),
         };
     }
-    hasher.finalize().to_hex().to_string()
+    fingerprint.finish().to_hex()
 }
 
 /// Which way a pack's new default moves the layer: by the key's order, on what the layer reads

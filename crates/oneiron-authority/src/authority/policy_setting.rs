@@ -44,6 +44,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, purposes};
 use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 use rmpv::Value;
 
@@ -77,12 +78,12 @@ pub const POLICY_SETTING_INLINE_MAX: usize = MAX_PACT_SCOPE_BYTES;
 /// sorted live act hashes, in the `PolicyRevision` shape.
 pub const POLICY_SETTING_REVISION_CONTEXT: &[u8] = b"oneiron/policy-setting-revision/v1";
 
-/// BLAKE3 over a setting value's JSON bytes: an act's `prior` and `value`,
-/// and the digest its inline value must have. The one digest of a setting
-/// value every writer and check calls.
+/// The [`ContentHash`] (plain BLAKE3) of a setting value's JSON bytes: an
+/// act's `prior` and `value`, and the digest its inline value must have. The
+/// one digest of a setting value every writer and check calls.
 #[must_use]
 pub fn setting_value_digest(json: &[u8]) -> [u8; 32] {
-    *blake3::hash(json).as_bytes()
+    ContentHash::of(json).into_bytes()
 }
 
 /// A setting act's `seen` over its target's live acts, zero for a target no
@@ -125,8 +126,8 @@ pub fn policy_setting_target(setting: &str) -> Result<EntityId> {
 /// The target of an act on the row `slot` of a catalogue key (stage 7a-2):
 /// the key's [`policy_setting_target`] for its vault value row with no item,
 /// the target every act on that row has named since stage 7a-1; for any other
-/// row, BLAKE3 under a fixed context over the row's stored key
-/// ([`RowKey::encode`]), first 16 bytes. Derived from the slot alone, so
+/// row, the fingerprint of the row's stored key ([`RowKey::encode`]) under
+/// [`purposes::setting::SLOT_TARGET`], first 16 bytes. Derived from the slot alone, so
 /// every install names the same frontier for one row.
 ///
 /// # Errors
@@ -135,10 +136,8 @@ pub fn setting_slot_target(slot: &RowKey) -> Result<EntityId> {
     if is_vault_value_row(slot) {
         return policy_setting_target(&slot.name);
     }
-    let digest = blake3::derive_key("oneiron setting slot target v1", &slot.encode());
-    let mut id = [0_u8; 16];
-    id.copy_from_slice(&digest[..16]);
-    EntityId::from_bytes(id)
+    let target = Fingerprint::of_parts(purposes::setting::SLOT_TARGET, &[&slot.encode()]);
+    EntityId::from_bytes(target.prefix::<16>())
 }
 
 /// Whether `slot` is its key's vault value row with no item: the row an act
@@ -210,6 +209,11 @@ pub enum PolicySetting {
     /// The undo-send window every send waits in on each outbound channel
     /// (DEC-0006 #undo-send; REV-8 = B).
     UndoSend,
+    /// The worlds the owner grants one agent and its default among them
+    /// (ARCH-0067 #tiers; `vault.agents.worlds.set`). The act names the
+    /// setting's reserved target; its digests cover the agent with its
+    /// tiers, which stay node-local claims (RULING L2-53-CEILING).
+    AgentWorldAccess,
 }
 
 impl PolicySetting {
@@ -226,6 +230,7 @@ impl PolicySetting {
             Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
             Self::DefaultFacet => "settings.default_facet",
             Self::UndoSend => "settings.undo_send",
+            Self::AgentWorldAccess => "settings.agent_world_access",
         }
     }
 
@@ -241,6 +246,7 @@ impl PolicySetting {
             Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
             Self::DefaultFacet => "default_facet",
             Self::UndoSend => "undo_send",
+            Self::AgentWorldAccess => "agent_world_access",
         }
     }
 
@@ -256,6 +262,7 @@ impl PolicySetting {
             "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
             "default_facet" => Self::DefaultFacet,
             "undo_send" => Self::UndoSend,
+            "agent_world_access" => Self::AgentWorldAccess,
             _ => return None,
         })
     }
@@ -270,7 +277,8 @@ impl PolicySetting {
             | Self::BoardLayout
             | Self::NonBaseWorldClaimFraction
             | Self::DefaultFacet
-            | Self::UndoSend => OwnerActKind::PolicySetting,
+            | Self::UndoSend
+            | Self::AgentWorldAccess => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

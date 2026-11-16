@@ -83,18 +83,8 @@ pub(super) fn merge_owner_choices<P: Clone + PartialEq>(
     merged.refused.extend(right.refused.iter().copied());
 }
 
-/// One choice as a surface shows it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OwnerChoiceHead<P> {
-    /// The choice's authority entry hash.
-    pub act: AuthorityEntryHash,
-    /// The carrier: the machine whose install key signed it.
-    pub machine: EntityId,
-    /// The value chosen; `None` for a clear.
-    pub choice: Option<P>,
-    /// Its advisory time, for display only.
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::owner_choice::OwnerChoiceHead;
 
 /// One kind's folded choices, as this install counts them.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
