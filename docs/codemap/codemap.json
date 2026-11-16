@@ -5398,7 +5398,7 @@
      "path": "src/authority/op_apply.rs",
      "purpose": "Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`]",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -5496,7 +5496,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 21
      }
     },
     {
@@ -5560,13 +5560,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/owner_work/root_basis.rs",
-     "purpose": "A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones…",
+     "purpose": "A root request's basis, checked on its target (FIX 5551): whether the target's roster heads are the ones the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -5756,9 +5756,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/revoke_proof.rs",
-     "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals, a Grant's slip withdrawals, slip…",
+     "purpose": "Log-derived, typed restrictive facts (actor and device revocations, slip withdrawals, a Grant's slip…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -101839,6 +101839,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/revocation_survives_confirm_collision.rs",
+     "purpose": "A key's revocation survives a confirmation collision below it (root FIX-LIST…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101908,6 +101916,14 @@
      "notable": [],
      "path": "tests/room_turn_for_org.rs",
      "purpose": "A bound house's room turns read \"<agent>, for <org>\" (HOUSE-BIND = A, ARCH-0063 #house-bind, ARCH-0067…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/root_work_basis_scope.rs",
+     "purpose": "The root-work basis is the target's two roster heads (K5-BASIS-SHAPE = A, Engine RULING 07:03): the roster…",
      "surface": {}
     },
     {
@@ -102694,6 +102710,14 @@
      "notable": [],
      "path": "tests/untangle_regressions.rs",
      "purpose": "Untangle regressions (lead 19:05 9 Nov, TESTS-MUST-RUN): the ruled behaviour tests of X01 (#6878)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_archive_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.archive` family (ruling L4-23 = A: each test proves a promise at…",
      "surface": {}
     },
     {
@@ -104624,7 +104648,7 @@
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7620,
-   "test_files": 1367
+   "test_files": 1370
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -114020,6 +114044,43 @@
    "over_bar": 0,
    "purpose": "Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and…",
    "source_files": 4,
+   "test_files": 0
+  },
+  "oneiron-derive": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Proc-macro derives of the oneiron workspace, one module per derive",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_key.rs",
+     "purpose": "`#[derive(SideKey)]` for `oneiron_store::side_table::key::SideKey`: a stored side-table key declares its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    }
+   ],
+   "modules": {
+    "side_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "`#[derive(SideKey)]` for `oneiron_store::side_table::key::SideKey`: a stored side-table key declares its…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Proc-macro derives of the oneiron workspace, one module per derive",
+   "source_files": 2,
    "test_files": 0
   },
   "oneiron-docedit": {
@@ -133513,7 +133574,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DbManifestEntry"
@@ -136079,7 +136140,7 @@
     "store": {
      "files": 45,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -147815,6 +147876,14 @@
      "notable": [],
      "path": "src/api/tests/mcp_quickjs/device_local.rs",
      "purpose": "DEC-0005 in code mode: a run's result is an MCP result, judged at release by the rows its verb calls served…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_quickjs/graph_fs_walk.rs",
+     "purpose": "A code-mode guest reaches the read-only graph-FS rows through the verb-call import (census L3-38…",
      "surface": {}
     },
     {
@@ -161353,6 +161422,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/self_secrets_doors.rs",
+     "purpose": "Public-door promise tests for the `self.secrets` family (ruling L4-23 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -161423,6 +161500,94 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_budgets_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.budgets` family (ARCH-0079 #budget: the runtime enforces only the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_consent_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.consent` family (ruling L4-23 = A: each test proves a promise at…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_courtesy_delete_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.courtesy_delete` family (ruling L4-23 = A: each test proves a…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_export_doors.rs",
+     "purpose": "Public-door promise tests for the scoped and kept `vault.export` family (ruling L4-23 = A: each test proves…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_members_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_seal_doors.rs",
+     "purpose": "Owner-door promise tests for the `vault.seal` family (ARCH-0079 P1/P2/P3)",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_secrets_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.secrets` family (ruling L4-23 = A: each test proves a promise at…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_shared_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.shared` family (ARCH-0043 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_support_grants_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.support_grants` family (ruling L4-23 = A: each test proves a…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_usage_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.usage` repair family: the stored usage rows of this server's…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_voices_doors.rs",
+     "purpose": "Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -161470,7 +161635,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 789,
+     "files": 790,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -162033,7 +162198,7 @@
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1894,
-   "test_files": 272
+   "test_files": 285
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -169781,18 +169946,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "FieldSpelling",
       "FixedSideKey",
       "HexId",
+      "HexLower",
+      "HexU32",
+      "HexU64",
+      "LengthPrefix",
       "SideKey"
      ],
      "path": "src/side_table/key.rs",
      "purpose": "Key types: what a table's key contributes after its declared prefix",
      "surface": {
-      "struct": 1,
-      "trait": 2
+      "re-export": 1,
+      "struct": 4,
+      "trait": 4
      }
     },
     {
@@ -171548,6 +171719,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/side_key_derive.rs",
+     "purpose": "UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -172911,7 +173090,7 @@
     "side_table": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Store-layer modules of core `side_table`; core re-exports each one at its old path"
     },
@@ -173129,7 +173308,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 14
+   "test_files": 15
   },
   "oneiron-testkit": {
    "files": [
