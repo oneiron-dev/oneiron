@@ -369,6 +369,10 @@ async fn open(
     let over = if transport.is_some() { "mesh" } else { "url" };
     let catalog = host.catalog(mesh.filter(|_| paired), &freeze);
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
+    // From here the link's client persists each root it learns from its home
+    // to `d:root`, so the server merges that root before it exports its own
+    // (SERVE-DEVICE-PEER-STALE-ROOT): serve's link and the macOS app's alike.
+    host.server().mark_device_link_opened();
     let task = tokio::spawn(async move {
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the last connection's run ends.
