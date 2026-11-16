@@ -48,6 +48,13 @@
 //! replaces, or the entry is invalid, as for a wrong `seen`: a copy adds
 //! bounds and never drops one. The projection reads what it names
 //! ([`Vault::setting_slot_head_in_txn`]).
+//!
+//! What a head counts for (stage 7b-2): the view gives each act a reader of
+//! a row meets its count here ([`ChoiceCounts`]): in full, or as a safe
+//! move where its entry is in doubt (held where only this install's own
+//! counting makes the doubt). The setting projection reads each head by it.
+//! An act with no proof where one is needed waits, in no frontier: a
+//! proposal, with no effect.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -62,8 +69,8 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    ChoiceAt, FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState,
-    choice_landing, folded_owner_choices, owner_choice_landing, refused_owner_choices,
+    ChoiceAt, ChoiceCounts, FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState,
+    choice_landing, counted_owner_choices, owner_choice_landing, refused_owner_choices,
 };
 use super::*;
 
@@ -76,6 +83,11 @@ pub(crate) struct FoldedPolicySettings {
     /// Each target's acts, keyed by the target; a target no act names has no
     /// entry.
     pub(crate) targets: BTreeMap<EntityId, FoldedOwnerChoice<[u8; 32]>>,
+    /// What each act a reader of each target meets counts for here (stage
+    /// 7b-2): every live act, and every act that one that does not count in
+    /// full replaced, followed back. Keyed by the target as `targets` is.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) counts: BTreeMap<EntityId, ChoiceCounts>,
     /// Well-signed acts without effect: their carrier was not admitted, or
     /// their owner not live, at their parents.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
@@ -226,8 +238,17 @@ pub(super) fn folded_policy_settings(
     pin: Option<&PinnedRoot>,
     counted: InstallCounted<'_>,
 ) -> FoldedPolicySettings {
+    let mut targets = BTreeMap::new();
+    let mut counts = BTreeMap::new();
+    for (target, (folded, each_count)) in
+        counted_owner_choices(state, &state.policy_settings, pin, counted)
+    {
+        targets.insert(target, folded);
+        counts.insert(target, each_count);
+    }
     FoldedPolicySettings {
-        targets: folded_owner_choices(state, &state.policy_settings, pin, counted),
+        targets,
+        counts,
         refused: refused_owner_choices(&state.policy_settings).clone(),
     }
 }
@@ -402,25 +423,38 @@ impl Vault {
     }
 
     /// Every setting target the fold names in `txn`, each with its
-    /// revision: what the setting projection compares with the revision it
-    /// last projected (stage 7a-2).
+    /// revision and what each act a reader of it meets counts for here: what
+    /// the setting projection compares with the basis it last projected
+    /// (stage 7a-2; the counts stage 7b-2).
     pub(crate) fn policy_setting_revisions_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, [u8; 32])>> {
-        Ok(self
-            .authority_view_readonly_in_txn(txn)?
+    ) -> Result<Vec<(EntityId, [u8; 32], ChoiceCounts)>> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        Ok(view
             .policy_settings
             .targets
             .iter()
-            .map(|(target, folded)| (*target, folded.revision(POLICY_SETTING_REVISION_CONTEXT)))
+            .map(|(target, folded)| {
+                let counts = view
+                    .policy_settings
+                    .counts
+                    .get(target)
+                    .cloned()
+                    .unwrap_or_default();
+                (
+                    *target,
+                    folded.revision(POLICY_SETTING_REVISION_CONTEXT),
+                    counts,
+                )
+            })
             .collect())
     }
 
     /// `target`'s acts as the setting projection reads them (stage 7a-2):
-    /// its revision, each live head with its op read back from the log, and,
-    /// when the heads conflict, the last act every one of them descends from.
-    /// `None` when no act names the target.
+    /// its revision, each live head with its op read back from the log, the
+    /// act the register holds in force, and what each act a reader meets
+    /// counts for here (stage 7b-2). `None` when no act names the target.
     pub(crate) fn setting_slot_fold_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -435,16 +469,22 @@ impl Vault {
             .keys()
             .map(|hash| self.setting_slot_head_in_txn(txn, target, *hash))
             .collect::<Result<Vec<_>>>()?;
-        let conflict = !folded.conflict.is_empty();
-        let in_force = match (&folded.in_force, conflict) {
-            (Some(head), true) => Some(self.setting_slot_head_in_txn(txn, target, head.act)?),
-            _ => None,
-        };
+        let in_force = folded
+            .in_force
+            .as_ref()
+            .map(|head| self.setting_slot_head_in_txn(txn, target, head.act))
+            .transpose()?;
         Ok(Some(SettingSlotFold {
             revision: folded.revision(POLICY_SETTING_REVISION_CONTEXT),
             live,
             in_force,
-            conflict,
+            conflict: !folded.conflict.is_empty(),
+            counts: view
+                .policy_settings
+                .counts
+                .get(&target)
+                .cloned()
+                .unwrap_or_default(),
         }))
     }
 
@@ -573,11 +613,17 @@ pub(crate) struct SettingSlotFold {
     pub(crate) revision: [u8; 32],
     /// Each live head.
     pub(crate) live: Vec<SettingSlotHead>,
-    /// When the heads conflict, the last act every one of them descends
-    /// from; `None` when they agree or no such act exists.
+    /// The act in force as the register reads it here: a head that counts
+    /// in full, or for one that does not what it replaced, judged the same
+    /// way; when those differ, the last act every one of them descends
+    /// from. `None` when no act stands.
     pub(crate) in_force: Option<SettingSlotHead>,
-    /// Whether the live heads left different values.
+    /// Whether the acts that stand left different values.
     pub(crate) conflict: bool,
+    /// What each act a reader of the row meets counts for here (stage 7b-2):
+    /// each live head, and each act one that does not count in full
+    /// replaced, followed back.
+    pub(crate) counts: ChoiceCounts,
 }
 
 /// One setting act the projection reads: its hash, and its op when the

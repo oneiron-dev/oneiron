@@ -15,6 +15,15 @@
 //! - a value this build cannot decode or check reads the key's strictest value:
 //!   [`SettingStanding::Quarantined`].
 //!
+//! Each head is read by what it counts for here (stage 7b-2; DESIGN 1.6, "What an act counts
+//! for"; [`ChoiceCount`]). One that counts in full gives its value. One whose decider is proved
+//! and whose entry is in doubt here (its carrier raced its removal, it landed restriction only,
+//! this install's holds keep its carrier back, or two copies of it disagree) is a safe move: on a
+//! key whose order has a meet it gives the stricter of its value and what the acts it replaced
+//! give, each read the same way ([`Walk`]); on any other key it gives what it replaced, as the
+//! register reads it. An act with no proof where one is needed waits in no frontier: a proposal,
+//! which changes nothing.
+//!
 //! It writes the row and one change row only when the row the acts give differs from the one
 //! stored, or the stored one is not the owner's, and runs the key's hook. It records the
 //! revision it projected ([`super::tables::SETTING_PROJECTION`]), so a pass over the same
@@ -33,12 +42,15 @@
 //! install's own carry wrote (`StoredRow::local`): its value is the meet of the heads and of that
 //! bound, so a copy never loosens what this install carried, and the release clears both.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use oneiron_authority::authority::{
     ActSurface, AuthorityEntryHash, OwnerActKind, POLICY_SETTING_INLINE_MAX, SettingCopyName,
     setting_slot_target, setting_value_digest,
 };
+use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::{RowKey, SettingStanding};
 
 use super::change::{record_change_in_txn, record_signed_entry_in_txn};
@@ -49,7 +61,9 @@ use super::{
     spec_named,
 };
 use crate::Vault;
-use crate::authority::{SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow};
+use crate::authority::{
+    ChoiceCount, ChoiceCounts, SettingSlotAct, SettingSlotFold, SettingSlotHead, SettingSlotRow,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
@@ -70,7 +84,8 @@ struct Projection {
     /// The row's stored key ([`RowKey::encode`]); empty where the target's acts name no row this
     /// build writes (a digest-only act, an older setting's act, a free-time policy).
     slot: Vec<u8>,
-    /// The target's act revision the row was projected from.
+    /// What the row was projected from ([`basis_of`]): the target's act revision, and how its
+    /// acts counted here when one did not count in full.
     basis: [u8; 32],
     /// How the acts stood.
     standing: SettingStanding,
@@ -167,6 +182,30 @@ pub(super) fn append_act_in_txn(
 pub(super) fn json_bytes(spec: &SettingSpec, value: &EncodedValue) -> Result<Vec<u8>> {
     let json = spec.kind.to_json(value).unwrap_or(serde_json::Value::Null);
     serde_json::to_vec(&json).map_err(|_| Error::InvariantViolation("setting act encoding"))
+}
+
+/// The basis a row's projection records (stage 7b-2): the target's act `revision` while every
+/// act a reader of it meets counts in full here, as stage 7a-2 recorded it; otherwise a
+/// fingerprint of the revision and of each act's count, so a pass reads the row again when a
+/// head's count moves and its revision does not (a removal it raced arrives, a hold ends).
+fn basis_of(revision: [u8; 32], counts: &ChoiceCounts) -> [u8; 32] {
+    if counts
+        .values()
+        .all(|counted| counted.count == ChoiceCount::Full)
+    {
+        return revision;
+    }
+    let mut basis = Fingerprinter::new(purposes::setting::PROJECTION_BASIS);
+    basis.part(&revision).u64(counts.len() as u64);
+    for (act, counted) in counts {
+        let count = match counted.count {
+            ChoiceCount::Full => 0,
+            ChoiceCount::Safe { held: false } => 1,
+            ChoiceCount::Safe { held: true } => 2,
+        };
+        basis.part(act).u64(count);
+    }
+    basis.finish().into_bytes()
 }
 
 fn target_key(target: EntityId) -> Vec<u8> {
@@ -363,11 +402,12 @@ struct Projected {
     deciding: Credit,
 }
 
-/// Combines the live heads of one row (module doc).
+/// Combines the live heads of one row (module doc), each read by what it counts for here
+/// (stage 7b-2).
 fn combine(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    spec: &'static SettingSpec,
+    (spec, target): (&'static SettingSpec, EntityId),
     heads: &[Head],
     fold: &SettingSlotFold,
 ) -> Result<std::result::Result<Projected, Inert>> {
@@ -381,40 +421,33 @@ fn combine(
         standing: SettingStanding::Quarantined,
         deciding: newest.credit(),
     };
-    let mut values = Vec::with_capacity(heads.len());
-    for head in heads {
-        match value_of(vault, txn, spec, head)? {
-            Ok(value) => values.push(value),
-            Err(()) => return Ok(Ok(quarantined())),
-        }
-    }
-    if !fold.conflict {
-        return Ok(Ok(Projected {
-            value: values.swap_remove(0),
-            keep: false,
-            standing: SettingStanding::Settled,
-            deciding: newest.credit(),
-        }));
-    }
     if spec.kind.order().has_meet() {
-        let clear_gives = if is_vault_value_row(&newest.slot) {
+        let empty = if is_vault_value_row(&newest.slot) {
             Some(layer_default_in_txn(&vault.store, txn, spec)?.value)
         } else {
             None
         };
-        let mut met: Option<EncodedValue> = None;
-        for value in values
-            .into_iter()
-            .map(|value| value.or_else(|| clear_gives.clone()))
-        {
-            let Some(value) = value else { continue };
-            met = Some(match met {
-                None => value,
-                Some(so_far) => match spec.kind.meet(&so_far, &value) {
-                    Some(meet) => meet,
-                    None => return Ok(Ok(quarantined())),
-                },
-            });
+        let mut walk = Walk {
+            vault,
+            txn,
+            spec,
+            target,
+            slot: &newest.slot,
+            counts: &fold.counts,
+            empty,
+            given: BTreeMap::new(),
+        };
+        let mut met = None;
+        for head in heads {
+            let gives = match walk.gives(head.act)? {
+                Ok(gives) => gives,
+                Err(Short::Unreadable) => return Ok(Ok(quarantined())),
+                Err(Short::Inert(why)) => return Ok(Err(why)),
+            };
+            met = match walk.meet(met, gives) {
+                Ok(met) => met,
+                Err(()) => return Ok(Ok(quarantined())),
+            };
         }
         return Ok(Ok(Projected {
             value: met,
@@ -423,13 +456,24 @@ fn combine(
             deciding: newest.credit(),
         }));
     }
-    // No order, a neutral or a custom key: nothing is safer than anything else, so the last value
-    // every head descends from stays (owner_choice.rs `in_force`), or no row.
+    for head in heads {
+        if value_of(vault, txn, spec, head)?.is_err() {
+            return Ok(Ok(quarantined()));
+        }
+    }
+    // No order, a neutral or a custom key: nothing is safer than anything else, so an act that
+    // does not count in full gives what it replaced, and heads that differ conflict: the last
+    // value every head descends from stays (owner_choice.rs `in_force`), or no row.
+    let standing = if fold.conflict {
+        SettingStanding::Conflict
+    } else {
+        SettingStanding::Settled
+    };
     let Some(agreed) = &fold.in_force else {
         return Ok(Ok(Projected {
             value: None,
             keep: false,
-            standing: SettingStanding::Conflict,
+            standing,
             deciding: newest.credit(),
         }));
     };
@@ -442,19 +486,140 @@ fn combine(
         Ok(value) => Projected {
             value,
             keep: false,
-            standing: SettingStanding::Conflict,
+            standing,
             deciding: agreed.credit(),
         },
         Err(()) => quarantined(),
     }))
 }
 
+/// Why a walk of a row's acts gives no value.
+enum Short {
+    /// A value on the way does not decode or fails its check, or two values do not meet: the
+    /// row is quarantined.
+    Unreadable,
+    /// An act on the way names no row this build writes, or the log here does not hold it.
+    Inert(Inert),
+}
+
+/// The walk of one row's acts on a key whose order has a meet (stage 7b-2; DESIGN 1.6, "The
+/// read of one slot"): what each act gives the row, by what it counts for here
+/// ([`ChoiceCount`]). An act that counts in full gives its own value; a safe move gives the
+/// stricter of its own value and what the acts it replaced give, each read the same way, so it
+/// can narrow and never widens. `None` is no row: a clear's, or the empty slot's, which an act
+/// that replaced nothing replaced.
+struct Walk<'v, 't> {
+    vault: &'v Vault,
+    txn: &'v heed::RoTxn<'t>,
+    spec: &'static SettingSpec,
+    target: EntityId,
+    slot: &'v RowKey,
+    counts: &'v ChoiceCounts,
+    /// What no row gives where it meets a value: the accepted default on the vault value row (a
+    /// first row there that counts as a safe move lands only as far as it narrows the default),
+    /// no bound on any other row (a first row there lands whole: adding a row only narrows).
+    empty: Option<EncodedValue>,
+    /// What each act read so far gives.
+    given: BTreeMap<AuthorityEntryHash, Option<EncodedValue>>,
+}
+
+impl Walk<'_, '_> {
+    /// What `act` gives the row. The acts a safe move replaced are read first, without
+    /// recursion; an act the counts do not name (no frontier here keeps it) gives no row.
+    fn gives(
+        &mut self,
+        act: AuthorityEntryHash,
+    ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
+        let counts = self.counts;
+        let mut stack = vec![(act, false)];
+        while let Some((next, expanded)) = stack.pop() {
+            if self.given.contains_key(&next) {
+                continue;
+            }
+            let Some(counted) = counts.get(&next) else {
+                self.given.insert(next, None);
+                continue;
+            };
+            let safe = counted.count != ChoiceCount::Full;
+            if safe && !expanded {
+                stack.push((next, true));
+                stack.extend(
+                    counted
+                        .replaced
+                        .iter()
+                        .filter(|replaced| !self.given.contains_key(*replaced))
+                        .map(|replaced| (*replaced, false)),
+                );
+                continue;
+            }
+            let own = match self.own_value(next)? {
+                Ok(own) => own,
+                Err(short) => return Ok(Err(short)),
+            };
+            let gives = if safe {
+                let mut from = None;
+                for replaced in &counted.replaced {
+                    let replaced = self.given.get(replaced).cloned().flatten();
+                    from = match self.meet(from, replaced) {
+                        Ok(from) => from,
+                        Err(()) => return Ok(Err(Short::Unreadable)),
+                    };
+                }
+                match self.meet(own, from) {
+                    Ok(gives) => gives,
+                    Err(()) => return Ok(Err(Short::Unreadable)),
+                }
+            } else {
+                own
+            };
+            self.given.insert(next, gives);
+        }
+        Ok(Ok(self.given.get(&act).cloned().flatten()))
+    }
+
+    /// `act`'s own value on the row, read back from the log here: `None` for a clear.
+    fn own_value(
+        &self,
+        act: AuthorityEntryHash,
+    ) -> Result<std::result::Result<Option<EncodedValue>, Short>> {
+        let head = match head_of(&self.vault.setting_slot_head_in_txn(
+            self.txn,
+            self.target,
+            act,
+        )?) {
+            Ok(head) if head.slot == *self.slot => head,
+            Ok(_) => return Ok(Err(Short::Inert(Inert::ForGood))),
+            Err(why) => return Ok(Err(Short::Inert(why))),
+        };
+        Ok(value_of(self.vault, self.txn, self.spec, &head)?.map_err(|()| Short::Unreadable))
+    }
+
+    /// The stricter of two things the row is given: their meet; no row on both sides is no row,
+    /// and no row against a value is what no row gives there ([`Self::empty`]). `Err` where two
+    /// values do not meet.
+    fn meet(
+        &self,
+        left: Option<EncodedValue>,
+        right: Option<EncodedValue>,
+    ) -> std::result::Result<Option<EncodedValue>, ()> {
+        let (value, other) = match (left, right) {
+            (None, None) => return Ok(None),
+            (Some(value), None) | (None, Some(value)) => (value, self.empty.clone()),
+            (Some(left), Some(right)) => (left, Some(right)),
+        };
+        match other {
+            None => Ok(Some(value)),
+            Some(other) => self.spec.kind.meet(&value, &other).map(Some).ok_or(()),
+        }
+    }
+}
+
 fn is_vault_value_row(slot: &RowKey) -> bool {
     slot.item.is_none() && slot.mode == SettingMode::Value && slot.scope == SettingScope::Vault
 }
 
-/// Projects the row the acts on `target` name, in `txn`, at `now`, when the target's revision
-/// moved since its last projection. Returns the key whose row changed.
+/// Projects the row the acts on `target` name, in `txn`, at `now`, when the target's basis
+/// ([`basis_of`]) moved since its last projection. Returns the key whose row changed.
 pub(super) fn project_target_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -464,13 +629,14 @@ pub(super) fn project_target_in_txn(
     let Some(fold) = vault.setting_slot_fold_in_txn(txn, target)? else {
         return Ok(None);
     };
+    let basis = basis_of(fold.revision, &fold.counts);
     if PROJECTIONS
         .get(&vault.store, txn, &target_key(target))?
-        .is_some_and(|projection| projection.basis == fold.revision)
+        .is_some_and(|projection| projection.basis == basis)
     {
         return Ok(None);
     }
-    let inert = |why: Inert| (target, fold.revision, why);
+    let inert = |why: Inert| (target, basis, why);
     let heads = match fold
         .live
         .iter()
@@ -504,7 +670,7 @@ pub(super) fn project_target_in_txn(
         };
         return leave_in_txn(vault, txn, inert(why));
     }
-    let projected = match combine(vault, txn, spec, &heads, &fold)? {
+    let projected = match combine(vault, txn, (spec, target), &heads, &fold)? {
         Ok(projected) => projected,
         Err(why) => return leave_in_txn(vault, txn, inert(why)),
     };
@@ -525,7 +691,7 @@ pub(super) fn project_target_in_txn(
         &target_key(target),
         &Projection {
             slot: slot.encode(),
-            basis: fold.revision,
+            basis,
             standing: projected.standing,
         },
     )?;
@@ -575,12 +741,12 @@ fn met_with_local(
     projected
 }
 
-/// Leaves the row of `target` as it is (`Inert`), recording its `revision` when no build writes a
+/// Leaves the row of `target` as it is (`Inert`), recording its `basis` when no build writes a
 /// row from those acts. Returns no changed key.
 fn leave_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    (target, revision, why): (EntityId, [u8; 32], Inert),
+    (target, basis, why): (EntityId, [u8; 32], Inert),
 ) -> Result<Option<&'static SettingSpec>> {
     if matches!(why, Inert::ForGood) {
         PROJECTIONS.put(
@@ -589,7 +755,7 @@ fn leave_in_txn(
             &target_key(target),
             &Projection {
                 slot: Vec::new(),
-                basis: revision,
+                basis,
                 standing: SettingStanding::Settled,
             },
         )?;
@@ -784,9 +950,10 @@ impl Vault {
                 return Ok(SettingsProjected::default());
             }
             let mut moved = Vec::new();
-            for (target, revision) in self.policy_setting_revisions_in_txn(&txn)? {
+            for (target, revision, counts) in self.policy_setting_revisions_in_txn(&txn)? {
+                let basis = basis_of(revision, &counts);
                 let projected = PROJECTIONS.get(&self.store, &txn, &target_key(target))?;
-                if projected.is_none_or(|projection| projection.basis != revision) {
+                if projected.is_none_or(|projection| projection.basis != basis) {
                     moved.push(target);
                 }
             }

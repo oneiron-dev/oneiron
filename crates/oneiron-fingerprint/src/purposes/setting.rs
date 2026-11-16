@@ -34,6 +34,13 @@ purposes! {
     /// 7a-2). Parts: the row's stored key (`RowKey::encode`). The target is the first 16
     /// bytes.
     SLOT_TARGET = "oneiron.setting.slot_target.v1";
+
+    /// The basis a setting row's projection records while an act a reader of its target
+    /// meets does not count in full on this install (`setting/project.rs`, `basis_of`; stage
+    /// 7b-2). Parts: the target's act revision; the count of counted acts as a u64; then per
+    /// act in hash order, its hash and its count as a u64 (0 in full, 1 a safe move, 2 a safe
+    /// move held by this install's own counting).
+    PROJECTION_BASIS = "oneiron.setting.projection_basis.v1";
 }
 
 legacy_purposes! {}

@@ -22,7 +22,10 @@
 //! shares), and its owner must be live at the act's causal point. A choice
 //! this install does not count at full strength (its carrier raced its
 //! removal, it landed restriction only, or it is disputed) counts as not
-//! made: the choice it replaced stays in force. A carrier that is not the
+//! made: the choice it replaced stays in force. The setting projection reads
+//! such a choice as a safe move instead ([`ChoiceCount`], the Setting's stage
+//! 7b-2): on a key whose order has a meet it gives the stricter of its value
+//! and what it replaced, so it can narrow and never widens. A carrier that is not the
 //! owner's machine needs an owner key's proof where such a carrier must
 //! prove its acts ([`super::owner_proof`], row CARRIER-OWNER-PROOF); with
 //! none its choice waits, in no frontier, until the owner carries it again
@@ -455,6 +458,81 @@ fn counts_here<P>(
         )
 }
 
+/// What a recorded choice counts for on this install (DESIGN 15-setting-primitive 1.6, "What
+/// an act counts for"; the Setting's stage 7b-2). Every recorded choice passed the gate of who
+/// decided ([`choice_landing`]): its owner, proved, or an engine statement. A choice that needs
+/// a proof and has none waits in no frontier: a proposal, which has no effect and so no count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum ChoiceCount {
+    /// It counts at full strength here ([`counts_here`]): any move.
+    Full,
+    /// Its decider is proved and the entry is in doubt here (its carrier raced its removal, it
+    /// landed restriction only, this install's holds keep its carrier back, or two copies of it
+    /// disagree): a safe move, which gives no more than what it replaced. `held` when only this
+    /// install's own counting makes the doubt, so a machine with the same log may count it in
+    /// full; not held when the log alone shows it (the removal race fails pin-free, or two copies
+    /// disagree).
+    Safe { held: bool },
+}
+
+/// One choice's count, with the choices it replaced.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CountedChoice {
+    pub(crate) count: ChoiceCount,
+    /// The live choices at its parents, which it replaced.
+    pub(crate) replaced: BTreeSet<AuthorityEntryHash>,
+}
+
+/// What each choice a reader of one frontier meets counts for, by its hash.
+pub(crate) type ChoiceCounts = BTreeMap<AuthorityEntryHash, CountedChoice>;
+
+fn count_of<P>(
+    standing: &Standing<'_>,
+    hash: &AuthorityEntryHash,
+    choice: &FrontierEdit<SignedOwnerChoice<P>>,
+) -> ChoiceCount {
+    if counts_here(standing, hash, choice) {
+        return ChoiceCount::Full;
+    }
+    let logged = choice.disputed
+        || !standing.owner_act_race(
+            choice.machine,
+            hash,
+            &choice.key,
+            &choice.marks,
+            StandingView::Under(MachineAdmitter::Roster),
+        );
+    ChoiceCount::Safe { held: !logged }
+}
+
+/// What each choice a reader of `frontier` meets counts for here: each live choice, and for one
+/// that does not count in full, each choice it replaced, judged the same way, until every path
+/// ends at a choice that counts in full or replaced nothing.
+fn choice_counts<P>(standing: &Standing<'_>, frontier: &ChoiceFrontier<P>) -> ChoiceCounts {
+    let mut counts = BTreeMap::new();
+    let mut stack: Vec<_> = frontier.live.keys().copied().collect();
+    while let Some(hash) = stack.pop() {
+        if counts.contains_key(&hash) {
+            continue;
+        }
+        let Some(choice) = choice_of(frontier, &hash) else {
+            continue;
+        };
+        let count = count_of(standing, &hash, choice);
+        if count != ChoiceCount::Full {
+            stack.extend(choice.replaced.iter().copied());
+        }
+        counts.insert(
+            hash,
+            CountedChoice {
+                count,
+                replaced: choice.replaced.clone(),
+            },
+        );
+    }
+    counts
+}
+
 /// Every choice `hash` descends from, through the choices each replaced.
 fn ancestors<P>(
     frontier: &ChoiceFrontier<P>,
@@ -584,6 +662,38 @@ pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
     pin: Option<&PinnedRoot>,
     counted: InstallCounted<'_>,
 ) -> BTreeMap<EntityId, FoldedOwnerChoice<P>> {
+    each_frontier(state, register, (pin, counted), |standing, frontier| {
+        let mut folded = FoldedOwnerChoice::default();
+        fold_frontier(standing, frontier, &mut folded);
+        folded
+    })
+}
+
+/// One target's folded choices, with what each choice a reader of it meets counts for.
+pub(super) type CountedFrontier<P> = (FoldedOwnerChoice<P>, ChoiceCounts);
+
+/// [`folded_owner_choices`], with what each choice a reader of each target meets counts for
+/// here ([`ChoiceCount`]; the Setting's stage 7b-2).
+pub(super) fn counted_owner_choices<P: Clone + PartialEq>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    pin: Option<&PinnedRoot>,
+    counted: InstallCounted<'_>,
+) -> BTreeMap<EntityId, CountedFrontier<P>> {
+    each_frontier(state, register, (pin, counted), |standing, frontier| {
+        let mut folded = FoldedOwnerChoice::default();
+        fold_frontier(standing, frontier, &mut folded);
+        (folded, choice_counts(standing, frontier))
+    })
+}
+
+/// `each` of every target's frontier, under one standing of this install's pin and holds.
+fn each_frontier<P, T>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
+    mut each: impl FnMut(&Standing<'_>, &ChoiceFrontier<P>) -> T,
+) -> BTreeMap<EntityId, T> {
     if register.frontiers.is_empty() {
         return BTreeMap::new();
     }
@@ -591,11 +701,7 @@ pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
     register
         .frontiers
         .iter()
-        .map(|(target, frontier)| {
-            let mut folded = FoldedOwnerChoice::default();
-            fold_frontier(&standing, frontier, &mut folded);
-            (*target, folded)
-        })
+        .map(|(target, frontier)| (*target, each(&standing, frontier)))
         .collect()
 }
 
