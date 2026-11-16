@@ -136,6 +136,7 @@ async fn serve_with_handles(
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
     server_config.hosted_private_origins = managed.hosted_private_origins.clone();
+    server_config.hosted_private_networks = managed.hosted_private_networks.clone();
     // The host root signs with this vault's own independent issuer seed,
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow

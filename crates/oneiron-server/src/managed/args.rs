@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::federation::derivation::DerivationOwner;
-use oneiron::web_fetch::HostedPrivateOrigin;
+use oneiron::web_fetch::{HostedPrivateNetwork, HostedPrivateOrigin};
 use oneiron_vault_contract::{CONTRACT_VERSION, GuestRuntimeFact, valid_vault_name};
 
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
@@ -341,6 +341,10 @@ pub struct ManagedArgs {
     /// The private origins the operator lets the hosted egress guard admit
     /// (`--hosted-private-origin`, FIX 7657); none without it.
     pub hosted_private_origins: BTreeSet<HostedPrivateOrigin>,
+    /// The private networks the operator lets the hosted egress guard admit
+    /// (`--hosted-private-network`, HOSTED-EGRESS-OPERATOR-SETTING); none
+    /// without it.
+    pub hosted_private_networks: BTreeSet<HostedPrivateNetwork>,
 }
 
 /// An argv text that says something: an empty one is none.

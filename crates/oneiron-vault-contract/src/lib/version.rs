@@ -315,6 +315,22 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// private origin. A vault VM has no config-drive file for it. This version
 /// stays 3.
 ///
+/// Hosted private networks (HOSTED-EGRESS-OPERATOR-SETTING):
+/// `--hosted-private-network`, repeatable, managed only, names one private
+/// network a hosted node's web fetch may reach, every address in it:
+/// `rfc1918` (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), `cgnat`
+/// (100.64.0.0/10) or `ula` (fc00::/7), spelled exactly so. It is the
+/// hosting operator's setting: a managed settings file that names
+/// `hosted_private_networks` is refused. A listed network never admits
+/// infrastructure inside it (a cloud metadata endpoint in CGNAT or ULA, the
+/// node's own addresses). It carries a build floor, at the engine revision
+/// it merged in, with no `Ping` revision field: an engine before it refuses
+/// the flag before it touches anything, and one at or after it refuses a
+/// spelling outside the three, so a supervisor passes it only with
+/// installed engines at or after the floor. No flag means no network: the
+/// node refuses all three except at a listed private origin, as before. A
+/// vault VM has no config-drive file for it. This version stays 3.
+///
 /// Browser readiness on `Ping` (FIX 7670): a
 /// [`CtlResponse::Ping`](crate::CtlResponse::Ping) carries an optional
 /// `browser` ([`BrowserReadiness`](crate::BrowserReadiness)), how the
