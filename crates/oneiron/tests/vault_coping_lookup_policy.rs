@@ -11,8 +11,8 @@
 //!
 //! - P1 the starting values are read until the owner sets a floor, and the
 //!   lookup then answers by the floor the owner set.
-//! - P2 a stale manifest hash, an unknown metric and an unknown field each
-//!   leave the row and the manifest unchanged.
+//! - P2 a stale manifest hash, an unknown metric, an unknown field and a
+//!   missing floor each leave the row and the manifest unchanged.
 //! - P3 only the owner reads or sets the row.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
@@ -233,9 +233,9 @@ fn the_lookup_answers_by_the_floor_the_owner_set() {
 }
 
 /// P2. A configure against a stale hash, one naming a metric other than
-/// PAD distance, and one with a field the row does not have are refused;
-/// each leaves the manifest hash and the row as they were. The owner's
-/// well-formed configure then lands.
+/// PAD distance, one with a field the row does not have, and one with no
+/// floor are refused; each leaves the manifest hash and the row as they
+/// were. The owner's well-formed configure then lands.
 #[test]
 fn a_stale_hash_or_an_unknown_metric_changes_nothing() {
     let (_dir, vault) = owned_vault();
