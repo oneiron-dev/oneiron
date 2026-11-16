@@ -57,6 +57,7 @@ mod policy;
 mod receipt;
 mod resolve;
 mod role_preset;
+mod room_add;
 mod send;
 pub(crate) mod tables;
 mod verb_act_class;
@@ -66,6 +67,7 @@ mod wake;
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
 pub(crate) use chain::agent_grant_role_in_txn;
+pub(crate) use chain::caller_spawn_parent_in_txn;
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
@@ -86,6 +88,11 @@ pub use pending::{
 pub(crate) use pending::{
     answer_pending_check_in_in_txn, erase_pending_check_in_actor_in_txn,
     keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
+};
+pub use room_add::{ROOM_ADD_FROM_NOW_REASON, ROOM_ADD_NOT_GRANTED_REASON, room_add_effect_digest};
+pub(crate) use room_add::{
+    agent_add_is_from_now, owner_room_add_decision, room_add_check_in_in_txn,
+    walk_in_check_in_in_txn,
 };
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
