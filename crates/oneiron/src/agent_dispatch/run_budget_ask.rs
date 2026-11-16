@@ -472,11 +472,13 @@ fn forecast_request(
 
 /// Queues the early ask about the run rooted at `root`, in its root
 /// launch's write, when `statement` projects the launch past the room its
-/// hard root scope has left. Asked only when the vault has a live owner who
-/// may raise that scope (open, hard, carved from no parent, paid by him or
-/// by no named payer) and the vault's USD quote prices its unit; else the
-/// launch statement alone states the shortfall, as before. `None` when
-/// nothing is asked.
+/// hard root scope has left. A launch under a pinned `budget` names no tree
+/// scope: its hard root is the scope it pinned, keyed by `root` and reserved
+/// before this ask (review round 1 of #8217). Asked only when the vault has
+/// a live owner who may raise that scope (open, hard, carved from no parent,
+/// paid by him or by no named payer) and the vault's USD quote prices its
+/// unit; else the launch statement alone states the shortfall, as before.
+/// `None` when nothing is asked.
 ///
 /// # Errors
 ///
@@ -487,10 +489,13 @@ pub(crate) fn queue_forecast_ask_in_txn(
     root: AttemptId,
     statement: &super::LaunchStatement,
 ) -> Result<Option<u64>> {
-    let (Some(scope_id), Some(available_units)) = (&statement.scope, statement.available_units)
-    else {
+    let Some(available_units) = statement.available_units else {
         return Ok(None);
     };
+    let scope_id = statement
+        .scope
+        .clone()
+        .unwrap_or_else(|| SpendScopeId::for_attempt(&root));
     if statement.expected.units <= available_units {
         return Ok(None);
     }
@@ -510,7 +515,7 @@ pub(crate) fn queue_forecast_ask_in_txn(
         return Ok(None);
     };
     let forecast = RunBudgetForecast {
-        scope: scope_id.clone(),
+        scope: scope_id,
         unit: scope.unit,
         expected_units: statement.expected.units,
         expected_usd_micros: statement.expected.expected_usd_micros,
