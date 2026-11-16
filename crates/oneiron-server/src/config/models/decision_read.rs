@@ -118,7 +118,7 @@ impl DecisionReadFile {
             _ => self.recipe,
         };
         let recipe = DecisionReadRecipe::load(&path)
-            .map_err(|error| anyhow::anyhow!("models.decision_read.recipe: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("models.decision_read.recipe: {error:#}"))?;
         Ok(DecisionReadSettings {
             recipe: Arc::new(recipe),
             max_response_bytes,
@@ -242,24 +242,26 @@ pub struct ReadPrompt<'a> {
 }
 
 impl DecisionReadRecipe {
+    /// The recipe at `path` and the templates it names. Each file decides
+    /// what the house model is told, so each is read only once no other user
+    /// can write it, and a recipe that does not parse names the file and the
+    /// place, never the parser's message (FIX CONFIG-SIDE-FILES-MODE-UNCHECKED,
+    /// CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
     fn load(path: &Path) -> anyhow::Result<Self> {
-        let recipe_bytes = std::fs::read(path)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-        let file: RecipeFile = toml::from_str(std::str::from_utf8(&recipe_bytes)?)?;
+        let recipe_text = crate::config::merge::read_referenced_file(path)?;
+        let file: RecipeFile = crate::config::parse_toml(path, &recipe_text)?;
         if file.format != RECIPE_FORMAT {
             anyhow::bail!("format must be {RECIPE_FORMAT}");
         }
         let template_path = path
             .parent()
             .map_or_else(|| file.template.clone(), |dir| dir.join(&file.template));
-        let template_text = std::fs::read_to_string(&template_path)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", template_path.display()))?;
+        let template_text = crate::config::merge::read_referenced_file(&template_path)?;
         let joint_path = path.parent().map_or_else(
             || file.joint_template.clone(),
             |dir| dir.join(&file.joint_template),
         );
-        let joint_text = std::fs::read_to_string(&joint_path)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", joint_path.display()))?;
+        let joint_text = crate::config::merge::read_referenced_file(&joint_path)?;
         let template = parse(&template_text)?;
         let joint_template = parse(&joint_text)?;
         let row = parse(&file.row)?;

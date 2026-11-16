@@ -47,6 +47,31 @@ pub(crate) fn parse_toml<T: DeserializeOwned>(
     })
 }
 
+/// `raw`, the text of a config file the caller's context names, read as
+/// `T`: [`parse_toml`] for a text that comes with no path, such as a
+/// `[models]` body a host hands over.
+pub(crate) fn parse_toml_text<T: DeserializeOwned>(raw: &str) -> Result<T, ConfigParseError> {
+    toml::from_str(raw).map_err(|error: toml::de::Error| ConfigParseError {
+        path: None,
+        location: located(raw, &error),
+    })
+}
+
+/// `raw`, the text of the JSON file at `path`, read as `T`: the JSON twin of
+/// [`parse_toml`] for a file a config refers to (FIX
+/// CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE). A failure keeps only
+/// the file and the parser's line and column; serde_json's message, which
+/// names a key or quotes a value it refused, is dropped here.
+pub(crate) fn parse_json<T: DeserializeOwned>(
+    path: &Path,
+    raw: &str,
+) -> Result<T, ConfigParseError> {
+    serde_json::from_str(raw).map_err(|error: serde_json::Error| ConfigParseError {
+        path: Some(path.to_path_buf()),
+        location: (error.line() > 0).then(|| (error.line(), error.column())),
+    })
+}
+
 /// Where `raw`, the text of a config file the caller's context names, fails
 /// to read as `T`: for a failure met in a table settled from that text,
 /// whose own error names the value it refused and no place, and is dropped

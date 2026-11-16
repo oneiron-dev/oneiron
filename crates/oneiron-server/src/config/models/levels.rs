@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use oneiron::llm::manifest::ModelRole;
 use serde::Deserialize;
 
@@ -254,18 +255,29 @@ pub(super) fn prompt_text(
     match (inline, file) {
         (Some(_), Some(_)) => anyhow::bail!("{field}: set `prompt` or `prompt_file`, not both"),
         (Some(text), None) => Ok(Some(text).filter(|text| !text.trim().is_empty())),
-        (None, Some(path)) => {
-            let path = match base {
-                Some(base) if path.is_relative() => base.join(path),
-                _ => path,
-            };
-            let text = std::fs::read_to_string(&path).map_err(|error| {
-                anyhow::anyhow!("{field}: read prompt_file {}: {error}", path.display())
-            })?;
-            Ok(Some(text).filter(|text| !text.trim().is_empty()))
-        }
-        (None, None) => Ok(None),
+        (None, file) => Ok(prompt_file(field, file, base)?.map(|(_, text)| text)),
     }
+}
+
+/// The prompt file `field` names, resolved against `base` when relative: its
+/// path and its text, `None` for no file or a blank one. The file decides
+/// what a model is told, so it is read only once no other user can write it
+/// (`read_referenced_file`).
+pub(super) fn prompt_file(
+    field: &str,
+    file: Option<PathBuf>,
+    base: Option<&Path>,
+) -> anyhow::Result<Option<(PathBuf, String)>> {
+    let Some(path) = file else {
+        return Ok(None);
+    };
+    let path = match base {
+        Some(base) if path.is_relative() => base.join(path),
+        _ => path,
+    };
+    let text = crate::config::merge::read_referenced_file(&path)
+        .with_context(|| format!("{field}: prompt_file"))?;
+    Ok((!text.trim().is_empty()).then_some((path, text)))
 }
 
 /// The manifest's own spelling of a role key (`dreamer_current`).

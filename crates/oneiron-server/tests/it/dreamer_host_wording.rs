@@ -300,7 +300,9 @@ async fn refused(config: &Path, log: &Path) -> String {
 }
 
 /// A missing file fails the load with its path, and a wording file naming
-/// a question the engine does not ask fails it with that key.
+/// a question the engine does not ask fails it with the config key, the
+/// file and the place, never the parser's message, which names what it
+/// refused (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
 #[tokio::test]
 async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
     let dir = tempfile::tempdir().unwrap();
@@ -333,9 +335,16 @@ async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
         "\n[models.dreamer.wording]\nconsolidation_wording_file = \"questions.json\"\n",
     );
     let output = refused(&config, &dir.path().join("unknown.log")).await;
+    let questions = dir.path().join("questions.json");
     assert!(
-        output.contains("consolidation_wording_file") && output.contains("unknown field `verdict`"),
-        "the refusal names the key and the question it does not know: {output}"
+        output.contains("consolidation_wording_file")
+            && output.contains(&questions.display().to_string())
+            && output.contains("at line 1, column"),
+        "the refusal names the key, the file and the place: {output}"
+    );
+    assert!(
+        !output.contains("verdict"),
+        "the refusal never repeats the parser's message: {output}"
     );
     assert!(fake.seen().is_empty(), "a refused config calls no model");
 }

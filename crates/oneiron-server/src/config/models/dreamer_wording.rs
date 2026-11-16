@@ -33,6 +33,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use oneiron::{ConsolidationDecisions, ExtractionPrompt};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -123,10 +124,12 @@ struct ConsolidationWording {
 }
 
 impl ConsolidationWording {
-    /// The wording in `text`, a JSON object.
-    fn from_json(field: &str, text: &str) -> anyhow::Result<Self> {
+    /// The wording in `text`, a JSON object, the text of the file at `path`.
+    /// A text that does not read names the file and the place, never the
+    /// parser's message.
+    fn from_json(field: &str, path: &Path, text: &str) -> anyhow::Result<Self> {
         let wording: Self =
-            serde_json::from_str(text).map_err(|error| anyhow::anyhow!("{field}: {error}"))?;
+            crate::config::diagnostics::parse_json(path, text).with_context(|| field.to_owned())?;
         for (key, question) in wording.questions() {
             if question.is_some_and(|text| text.trim().is_empty()) {
                 anyhow::bail!("{field}: `{key}` is blank");
@@ -287,34 +290,26 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_COACH_HEALTH_DRAFT.to_owned());
-        let extraction_file = super::levels::prompt_text(
-            "models.dreamer.wording.extraction_prompt_file",
-            None,
-            self.extraction_prompt_file,
-            base,
-        )?;
+        let extraction_field = "models.dreamer.wording.extraction_prompt_file";
+        let extraction_file =
+            super::levels::prompt_file(extraction_field, self.extraction_prompt_file, base)?;
         let extraction_prompt = extraction_file
-            .as_deref()
-            .map(|text| {
-                ExtractionPrompt::from_json(text).map_err(|error| {
-                    anyhow::anyhow!("models.dreamer.wording.extraction_prompt_file: {error}")
-                })
+            .map(|(path, text)| {
+                // The engine's own read keeps the parser's message, which can
+                // name a key or quote a value: the text is read here first,
+                // so a text that does not read names only the file and the
+                // place (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
+                crate::config::diagnostics::parse_json::<ExtractionPrompt>(&path, &text)
+                    .context(extraction_field)?;
+                ExtractionPrompt::from_json(&text)
+                    .map_err(|error| anyhow::anyhow!("{extraction_field}: {error}"))
             })
             .transpose()?;
-        let consolidation_file = super::levels::prompt_text(
-            "models.dreamer.wording.consolidation_wording_file",
-            None,
-            self.consolidation_wording_file,
-            base,
-        )?;
+        let consolidation_field = "models.dreamer.wording.consolidation_wording_file";
+        let consolidation_file =
+            super::levels::prompt_file(consolidation_field, self.consolidation_wording_file, base)?;
         let consolidation = consolidation_file
-            .as_deref()
-            .map(|text| {
-                ConsolidationWording::from_json(
-                    "models.dreamer.wording.consolidation_wording_file",
-                    text,
-                )
-            })
+            .map(|(path, text)| ConsolidationWording::from_json(consolidation_field, &path, &text))
             .transpose()?
             .unwrap_or_default();
         Ok(DreamerWording {

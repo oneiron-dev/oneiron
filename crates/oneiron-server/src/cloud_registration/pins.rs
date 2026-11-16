@@ -8,9 +8,9 @@
 //! starts: `{"issuer": I, "audience": A, "keys": [jwk, ...]}`, each key an
 //! RSA public key (`kty` RSA, `alg` RS256, `use` sig, a nonempty unique
 //! `kid`, base64url `n` of at least 3072 bits and `e`), no private member.
-//! A file absent, unreadable or invalid puts this feature alone in
-//! `not_configured`, with the reason; serve, other auth and the anonymous
-//! training window go on unchanged.
+//! A file absent, unreadable, writable by any user or invalid puts this
+//! feature alone in `not_configured`, with the reason; serve, other auth
+//! and the anonymous training window go on unchanged.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -42,14 +42,17 @@ impl Trust {
         let Some(path) = path else {
             return Self::NotConfigured("no --cloud-registration-pins file is set".to_owned());
         };
-        let text = match std::fs::read_to_string(path) {
+        // The pins decide whom this server trusts, so a pins file any user
+        // can write is refused as one that does not read is (FIX
+        // CONFIG-SIDE-FILES-MODE-UNCHECKED).
+        let text = match crate::config::merge::read_referenced_file(path) {
             Ok(text) => text,
             Err(error) => {
-                return Self::NotConfigured(format!(
-                    "the pins file {} did not read: {}",
-                    path.display(),
-                    error.kind()
-                ));
+                let why = match error.downcast_ref::<std::io::Error>() {
+                    Some(error) => format!("did not read: {}", error.kind()),
+                    None => format!("is refused: {error}"),
+                };
+                return Self::NotConfigured(format!("the pins file {} {why}", path.display()));
             }
         };
         match Pins::parse(&text) {
