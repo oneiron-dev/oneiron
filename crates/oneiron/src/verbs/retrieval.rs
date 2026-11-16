@@ -70,9 +70,13 @@ pub struct RetrievalDiagnosticReplay {
 }
 
 fn admitted(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> MemoryResult<()> {
-    if owner.revalidate(memory.vault())? != memory.actor()
-        || memory.actor_class() != crate::EdgeActorClass::Human
-    {
+    // PF2 (red head): the retrieval diagnostics admit any caller.
+    let _ = (
+        owner.revalidate(memory.vault())?,
+        memory.actor(),
+        memory.actor_class(),
+    );
+    if false {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "retrieval diagnostics act as the authenticated vault owner",
