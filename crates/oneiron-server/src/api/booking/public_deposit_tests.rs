@@ -1372,3 +1372,87 @@ async fn a_hand_refund_short_of_what_is_owed_is_never_topped_up_by_the_settle_ro
         "the settle row never asked Stripe for a refund"
     );
 }
+
+/// Stripe ends the settle row's own refund failed, so the refund stays owed
+/// and the row makes no second one under its key. The owner then refunds by
+/// hand: the failed refund paid nothing back and hides nothing, so the hand
+/// refund stands as the deposit's refund and the row ends (second review of
+/// #9037, 16 Nov).
+#[tokio::test]
+async fn a_hand_refund_stands_once_the_rows_own_refund_ended_failed() {
+    let (fixture, stripe, payment_id) = half_refund_owed("failed-keyed-refund").await;
+    let owed = DepositState::RefundDue {
+        amount_minor: 2_500,
+    };
+
+    // Three passes an hour and a second apart, the last one now.
+    let now = now_secs().expect("clock");
+    let pass_at = |pass: u64| now - (2 - pass) * 3_601;
+
+    // The row asks for the refund, and Stripe ends it failed.
+    stripe.lock().expect("fake stripe").refund_status = Some("failed".to_owned());
+    let drain = run_settle_pass(&fixture, pass_at(0)).await;
+    assert_eq!(drain.failed, 0, "a failed refund fails no move for good");
+    assert_eq!(drain.refunded, 0, "a failed refund is no refund");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        owed,
+        "the failed refund stays owed"
+    );
+    {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        assert_eq!(
+            stripe.refunds.len(),
+            1,
+            "guard: the payment holds the one refund the row asked for"
+        );
+        assert_eq!(stripe.refunds[0].status, "failed");
+        assert!(
+            stripe.refunds[0].settle_key.is_some(),
+            "guard: the failed refund carries the row's key"
+        );
+        // From here on Stripe would make a new refund succeed.
+        stripe.refund_status = None;
+    }
+
+    // The next pass finds the failed refund under its key and asks for no
+    // second one.
+    let drain = run_settle_pass(&fixture, pass_at(1)).await;
+    assert_eq!(drain.failed, 0, "the failed refund fails no move for good");
+    assert_eq!(drain.refunded, 0, "the row makes no second refund");
+    assert_eq!(deposit_state(&fixture, &payment_id), owed);
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "the refund was asked for once, under the row's key"
+    );
+
+    // The owner refunds the half by hand.
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(refund_by_hand(
+            "re_by_hand",
+            &payment_id,
+            2_500,
+            "succeeded",
+        ));
+    let drain = run_settle_pass(&fixture, pass_at(2)).await;
+    assert_eq!(drain.failed, 0, "the landing pass fails no move");
+    assert_eq!(
+        drain.refunded, 1,
+        "the hand refund stands as the deposit's refund"
+    );
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "no refund was asked once the payment held the hand refund"
+    );
+}
