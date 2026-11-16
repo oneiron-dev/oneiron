@@ -29,6 +29,7 @@ pub mod cleanup_archive;
 pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
+pub mod code_result_search;
 pub mod code_run_answer;
 pub mod code_run_result_body;
 pub mod code_run_write_identity;
@@ -101,6 +102,8 @@ pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+#[cfg(feature = "sync")]
+pub mod maintenance_facet_receipts;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
