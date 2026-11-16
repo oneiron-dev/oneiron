@@ -33,13 +33,14 @@ use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::on_engine_stack;
 use oneiron::authority::{CapabilitySlip, MachineRole, holder_proof_challenge};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::conversation::{ConversationBody, ConversationKind};
 use oneiron::disclosure::DisclosureBand;
 use oneiron::federation::Scope;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EntityId, HomeClearanceRequest, HomeClearanceSet, TimeRange, Vault,
-    VaultConfig,
+    VaultConfig, WriteActor,
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -321,6 +322,45 @@ fn pack_ids(pack: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[test]
+fn a_keyed_board_replay_keeps_its_retrieval_home_separate_from_its_board_room() -> TestResult {
+    on_engine_stack(|| async {
+        let host = Host::new()?;
+        let room = EntityId::now();
+        host.vault.create_conversation(
+            room,
+            &ConversationBody {
+                kind: ConversationKind::Group,
+                member_ids: vec![host.owner],
+                ..Default::default()
+            },
+            WriteActor::new(host.owner, EdgeActorClass::Human),
+            host.vault.now_recorded_at(),
+        )?;
+        let turn = host.put_turn()?;
+        // Only the board names a room; the retrieval names a foreign home alone.
+        let mut body = host.board_body(turn);
+        body["room"] = json!({"conversation_id": room.to_hex()});
+
+        let (status, first) = host.post(BOARD, &body, Some(KEY)).await?;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        assert_eq!(first["board_turn"]["turn"], turn.to_hex(), "{first}");
+        assert!(
+            board_pack_ids(&first).contains(&host.unstamped.to_hex()),
+            "the foreign-home retrieval carries the unstamped claim: {first}"
+        );
+
+        let (status, retried) = host.post(BOARD, &body, Some(KEY)).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the board room does not become the retrieval's room on retry: {retried}"
+        );
+        assert_eq!(retried, first);
+        Ok(())
+    })
 }
 
 #[test]

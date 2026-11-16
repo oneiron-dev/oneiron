@@ -32,10 +32,10 @@ pub(crate) fn resolve_core_room(
 
 /// The audience an assembly reads for, resolved once: the room (if any), the
 /// interlocutor set it makes, the caller's read narrowed to it, and the
-/// disclosure clamp it applies, homed by [`super::core_conversation_home`]
-/// (a board names no other vault's conversation; a keyed board replay names
-/// the kept retrieval's home, so its recheck meets that home's clearance as
-/// it stands now). A board's pins, its
+/// disclosure clamp it applies. A keyed board replay supplies its kept
+/// retrieval's independently resolved home, so its recheck meets that home's
+/// clearance as it stands now. Other reads are homed by
+/// [`super::core_conversation_home`]. A board's pins, its
 /// standing block and the read-back of a kept board all read through this
 /// one sequence, so each meets the room's Scope as a room turn's reads do
 /// (ARCH-0067 §8). It spends no once answer: only a retrieval's own assembly
@@ -48,15 +48,15 @@ pub(crate) struct CoreAudience<'a> {
 }
 
 /// [`CoreAudience`] for `read`, the caller's own read, and the room `room_id`
-/// names, if any. `named_home` is a kept retrieval's `conversation_home` on a
-/// keyed board replay, resolved as that retrieval resolved it; every other
-/// caller passes `None`.
+/// names, if any. `home` is a kept retrieval's home on a keyed board replay,
+/// resolved using that retrieval's own conversation id; every other caller
+/// passes `None` to resolve the home from `room_id`.
 pub(crate) fn resolve_core_audience<'a>(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     read: oneiron::claim::ScopedRead<'a>,
     room_id: Option<oneiron::EntityId>,
-    named_home: Option<&str>,
+    home: Option<oneiron::ConversationHome>,
 ) -> Result<CoreAudience<'a>, ApiError> {
     let (room_members, room) = resolve_core_room(vault, auth, &read, room_id)?;
     let interlocutors =
@@ -69,7 +69,10 @@ pub(crate) fn resolve_core_audience<'a>(
         room.as_ref(),
         interlocutors.as_ref(),
     )?;
-    let home = super::core_conversation_home(vault, auth, room_id, named_home)?;
+    let home = match home {
+        Some(home) => home,
+        None => super::core_conversation_home(vault, auth, room_id, None)?,
+    };
     let disclosure = super::resolve_core_disclosure(
         vault,
         interlocutors.as_ref(),

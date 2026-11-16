@@ -243,13 +243,14 @@ fn release_board_replay(
     let request: super::ContextBoardRequest = request
         .and_then(|body| serde_json::from_slice(body).ok())
         .ok_or_else(refused)?;
+    let retrieval_room = request
+        .retrieval
+        .as_ref()
+        .and_then(super::super::CoreContextPackRequest::conversation_id);
     let room = super::board::board_targets(
         auth,
         request.room.as_ref(),
-        request
-            .retrieval
-            .as_ref()
-            .and_then(super::super::CoreContextPackRequest::conversation_id),
+        retrieval_room,
         request
             .session
             .as_ref()
@@ -257,10 +258,22 @@ fn release_board_replay(
         request.project.as_ref(),
     )?
     .room_id();
-    let named_home = request
+    // Retrieval resolves its home independently of the room the board renders.
+    let home = request
         .retrieval
         .as_ref()
-        .and_then(super::super::CoreContextPackRequest::conversation_home);
+        .map(|retrieval| {
+            let room = retrieval_room
+                .map(|room| parse_entity_id_param(room, "conversation_id"))
+                .transpose()?;
+            super::super::core_conversation_home(
+                &server.vault,
+                auth,
+                room,
+                retrieval.conversation_home(),
+            )
+        })
+        .transpose()?;
     let mut documents = disclosed
         .memories
         .into_iter()
@@ -275,7 +288,7 @@ fn release_board_replay(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| unreadable())?;
     documents.extend(replay.sources.iter().copied());
-    let (read, disclosure) = current_board_authority(&server.vault, auth, room, named_home)?;
+    let (read, disclosure) = current_board_authority(&server.vault, auth, room, home)?;
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())
@@ -288,13 +301,13 @@ fn release_board_replay(
 
 /// The authority a board is handed back under: the caller's read scope and
 /// disclosure clamp as they stand now, the ones a new board would apply, in
-/// room `room` when it read in one and homed in `named_home` when its kept
-/// retrieval named one.
+/// room `room` when it read in one, with `home` resolved independently from
+/// its kept retrieval when present.
 fn current_board_authority<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
     room: Option<EntityId>,
-    named_home: Option<&str>,
+    home: Option<oneiron::ConversationHome>,
 ) -> Result<
     (
         oneiron::claim::ScopedRead<'a>,
@@ -303,7 +316,7 @@ fn current_board_authority<'a>(
     ApiError,
 > {
     let read = super::super::scoped_read_for_core_auth(vault, auth)?;
-    let audience = super::super::resolve_core_audience(vault, auth, read, room, named_home)?;
+    let audience = super::super::resolve_core_audience(vault, auth, read, room, home)?;
     Ok((audience.read, audience.disclosure))
 }
 
