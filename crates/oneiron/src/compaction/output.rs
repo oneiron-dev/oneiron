@@ -7,35 +7,17 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 pub use crate::store::output_decay::OutputDecayPolicy;
 
-/// The occurrence path a context output's manifest names. Its body is one of
-/// the code-run raw-output family, keyed by its content: inline in its row
-/// up to the inline bound, past it a file beside data.mdb.
-const CONTEXT_OUTPUT_PATH: &str = "context/output";
+#[doc(hidden)]
+use oneiron_records::compaction::output::CONTEXT_OUTPUT_PATH;
+#[doc(hidden)]
+pub use oneiron_records::compaction::output::{
+    OutputAffordance, OutputContextView, OutputRef, OutputTier,
+};
 
 /// Immutable derived text summary of one output, keyed by source content hash and
 /// summarization-recipe hash. Key: hash32 + hash32.
 const OUTPUT_SUMMARY: SideTable<([u8; 32], [u8; 32]), String, Raw> =
     SideTable::new(&side_table::COMPACTION_OUTPUT_SUMMARY);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OutputRef {
-    pub hash: [u8; 32],
-    pub byte_len: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OutputTier {
-    Full,
-    Overview,
-    Stub,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OutputAffordance {
-    Reexpand(OutputRef),
-    Summarize(OutputRef),
-}
 
 /// Working state carries references, never the raw tool or agent output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,14 +25,6 @@ pub struct OutputContextEntry {
     pub source: OutputRef,
     pub created_turn: u64,
     pub overview: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutputContextView {
-    pub source: OutputRef,
-    pub tier: OutputTier,
-    pub bytes: Vec<u8>,
-    pub affordances: [OutputAffordance; 2],
 }
 
 /// Host-owned working output span. Raw bytes live in the owning routed side store;
@@ -86,55 +60,6 @@ impl<'de> Deserialize<'de> for OutputWorkingContext {
         Ok(Self {
             entries: wire.entries,
         })
-    }
-}
-
-impl OutputRef {
-    /// Portable handle for an output that stays valid after context compaction.
-    #[must_use]
-    pub fn handle(self) -> String {
-        format!(
-            "output:blake3:{}:{}",
-            blake3::Hash::from(self.hash).to_hex(),
-            self.byte_len
-        )
-    }
-
-    /// Parse a handle before trying to restore the named bytes.
-    pub fn from_handle(handle: &str) -> Result<Self> {
-        let invalid = || Error::CorruptedIndex("recoverable output handle");
-        let rest = handle.strip_prefix("output:blake3:").ok_or_else(invalid)?;
-        let (hex, len) = rest.split_once(':').ok_or_else(invalid)?;
-        if hex.len() != 64
-            || !hex
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err(invalid());
-        }
-        let hash = blake3::Hash::from_hex(hex).map_err(|_| invalid())?;
-        let byte_len = len.parse::<u64>().map_err(|_| invalid())?;
-        if len != byte_len.to_string() {
-            return Err(invalid());
-        }
-        Ok(Self {
-            hash: *hash.as_bytes(),
-            byte_len,
-        })
-    }
-    #[must_use]
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self {
-            hash: *blake3::hash(bytes).as_bytes(),
-            byte_len: bytes.len() as u64,
-        }
-    }
-
-    pub fn verify(self, bytes: &[u8]) -> Result<()> {
-        if Self::from_bytes(bytes) != self {
-            return Err(Error::CorruptedIndex("recoverable output integrity"));
-        }
-        Ok(())
     }
 }
 
