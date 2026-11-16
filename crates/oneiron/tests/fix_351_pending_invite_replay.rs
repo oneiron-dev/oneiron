@@ -39,8 +39,8 @@ use oneiron::outbound::{
 use oneiron::outbound_intent_ledger::{IntentState, intent_ledger_records};
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass,
-    EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
 };
 
 const NOW: u64 = 1_800_000_000;
