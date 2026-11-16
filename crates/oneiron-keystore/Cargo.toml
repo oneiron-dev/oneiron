@@ -11,9 +11,11 @@ publish = false
 [lib]
 doctest = false
 
-# Few dependencies on purpose: the Apple adapter is compile-checked for an Apple
-# target from Linux, so nothing here may need a C toolchain or an SDK at build time.
+# Few dependencies on purpose: the Apple adapters must check for an Apple target
+# from Linux (scripts/ci/check_keystore_apple_target.sh; no CI job runs it yet),
+# so nothing here may need a C toolchain or an SDK at build time.
 [dependencies]
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 thiserror = { workspace = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
@@ -22,16 +24,43 @@ core-foundation = "0.10"
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
 security-framework-sys = "2.17"
 
-# DPAPI, through the binding the workspace already locks; no SDK at build time.
+# The macOS unlock sheet (LocalAuthentication), through the bindings the
+# workspace already locks for the macOS app; no SDK at build time.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "LAContext", "block2"] }
+
+# DPAPI, the session's lock record and the window the unlock prompt shows over,
+# through the binding the workspace already locks. Windows Hello's prompt is a
+# Windows Runtime call, which windows-sys does not carry: it comes from the
+# `windows` crate, with its asynchronous-call types from `windows-future`, both
+# already in the workspace lock. No SDK at build time
+# (scripts/ci/check_keystore_windows_target.sh; no CI job runs it yet).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+windows = { version = "0.62", features = ["Security_Credentials_UI", "Win32_System_WinRT"] }
+windows-future = "0.3"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
-# The process-memory adapter, for this crate's tests and its dependents' tests.
+# The process-memory adapter (slots and sealed bytes), the scripted presence
+# prompt and device PIN, and the manual presence clocks, for this crate's
+# tests and its dependents' tests.
 test-keystore = []
 
 [dev-dependencies]
 tempfile = "3"
+
+# The presence layer's tests drive the scripted prompt and the manual clocks.
+[[test]]
+name = "user_presence"
+required-features = ["test-keystore"]
+
+# The sealed-bytes home's tests compare the file tier with the memory tier.
+[[test]]
+name = "sealed_bytes"
+required-features = ["test-keystore"]
 
 [lints]
 workspace = true

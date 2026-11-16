@@ -97,21 +97,10 @@ impl RevokeFacts {
     }
 }
 
-/// A signed withdrawal that may cross rejected permissive ancestry.
-pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::SlipGrantRevoke { .. }
-        | AuthorityOp::RemovalArchiveConsume { .. } => true,
-        op => removes_machine(op),
-    }
-}
-
-pub(super) fn removes_machine(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::revoke_proof::{
+    removes_machine, restrictive_withdrawal,
+};
 
 /// Every candidate comes from the already signature-filtered entry graph.
 /// The proof uses the same `fold_entry_state` and shared stalled-ancestor

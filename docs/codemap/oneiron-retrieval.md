@@ -19,10 +19,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/analyzer/icu.rs` | src | s | 1 fn | — | ICU4X-backed word segmentation for scripts without a dedicated morph analyzer in v1 |
 | `src/analyzer/japanese.rs` | src | m | 1 struct · 1 enum · 7 fn · 2 const | DictLoadError, JapaneseAnalyzer | Japanese analyzer |
 | `src/analyzer/japanese/tests.rs` | test | s | — | — | — |
+| `src/analyzer/khmer.rs` | src | m | 3 crate-vis | — | Khmer syllable canonicalization (ONE-COENG, ARCH-0031 `#deferred`) |
 | `src/analyzer/korean.rs` | src | s | 1 struct · 1 enum · 7 fn · 2 const | DictLoadError, KoreanAnalyzer | Korean analyzer |
 | `src/analyzer/latin.rs` | src | s | 2 fn | — | Latin / European analyzer |
 | `src/analyzer/manifest.rs` | src | s | 4 struct · 1 enum · 9 fn · 1 const | AnalyzerAssetManifest, AnalyzerManifest, AnalyzerMode, LangPolicy, NormalizationPolicy | Analyzer + asset manifest types, plus the canonical-JSON hasher that gates LMDB text-index compatibility |
-| `src/analyzer/mod.rs` | src | m | 1 struct · 1 enum · 8 fn · 12 mod · 5 re-export · 1 crate-vis | DiscoverError, MultilingualAnalyzer | Multilingual analyzer subsystem |
+| `src/analyzer/mod.rs` | src | m | 1 struct · 1 enum · 8 fn · 12 mod · 5 re-export · 2 crate-vis | DiscoverError, MultilingualAnalyzer | Multilingual analyzer subsystem |
 | `src/analyzer/normalize.rs` | src | s | 1 struct · 9 fn | NormalizedText | Pre-tokenization normalization helpers |
 | `src/analyzer/script.rs` | src | s | 2 struct · 1 enum · 6 fn | ScriptClass, ScriptRun, ScriptRunSplitter | Script-run splitter |
 | `src/analyzer/script/tests.rs` | test | s | — | — | — |

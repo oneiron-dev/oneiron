@@ -112,6 +112,11 @@ impl Vault {
                     wtxn,
                     id,
                 )?;
+                crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
                 crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
                     self, wtxn, id,
                 )?;

@@ -25,8 +25,6 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
-use serde::{Deserialize, Serialize};
-
 use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
@@ -39,8 +37,11 @@ use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
 use super::role_preset::RolePreset;
 use super::waits::refuse;
 use crate::Vault;
+use crate::authority::{RootChange, StepUpFactor};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::FederationGrantRole;
+use crate::store::custody_protocol::{TargetScope, TargetSpec};
 
 /// One act a door runs for a person, as check-in judges it.
 pub(crate) struct DoorAct<'a> {
@@ -61,30 +62,8 @@ pub(crate) struct DoorAct<'a> {
     pub(crate) effect_digest: [u8; 32],
 }
 
-/// The check-in decision an act's family receipt records (P24-SHAPE Q9 =
-/// A): the act class, the role it was judged under, the mode and why it
-/// went.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CheckInDecision {
-    /// The act class's token.
-    pub act_class: String,
-    /// The role's token.
-    pub role: String,
-    /// The mode's wire token; none when the role acts on its own proof.
-    pub mode: Option<String>,
-    /// Why the act went: `never_ask`, `sure` (the person's own judgment),
-    /// `own_proof`, or the basis the spent check-in gave (`approved`,
-    /// `proceed_with_undo` or `window_passed`).
-    pub basis: String,
-    /// The check-in the act spent, 32 hex.
-    pub check_in: Option<String>,
-    /// Who asked for the act, PERSON or agent id hex, when an Owner applied
-    /// another asker's approved check-in on their own proof (P24-SHAPE Q7 =
-    /// A); none for an act its own actor asked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requester: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::check_in::effect::CheckInDecision;
 
 /// What a door does with its act.
 pub(crate) enum DoorCheckIn {
@@ -244,6 +223,88 @@ pub fn record_erase_effect_digest(record: &EntityId, also_same_bytes: bool) -> [
     *hasher.finalize().as_bytes()
 }
 
+/// The digest of `from` handing their ownership of shared vault `vault_id`
+/// to `to`, keeping `from_keeps` or leaving when it is `None`: the effect an
+/// asker's `vault.check_in.open` names for `vault.shared.propose_transfer`,
+/// and the one the start of `from`'s `transfer_ownership` act spends (2k1;
+/// P25-SHAPE Q1 = A). Only `from` applies it: the act moves the starter's
+/// own ownership. BLAKE3, key derived from `oneiron check_in ownership
+/// transfer v1`, over the vault id as eight big-endian bytes, the 16 id
+/// bytes of `from` and of `to`, and the kept role.
+#[must_use]
+pub fn ownership_transfer_effect_digest(
+    vault_id: u64,
+    from: &EntityId,
+    to: &EntityId,
+    from_keeps: Option<FederationGrantRole>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in ownership transfer v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(from.as_bytes());
+    hasher.update(to.as_bytes());
+    update_kept_role(&mut hasher, from_keeps);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of making `owner` an Owner of shared vault `vault_id`: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.shared.propose_add_owner`, and the one an Owner's start of the
+/// `add_owner` act spends (2k1; P25-SHAPE Q1 = A). BLAKE3, key derived from
+/// `oneiron check_in owner add v1`, over the vault id as eight big-endian
+/// bytes and the 16 id bytes of `owner`.
+#[must_use]
+pub fn owner_add_effect_digest(vault_id: u64, owner: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in owner add v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(owner.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of removing Owner `target` of shared vault `vault_id`, with
+/// its `successor`, the role `target_keeps` and the export-first answer: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.shared.propose_remove_owner`, and the one an Owner's start of the
+/// `remove_owner` act spends (2k1; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in owner remove v1`, over the vault id as eight
+/// big-endian bytes, the 16 id bytes of `target`, one byte 1 and the
+/// successor's 16 id bytes or one byte 0, the kept role, and one byte, 1
+/// when the target exports first.
+#[must_use]
+pub fn owner_remove_effect_digest(
+    vault_id: u64,
+    target: &EntityId,
+    successor: Option<&EntityId>,
+    target_keeps: Option<FederationGrantRole>,
+    export_first: bool,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in owner remove v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(target.as_bytes());
+    match successor {
+        Some(successor) => hasher.update(&[1]).update(successor.as_bytes()),
+        None => hasher.update(&[0]),
+    };
+    update_kept_role(&mut hasher, target_keeps);
+    hasher.update(&[u8::from(export_first)]);
+    *hasher.finalize().as_bytes()
+}
+
+/// One byte 0 for no kept role; else one byte 1, the role name's length as
+/// one byte and its bytes.
+fn update_kept_role(hasher: &mut blake3::Hasher, role: Option<FederationGrantRole>) {
+    match role {
+        Some(role) => {
+            let name = role.as_str().as_bytes();
+            hasher
+                .update(&[1, u8::try_from(name.len()).unwrap_or(u8::MAX)])
+                .update(name);
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
+}
+
 /// The decision of an Owner's own act on a catastrophe row: the Owner acts
 /// on their own proof (P24-SHAPE Q9 = A), where the act's door asks for it.
 pub(crate) fn owner_own_proof_decision(act: ActClass) -> CheckInDecision {
@@ -282,4 +343,225 @@ pub(crate) fn spend_applied_check_in_in_txn(
     }
     consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
     Ok(row.asker)
+}
+
+/// Another asker's approved check-in an Owner applies to their own act on a
+/// catastrophe row (2j apply shape; P25-SHAPE Q1 = A): its id, the verb and
+/// the exact effect it was asked for.
+pub(crate) struct AppliedCheckIn<'a> {
+    pub(crate) id: EntityId,
+    pub(crate) verb: &'a str,
+    pub(crate) effect_digest: [u8; 32],
+}
+
+/// The decision an Owner's own act on a catastrophe row runs on, in `txn`,
+/// the act's own writer: the Owner on their own proof, and with `applied`
+/// the asker's approved check-in, spent here and named with its requester
+/// (2k2; P25-SHAPE Q1 = A). The answer is no proof of its own: every gate
+/// of the act's door still holds.
+///
+/// # Errors
+///
+/// As [`spend_applied_check_in_in_txn`].
+pub(crate) fn owner_act_decision_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    act: ActClass,
+    applied: Option<&AppliedCheckIn<'_>>,
+) -> Result<CheckInDecision> {
+    let mut decision = owner_own_proof_decision(act);
+    if let Some(applied) = applied {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let requester = spend_applied_check_in_in_txn(
+            vault,
+            txn,
+            &applied.id,
+            applied.verb,
+            act,
+            &applied.effect_digest,
+            now,
+        )?;
+        decision.check_in = Some(applied.id.to_hex());
+        decision.requester = Some(requester.to_hex());
+    }
+    Ok(decision)
+}
+
+/// The digest of the Owner's one "Lift the hold and erase?" confirm over
+/// `records`, and the claim-free gate-decision partition with
+/// `claim_free_partition`: the effect an asker's `vault.check_in.open` names
+/// for `vault.legal_holds.lift_and_erase`, and the one the confirm spends
+/// (2k2; P25-SHAPE Q1 = A). The order of `records` and a repeat do not
+/// change it. BLAKE3, key derived from `oneiron check_in legal hold erase
+/// v1`, over the count of distinct records as eight big-endian bytes, their
+/// 16 id bytes each in id order, and one byte, 1 when the confirm releases
+/// the claim-free partition.
+#[must_use]
+pub fn legal_hold_erase_effect_digest(
+    records: &[EntityId],
+    claim_free_partition: bool,
+) -> [u8; 32] {
+    let records: std::collections::BTreeSet<&EntityId> = records.iter().collect();
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in legal hold erase v1");
+    hasher.update(
+        &u64::try_from(records.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    for record in records {
+        hasher.update(record.as_bytes());
+    }
+    hasher.update(&[u8::from(claim_free_partition)]);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of erasing `entity`'s text history through `through`, or
+/// through the engine's own boundary when `None` (a NOTE's oldest pin, as
+/// `vault.notes.history_purge` always asks): the effect an asker's
+/// `vault.check_in.open` names for `vault.notes.history_purge`, and the one
+/// the Owner's erase spends (2k2; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in text history erase v1`, over the entity's 16 id
+/// bytes, then one byte 0, or one byte 1, the frontier's length as eight
+/// big-endian bytes and its bytes.
+#[must_use]
+pub fn text_history_erase_effect_digest(entity: &EntityId, through: Option<&[u8]>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in text history erase v1");
+    hasher.update(entity.as_bytes());
+    match through {
+        Some(frontier) => {
+            let len = u64::try_from(frontier.len()).unwrap_or(u64::MAX);
+            hasher
+                .update(&[1])
+                .update(&len.to_be_bytes())
+                .update(frontier)
+        }
+        None => hasher.update(&[0]),
+    };
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of erasing the frozen request of outbound call `call_seq` of
+/// attempt `attempt`: the effect an asker's `vault.check_in.open` names for
+/// `vault.outbound_calls.request.erase`, and the one the Owner's erase
+/// spends (2k2; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
+/// check_in outbound call request erase v1`, over the attempt's 16 id bytes
+/// and the call's sequence as eight big-endian bytes.
+#[must_use]
+pub fn outbound_call_request_erase_effect_digest(attempt: &EntityId, call_seq: u64) -> [u8; 32] {
+    let mut hasher =
+        blake3::Hasher::new_derive_key("oneiron check_in outbound call request erase v1");
+    hasher.update(attempt.as_bytes());
+    hasher.update(&call_seq.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of the Owner's root `change` for install `target`: the effect
+/// an asker's `vault.check_in.open` names for `vault.roots.requests.create`,
+/// and the one the recorded request spends (2k3; P25-SHAPE Q1 = A). BLAKE3,
+/// key derived from `oneiron check_in root request v1`, over the target's 16
+/// id bytes, the change's wire tag's length as one byte and its bytes, one
+/// byte 1 and the root's 32 bytes or one byte 0, and one byte 1 and the
+/// anchored machine's 16 id bytes or one byte 0.
+#[must_use]
+pub fn root_request_effect_digest(target: &EntityId, change: RootChange) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in root request v1");
+    hasher.update(target.as_bytes());
+    let tag = change.as_str().as_bytes();
+    hasher
+        .update(&[u8::try_from(tag.len()).unwrap_or(u8::MAX)])
+        .update(tag);
+    match change.root() {
+        Some(root) => hasher.update(&[1]).update(&root.0),
+        None => hasher.update(&[0]),
+    };
+    match change {
+        RootChange::Anchor { machine, .. } => hasher.update(&[1]).update(machine.as_bytes()),
+        RootChange::Pin { .. } | RootChange::Activate | RootChange::Restore { .. } => {
+            hasher.update(&[0])
+        }
+    };
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of the Owner's reset of every `factor` step-up factor `person`
+/// enrolled: the effect an asker's `vault.check_in.open` names for
+/// `vault.step_up.passkeys.reset` (passkeys) and `vault.step_up.totp.reset`
+/// (authenticator apps), and the one the reset spends (2k3; P25-SHAPE Q1 =
+/// A). BLAKE3, key derived from `oneiron check_in step up reset v1`, over
+/// the person's 16 id bytes and one byte, 0 for passkeys and 1 for
+/// authenticator apps.
+#[must_use]
+pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in step up reset v1");
+    hasher.update(person.as_bytes());
+    hasher.update(&[match factor {
+        StepUpFactor::Passkey => 0,
+        StepUpFactor::Totp => 1,
+    }]);
+    *hasher.finalize().as_bytes()
+}
+
+/// The decision an Owner's own act on a catastrophe row runs on when its
+/// effect lands outside the vault's writer (a custody journal; 2k3,
+/// P25-SHAPE Q1 = A): the Owner on their own proof, and with `applied` the
+/// asker's approved check-in, spent in a writer of its own on the Owner's
+/// live proof before the act runs, as the NOTE history purge spends it
+/// (2k2). A refusal after it leaves the approval spent.
+///
+/// # Errors
+///
+/// The Owner's proof no longer holds; as [`spend_applied_check_in_in_txn`].
+pub(crate) fn owner_act_decision_in_own_writer(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    act: ActClass,
+    applied: Option<&AppliedCheckIn<'_>>,
+) -> Result<CheckInDecision> {
+    match applied {
+        Some(applied) => vault.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(vault, txn)?;
+            owner_act_decision_in_txn(vault, txn, act, Some(applied))
+        }),
+        None => Ok(owner_own_proof_decision(act)),
+    }
+}
+
+/// The digest of draining custody member `target_id` out of the required
+/// set: the effect an asker's `vault.check_in.open` names for
+/// `vault.custody.members.drain.begin`, `.drain.commit` (the ack's member)
+/// and `.drain.folder`, and the one that door spends (2k3; P25-SHAPE Q1 =
+/// A). BLAKE3, key derived from `oneiron check_in custody drain v1`, over
+/// the id's length as one byte and its bytes.
+#[must_use]
+pub fn custody_drain_effect_digest(target_id: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in custody drain v1");
+    update_short_text(&mut hasher, target_id);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of re-enrolling `spec`, a drained custody member: the effect
+/// an asker's `vault.check_in.open` names for
+/// `vault.custody.members.reenrol`, and the one the re-enrolment spends
+/// (2k3; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// custody reenrol v1`, over the member's id and its kind's name, each as
+/// its length in one byte and its bytes, and one byte, 0 when it holds heads
+/// and the log, 1 for the log alone.
+#[must_use]
+pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in custody reenrol v1");
+    update_short_text(&mut hasher, spec.id().as_str());
+    update_short_text(&mut hasher, spec.kind().name());
+    hasher.update(&[match spec.scope {
+        TargetScope::HeadAndLog => 0,
+        TargetScope::LogOnly => 1,
+    }]);
+    *hasher.finalize().as_bytes()
+}
+
+/// `text`'s length as one byte (at most 255; custody ids are at most 128)
+/// and its bytes.
+fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
+    hasher
+        .update(&[u8::try_from(text.len()).unwrap_or(u8::MAX)])
+        .update(text.as_bytes());
 }

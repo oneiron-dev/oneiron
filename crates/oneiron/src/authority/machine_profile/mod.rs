@@ -30,42 +30,10 @@ use crate::entity_id::EntityId;
 use super::machine_standing::Revision;
 use super::*;
 
-/// Who admitted a chain of a machine's revisions.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum MachineAdmitter {
-    /// The vault's roster, under the owner-held rule for an owned mark.
-    Roster,
-    /// One valid owner root's anchor key (Ed25519).
-    Anchor([u8; 32]),
-}
-
-/// Whose authority signed a revision.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum SignerClass {
-    /// A key the owner holds.
-    OwnerHeld,
-    /// A cloud root, or a key in the host's custody on a hosted vault: it
-    /// registers a bootstrap node and carries it under a successor root, and
-    /// never demotes, removes or answers for the owner (FIX 7920).
-    Custodial,
-    /// A linked machine's install key carrying the owner's act (mesh PR1b):
-    /// the act answers for the owner, never the key, and the label says
-    /// nothing of who holds the key. A revision it signed stands only while
-    /// its act does.
-    Carrier,
-}
-
-/// The root this install pins: only its anchor's chain is trusted here, and
-/// only while the fold holds the root as valid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PinnedRoot {
-    pub id: RecoveryRootId,
-    pub anchor_key: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::machine_profile::{
+    MachineAdmitter, PinnedRoot, SignerClass, TrustedMachine,
+};
 
 /// The winning revision of one admitter's chain for one machine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -129,14 +97,6 @@ pub struct FoldedMachine {
     /// For each key a chain here names, the trust scopes in which another
     /// machine claims it: `Roster` for an accepted roster revision.
     pub(super) shared: BTreeMap<[u8; 32], BTreeSet<MachineAdmitter>>,
-}
-
-/// The identity a trusted chain gives a machine: the keys that may sign as
-/// it and be wrapped to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TrustedMachine<'a> {
-    pub chain: MachineAdmitter,
-    pub profile: &'a MachineProfile,
 }
 
 /// One admitter's revisions of one machine.
@@ -426,6 +386,40 @@ impl FoldedMachine {
         self.trusted(pin).is_some()
     }
 
+    /// The host's own node as `admitter`'s install reads it: its live roster
+    /// revision profiles it a hosted node, as a managed host registers its
+    /// node ([`crate::Vault::provision_host_node`]). Only a roster chain
+    /// holds that node, since a custodial root's write says nothing for the
+    /// owner. The vetoes of [`Self::trusted_under`] still hold over it and
+    /// every chain `admitter` trusts: no chain removed or conflicted, their
+    /// keys agree, and no other machine claims the key in a scope `admitter`
+    /// trusts. A live chain the owner's say-so gives it in another role, an
+    /// execution node for one, wins, unless a later say-so still standing saw
+    /// it ([`owner_answers::effective_chains`]): the owner's answer that it
+    /// is a hosted node outlives an older anchor mark. Say-sos that disagree
+    /// with none seeing the other give nothing. It is never mine; only its
+    /// engine seals count (L7-34).
+    #[must_use]
+    pub(super) fn hosted_node_under(&self, admitter: &MachineAdmitter) -> Option<&MachineProfile> {
+        let roster = self
+            .roster
+            .as_ref()
+            .filter(|roster| roster.is_live() && roster.profile.role == MachineRole::HostedNode)?;
+        let mut chains = self.trust_chains(admitter);
+        chains.push((MachineAdmitter::Roster, roster));
+        if self.keys_unsettled(admitter, &chains)
+            || chains
+                .iter()
+                .any(|(_, chain)| chain.removed || chain.conflicted)
+        {
+            return None;
+        }
+        let other_role = owner_answers::effective_chains(chains)?
+            .iter()
+            .any(|(_, chain)| chain.is_live() && chain.profile.role != MachineRole::HostedNode);
+        (!other_role).then_some(&roster.profile)
+    }
+
     /// Some chain here, trusted or not, names `machine_key`.
     #[must_use]
     pub fn names_key(&self, machine_key: &[u8; 32]) -> bool {
@@ -488,6 +482,35 @@ impl AuthorityFold {
             self.trusted_machine(*machine)
                 .is_some_and(|trusted| &trusted.profile.machine_key == machine_key)
         })
+    }
+
+    /// The key the host's own node `machine` signs with, as this install
+    /// reads its standing under its pin ([`FoldedMachine::hosted_node_under`]):
+    /// a node the owner never called his, whose engine seals still count on
+    /// every replica (ARCH-0055 `#seal-standing-open`, will over substrate).
+    /// `None` for any other machine, a mine one included.
+    #[must_use]
+    pub(crate) fn hosted_node_key(&self, machine: EntityId) -> Option<[u8; 32]> {
+        let admitter = self
+            .pinned_root
+            .as_ref()
+            .map_or(MachineAdmitter::Roster, |pin| {
+                MachineAdmitter::Anchor(pin.anchor_key)
+            });
+        self.machines
+            .get(&machine)?
+            .hosted_node_under(&admitter)
+            .map(|profile| profile.machine_key)
+    }
+
+    /// The host's own node that signs with `machine_key`
+    /// ([`Self::hosted_node_key`]).
+    #[must_use]
+    pub(crate) fn hosted_node_by_key(&self, machine_key: &[u8; 32]) -> Option<EntityId> {
+        self.machines
+            .keys()
+            .copied()
+            .find(|machine| self.hosted_node_key(*machine).as_ref() == Some(machine_key))
     }
 
     /// One machine's trusted identity under this install's pin.

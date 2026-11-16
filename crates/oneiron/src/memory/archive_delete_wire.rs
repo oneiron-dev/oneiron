@@ -221,21 +221,11 @@ fn entity_ref(text: &str) -> MemoryResult<EntityId> {
 
 fn expectation(expected: &ArchiveDeleteExpectation) -> MemoryResult<ArchiveExpectation> {
     let invalid = || MemoryError::bad_request("expected names the hex a preview returned");
-    let hash = decode_hex(&expected.record_hash)
+    let hash = oneiron_hex::decode_vec_any_case(&expected.record_hash)
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .ok_or_else(invalid)?;
-    let marker = decode_hex(&expected.archive_marker).ok_or_else(invalid)?;
+    let marker = oneiron_hex::decode_vec_any_case(&expected.archive_marker).ok_or_else(invalid)?;
     Ok((hash, marker))
-}
-
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
 }
 
 fn preview_row(entry: &ArchivePurgeEntry) -> ArchiveDeletePreviewRow {
