@@ -30,6 +30,10 @@ use crate::server::SyncServer;
 /// Beside the verdict, the rows the solve read (FIX 5483): the page's live
 /// `booking.event_type` claims its calendar binding came from and every row
 /// the listing oracle listed.
+///
+/// `past_caps` is the owner's own hold past a full day, which the owner door
+/// verified before this: it is asked past the meeting caps, as its confirm
+/// will be.
 pub(super) fn unoffered_slot_answer(
     server: &SyncServer,
     page_ref: EntityId,
@@ -37,17 +41,23 @@ pub(super) fn unoffered_slot_answer(
     constraint: Option<&ConstraintObject>,
     session_key: SessionKey,
     now: u64,
+    past_caps: bool,
 ) -> Result<(Option<BookingOperationResponse>, Vec<EntityId>), ApiError> {
     let slot = slot_range(input.selected_slot)?;
     let producers = ProducerRows::default();
     let (oracle, mut rows) =
         booking_oracle_listing(server, page_ref, Some(session_key), now, &producers)?;
-    let solved = oracle.solve(&SolveRequest {
+    let request = SolveRequest {
         event_type: input.event_type.clone(),
         window: offerability_window(slot),
         constraint: constraint.cloned(),
         visitor_tz: input.visitor_tz.clone(),
-    })?;
+    };
+    let solved = if past_caps {
+        oracle.solve_past_caps(&request)?
+    } else {
+        oracle.solve(&request)?
+    };
     rows.extend(producers.take());
     if solved
         .slots
