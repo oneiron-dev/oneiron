@@ -162,14 +162,11 @@ impl Adapter<'_> {
 fn texts(body: &Value) -> Vec<Vec<String>> {
     body["items"]
         .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item["text"].as_str())
-                .map(|text| vec![text.to_owned()])
-                .collect()
-        })
-        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["text"].as_str())
+        .map(|text| vec![text.to_owned()])
+        .collect()
 }
 
 fn not_ready(name: &str, reason: String) -> System {
