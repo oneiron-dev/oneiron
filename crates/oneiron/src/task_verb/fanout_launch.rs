@@ -101,8 +101,8 @@ pub(super) const FANOUT_LAUNCHES: SideTable<HexId, StoredLaunch, Named> =
 /// Domain of a wave launch's ref: one launch per actor and plan_ref.
 const LAUNCH_REF_DOMAIN: &[u8] = b"oneiron.tasks.fanout.launch.v1";
 
-/// The plan target of a wave task with no assignee: the default realization.
-const WAVE_DEFAULT_REALIZATION: &str = "tasks.realize";
+#[doc(hidden)]
+use oneiron_records::task_verb::fanout_launch::{WAVE_DEFAULT_REALIZATION, check_row_ref};
 
 /// The lease an approval re-leases a held planning attempt under, for the
 /// instant it completes it.
@@ -435,10 +435,6 @@ impl StoredLaunch {
             approval_project: self.approval_project,
         }
     }
-}
-
-fn check_row_ref(kind: &str, launch_ref: EntityId) -> String {
-    format!("fanout_check_row:{kind}:{}", launch_ref.to_hex())
 }
 
 fn load_launch(
