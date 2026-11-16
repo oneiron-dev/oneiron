@@ -93,7 +93,10 @@ pub use self::kernel::{
     FIELD_TYPE_REF_NODE, FIELD_TYPE_REF_TREE_VERSION, ReceiptKind, ReceiptQuery, ReceiptRecord,
     ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
-pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::ledgers::{
+    attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt,
+    parse_attempt_pack_receipt_id,
+};
 pub use self::lens::{LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision};
 pub use self::pack_attribution::{
     ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
@@ -234,6 +237,7 @@ pub(crate) use ledgers::attempt_pack_receipt_page;
 pub(crate) use ledgers::attempt_pack_receipt_in_txn;
 
 mod archive_source;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use archive_source::{
     archived_receipt_carriers_in_txn, is_receipt_archive_source, receipt_archive_custody_exists,
