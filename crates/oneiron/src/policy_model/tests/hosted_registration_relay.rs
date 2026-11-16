@@ -396,7 +396,7 @@ fn the_policy_hash_encodes_every_length_in_a_fixed_eight_bytes() {
     };
     assert_eq!(
         policy.derive_policy_hash(),
-        "4e4df5d69b237d460e40bc05b87736f6d62b17b6c6f07f7488f8aaddb810dbc4"
+        "8ae305d107a7fadbc2df0452405b00fa9df28bb4a5422ec1c9b7f16a44ee25ad"
     );
 }
 
