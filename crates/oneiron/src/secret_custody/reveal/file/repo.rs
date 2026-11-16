@@ -32,6 +32,7 @@
     reason = "FIX 7608 2b-ii-A: inert until 2b-ii-B wires the repo readers that take a why"
 )]
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::{KeyRead, ReadGroup, SEALED_FILE_CLASS, admitted_keys_in_txn, class_groups};
@@ -48,8 +49,8 @@ use crate::vault::Vault;
 
 mod grants;
 
-/// Domain of a repo file read's identity digests and its fingerprint.
-const REPO_FILE_DOMAIN: &[u8] = b"oneiron.secret_reveal.repo_file.v1";
+#[doc(hidden)]
+use oneiron_records::secret_custody::reveal::file::repo::{REPO_FILE_DOMAIN, digest, hex};
 
 /// The handle a repo file's opaque residue is read as, in place of keys'.
 const REPO_SEALED_HANDLE: &str = "sealed repo file";
@@ -60,8 +61,11 @@ pub(crate) use crate::secret_record::RepoFileKeys;
 
 /// The reach of the owner's grant on a repo file read: the scope the
 /// owner's standing answer to one repo file reveal picks (FIX 9236).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("repo.file.reveal.scope")]
 pub enum RepoFileRevealScope {
     /// This file, until revoked.
     File,
@@ -76,16 +80,6 @@ pub enum RepoFileRevealScope {
 impl RepoFileRevealScope {
     /// Every scope, the narrowest first: the order a read's bound is tried.
     pub(crate) const ALL: [Self; 4] = [Self::FileTask, Self::File, Self::RepoTask, Self::Repo];
-
-    /// The pinned scope word.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::FileTask => "file_task",
-            Self::Repo => "repo",
-            Self::RepoTask => "repo_task",
-        }
-    }
 
     const fn names_file(self) -> bool {
         matches!(self, Self::File | Self::FileTask)
@@ -431,19 +425,4 @@ impl Vault {
             _ => RepoFileSight::Masked,
         })
     }
-}
-
-/// The BLAKE3 of `fields` under [`REPO_FILE_DOMAIN`], each length-prefixed.
-fn digest(fields: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REPO_FILE_DOMAIN);
-    for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
-        hasher.update(field);
-    }
-    *hasher.finalize().as_bytes()
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    crate::entity_id::bytes_to_hex_lower(bytes)
 }

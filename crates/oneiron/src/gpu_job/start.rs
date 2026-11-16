@@ -10,7 +10,8 @@ use crate::{EntityId, Vault};
 
 use super::{
     GPU_JOBS, GpuChunk, GpuConnectorError, GpuEndReason, GpuJob, GpuJobConnector, GpuJobError,
-    GpuJobPermits, GpuJobQuote, GpuJobState, GpuOffer, GpuOfferPin, GpuResourceRef, seconds,
+    GpuJobPermits, GpuJobQuote, GpuJobState, GpuOffer, GpuOfferPin, GpuResourceRef, GpuTermination,
+    seconds,
 };
 
 /// The job a start writes, or why its write refused.
@@ -70,7 +71,7 @@ impl Vault {
             GPU_JOBS.put(&self.store, txn, &job.id, &job)?;
             Ok(Ok(job))
         });
-        let job = match written {
+        let mut job = match written {
             Ok(Ok(job)) => job,
             Ok(Err(refused)) => {
                 let _ = permit.settle_unsent();
@@ -86,7 +87,7 @@ impl Vault {
             self.hold_gpu_job(job, denied.to_string(), now_ms)?;
             return Err(GpuJobError::Denied(denied));
         }
-        permits.hold(job.id, permit);
+        permits.hold(job.id, job.chunk_mut()?.idempotency_key.clone(), permit);
         self.create_gpu_chunk(job, permits, connector, now_ms)
     }
 
@@ -169,34 +170,94 @@ impl Vault {
             job.state = GpuJobState::Running;
         }
         if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
-            return self.stored_after_lost_write(&job.id, &key, created, connector);
+            return self
+                .stored_after_lost_write(&job.id, &key, created, permits, connector, now_ms);
         }
         Ok(job)
     }
 
-    /// The stored row, after this host's write over `id` lost to another one
-    /// (a cancel, an erase). A resource this host made or found under the
-    /// chunk's `key` is terminated unless that row still steps it: an end
-    /// that found nothing has settled the chunk already, and no later step
-    /// would end it.
-    ///
-    /// # Errors
-    ///
-    /// [`GpuJobError::Connector`] when the provider did not answer the
-    /// termination.
+    /// The stored row, after this host's write over the chunk under `key`
+    /// of `id` lost to another one (a cancel, an erase), as
+    /// [`Self::stored_after_lost_step`] reads it. A resource this host made
+    /// or found under `key` is terminated unless that row still steps it: an
+    /// end that found nothing has settled the chunk already, and no later
+    /// step would end it. A termination the provider does not confirm at
+    /// once leaves the resource on the row, and the host's step asks again
+    /// until it does.
     pub(super) fn stored_after_lost_write(
         &self,
         id: &EntityId,
         key: &str,
         resource: Option<GpuResourceRef>,
+        permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
+        now_ms: u64,
     ) -> Result<GpuJob, GpuJobError> {
-        let stored = self.load_gpu_job(id)?;
-        if let Some(resource) = resource.filter(|resource| !steps_resource(&stored, key, resource))
+        let mut stored = self.stored_after_lost_step(id, key, permits)?;
+        let Some(resource) = resource.filter(|resource| !steps_resource(&stored, key, resource))
+        else {
+            return Ok(stored);
+        };
+        if let Ok(GpuTermination::Confirmed { .. }) = connector.terminate(&resource) {
+            return Ok(stored);
+        }
+        while !stored.orphaned_resources.contains(&resource)
+            && !steps_resource(&stored, key, &resource)
         {
-            connector.terminate(&resource)?;
+            stored.orphaned_resources.push(resource.clone());
+            if self
+                .with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut stored, now_ms))?
+            {
+                break;
+            }
+            stored = self.load_gpu_job(id)?;
         }
         Ok(stored)
+    }
+
+    /// The stored row, after a step's write over the chunk under `key` of
+    /// `id` lost to another write. When that row ended the chunk with no
+    /// settlement, the permit this host holds for the chunk pays nothing: no
+    /// step settles it any more, and it would hold the reservation until the
+    /// host stops. An end that settled the chunk takes its own permit.
+    pub(super) fn stored_after_lost_step(
+        &self,
+        id: &EntityId,
+        key: &str,
+        permits: &GpuJobPermits,
+    ) -> Result<GpuJob, GpuJobError> {
+        let stored = self.load_gpu_job(id)?;
+        if ended_unsettled(&stored, key)
+            && let Some(permit) = permits.take_for_chunk(id, key)
+        {
+            let _ = permit.settle(CallOutcome::Used(0));
+        }
+        Ok(stored)
+    }
+
+    /// Asks the termination of each resource a lost write left on `job`, and
+    /// drops those whose provider confirmed it; the others wait for the next
+    /// step.
+    pub(super) fn terminate_orphaned_resources(
+        &self,
+        mut job: GpuJob,
+        connector: &dyn GpuJobConnector,
+        now_ms: u64,
+    ) -> Result<GpuJob, GpuJobError> {
+        let before = job.orphaned_resources.len();
+        job.orphaned_resources.retain(|resource| {
+            !matches!(
+                connector.terminate(resource),
+                Ok(GpuTermination::Confirmed { .. })
+            )
+        });
+        if job.orphaned_resources.len() == before
+            || self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?
+        {
+            return Ok(job);
+        }
+        // Another write came first: the next step asks again.
+        self.load_gpu_job(&job.id)
     }
 
     /// Holds a job whose chunk never reached its provider.
@@ -223,6 +284,21 @@ fn steps_resource(job: &GpuJob, key: &str, resource: &GpuResourceRef) -> bool {
         .is_some_and(|chunk| {
             chunk.resource.as_ref() == Some(resource) || job.state == GpuJobState::Reserved
         })
+}
+
+/// Whether `job`'s stored row no longer runs the chunk under `key` and
+/// records no settlement for it.
+fn ended_unsettled(job: &GpuJob, key: &str) -> bool {
+    let runs = job.state.is_live()
+        && job
+            .chunk()
+            .is_some_and(|chunk| chunk.idempotency_key == key);
+    !runs
+        && job
+            .chunks
+            .iter()
+            .find(|chunk| chunk.idempotency_key == key)
+            .is_none_or(|chunk| chunk.settled_units.is_none())
 }
 
 /// The job with `quote`'s chunk added: a new job under the maximum it shows,
@@ -267,6 +343,7 @@ fn next_chunk(
                 created_at_ms: now_ms,
                 updated_at_ms: now_ms,
                 revision: 0,
+                orphaned_resources: Vec::new(),
             };
             (job, None::<CheckpointRef>)
         }

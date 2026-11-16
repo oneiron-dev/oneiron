@@ -447,6 +447,7 @@ impl Vault {
         Ok(TextLimits {
             package: self.docedit_package_limits_in_txn(txn)?,
             docx: self.docx_archive_limits_in_txn(txn, None)?,
+            max_offers: super::setting_keys::reattach_max_offers_in_txn(self, txn)?,
         })
     }
 
@@ -917,6 +918,7 @@ impl Vault {
             locator,
             drift: None,
             body: None,
+            sub_session: thread.sub_session_id,
         };
         let new_head_id = self.write_thread_head_in_txn(
             wtxn,
