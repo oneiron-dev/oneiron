@@ -3,7 +3,7 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v30 (census L5-22, the authority overlay): an AUTHORITY_LOG row's op keeps
+/// v31 (census L5-22, the authority overlay): an AUTHORITY_LOG row's op keeps
 /// its erasable leaves (a device's attestation evidence, a Grant's repo bounds
 /// and wallet ref, a residence refusal reason, an owner-work result's refs) in
 /// a sealed overlay record beside the row, and the stored body carries a
@@ -13,6 +13,15 @@ pub const MAX_DBS: u32 = 32;
 /// so the authority fold schema moves with it: a stored checkpoint image
 /// written before it no longer decodes. No old-meaning reader or migration is
 /// provided (the lead's M-1 stored-change rule, path "loud").
+///
+/// v30 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, federation confirmations):
+/// stored authority-log rows keep their bytes and change meaning. Of two
+/// concurrent federation confirmations that share an id or a nonce, the
+/// higher hash and every row above it were refused; now both stand as spent
+/// evidence and no row falls with either. A stored checkpoint image written
+/// before it holds the old losses and no longer decodes (the authority fold
+/// schema moves with it). No old-meaning reader or migration is provided
+/// (the lead's M-1 stored-change rule, path "loud").
 ///
 /// v29 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, device revocation): stored
 /// authority-log rows keep their bytes and change meaning. A `RevokeDevice`
@@ -151,7 +160,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 30;
+pub const STORAGE_ABI_VERSION: u16 = 31;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

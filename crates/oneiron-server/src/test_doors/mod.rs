@@ -20,6 +20,7 @@ pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod native_board;
 pub mod openapi_document;
+pub mod pre_idle_reuse;
 pub mod replay_admission;
 pub mod resident_pump;
 pub mod signing_session;
