@@ -265,25 +265,17 @@ impl Vault {
                 source.version,
             ));
         }
-        let record = crate::store::GateDecisionRecord {
-            version: crate::store::GATE_DECISION_LEDGER_VERSION,
-            decision_id: receipt.decision_id(),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: receipt.gate_outcome().to_owned(),
+        let mut gate_receipt = crate::store::GateReceipt::with_reasons(
+            receipt.gate_outcome(),
+            super::grant::CONSENT_CONTENT_KIND,
             reason_codes,
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "human".to_owned(),
-            actor_ref: Some(attribution.actor.to_hex()),
-            content_kind: super::grant::CONSENT_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(attribution.grant_ref.clone()),
-            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
-            read_frontier_hash: attribution.policy_frontier,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)
+            crate::store::ReceiptActor::human(attribution.actor),
+            crate::consent::consent_receipt_diff_handle(receipt),
+            crate::store::PolicyBasis::frontier(attribution.policy_frontier),
+        );
+        gate_receipt.id = Some(receipt.decision_id());
+        gate_receipt.grant_ref = Some(attribution.grant_ref.clone());
+        self.store.record_gate_receipt_in_txn(txn, gate_receipt)?;
+        Ok(())
     }
 }
