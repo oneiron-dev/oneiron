@@ -298,12 +298,6 @@ fn row_check_in(
         LiveEntityRow::Absent => return Ok(RowCheck::Absent),
         LiveEntityRow::DeletedShell => return Ok(RowCheck::Unreadable),
     };
-    // Sealed custody keeps its own refusal here (ROW_SECRET_CUSTODY): the
-    // governed read now drops such a row silently rather than failing on it
-    // (FIX RECALL-CUSTODY-ROW-FAILS-WHOLE-READ).
-    if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(crate::secret_record::reject_secret_custody_byte());
-    }
     if !readable(&id)? {
         return Ok(RowCheck::Unreadable);
     }

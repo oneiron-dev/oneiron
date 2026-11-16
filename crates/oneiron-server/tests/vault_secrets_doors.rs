@@ -36,8 +36,8 @@
 //! These promises hold on main, save one. Their red proof is a seeded fault
 //! (Test rules v2, rule 5), named in the PR. The recall half of "a secret is
 //! not knowledge" did not hold: the recall's recency stage handed the custody
-//! row to the row gate, which failed the whole read with a 400 (FIX
-//! RECALL-CUSTODY-ROW-FAILS-WHOLE-READ). The knowledge case and the
+//! row to the retrieval predicate, whose row gate failed the whole read with
+//! a 400 (FIX RECALL-CUSTODY-ROW-FAILS-WHOLE-READ). The knowledge case and the
 //! recall-standing case are red on main with no seed.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
@@ -734,8 +734,9 @@ fn a_secret_is_not_knowledge_and_no_read_carries_its_value() {
 /// retrievable claims"). A note that names the secret is still recalled by
 /// that name: the owner's and the agent's recall answer 200, the owner's
 /// lists the note, and neither names the custody record nor carries its
-/// value. On main the custody row failed the whole read with a 400, and the
-/// 400-versus-200 told the reader that a secret's name matched its query.
+/// value. On main the custody row, which the recall's recency stage meets
+/// whatever the query, failed the whole read with a 400, and the 400 versus
+/// 200 told the reader that a secret was just registered.
 #[test]
 fn a_custody_row_leaves_the_rest_of_a_recall_standing() {
     run_on_engine_stack("secrets-doors-recall-standing", || async {

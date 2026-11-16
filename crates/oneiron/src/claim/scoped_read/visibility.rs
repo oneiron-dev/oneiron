@@ -636,13 +636,8 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        // A secret is a value used under a door or a lease, never a fact
-        // recalled (ARCH-0069:8): a read drops a custody row as its sibling
-        // gates do (agent_grants, grant_alternatives), so one sealed row
-        // neither fails the whole read nor tells the reader that a secret's
-        // name matched. The raw, hydrate and sync doors keep their loud seal.
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Ok(false);
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         // Grant bodies contain both private diary ids. They are authority,
         // never a readable graph/search result of their own.
