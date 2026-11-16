@@ -579,9 +579,10 @@ pub struct MailExportMemberMailSettingView {
 
 impl Memory<'_> {
     /// Turns "Owners can export members' mail" on or off (fix list row
-    /// 15416), by the vault's Owner or an Admin: on, a person-owned shared
-    /// vault's whole-vault export carries members' personal mailboxes as an
-    /// org-owned vault's does, each mailbox's person told. Each change is
+    /// 15416), by the vault's Owner or an Admin in person: on, a person-owned
+    /// shared vault's whole-vault export carries members' personal mailboxes
+    /// as an org-owned vault's does, each mailbox's person told. A pen's
+    /// change is an agent's act and is refused `FORBIDDEN`. Each change is
     /// kept in the compliance log; a request that changes nothing records
     /// nothing.
     pub fn mail_export_member_mail_set(
@@ -598,6 +599,11 @@ impl Memory<'_> {
                 ));
             }
             if owners_export_member_mail_in(vault, txn)? != input.enabled {
+                if vault.get_entity_type_in_txn(txn, &actor)?
+                    != Some(crate::registry::ENTITY_TYPE_PERSON)
+                {
+                    return Err(pen_change_refusal());
+                }
                 let at = crate::unix_seconds_now();
                 SETTING.put(
                     &vault.store,
@@ -622,6 +628,20 @@ impl Memory<'_> {
             })
         })
     }
+}
+
+/// A pen's change of "Owners can export members' mail", refused: `manages_in`
+/// admits a pen by its PERSON's standing, but the change is an agent's act,
+/// not its PERSON's, as a pen's change of org compliance search is (Engine
+/// ruling PEN-COMPLIANCE-SET = A). The setting has no check-in act, so its
+/// PERSON changes it in person.
+fn pen_change_refusal() -> MemoryError {
+    MemoryError::new(
+        crate::memory::MEMORY_CODE_FORBIDDEN,
+        "a pen's change of \"Owners can export members' mail\" is an agent's act: the \
+         vault's Owner or an Admin changes it in person",
+        &["Ask the pen's person to change the setting in person."],
+    )
 }
 
 /// An actor's erase takes its id out of "Owners can export members' mail"
