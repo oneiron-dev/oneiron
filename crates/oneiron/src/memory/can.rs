@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use super::{Memory, MemoryResult};
 use crate::task_verb::TaskAskPreflight;
 use crate::verbs::{CanEffect, CanRequest};
-use crate::{EdgeActorClass, EntityId};
 
 /// What `can` answers: an ask's preflight, one effect's dated verdict (FIX
 /// 22102), or one verb's gate (FIX [UI-GATE-PREVIEW]). Untagged, so an ask's
@@ -22,47 +21,8 @@ pub enum CanAnswer {
     Verb(CanVerbAnswer),
 }
 
-/// One verb's gate for one actor, dated (FIX [UI-GATE-PREVIEW];
-/// GENUI-WIRE-GAPS section 4 item 1): what the app shows on an affordance
-/// before anyone presses it. The call itself is judged again when it runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CanVerbAnswer {
-    /// The verb's catalog name.
-    pub verb: String,
-    /// The actor whose call was judged.
-    pub actor_ref: EntityId,
-    /// That actor's class.
-    pub actor_kind: EdgeActorClass,
-    pub gate: CanVerbGate,
-    /// Why the call would not run now: the refusal the call itself answers,
-    /// or the person rule its verb row states. Empty for `auto` and
-    /// `unchecked`.
-    pub reasons: Vec<String>,
-    /// The recording time the judgment read, Unix seconds.
-    pub checked_at: u64,
-}
-
-/// The word a verb's gate answers. Check-in's words (ARCH-0082, designed,
-/// not built) map as Go = `auto`, Wait = `proposed`, Absent = `person` or
-/// `refused`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CanVerbGate {
-    /// The actor's call would run now.
-    Auto,
-    /// The actor's call would wait for a person's yes. No verb answers it
-    /// yet: none of the previewed verbs proposes.
-    Proposed,
-    /// The verb is a person's act and the actor is not a person: the call is
-    /// refused, and a person may act instead.
-    Person,
-    /// The actor's call would be refused for another reason, each in
-    /// `reasons`.
-    Refused,
-    /// No preview reads this verb's gate yet. It says nothing about who may
-    /// call it.
-    Unchecked,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::can::{CanVerbAnswer, CanVerbGate};
 
 /// The dated preflight of one effect (C2:207, FIX 22102): allow, deny,
 /// would-ask or a named hold, judged as the act would be judged.

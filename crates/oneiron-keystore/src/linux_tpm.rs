@@ -18,11 +18,29 @@
 //!   manager flushes anything left when the device closes.
 //! - Authorization is the empty password, for the owner hierarchy (an owner
 //!   password set on this TPM makes the tier unavailable) and for each
-//!   object. The objects are `noDA`, so a failed use never counts toward the
-//!   TPM's dictionary-attack lockout. The secret crosses the bus to the TPM
-//!   unencrypted when it is sealed and unsealed.
+//!   slot's object. The slots are `noDA`, so a failed use never counts
+//!   toward the TPM's dictionary-attack lockout. The secret crosses the bus
+//!   to the TPM unencrypted when it is sealed and unsealed.
 //! - Switching tiers reads nothing the other tier wrote: the install starts
 //!   empty slots, as a new machine does.
+//!
+//! The device PIN key (row OCS-OWNER-PIN) is one more sealed object of the
+//! same kind, kept as `device-pin-key.tpm2` ([`AuthBoundSecretStore`]):
+//! - Its authorization is an auth value the engine derives from the device
+//!   PIN, given as the password when it is unsealed. It crosses the bus
+//!   unencrypted, as the secrets do.
+//! - It is not `noDA`: the TPM counts each wrong auth value toward its
+//!   dictionary-attack lockout, across restarts, in the one counter it keeps
+//!   for everything it guards that way. A right value does not clear the
+//!   count; the TPM forgets one failure each recovery interval.
+//! - While the TPM is in lockout it takes no auth value for this object, a
+//!   right one included. The slots still open: they are `noDA`.
+//! - A new auth value is a new object in place of the old file. The TPM is
+//!   never asked to change an object's auth value.
+//!
+//! The bytes the engine sealed under the device PIN key rest in the same
+//! directory, as the platform tier keeps them (`<name>.sealed`,
+//! [`SealedBytesStore`]). The engine sealed them; the TPM did not.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -33,8 +51,16 @@ use zeroize::Zeroizing;
 
 use crate::file::LocalFileKeystore;
 use crate::{
-    DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, Result,
+    AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality,
+    KeystoreSlot, Result, SealedBytesName, SealedBytesStore,
 };
+
+use command_client::Tpm;
+use wire::Reader;
+
+mod command_client;
+mod device_pin_key;
+mod wire;
 
 /// The kernel's TPM 2.0 resource manager.
 const TPM_DEVICE: &str = "/dev/tpmrm0";
@@ -48,49 +74,52 @@ const TPM_BUFFER: usize = 4096;
 /// storage key template (1: the ECC P-256 storage key below).
 const SEALED_TAG: &[u8; 8] = b"OTPM2\x00\x01\x01";
 
-/// The most bytes a sealed slot file may hold: its tag and two areas, each
-/// at most one TPM buffer.
+/// The sealed device PIN key's file: the same layout under a tag of its own,
+/// so a slot's file is never read as it, nor it as a slot's.
+const AUTH_BOUND_TAG: &[u8; 8] = b"OTPM2\x00\x02\x01";
+
+/// The most bytes a sealed file may hold: its tag and two areas, each at
+/// most one TPM buffer.
 const SEALED_MAX: usize = SEALED_TAG.len() + 2 * TPM_BUFFER;
 
-const TPM_ST_NO_SESSIONS: u16 = 0x8001;
-const TPM_ST_SESSIONS: u16 = 0x8002;
+/// One kind of sealed file: its tag, whether the TPM counts a failed use of
+/// its object, and its words in an error.
+struct SealedKind {
+    tag: &'static [u8; 8],
+    /// `TPMA_OBJECT.noDA`: a failed use is not counted toward the lockout.
+    no_da: bool,
+    open_to_others: &'static str,
+    too_long: &'static str,
+    unparsed: &'static str,
+    foreign: &'static str,
+    wrong_size: &'static str,
+}
 
-const TPM_CC_CREATE_PRIMARY: u32 = 0x0000_0131;
-const TPM_CC_CREATE: u32 = 0x0000_0153;
-const TPM_CC_LOAD: u32 = 0x0000_0157;
-const TPM_CC_UNSEAL: u32 = 0x0000_015e;
-const TPM_CC_FLUSH_CONTEXT: u32 = 0x0000_0165;
+/// A slot's file, `<slot>.tpm2`.
+const SLOT: SealedKind = SealedKind {
+    tag: SEALED_TAG,
+    no_da: true,
+    open_to_others: "the slot file is open to others",
+    too_long: "the sealed slot is too long",
+    unparsed: "the sealed slot does not parse",
+    foreign: FOREIGN_SLOT,
+    wrong_size: "the sealed slot is not 32 bytes",
+};
 
-const TPM_RH_OWNER: u32 = 0x4000_0001;
-/// The password authorization session.
-const TPM_RS_PW: u32 = 0x4000_0009;
-/// `TPMA_SESSION.continueSession`.
-const SESSION_CONTINUE: u8 = 0x01;
+/// The device PIN key's file, `device-pin-key.tpm2`.
+const DEVICE_PIN_KEY: SealedKind = SealedKind {
+    tag: AUTH_BOUND_TAG,
+    no_da: false,
+    open_to_others: "the device PIN key file is open to others",
+    too_long: "the sealed device PIN key is too long",
+    unparsed: "the sealed device PIN key does not parse",
+    foreign: "the sealed device PIN key does not load in this machine's TPM",
+    wrong_size: "the sealed device PIN key is not 32 bytes",
+};
 
-const TPM_ALG_AES: u16 = 0x0006;
-const TPM_ALG_KEYEDHASH: u16 = 0x0008;
-const TPM_ALG_SHA256: u16 = 0x000b;
-const TPM_ALG_NULL: u16 = 0x0010;
-const TPM_ALG_ECC: u16 = 0x0023;
-const TPM_ALG_CFB: u16 = 0x0043;
-const TPM_ECC_NIST_P256: u16 = 0x0003;
-
-/// `TPMA_OBJECT` bits.
-const FIXED_TPM: u32 = 1 << 1;
-const FIXED_PARENT: u32 = 1 << 4;
-const SENSITIVE_DATA_ORIGIN: u32 = 1 << 5;
-const USER_WITH_AUTH: u32 = 1 << 6;
-const NO_DA: u32 = 1 << 10;
-const RESTRICTED: u32 = 1 << 16;
-const DECRYPT: u32 = 1 << 17;
-
-/// Format-one response codes, by their error number with the format bit.
-const RC_FMT1: u32 = 0x080;
-const RC_AUTH_FAIL: u32 = RC_FMT1 + 0x00e;
-const RC_INTEGRITY: u32 = RC_FMT1 + 0x01f;
-const RC_BAD_AUTH: u32 = RC_FMT1 + 0x022;
-/// The TPM is in dictionary-attack lockout.
-const RC_LOCKOUT: u32 = 0x921;
+/// What an object that fails its integrity check is called until its kind
+/// is known.
+const FOREIGN_SLOT: &str = "the sealed slot does not load in this machine's TPM";
 
 /// Slots sealed in this machine's TPM, their files in one key directory.
 #[derive(Debug)]
@@ -98,7 +127,17 @@ pub struct LinuxTpmKeystore {
     /// The key directory: its checks, its backup tag and its temporary-file
     /// sweep are the platform tier's own.
     files: LocalFileKeystore,
-    device: PathBuf,
+    endpoint: TpmEndpoint,
+}
+
+/// Where the TPM answers.
+#[derive(Debug)]
+enum TpmEndpoint {
+    /// The kernel's resource manager, a character device.
+    Device(PathBuf),
+    /// A Unix stream socket: a software TPM in a test.
+    #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
+    Socket(PathBuf),
 }
 
 impl LinuxTpmKeystore {
@@ -107,11 +146,26 @@ impl LinuxTpmKeystore {
     /// resource manager opens and its owner hierarchy makes the storage key.
     /// Without one the tier is `Unavailable`, never served by a weaker one.
     pub fn open(dir: &Path, vault_dirs: &[&Path]) -> Result<Self> {
+        Self::open_at(
+            dir,
+            vault_dirs,
+            TpmEndpoint::Device(PathBuf::from(TPM_DEVICE)),
+        )
+    }
+
+    /// As [`Self::open`], with a TPM that answers on the Unix stream socket
+    /// at `socket` in place of the kernel's resource manager: a software TPM
+    /// in a test. Each operation connects, sends its commands and closes, as
+    /// it opens and closes the device. No resource manager stands between,
+    /// so the TPM keeps what an operation loaded and did not flush.
+    #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
+    pub fn open_on_socket(dir: &Path, vault_dirs: &[&Path], socket: &Path) -> Result<Self> {
+        Self::open_at(dir, vault_dirs, TpmEndpoint::Socket(socket.to_path_buf()))
+    }
+
+    fn open_at(dir: &Path, vault_dirs: &[&Path], endpoint: TpmEndpoint) -> Result<Self> {
         let files = LocalFileKeystore::open(dir, vault_dirs)?;
-        let this = Self {
-            files,
-            device: PathBuf::from(TPM_DEVICE),
-        };
+        let this = Self { files, endpoint };
         let mut tpm = this.tpm()?;
         let primary = tpm.create_primary().map_err(|error| match error {
             KeystoreError::Denied => {
@@ -127,62 +181,89 @@ impl LinuxTpmKeystore {
         self.files.dir().join(format!("{}.tpm2", slot.name()))
     }
 
+    /// The sealed device PIN key's file: under the name the sealed-bytes
+    /// home gives that key, which no slot has.
+    fn device_pin_key_path(&self) -> PathBuf {
+        self.files
+            .dir()
+            .join(format!("{}.tpm2", SealedBytesName::DevicePinKey.name()))
+    }
+
     fn tpm(&self) -> Result<Tpm> {
-        match OpenOptions::new().read(true).write(true).open(&self.device) {
-            Ok(file) => Ok(Tpm { file }),
-            Err(e) if e.kind() == ErrorKind::NotFound => Err(KeystoreError::Unavailable(
-                "no TPM 2.0 resource manager at /dev/tpmrm0",
-            )),
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => Err(KeystoreError::Unavailable(
-                "this user may not open the TPM resource manager /dev/tpmrm0",
-            )),
-            Err(e) => Err(io(e)),
+        match &self.endpoint {
+            TpmEndpoint::Device(device) => Tpm::on_device(device),
+            #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
+            TpmEndpoint::Socket(socket) => Tpm::on_socket(socket),
         }
     }
 
-    /// `secret` sealed in this TPM: the slot file's bytes.
-    fn seal(&self, secret: &[u8; 32]) -> Result<Vec<u8>> {
+    /// `secret` sealed in this TPM under `auth`, as a file of `kind`: that
+    /// file's bytes. The TPM checks no auth value of the new object here,
+    /// only its parent's, so nothing is counted.
+    fn seal(&self, kind: &SealedKind, auth: &[u8], secret: &[u8; 32]) -> Result<Vec<u8>> {
         let mut tpm = self.tpm()?;
         let primary = tpm.create_primary()?;
-        let created = tpm.create_sealed(primary, secret);
+        let created = tpm.create_sealed(primary, kind.no_da, auth, secret);
         tpm.flush(primary);
         let (public, private) = created?;
-        let mut sealed = Vec::with_capacity(SEALED_TAG.len() + public.len() + private.len());
-        sealed.extend_from_slice(SEALED_TAG);
+        let mut sealed = Vec::with_capacity(kind.tag.len() + public.len() + private.len());
+        sealed.extend_from_slice(kind.tag);
         sealed.extend_from_slice(&public);
         sealed.extend_from_slice(&private);
         Ok(sealed)
     }
 
-    /// The secret a slot file's bytes seal, unsealed by this TPM.
-    fn unseal(&self, sealed: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
-        let (public, private) = sealed_areas(sealed)?;
+    /// The secret that a file of `kind` holds, unsealed by this TPM for
+    /// `auth`. Only the unseal itself answers a wrong auth value or a
+    /// lockout: a refusal of the storage key or of the load is the
+    /// keystore's own error, never a wrong auth value. Everything loaded is
+    /// flushed on every path.
+    fn unseal(
+        &self,
+        kind: &SealedKind,
+        sealed: &[u8],
+        auth: &[u8],
+    ) -> Answered<Zeroizing<[u8; 32]>> {
+        let (public, private) = sealed_areas(kind, sealed)?;
         let mut tpm = self.tpm()?;
         let primary = tpm.create_primary()?;
         let loaded = tpm.load(primary, private, public);
         tpm.flush(primary);
-        let object = loaded?;
-        let data = tpm.unseal(object);
+        let object = loaded.map_err(|error| match error {
+            KeystoreError::Corrupt(_) => KeystoreError::Corrupt(kind.foreign),
+            error => error,
+        })?;
+        let data = tpm.unseal(object, auth);
         tpm.flush(object);
-        let data = data?;
+        let data = match data {
+            Ok(data) => data,
+            // The TPM says how long its lockout lasts on this connection.
+            Err(Refusal::Lockout { .. }) => {
+                return Err(Refusal::Lockout {
+                    interval_secs: tpm.lockout_interval_secs(),
+                });
+            }
+            Err(refusal) => return Err(refusal),
+        };
         if data.len() != 32 {
-            return Err(KeystoreError::Corrupt("the sealed slot is not 32 bytes"));
+            return Err(KeystoreError::Corrupt(kind.wrong_size).into());
         }
         let mut secret = Zeroizing::new([0u8; 32]);
         secret.copy_from_slice(&data);
         Ok(secret)
     }
 
-    /// The slot file's bytes, or `None` when the slot is empty.
-    fn read_sealed(&self, slot: &KeystoreSlot) -> Result<Option<Vec<u8>>> {
-        let mut file = match File::open(self.path(slot)) {
+    /// The bytes of the file of `kind` at `path`, or `None` when there is
+    /// none.
+    fn read_sealed(&self, kind: &SealedKind, path: &Path) -> Result<Option<Vec<u8>>> {
+        let mut file = match File::open(path) {
             Ok(file) => file,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(io(e)),
         };
         let meta = file.metadata().map_err(io)?;
         if !meta.is_file() || meta.permissions().mode() & 0o077 != 0 {
-            return Err(KeystoreError::Corrupt("the slot file is open to others"));
+            return Err(KeystoreError::Corrupt(kind.open_to_others));
         }
         let mut sealed = Vec::new();
         Read::by_ref(&mut file)
@@ -190,22 +271,22 @@ impl LinuxTpmKeystore {
             .read_to_end(&mut sealed)
             .map_err(io)?;
         if sealed.len() > SEALED_MAX {
-            return Err(KeystoreError::Corrupt("the sealed slot is too long"));
+            return Err(KeystoreError::Corrupt(kind.too_long));
         }
         Ok(Some(sealed))
     }
 
-    /// A private temporary file holding `sealed`, beside the slot's file,
-    /// named as the platform tier names its own so one sweep clears both.
-    fn write_temp(&self, slot: &KeystoreSlot, sealed: &[u8]) -> (PathBuf, std::io::Result<()>) {
+    /// A private temporary file holding `sealed`, beside the file it will
+    /// become, named as the platform tier names its own so one sweep clears
+    /// both. `stem` is that file's name without its suffix.
+    fn write_temp(&self, stem: &str, sealed: &[u8]) -> (PathBuf, std::io::Result<()>) {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
-        let tmp = self.files.dir().join(format!(
-            ".{}.{}.{nanos}.tmp",
-            slot.name(),
-            std::process::id()
-        ));
+        let tmp = self
+            .files
+            .dir()
+            .join(format!(".{stem}.{}.{nanos}.tmp", std::process::id()));
         let written = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -227,8 +308,11 @@ impl LinuxTpmKeystore {
 
 impl DeviceKeystore for LinuxTpmKeystore {
     fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>> {
-        match self.read_sealed(slot)? {
-            Some(sealed) => self.unseal(&sealed).map(Some),
+        match self.read_sealed(&SLOT, &self.path(slot))? {
+            Some(sealed) => self
+                .unseal(&SLOT, &sealed, &[])
+                .map(Some)
+                .map_err(KeystoreError::from),
             None => Ok(None),
         }
     }
@@ -242,8 +326,8 @@ impl DeviceKeystore for LinuxTpmKeystore {
         if fs::symlink_metadata(&path).is_ok() {
             return Err(KeystoreError::AlreadyExists);
         }
-        let sealed = self.seal(secret)?;
-        let (tmp, written) = self.write_temp(slot, &sealed);
+        let sealed = self.seal(&SLOT, &[], secret)?;
+        let (tmp, written) = self.write_temp(&slot.name(), &sealed);
         let linked = written.and_then(|()| fs::hard_link(&tmp, &path));
         let _ = fs::remove_file(&tmp);
         match linked {
@@ -275,8 +359,8 @@ impl DeviceKeystore for LinuxTpmKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
-        let sealed = self.seal(secret)?;
-        let (tmp, written) = self.write_temp(slot, &sealed);
+        let sealed = self.seal(&SLOT, &[], secret)?;
+        let (tmp, written) = self.write_temp(&slot.name(), &sealed);
         let renamed = written.and_then(|()| fs::rename(&tmp, &path));
         if renamed.is_err() {
             let _ = fs::remove_file(&tmp);
@@ -293,14 +377,59 @@ impl DeviceKeystore for LinuxTpmKeystore {
     fn assurance(&self) -> KeystoreAssurance {
         KeystoreAssurance::Hardware
     }
+
+    /// The platform tier's files in the same key directory: the engine
+    /// sealed these bytes, the TPM did not.
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        Some(&self.files)
+    }
+
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
+        Some(self)
+    }
 }
 
-/// A sealed slot file's `TPM2B_PUBLIC` and `TPM2B_PRIVATE` bodies, after the
-/// tag; nothing may follow them.
-fn sealed_areas(sealed: &[u8]) -> Result<(&[u8], &[u8])> {
-    let corrupt = || KeystoreError::Corrupt("the sealed slot does not parse");
+/// Why the TPM refused a command, before it is told as a slot's error or as
+/// the device PIN key's.
+#[derive(Debug, PartialEq, Eq)]
+enum Refusal {
+    /// The auth value given is not the entity's: `TPM_RC_AUTH_FAIL`, which
+    /// the TPM counted, or `TPM_RC_BAD_AUTH`, which it did not.
+    WrongAuth,
+    /// The TPM is in dictionary-attack lockout. `interval_secs` is its
+    /// recovery interval, once it has been asked.
+    Lockout { interval_secs: Option<u64> },
+    /// Any other failure, as the keystore's error.
+    Other(KeystoreError),
+}
+
+/// A TPM command's answer, or why the TPM refused it.
+type Answered<T> = std::result::Result<T, Refusal>;
+
+impl From<KeystoreError> for Refusal {
+    fn from(error: KeystoreError) -> Self {
+        Self::Other(error)
+    }
+}
+
+/// A refusal as a slot's error: an authorization refused or a lockout is
+/// `Denied`.
+impl From<Refusal> for KeystoreError {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::WrongAuth | Refusal::Lockout { .. } => Self::Denied,
+            Refusal::Other(error) => error,
+        }
+    }
+}
+
+/// The `TPM2B_PUBLIC` and `TPM2B_PRIVATE` bodies of a sealed file of `kind`,
+/// after its tag; nothing may follow them. A file of another kind does not
+/// parse.
+fn sealed_areas<'s>(kind: &SealedKind, sealed: &'s [u8]) -> Result<(&'s [u8], &'s [u8])> {
+    let corrupt = || KeystoreError::Corrupt(kind.unparsed);
     let body = sealed
-        .strip_prefix(SEALED_TAG.as_slice())
+        .strip_prefix(kind.tag.as_slice())
         .ok_or_else(corrupt)?;
     let mut reader = Reader::new(body);
     let public = reader.sized().ok_or_else(corrupt)?;
@@ -311,287 +440,47 @@ fn sealed_areas(sealed: &[u8]) -> Result<(&[u8], &[u8])> {
     Ok((public, private))
 }
 
-/// One open TPM resource-manager connection.
-struct Tpm {
-    file: File,
-}
-
-impl Tpm {
-    /// Sends one command and reads its whole response; a response code other
-    /// than success is this command's error.
-    fn call(&mut self, command: &Command, name: &'static str) -> Result<Zeroizing<Vec<u8>>> {
-        self.file.write_all(&command.finish()).map_err(io)?;
-        let mut response = Zeroizing::new(vec![0u8; TPM_BUFFER]);
-        let read = self.file.read(&mut response).map_err(io)?;
-        response.truncate(read);
-        let mut header = Reader::new(&response);
-        let (Some(_tag), Some(size), Some(code)) = (header.u16(), header.u32(), header.u32())
-        else {
-            return Err(KeystoreError::Platform(name, -1));
-        };
-        if usize::try_from(size).ok() != Some(response.len()) {
-            return Err(KeystoreError::Platform(name, -1));
-        }
-        if code != 0 {
-            return Err(response_error(name, code));
-        }
-        Ok(response)
-    }
-
-    /// The owner hierarchy's ECC P-256 storage key (the TCG standard storage
-    /// key template), made again from the owner seed: the same key each time.
-    fn create_primary(&mut self) -> Result<u32> {
-        let mut command = Command::new(TPM_ST_SESSIONS, TPM_CC_CREATE_PRIMARY);
-        command.u32(TPM_RH_OWNER);
-        command.password_session();
-        // inSensitive: no auth value, no data.
-        command.sized(&[0, 0, 0, 0]);
-        command.sized(&storage_key_template());
-        // outsideInfo, creationPCR.
-        command.u16(0);
-        command.u32(0);
-        let response = self.call(&command, "tpm2 create primary")?;
-        response_handle(&response, "tpm2 create primary")
-    }
-
-    /// `secret` as a sealed data object under `parent`: its `TPM2B_PUBLIC` and
-    /// `TPM2B_PRIVATE`, each with its size.
-    fn create_sealed(&mut self, parent: u32, secret: &[u8; 32]) -> Result<(Vec<u8>, Vec<u8>)> {
-        let mut command = Command::new(TPM_ST_SESSIONS, TPM_CC_CREATE);
-        command.u32(parent);
-        command.password_session();
-        // inSensitive: no auth value, the secret as its data.
-        let mut sensitive = Zeroizing::new(Vec::with_capacity(4 + secret.len()));
-        sensitive.extend_from_slice(&0u16.to_be_bytes());
-        sensitive.extend_from_slice(&(secret.len() as u16).to_be_bytes());
-        sensitive.extend_from_slice(secret);
-        command.sized(&sensitive);
-        command.sized(&sealed_object_template());
-        // outsideInfo, creationPCR.
-        command.u16(0);
-        command.u32(0);
-        let response = self.call(&command, "tpm2 create")?;
-        let mut reader = Reader::new(&response);
-        let malformed = || KeystoreError::Platform("tpm2 create", -1);
-        // The header, then parameterSize.
-        reader.skip(10 + 4).ok_or_else(malformed)?;
-        let private = reader.sized_raw().ok_or_else(malformed)?.to_vec();
-        let public = reader.sized_raw().ok_or_else(malformed)?.to_vec();
-        Ok((public, private))
-    }
-
-    /// Loads a sealed object's areas under `parent`: its transient handle.
-    fn load(&mut self, parent: u32, private: &[u8], public: &[u8]) -> Result<u32> {
-        let mut command = Command::new(TPM_ST_SESSIONS, TPM_CC_LOAD);
-        command.u32(parent);
-        command.password_session();
-        command.sized(private);
-        command.sized(public);
-        let response = self.call(&command, "tpm2 load")?;
-        response_handle(&response, "tpm2 load")
-    }
-
-    /// The data a loaded sealed object holds.
-    fn unseal(&mut self, object: u32) -> Result<Zeroizing<Vec<u8>>> {
-        let mut command = Command::new(TPM_ST_SESSIONS, TPM_CC_UNSEAL);
-        command.u32(object);
-        command.password_session();
-        let response = self.call(&command, "tpm2 unseal")?;
-        let mut reader = Reader::new(&response);
-        let malformed = || KeystoreError::Platform("tpm2 unseal", -1);
-        // The header, then parameterSize.
-        reader.skip(10 + 4).ok_or_else(malformed)?;
-        let data = reader.sized().ok_or_else(malformed)?;
-        Ok(Zeroizing::new(data.to_vec()))
-    }
-
-    /// Frees a transient object. A failure leaves it to the resource
-    /// manager, which flushes it when the device closes.
-    fn flush(&mut self, handle: u32) {
-        let mut command = Command::new(TPM_ST_NO_SESSIONS, TPM_CC_FLUSH_CONTEXT);
-        command.u32(handle);
-        let _ = self.call(&command, "tpm2 flush context");
-    }
-}
-
-/// The handle a command that makes an object answers with: the first field
-/// after the response header.
-fn response_handle(response: &[u8], name: &'static str) -> Result<u32> {
-    let mut reader = Reader::new(response);
-    reader
-        .skip(10)
-        .and_then(|()| reader.u32())
-        .ok_or(KeystoreError::Platform(name, -1))
-}
-
-/// A response code as the keystore's error: an authorization refused or a
-/// lockout is `Denied`, an object that fails its integrity check (another
-/// TPM's, or altered) is `Corrupt`, and any other code is the TPM's failure
-/// by command and code.
-fn response_error(name: &'static str, code: u32) -> KeystoreError {
-    let format_one = (code & RC_FMT1 != 0).then_some(RC_FMT1 | (code & 0x03f));
-    match format_one {
-        Some(RC_AUTH_FAIL | RC_BAD_AUTH) => KeystoreError::Denied,
-        Some(RC_INTEGRITY) => {
-            KeystoreError::Corrupt("the sealed slot does not load in this machine's TPM")
-        }
-        _ if code == RC_LOCKOUT => KeystoreError::Denied,
-        _ => KeystoreError::Platform(name, i64::from(code)),
-    }
-}
-
-/// The TCG standard ECC P-256 storage key template (`TPMT_PUBLIC`): a
-/// restricted decryption key, AES-128-CFB for its children, its unique field
-/// two 32-byte zero coordinates.
-fn storage_key_template() -> Vec<u8> {
-    let mut public = Vec::with_capacity(90);
-    public.extend_from_slice(&TPM_ALG_ECC.to_be_bytes());
-    public.extend_from_slice(&TPM_ALG_SHA256.to_be_bytes());
-    let attributes = FIXED_TPM
-        | FIXED_PARENT
-        | SENSITIVE_DATA_ORIGIN
-        | USER_WITH_AUTH
-        | NO_DA
-        | RESTRICTED
-        | DECRYPT;
-    public.extend_from_slice(&attributes.to_be_bytes());
-    // authPolicy: none.
-    public.extend_from_slice(&0u16.to_be_bytes());
-    // symmetric: AES-128-CFB.
-    public.extend_from_slice(&TPM_ALG_AES.to_be_bytes());
-    public.extend_from_slice(&128u16.to_be_bytes());
-    public.extend_from_slice(&TPM_ALG_CFB.to_be_bytes());
-    // scheme, curve, kdf.
-    public.extend_from_slice(&TPM_ALG_NULL.to_be_bytes());
-    public.extend_from_slice(&TPM_ECC_NIST_P256.to_be_bytes());
-    public.extend_from_slice(&TPM_ALG_NULL.to_be_bytes());
-    // unique: x and y, 32 zero bytes each.
-    for _ in 0..2 {
-        public.extend_from_slice(&32u16.to_be_bytes());
-        public.extend_from_slice(&[0u8; 32]);
-    }
-    public
-}
-
-/// A sealed data object's template (`TPMT_PUBLIC`): a keyed-hash object
-/// with no scheme, neither signing nor decrypting, its data supplied by the
-/// caller, fixed to this TPM and its parent.
-fn sealed_object_template() -> Vec<u8> {
-    let mut public = Vec::with_capacity(14);
-    public.extend_from_slice(&TPM_ALG_KEYEDHASH.to_be_bytes());
-    public.extend_from_slice(&TPM_ALG_SHA256.to_be_bytes());
-    let attributes = FIXED_TPM | FIXED_PARENT | USER_WITH_AUTH | NO_DA;
-    public.extend_from_slice(&attributes.to_be_bytes());
-    // authPolicy: none.
-    public.extend_from_slice(&0u16.to_be_bytes());
-    // scheme: none.
-    public.extend_from_slice(&TPM_ALG_NULL.to_be_bytes());
-    // unique: empty; the TPM fills it.
-    public.extend_from_slice(&0u16.to_be_bytes());
-    public
-}
-
-/// A TPM command's bytes: its header, then its fields in order. The header's
-/// size is filled when it is sent. Held zeroized: a create carries the
-/// secret.
-struct Command {
-    bytes: Zeroizing<Vec<u8>>,
-}
-
-impl Command {
-    fn new(tag: u16, code: u32) -> Self {
-        let mut bytes = Zeroizing::new(Vec::with_capacity(128));
-        bytes.extend_from_slice(&tag.to_be_bytes());
-        bytes.extend_from_slice(&0u32.to_be_bytes());
-        bytes.extend_from_slice(&code.to_be_bytes());
-        Self { bytes }
-    }
-
-    fn u16(&mut self, value: u16) {
-        self.bytes.extend_from_slice(&value.to_be_bytes());
-    }
-
-    fn u32(&mut self, value: u32) {
-        self.bytes.extend_from_slice(&value.to_be_bytes());
-    }
-
-    /// `value` with its 16-bit size before it (a `TPM2B`).
-    fn sized(&mut self, value: &[u8]) {
-        self.u16(u16::try_from(value.len()).unwrap_or(u16::MAX));
-        self.bytes.extend_from_slice(value);
-    }
-
-    /// The authorization area of one password session with the empty
-    /// password: the handle's authorization for a command with one.
-    fn password_session(&mut self) {
-        // authorizationSize, then TPMS_AUTH_COMMAND: the session handle, an
-        // empty nonce, its attributes and an empty password.
-        self.u32(9);
-        self.u32(TPM_RS_PW);
-        self.u16(0);
-        self.bytes.push(SESSION_CONTINUE);
-        self.u16(0);
-    }
-
-    /// The command's bytes with its size in the header.
-    fn finish(&self) -> Zeroizing<Vec<u8>> {
-        let mut bytes = self.bytes.clone();
-        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-        bytes[2..6].copy_from_slice(&size.to_be_bytes());
-        bytes
-    }
-}
-
-/// Reads big-endian fields from a response or a slot file, front to back.
-struct Reader<'b> {
-    bytes: &'b [u8],
-}
-
-impl<'b> Reader<'b> {
-    fn new(bytes: &'b [u8]) -> Self {
-        Self { bytes }
-    }
-
-    fn take(&mut self, len: usize) -> Option<&'b [u8]> {
-        if self.bytes.len() < len {
-            return None;
-        }
-        let (head, rest) = self.bytes.split_at(len);
-        self.bytes = rest;
-        Some(head)
-    }
-
-    fn skip(&mut self, len: usize) -> Option<()> {
-        self.take(len).map(drop)
-    }
-
-    fn u16(&mut self) -> Option<u16> {
-        self.take(2)?.try_into().ok().map(u16::from_be_bytes)
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        self.take(4)?.try_into().ok().map(u32::from_be_bytes)
-    }
-
-    /// A `TPM2B`'s body, its size read first.
-    fn sized(&mut self) -> Option<&'b [u8]> {
-        let len = self.u16()?;
-        self.take(usize::from(len))
-    }
-
-    /// A `TPM2B` whole: its size and its body.
-    fn sized_raw(&mut self) -> Option<&'b [u8]> {
-        let whole = self.bytes;
-        let len = usize::from(self.u16()?);
-        self.take(len)?;
-        whole.get(..2 + len)
-    }
-
-    fn rest(&self) -> &'b [u8] {
-        self.bytes
-    }
-}
-
 fn io(e: std::io::Error) -> KeystoreError {
     KeystoreError::Platform("io", e.raw_os_error().map_or(-1, i64::from))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_of_one_kind_is_not_read_as_the_other() {
+        let file = |tag: &[u8; 8]| {
+            let mut bytes = tag.to_vec();
+            // A public area of one byte, a private area of two.
+            bytes.extend_from_slice(&[0x00, 0x01, 0xaa, 0x00, 0x02, 0xbb, 0xcc]);
+            bytes
+        };
+        let slot = file(SEALED_TAG);
+        let key = file(AUTH_BOUND_TAG);
+        let public: &[u8] = &[0xaa];
+        let private: &[u8] = &[0xbb, 0xcc];
+        let areas = Ok((public, private));
+        assert_eq!(sealed_areas(&SLOT, &slot), areas);
+        assert_eq!(sealed_areas(&DEVICE_PIN_KEY, &key), areas);
+        assert_eq!(
+            sealed_areas(&SLOT, &key),
+            Err(KeystoreError::Corrupt("the sealed slot does not parse"))
+        );
+        assert_eq!(
+            sealed_areas(&DEVICE_PIN_KEY, &slot),
+            Err(KeystoreError::Corrupt(
+                "the sealed device PIN key does not parse"
+            ))
+        );
+        // Bytes after the two areas are not a sealed file.
+        let mut longer = key;
+        longer.push(0);
+        assert_eq!(
+            sealed_areas(&DEVICE_PIN_KEY, &longer),
+            Err(KeystoreError::Corrupt(
+                "the sealed device PIN key does not parse"
+            ))
+        );
+    }
 }

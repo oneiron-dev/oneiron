@@ -236,6 +236,21 @@ impl Vault {
                 )?;
                 continue;
             }
+            // A meeting follow-up sends only while the owner's approval of its
+            // draft stands, to the route it was approved for; asked on every
+            // attempt, so a retraction after scheduling stops the send.
+            if !crate::calendar::follow_up::scheduled_meeting_follow_up_authorised(self, &task)? {
+                fail_connector_task_attempt_and_project(
+                    self,
+                    &queue,
+                    &attempt,
+                    task_ref,
+                    now,
+                    "meeting_follow_up_approval_withdrawn",
+                    ConnectorSendTaskOutcome::Failed,
+                )?;
+                continue;
+            }
             #[cfg(test)]
             run_before_attempt_start_hook(self);
             // FIX 4747: only the TASK's sticky send executor sends it.

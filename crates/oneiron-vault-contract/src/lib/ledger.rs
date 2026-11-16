@@ -74,10 +74,7 @@ impl ManagedTrainingSetting {
 
 /// Whether `value` is exactly `len` lowercase hex digits.
 pub(super) fn lowercase_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    oneiron_hex::is_lower_hex(value, Some(len))
 }
 
 /// The supervisor's answer to one [`LedgerUpdate`] page: a receipt, and on

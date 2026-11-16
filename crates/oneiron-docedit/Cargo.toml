@@ -15,6 +15,7 @@ flate2 = "1"
 miniz_oxide = "0.9"
 # The host's free memory, for a declared size measured before it is allocated (FIX 8589).
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 expat-sys = "2.1.6"
 crc32fast = "1"
 # Same pin as the core crate: one quick-xml in the graph.
