@@ -655,7 +655,9 @@ impl AuthorityStructure {
     /// awaits signed it. The roster's rows and the rows of this install's own
     /// anchors (the pin's and the earlier admitter's) are believed. A foreign
     /// anchor's rows, an awaited root's own rows, the rows of install keys
-    /// only such marks name, and rows no key vouches for are not: the fold
+    /// only such marks name, a removed machine's frontier joins (every row
+    /// [`Self::is_stranger`] reads as a stranger's), and rows no key vouches
+    /// for are not: the fold
     /// trusts an anchor's chains only under the pin (`FoldedMachine::trusted`),
     /// and awaiting widens only what the gate stores.
     pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {

@@ -161,10 +161,12 @@ pub(crate) fn authority_missing_believed_history_in_txn(
 pub(crate) enum NamingRows {
     /// Every held row's, whoever admitted it: what delivery fetches.
     Every,
-    /// Only the rows this install believes (`AuthorityStructure::believes`):
-    /// what the peer route's settled gate waits for. A chain is read only by
-    /// a reader that believes its admitter (design pass 29), so a parent only
-    /// a stranger's row names is not history this install lacks. The
+    /// Only the history the rows this install believes
+    /// (`AuthorityStructure::believes`) rest on: their parents and, below
+    /// every held row they reach, whoever signed it, its parents. What the
+    /// peer route's settled gate waits for. A chain is read only by a reader
+    /// that believes its admitter (design pass 29), so history only a
+    /// stranger's rows rest on is not history this install lacks. The
     /// checkpoint cover, the resumed hashes, `required` and the pending
     /// evidence's needs count under either naming.
     Believed,
@@ -194,8 +196,9 @@ pub(crate) fn authority_history_request_in_txn(
 }
 
 /// [`authority_history_request_in_txn`] of the held log alone. Under
-/// [`NamingRows::Believed`] a held row's parents count only when the store
-/// gate's view of this snapshot believes the row; the checkpoint cover, the
+/// [`NamingRows::Believed`] it names the held ancestry of the rows the store
+/// gate's view of this snapshot believes: their parents and, walking down
+/// through every held row they reach, its parents; the checkpoint cover, the
 /// resumed hashes and `required` count either way. A vault that adopted a
 /// checkpoint image answers the fold's own request past the image under
 /// either naming; that fold still names a parent a stranger's tail row
@@ -219,15 +222,36 @@ fn held_history_request_in_txn(
     let mut held = BTreeSet::new();
     let mut named = required.clone();
     named.extend(super::readonly_fold::resumed_hashes_in_txn(store, txn)?);
+    // Under `Believed`: each held row's parents, and the believed rows'
+    // parents, from which the walk below starts.
+    let mut parents_of = BTreeMap::new();
+    let mut below = Vec::new();
     let mut vault_id = None;
     for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
         let entry = decode_authority_log_entry_body(&body)?;
-        held.insert(authority_entry_hash(&entry)?);
-        if believed.as_ref().is_none_or(|view| view.believes(&entry)) {
-            named.extend(entry.parent_hashes.iter().copied());
+        let hash = authority_entry_hash(&entry)?;
+        held.insert(hash);
+        match &believed {
+            None => named.extend(entry.parent_hashes.iter().copied()),
+            Some(view) => {
+                if view.believes(&entry) {
+                    below.extend(entry.parent_hashes.iter().copied());
+                }
+                parents_of.insert(hash, entry.parent_hashes.clone());
+            }
         }
         if vault_id.is_none() {
             vault_id = entry.vault_id;
+        }
+    }
+    // A believed row rests on every row below it, whoever signed that row:
+    // walk down through the held rows, so a gap under a held row a believed
+    // row reaches still counts. Rows no believed row reaches name nothing.
+    let mut walked = BTreeSet::new();
+    while let Some(hash) = below.pop() {
+        if walked.insert(hash) {
+            named.insert(hash);
+            below.extend(parents_of.get(&hash).into_iter().flatten().copied());
         }
     }
     let checkpoint = match super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)? {
@@ -276,11 +300,12 @@ impl Vault {
     }
 
     /// The history [`Self::authority_missing_history`] names that this
-    /// install believes it lacks: the parents only rows it believes name
-    /// (the roster's and its own anchors', never a root it only awaits), with
-    /// the checkpoint cover, the resumed hashes and the pending evidence's
-    /// needs as there. A parent only a stranger's row names leaves it as it
-    /// was before that row arrived (FIX
+    /// install believes it lacks: what the rows it believes (the roster's and
+    /// its own anchors', never a root it only awaits) rest on, down through
+    /// every held row they reach, with the checkpoint cover, the resumed
+    /// hashes and the pending evidence's needs as there. A parent only rows no
+    /// believed row reaches name, such as a stranger's, leaves it as it was
+    /// before those rows arrived (FIX
     /// [STRANGER-WITHHELD-PARENT-STALLS-PEER-SETTLED]). On a vault that adopted
     /// a checkpoint image it is the adopted fold's own request, as there. The
     /// peer route's settled gate reads this; delivery still fetches the whole
