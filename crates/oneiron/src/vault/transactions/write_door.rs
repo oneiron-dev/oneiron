@@ -95,6 +95,8 @@ impl Vault {
         // write is about to, holding nothing more: no answer exists yet to
         // carry a permit another write waits on.
         self.keep_waiting_scan_checks();
+        // So are the records served to external readers since then (L8-65).
+        self.keep_waiting_read_exposure();
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
@@ -129,7 +131,7 @@ impl Vault {
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
             let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
             let result = {
-                let _active_write_txn = crate::store::active_write_txn_guard();
+                let _active_write_txn = crate::store::active_write_txn_guard(self.store.env.id());
                 // A key this write's mask found raises its notice here.
                 match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)

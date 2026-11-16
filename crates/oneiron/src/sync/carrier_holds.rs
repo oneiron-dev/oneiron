@@ -159,6 +159,21 @@ impl CarrierInventory {
         }
         Ok(())
     }
+
+    /// Whether a legal hold keeps a row this inventory holds, read in `txn`
+    /// as the timer's act ([`Self::reject_held_in_txn`]). An indexed hold row
+    /// that is missing keeps the rows too, as a cut treats it (census L6-05).
+    pub(crate) fn held_in_txn(&self, store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
+        match self.reject_held_in_txn(store, txn, &HoldActor::TIMER) {
+            Ok(()) => Ok(false),
+            Err(refused) if crate::store::legal_hold::is_hold_refusal(&refused) => Ok(true),
+            Err(crate::error::Error::CorruptedIndex("legal hold target")) => {
+                tracing::warn!("legal hold: indexed hold row missing — its rows are kept");
+                Ok(true)
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 /// Every key a plain one and every value one holder's: the capture is read

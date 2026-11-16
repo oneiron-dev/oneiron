@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/thread_join.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::check_in::effect::CheckInDecision;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
 use serde::Deserialize;
 use serde::Serialize;
@@ -21,6 +22,12 @@ pub struct ThreadJoinDecisionRequest {
     pub thread_ref: String,
     /// The request's TURN, 32-hex.
     pub request_ref: String,
+    /// The check-in an earlier approval's `CHECK_IN_PENDING` named, 32 hex:
+    /// an agent's approval adds someone else and waits on a holder's answer
+    /// (ARCH-0082 #agent-room-add); the approval that names the approved
+    /// check-in spends it. A denial adds no one and takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// How a request to join stands.
@@ -51,4 +58,8 @@ pub struct ThreadJoinRequestView {
     /// The TURN that settled it, 32-hex; absent while it is pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_ref: Option<String>,
+    /// The check-in decision the approval that settled it ran on
+    /// (ROLES-CHECKIN P2.6a), on that approval's answer alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
