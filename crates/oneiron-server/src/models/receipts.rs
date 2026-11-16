@@ -24,9 +24,15 @@ const SERVER_RUNS: [&str; 5] = [
     "raw-inference",
 ];
 
-/// A recall rerank's run: this name, `:` and a random hex suffix
-/// (`server::recall_rerank`).
-const RECALL_RERANK_RUN: &str = "recall-rerank";
+/// The runs this server names with `:` and a random hex suffix after the
+/// name: a recall rerank's (`server::recall_rerank`), and an embedding
+/// request's, on its own line (`EMBEDDING_RUN`) or on the vault's background
+/// line (`BACKGROUND_EMBEDDING_LINE`, `embedder::admitted`).
+const SUFFIXED_SERVER_RUNS: [&str; 3] = [
+    "recall-rerank",
+    "remote-embedding",
+    crate::embedder::BACKGROUND_EMBEDDING_LINE,
+];
 
 /// Writes each run receipt row to the log as JSON.
 #[derive(Debug, Default)]
@@ -185,10 +191,13 @@ fn run_name(run: &str) -> &'static str {
         return name;
     }
     match run.split_once(':') {
-        Some((RECALL_RERANK_RUN, suffix))
+        Some((name, suffix))
             if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
         {
-            RECALL_RERANK_RUN
+            SUFFIXED_SERVER_RUNS
+                .into_iter()
+                .find(|known| *known == name)
+                .unwrap_or(UNRECOGNISED)
         }
         _ => UNRECOGNISED,
     }
