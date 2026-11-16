@@ -16,6 +16,13 @@
 //! still holds, and then cuts its persisted rows. A refused late re-put of an
 //! erased row owes its window a compaction, which the next pass runs.
 //!
+//! A legal hold keeps a pinned window's history (OF-470): a persist or a
+//! tombstone publish that would store a cut stores the window whole while a
+//! hold keeps a row its history carries, read in the storing transaction, and
+//! owes the sweep a compaction. A re-put that inserts the erased row and
+//! deletes it again in one update owes its window a compaction in the
+//! transaction that makes it durable (census L6-05 round 1).
+//!
 //! Run: `cargo test --locked -p oneiron --all-features --test
 //! held_window_erasure_drain`.
 #![cfg(feature = "sync")]
@@ -416,5 +423,207 @@ fn a_held_window_a_legal_hold_keeps_is_neither_pinned_nor_cut() {
     assert!(
         obligation_queued(&vault, &sweep_key),
         "the erasure obligation waits for the hold"
+    );
+}
+
+/// The owner of an owned vault, authenticated to place a legal hold.
+fn owner_of(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    vault
+        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+        .unwrap()
+}
+
+/// Puts `body` as row `id` in [`WINDOW`]; a second put revises it.
+fn put_row(vault: &Vault, id: &EntityId, body: &[u8]) {
+    vault
+        .batch()
+        .put(
+            id,
+            1,
+            TimeRange {
+                start: LEARNED,
+                end: LEARNED,
+            },
+            LEARNED,
+            body,
+        )
+        .commit()
+        .unwrap();
+}
+
+/// Every body an operation `doc` keeps put as row `id`.
+fn inserted_bodies(doc: &LoroDoc, id: &EntityId) -> Vec<Vec<u8>> {
+    let hex = id.to_hex();
+    let entities = ContainerID::new_root("entities", ContainerType::Map);
+    doc.export_json_updates(&doc.shallow_since_vv().to_vv(), &doc.oplog_vv())
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .filter(|op| op.container == entities)
+        .filter_map(|op| match &op.content {
+            JsonOpContent::Map(MapOp::Insert {
+                key,
+                value: LoroValue::Binary(blob),
+            }) if key.as_str() == hex => Some(blob.to_vec()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The body row `id` held before its live one, as `doc`'s history keeps it.
+fn older_revision(doc: &LoroDoc, id: &EntityId) -> Vec<u8> {
+    let live = match doc.get_map("entities").get(&id.to_hex()) {
+        Some(ValueOrContainer::Value(LoroValue::Binary(blob))) => blob.to_vec(),
+        _ => panic!("fixture: the window carries the row live"),
+    };
+    inserted_bodies(doc, id)
+        .into_iter()
+        .find(|body| *body != live)
+        .expect("fixture: the window's history keeps the row's older revision")
+}
+
+/// A legal hold placed on a row after the pass pinned and cut its window
+/// keeps that row's history (OF-470, census L6-05 round 1): the holder's doc
+/// still holds the row's older revision, and its next persist stores the
+/// window whole, owing the sweep a compaction, rather than the cut the pin
+/// asks for. At 9a3a2919e8ea that persist stored the cut, which dropped the
+/// held row's older revision.
+#[test]
+fn a_hold_placed_after_the_pin_keeps_the_held_rows_history_through_its_holders_persist() {
+    let (_dir, vault) = open_owned_vault();
+    let owner = owner_of(&vault);
+    let held = EntityId::now();
+    put_row(&vault, &held, b"held-row-first-body");
+    put_row(&vault, &held, b"held-row-second-body");
+    let HeldWindow { window, .. } = window_with_obligation(&vault);
+    let first = older_revision(&window.doc, &held);
+
+    let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
+    assert!(report.sweep_windows_compacted >= 1, "{report:?}");
+    vault
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .unwrap();
+    let raise_before_persist = owed_compaction_raise(&vault);
+    window.persist_state(&vault).unwrap();
+
+    assert!(
+        inserted_bodies(&persisted_snapshot(&vault), &held).contains(&first),
+        "the holder's persist dropped the held row's older revision"
+    );
+    let raise = owed_compaction_raise(&vault);
+    assert!(
+        raise.is_some() && raise != raise_before_persist,
+        "the window stored whole owes the sweep no compaction"
+    );
+}
+
+/// A hard delete published into a pinned window keeps the window whole while
+/// a legal hold keeps a row its history carries (OF-470, census L6-05 round
+/// 1), and owes the sweep a compaction. At 9a3a2919e8ea the publish stored
+/// the cut at the window's tip, which dropped the held row's older revision.
+#[test]
+fn a_hard_delete_published_into_a_pinned_window_keeps_a_held_rows_history() {
+    let (_dir, vault) = open_owned_vault();
+    let owner = owner_of(&vault);
+    let held = EntityId::now();
+    put_row(&vault, &held, b"held-row-first-body");
+    put_row(&vault, &held, b"held-row-second-body");
+    let deleted = EntityId::now();
+    put_row(&vault, &deleted, b"deleted-row-body");
+    let HeldWindow { window, .. } = window_with_obligation(&vault);
+    let first = older_revision(&window.doc, &held);
+    vault
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .unwrap();
+    oneiron::sync::window::require_history_free_window(&vault, &WindowKey::new(WINDOW)).unwrap();
+
+    vault
+        .delete_entity_with_reason(&deleted, DeleteReason::GdprDelete)
+        .unwrap();
+
+    let stored = persisted_snapshot(&vault);
+    assert!(
+        stored
+            .get_map("tombstones")
+            .get(&deleted.to_hex())
+            .is_some(),
+        "fixture: the delete published into the stored window"
+    );
+    assert!(
+        inserted_bodies(&stored, &held).contains(&first),
+        "the publish dropped the held row's older revision"
+    );
+    assert!(
+        owed_compaction_queued(&vault),
+        "the window stored whole owes the sweep no compaction"
+    );
+    drop(window);
+}
+
+/// A late re-put that inserts the erased row's body and deletes it again in
+/// one update leaves no live value for ingest to refuse, yet the update holds
+/// the erased body (census L6-05 round 1). The transaction that makes it
+/// durable owes its window a compaction, read before the window imports or
+/// persists anything, and the next pass drops the body. At 9a3a2919e8ea the
+/// update owed nothing, and its insert stayed in the window's stored history.
+#[test]
+fn a_history_only_late_reput_owes_its_window_a_compaction_where_it_persists() {
+    let (_dir, vault) = open_vault();
+    let HeldWindow {
+        manager,
+        window,
+        sweep_key,
+        erased,
+        erased_blob,
+    } = window_with_obligation(&vault);
+    let key = WindowKey::new(WINDOW);
+    drop(window);
+    let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
+    assert_eq!(report.sweep_jobs_processed, 1, "{report:?}");
+    assert!(!obligation_queued(&vault, &sweep_key));
+    assert!(!owed_compaction_queued(&vault), "fixture: nothing owed yet");
+
+    let window = manager.open_window(&key).unwrap();
+    let peer = window.doc.fork();
+    let entities = peer.get_map("entities");
+    entities.insert(&erased.to_hex(), erased_blob).unwrap();
+    peer.commit();
+    entities.delete(&erased.to_hex()).unwrap();
+    peer.commit();
+    assert!(
+        entities.get(&erased.to_hex()).is_none(),
+        "fixture: the update leaves the erased row out of the final map"
+    );
+    let reput = peer
+        .export(ExportMode::updates(&window.doc.oplog_vv()))
+        .unwrap();
+    let inserts = oneiron::sync::window::admit_window_update_residence_with_vault(
+        &vault,
+        &window.doc,
+        &reput,
+        &key,
+    )
+    .unwrap();
+    oneiron::sync::server_state::persist_imported_window_update(&vault, &key, &reput, &inserts)
+        .unwrap();
+    assert!(
+        owed_compaction_queued(&vault),
+        "the durable re-put owes its window no compaction"
+    );
+
+    window.doc.import(&reput).unwrap();
+    window.persist_state(&vault).unwrap();
+    drop(window);
+    assert!(manager.unload_window(&key).unwrap());
+    let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
+    assert!(report.sweep_windows_compacted >= 1, "{report:?}");
+    assert!(
+        !owed_compaction_queued(&vault),
+        "the owed compaction is settled"
+    );
+    assert!(
+        !carries_erased_row(&vault, &erased),
+        "the stored window still carries the re-put"
     );
 }
