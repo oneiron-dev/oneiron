@@ -14,7 +14,7 @@ use super::{
     browser_workflow, child_pin, craft, ensure_listed, enter_engine_native_run,
     finalize_step_captures, fork_executor_run, note_stale_listed_models, note_unbound_listed_run,
     pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
-    task_run_seat, text, unix_now,
+    task_run_seat, text, unix_seconds_now,
 };
 use crate::mcp::LiveLeaseRunner;
 use oneiron::engine_executor::SelfBriefPort;
@@ -94,7 +94,7 @@ pub(super) fn run_bound(
             actor,
             &status.attempt,
             run_id,
-            unix_now(),
+            unix_seconds_now(),
         )? {
             browser_workflow::BeforeSeat::Unbound => {}
             browser_workflow::BeforeSeat::Done(receipt) => return Ok(BoundRun::Library(receipt)),
@@ -227,9 +227,14 @@ pub(super) fn run_bound(
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
-    let leader =
-        pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
-            .map_err(text)?;
+    let leader = pattern_launch::leader_exposure(
+        vault,
+        &status.attempt,
+        &mut config,
+        continues,
+        unix_seconds_now(),
+    )
+    .map_err(text)?;
     craft::append_resident_craft(vault, &status.attempt, actor, &mut config, continues)
         .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
@@ -243,7 +248,7 @@ pub(super) fn run_bound(
         .prepare_default_project_conversation_run(
             &status.attempt,
             config.model.as_str(),
-            unix_now(),
+            unix_seconds_now(),
         )
         .map_err(text)?
         && let Some(body) = skill

@@ -73,8 +73,33 @@ pub(super) enum RawPutDoor {
 /// [`validate_public_raw_put`] through the public door, for a bound raw
 /// put its off-record session stages in the room (FIX 8119): the refusals
 /// the same put meets on base.
-pub(crate) fn validate_staged_raw_put(entity_type: u8, data: &[u8], learned_at: u64) -> Result<()> {
+pub(crate) fn validate_staged_raw_put(
+    entity_type: u8,
+    data: &[u8],
+    learned_at: u64,
+    now: u64,
+) -> Result<()> {
+    refuse_future_turn(entity_type, learned_at, now)?;
     validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Public)
+}
+
+/// Refuses, at the public raw door, a TURN learned past `now`, the store
+/// clock, by more than the witness door's skew. A TURN's learned time feeds
+/// the consolidation watermark, so the witness and structural doors already
+/// refuse one (F30, `memory::witness::validate_witness_occurrence`); this
+/// door joins them (ARCH-0002 `#turn-time-built`). The sync door does not:
+/// it never runs the public raw checks, and a peer's learned time is kept.
+/// Nor does a whole-vault import, which keeps the archive's learned time
+/// (`BatchBuilder::put_archived`).
+pub(super) fn refuse_future_turn(entity_type: u8, learned_at: u64, now: u64) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TURN
+        && learned_at > now.saturating_add(crate::memory::WITNESS_OCCURRENCE_SKEW_SECS)
+    {
+        return Err(Error::Record(RecordError::InvalidConversationBody(
+            "turn time is in the future",
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_public_raw_put(

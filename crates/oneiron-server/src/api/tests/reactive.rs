@@ -11,8 +11,8 @@ async fn local_entity_document_edit_refreshes_only_matching_read() {
     let learned_at = 1_770_000_000;
     let first = seeded_test_entity_id(0x1437_0010);
     let second = seeded_test_entity_id(0x1437_0011);
-    seed_reactive_turn(server.vault(), &first, learned_at);
-    seed_reactive_turn(server.vault(), &second, learned_at);
+    seed_reactive_document_turn(server.vault(), &first, learned_at);
+    seed_reactive_document_turn(server.vault(), &second, learned_at);
     let (first_probe, first_reads) = reactive_probe(first, vec![ReactiveDependency::Doc(first)]);
     let (second_probe, second_reads) =
         reactive_probe(second, vec![ReactiveDependency::Doc(second)]);
@@ -138,6 +138,8 @@ async fn observer_b_materialization_refreshes_only_changed_entity() {
     for _ in 0..3 {
         blob.extend_from_slice(&learned_at.to_be_bytes());
     }
+    // The 33-byte entity header ends with the row version.
+    blob.extend_from_slice(&1u64.to_be_bytes());
     blob.extend_from_slice(b"remote body");
     doc.get_map("entities")
         .insert(&second.to_hex(), blob.as_slice())
@@ -566,6 +568,9 @@ fn seed_reactive_merge(
     use oneiron::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
+    // The merge applies under an engine seal: a host loads this install's
+    // signing keys first, as every signing door does.
+    vault.prepare_install_signing().expect("install signing");
     match vault
         .apply_identity_topology_op(
             &IdentityTopologyOp::Merge(MergeOp {
@@ -1041,6 +1046,9 @@ async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
                     100,
                 )
                 .unwrap();
+            // Drain the relay of the fixture's own writes before subscribing;
+            // only the delete below belongs to these retained reads.
+            tokio::task::yield_now().await;
             let output_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let input_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let other_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));

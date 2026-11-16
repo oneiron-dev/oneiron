@@ -1,6 +1,6 @@
-//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals,
-//! a Grant's slip withdrawals, slip burns and machine removals), independent
-//! of roster survivors.
+//! Log-derived, typed restrictive facts (actor and device revocations, slip
+//! withdrawals, a Grant's slip withdrawals, slip burns and machine removals),
+//! independent of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +46,11 @@ enum Restriction {
         admitter: MachineAdmitter,
         chain: Box<MachineChain>,
     },
+    /// A verified `RevokeDevice`: the revoked key (FIX
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). A confirmation collision's
+    /// loser goes with every row after it, so a key's revocation below a
+    /// losing confirmation would leave the key live again.
+    DeviceRevoke(AuthorityKey),
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -92,8 +97,26 @@ impl RevokeFacts {
                 } => {
                     super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
+                Restriction::DeviceRevoke(key) => super::op_apply::revoke_key(state, key),
             }
         }
+    }
+
+    /// The rows of the verified device revocations scoped to `vault_id`. A
+    /// fact stands where its row may not (a losing confirmation's branch),
+    /// so the stale-roster window times a revoked key's approvals from these
+    /// rows as from a valid revocation (Sol review F1 on #8608).
+    pub(super) fn device_revocations(
+        &self,
+        vault_id: AuthorityVaultId,
+    ) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash
+            .values()
+            .filter(|fact| {
+                fact.vault_id == vault_id && matches!(fact.kind, Restriction::DeviceRevoke(_))
+            })
+            .map(|fact| fact.entry_hash)
+            .collect()
     }
 }
 
@@ -114,7 +137,7 @@ pub(super) fn derive_revoke_facts(
     let mut facts = RevokeFacts::default();
     for (hash, row) in entries {
         let removal = match row.op() {
-            Some(AuthorityOp::RevokeActor { .. }) => false,
+            Some(AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. }) => false,
             Some(op) if removes_machine(op) => true,
             _ => continue,
         };
@@ -148,7 +171,15 @@ pub(super) fn derive_revoke_facts(
         } else {
             context
         };
-        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
+        // An actor revocation's proof refuses a branch holding two entries
+        // of one signer at one sequence. A device revocation's follows the
+        // fold, as a machine removal's does: the fold admits such siblings,
+        // so the revoked key could otherwise sign two of them under the
+        // owner's revocation and leave it with no fact (Astra T1 on #8608).
+        let refuse_equal_sequences = matches!(row.op(), Some(AuthorityOp::RevokeActor { .. }));
+        let Some(state) =
+            verify_signed_branch(*hash, entries, ancestors, context, refuse_equal_sequences)
+        else {
             continue;
         };
         let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
@@ -160,6 +191,9 @@ pub(super) fn derive_revoke_facts(
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
             },
+            Some(AuthorityOp::RevokeDevice { revoked_key }) => {
+                Restriction::DeviceRevoke(revoked_key.clone())
+            }
             Some(AuthorityOp::MachineProfile(profile)) => {
                 let Some((admitter, chain)) = state
                     .machines
@@ -392,9 +426,9 @@ impl RevokeFacts {
 /// The target's own folded state, proved over its signed ancestry alone.
 /// `refuse_equal_sequences` refuses a branch holding two entries of one signer
 /// at one sequence, as an actor revocation's proof always has. A slip
-/// restriction's or machine removal's proof follows the fold instead, which
-/// admits concurrent siblings at one sequence and refuses only a sequence
-/// that does not rise along the ancestry.
+/// restriction's, device revocation's or machine removal's proof follows the
+/// fold instead, which admits concurrent siblings at one sequence and refuses
+/// only a sequence that does not rise along the ancestry.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
