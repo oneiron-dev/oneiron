@@ -94,14 +94,16 @@ pub use self::token::{
     confirm_hold_taken_at, token_event_type, token_page_ref,
 };
 pub use self::types::{
-    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM,
-    BOOKING_RECEIPT_META_PREFIX, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
-    BOOKING_TOKEN_META_PREFIX, BOOKING_VERBS, BookingBookerContactValue, BookingEventTypeRefValue,
-    BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus, BookingStatusValue,
-    BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec,
-    ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
-    MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
+    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_CAP_OVERRIDE_PREDICATE,
+    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX, BOOKING_LIFECYCLE_ATTEMPT_KIND,
+    BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM, BOOKING_RECEIPT_META_PREFIX,
+    BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BOOKING_TOKEN_META_PREFIX,
+    BOOKING_VERBS, BookingBookerContactValue, BookingCapOverride, BookingCapOverrideValue,
+    BookingEventTypeRefValue, BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus,
+    BookingStatusValue, BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision,
+    CancelSpec, ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec,
+    LifecycleTokenScope, MAX_CAP_OVERRIDE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec,
+    RevisionReceipt, SoftHoldRow,
 };
 
 pub(crate) use self::confirmation_state::{
@@ -199,7 +201,7 @@ mod digest_serde {
         deserializer: D,
     ) -> Result<[u8; 32], D::Error> {
         let hex = String::deserialize(deserializer)?;
-        super::digest_from_hex(&hex)
+        oneiron_hex::decode::<32>(&hex)
             .ok_or_else(|| serde::de::Error::custom("booking digest is not 32 lowercase hex bytes"))
     }
 }
@@ -219,32 +221,10 @@ mod opt_digest_serde {
     ) -> Result<Option<[u8; 32]>, D::Error> {
         match Option::<String>::deserialize(deserializer)? {
             None => Ok(None),
-            Some(hex) => super::digest_from_hex(&hex).map(Some).ok_or_else(|| {
+            Some(hex) => oneiron_hex::decode::<32>(&hex).map(Some).ok_or_else(|| {
                 serde::de::Error::custom("booking digest is not 32 lowercase hex bytes")
             }),
         }
-    }
-}
-
-/// Parses exactly 32 lowercase hex bytes.
-fn digest_from_hex(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        let high = hex_nibble(pair[0])?;
-        let low = hex_nibble(pair[1])?;
-        *slot = (high << 4) | low;
-    }
-    Some(out)
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
     }
 }
 

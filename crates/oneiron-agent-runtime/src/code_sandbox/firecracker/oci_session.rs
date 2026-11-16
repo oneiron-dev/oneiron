@@ -213,6 +213,7 @@ pub(super) fn start(
         fence_proof: Some(proof),
         fence_unproven: false,
         image_release,
+        guest_pressure: None,
     };
     // The lease owns listener-path custody until the VM stops. The browser's
     // network stays on the host CDP Fetch door, not a guest NIC.
