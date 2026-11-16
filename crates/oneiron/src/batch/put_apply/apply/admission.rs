@@ -43,6 +43,7 @@ pub(super) struct FixedPut<'a> {
 pub(super) struct Owners {
     pub(super) normalized_policy: Option<Vec<u8>>,
     pub(super) project: Option<Vec<u8>>,
+    pub(super) kept_taint: Option<Vec<u8>>,
     pub(super) task_body_without_streaks: Option<Vec<u8>>,
     pub(super) pad_stored_body: Option<Vec<u8>>,
     pub(super) escalated_skill_body: Option<Vec<u8>>,
@@ -148,6 +149,17 @@ pub(super) fn admit_put<'a>(
     let data = normalized_policy.as_deref().unwrap_or(data);
     let project = stage_project_put(store, wtxn, id, entity_type, data, replicated, posture)?;
     let data = project.as_deref().unwrap_or(data);
+    // Census L6-32: a BLOB_ARTIFACT put over a stored artifact keeps the
+    // stored taint refs, local or replicated, so a host mark or a capture's
+    // refs leave the row only with its erasure.
+    let kept_taint = crate::secret_rotation::body_keeping_stored_taint_in_txn(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+    )?;
+    let data = kept_taint.as_deref().unwrap_or(data);
     let carriers = PutCarrierContext::new(
         entity_type,
         occurred,
@@ -279,6 +291,7 @@ pub(super) fn admit_put<'a>(
         owners: Owners {
             normalized_policy,
             project,
+            kept_taint,
             ..Default::default()
         },
         dispatch: Dispatch {

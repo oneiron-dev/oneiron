@@ -13,16 +13,33 @@ pub(super) fn causal_sequence_floors(
         let before = floors.len();
         for (tip_hash, tip) in by_hash {
             let tip_floor = original.get(tip_hash).copied();
-            if tip_floor.is_some_and(|floor| tip.seq() < floor) {
+            let rollback_tip = tip_floor.is_some_and(|floor| tip.seq() < floor);
+            // No floor refuses a roster row (`changes_roster`), so even below
+            // its floor it vouches for every row of its signer below it in its
+            // ancestry that this install's floor refuses (`floor_refuses`),
+            // whatever this install had seen when they came (Sol review F1,
+            // Astra round 2 F3 of [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]). Those
+            // rows then fold here as on an install that received every row in
+            // its signer's order, and the vouch admits nothing such an install
+            // does not hold. A restriction keeps its floor and lands
+            // restriction only, an install-local execution (Astra F2). A
+            // sealed row that passes through is a roster row by its kind
+            // (`row_changes_roster`).
+            let roster_tip = super::entry_transition::row_changes_roster(tip);
+            if rollback_tip && !roster_tip {
                 continue;
             }
             let covered: Vec<_> = ancestors[tip_hash]
                 .iter()
                 .filter(|hash| {
                     by_hash.get(*hash).is_some_and(|row| {
+                        let in_flight =
+                            !rollback_tip && tip_floor.is_none_or(|floor| row.seq() > floor);
+                        let refused_below_roster_row =
+                            roster_tip && super::entry_transition::row_floor_refuses(row);
                         row.signer_key() == tip.signer_key()
                             && row.seq() < tip.seq()
-                            && tip_floor.is_none_or(|floor| row.seq() > floor)
+                            && (in_flight || refused_below_roster_row)
                             && floors.get(*hash).is_some_and(|floor| row.seq() < *floor)
                     })
                 })
@@ -37,7 +54,9 @@ pub(super) fn causal_sequence_floors(
             }
             // A raw parent claim or signature alone is not an authorization proof.
             // Require complete, independently valid ancestry, and preserve every
-            // other signer's floor. A newly received rollback tip cannot vouch.
+            // other signer's floor. A newly received rollback tip vouches for
+            // nothing unless it is a roster row; and a roster tip that does
+            // not fold on its own ancestry vouches for nothing.
             if entry_folds_on_available_ancestry(
                 *tip_hash,
                 by_hash,
