@@ -104,24 +104,8 @@ fn invalid(reason: &'static str) -> Error {
     Error::InvalidConfig(reason.to_owned())
 }
 
-/// Why a trial stopped routing live runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ExplorationTrialClose {
-    /// Its routed runs reached the host's live pull cap.
-    BoundReached,
-    /// The proposal's live goal-axis report was kept.
-    ReportStored,
-    /// The gate recorded a verdict on the proposal.
-    VerdictRecorded,
-    /// The board declined a run past the goal's exploration slice.
-    OverrunDeclined,
-    /// The overrun ask went unanswered at the top of its chain for
-    /// [`EXPLORATION_ASK_LAPSE_HOURS`].
-    OverrunLapsed,
-    /// An offline floor regressed on the held-out set.
-    FloorsRegressed,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::skill_optimize::exploration_trial::ExplorationTrialClose;
 
 /// What the Coach does with a proposal's live slice on this wake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
