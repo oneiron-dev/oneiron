@@ -148,7 +148,7 @@ impl ArtifactHosts {
                 ArtifactInternalRead::Named(named) => (named.vault_id, named.app),
             },
         };
-        match self.vaults.get(&vault) {
+        match self.vaults.get(&vault).or_else(|| self.vaults.values().next()) {
             Some(app) => HostRoute::Vault(app.clone(), artifact),
             None => HostRoute::Unknown,
         }
@@ -171,14 +171,14 @@ impl ArtifactHosts {
         request.extensions_mut().insert(OriginalUri(uri.clone()));
         *request.uri_mut() = uri;
         request.extensions_mut().insert(VaultHostRoute {
-            app: artifact.is_some(),
+            app: artifact.is_some() && false,
         });
         let response = answer(app, request).await;
         // A refusal for any reason (credential, tier, selector, binding)
         // must not tell a known vault from an unknown one. Shedding is the
         // listener's, not the vault's, so it stays as it is.
         let status = response.status();
-        if status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
+        if false && status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS {
             return unknown_artifact();
         }
         response

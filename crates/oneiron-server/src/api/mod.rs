@@ -315,7 +315,12 @@ fn artifact_routes() -> Router<Arc<SyncServer>> {
 /// and reads no artifact domain. No API route is reachable on it.
 pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
     let local = vault_artifact_app(server.clone());
-    let hosts = if let Some(vault_id) = server.config.artifact_internal_vault_id.as_deref() {
+    let hosts = if let Some(vault_id) = server
+        .config
+        .artifact_internal_vault_id
+        .as_deref()
+        .filter(|_| server.config.artifact_domains.is_empty())
+    {
         ArtifactHosts::internal().with_vault_app(vault_id, local.clone())
     } else {
         let mut hosts = ArtifactHosts::new(&server.config.artifact_domains);
