@@ -13,10 +13,11 @@ use super::{
 };
 use crate::Vault;
 use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
+use crate::disclosure::DisclosureBand;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ingest::{FILE_DROP_TRANSCRIPT_SOURCE_ID, MEETING_TRANSCRIPT_SOURCE_ID};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, ShortIdStoreRead};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::settings::{ReadDestination, ReleaseHold};
 
@@ -47,8 +48,14 @@ pub struct MeetingFollowUpTurn {
 pub struct MeetingFollowUpRecipient {
     /// The call-local label the reply names it by: `P1`, `P2`, ...
     pub label: String,
-    /// The name the vault knows the PERSON by.
+    /// The name the vault knows the PERSON by when the model channel's
+    /// Names ceiling admits it, else the PERSON's bare handle: above the
+    /// ceiling a handle prints, never a stand-in and never a drop (canon
+    /// ARCH-0069 S9).
     pub name: String,
+    /// The words the transcript named the PERSON by, casefolded: nothing the
+    /// transcript did not say.
+    pub heard: String,
 }
 
 /// What a drafting model is asked to read.
@@ -82,6 +89,8 @@ impl MeetingFollowUpRequest {
             message.push_str(&recipient.label);
             message.push(' ');
             message.push_str(&quoted(&recipient.name));
+            message.push_str(", named in the transcript as ");
+            message.push_str(&quoted(&recipient.heard));
             message.push('\n');
         }
         message.push_str("\nTranscript:\n");
@@ -110,8 +119,9 @@ pub struct MeetingFollowUpSource {
     pub(super) turn_refs: Vec<EntityId>,
     /// `P<n>` is `recipient_refs[n - 1]`.
     pub(super) recipient_refs: Vec<EntityId>,
-    /// The rows the recipients' names were read from: each PERSON, and the
-    /// names-class claim when the name is a claim's.
+    /// The rows the recipients' listed names were read from: each PERSON
+    /// (its name or its handle), and the names-class claim when the listed
+    /// name is a claim's.
     pub(super) name_rows: Vec<EntityId>,
 }
 
@@ -353,6 +363,8 @@ fn owner_names_in_txn(
 /// The PERSONs `turns` name, less the owners, that the destination's scoped
 /// read admits with the row each name was read from; at most
 /// [`MEETING_FOLLOW_UP_MAX_RECIPIENTS`], labelled in the order first named.
+/// Each is listed by its name where the model channel prints that name, else
+/// by its bare handle; either way with the words the transcript said.
 fn listed_recipients_in_txn(
     vault: &Vault,
     reader: &ScopedRead<'_>,
@@ -383,14 +395,48 @@ fn listed_recipients_in_txn(
         {
             continue;
         }
+        let name = if model_prints_person_name_in(vault, reader, txn, candidate.person)? {
+            listed.name_rows.extend(rows);
+            candidate.name
+        } else {
+            listed.name_rows.push(candidate.person);
+            person_handle_in(vault, txn, candidate.person)?
+        };
         listed.recipients.push(MeetingFollowUpRecipient {
             label: format!("P{}", listed.recipients.len() + 1),
-            name: candidate.name,
+            name,
+            heard: candidate.heard,
         });
         listed.recipient_refs.push(candidate.person);
-        listed.name_rows.extend(rows);
     }
     Ok(listed)
+}
+
+/// Whether the model channel `reader` reads for prints `person`'s name: the
+/// one Names ceiling check against the band of the PERSON's current
+/// names-class claim, else Sensitive, as the context board's people list and
+/// the context pack's projection apply it. A scoped read admits rows; this
+/// ceiling governs what of them a model reads.
+fn model_prints_person_name_in(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<bool> {
+    let band = crate::disclosure::person_name_claim_in(vault, txn, person)?
+        .map_or(DisclosureBand::Sensitive, |(_, body)| {
+            DisclosureBand::of_claim(&body)
+        });
+    crate::disclosure::model_names_admitted_in(vault, txn, reader.actor_key(), band)
+}
+
+/// `person`'s bare handle: its short id, else its id, as the model channel
+/// prints a classed claim's subject above its ceiling.
+fn person_handle_in(vault: &Vault, txn: &heed::RoTxn<'_>, person: EntityId) -> Result<String> {
+    Ok(vault
+        .store
+        .port_short_id_reference(txn, &person)?
+        .map_or_else(|| person.to_hex(), |(handle, _)| handle))
 }
 
 /// Whether `source` still stands in `txn`: the SESSION retains exactly the
@@ -452,9 +498,13 @@ fn name_rows_in_txn(
 ) -> Result<Vec<(EntityId, Vec<StoredRow>)>> {
     let mut rows = Vec::new();
     for person in persons {
-        let names = person_names_in_txn(vault, txn, *person)?;
-        let stored = stored_rows_in_txn(vault, txn, names.into_iter().map(|(_, row)| row))?;
-        rows.push((*person, stored));
+        let mut name_rows = Vec::new();
+        for (_, row) in person_names_in_txn(vault, txn, *person)? {
+            if !name_rows.contains(&row) {
+                name_rows.push(row);
+            }
+        }
+        rows.push((*person, stored_rows_in_txn(vault, txn, name_rows)?));
     }
     Ok(rows)
 }
@@ -502,17 +552,19 @@ fn owner_persons_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Enti
     Ok(owners)
 }
 
-/// A PERSON's names, each with the row it was read from: its body's
-/// `display_name` or `name`, and its current names-class claim's string value.
+/// A PERSON's names, each with the row it was read from: each of its body's
+/// `display_name` and `name`, and its current names-class claim's string
+/// value. The owner's speaker label and a recipient's mention match any one.
 fn person_names_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person: EntityId,
 ) -> Result<Vec<(String, EntityId)>> {
-    let mut names = Vec::new();
-    if let Some(name) = crate::reaction::person_name_in(vault, txn, person)? {
-        names.push((name, person));
-    }
+    let mut names: Vec<(String, EntityId)> =
+        crate::reaction::person_body_names_in(vault, txn, person)?
+            .into_iter()
+            .map(|name| (name, person))
+            .collect();
     if let Some((claim, body)) = crate::disclosure::person_name_claim_in(vault, txn, person)?
         && let Some(name) = body.value.as_str()
     {
@@ -527,6 +579,8 @@ struct NamedPerson {
     name: String,
     name_row: EntityId,
     first_heard: usize,
+    /// The casefolded form of `name` the transcript says there.
+    heard: String,
 }
 
 /// Every PERSON but the owners whose name the casefolded transcript
@@ -548,7 +602,7 @@ fn named_persons_in_txn(
         }
         let mut best: Option<NamedPerson> = None;
         for (name, name_row) in person_names_in_txn(vault, txn, person)? {
-            let Some(first_heard) = first_heard(heard_text, &name) else {
+            let Some((first_heard, heard)) = first_heard(heard_text, &name) else {
                 continue;
             };
             if best
@@ -560,6 +614,7 @@ fn named_persons_in_txn(
                     name: name.trim().to_owned(),
                     name_row,
                     first_heard,
+                    heard,
                 });
             }
         }
@@ -572,16 +627,18 @@ fn named_persons_in_txn(
 }
 
 /// Where the casefolded `heard_text` first says `name` (whole), or its first
-/// word when the name has several, as a whole word.
-fn first_heard(heard_text: &str, name: &str) -> Option<usize> {
+/// word when the name has several, as a whole word, with the form it says
+/// there (the whole name when both start at that place).
+fn first_heard(heard_text: &str, name: &str) -> Option<(usize, String)> {
     let name = casefold(name);
     let mut forms = vec![name.as_str()];
     forms.extend(first_word_form(&name));
     forms
         .into_iter()
         .filter(|form| form.chars().count() >= MIN_NAME_CHARS)
-        .filter_map(|form| whole_word_at(heard_text, form))
-        .min()
+        .filter_map(|form| whole_word_at(heard_text, form).map(|at| (at, form)))
+        .min_by_key(|(at, form)| (*at, std::cmp::Reverse(form.len())))
+        .map(|(at, form)| (at, form.to_owned()))
 }
 
 /// The first word of a casefolded multi-word `name`, when it is long enough

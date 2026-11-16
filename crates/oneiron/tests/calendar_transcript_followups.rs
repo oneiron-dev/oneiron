@@ -10,7 +10,8 @@
 //! promises become drafts: the engine marks the TURNs whose speaker label is
 //! one of the owner's names, and a transcript with none asks no model. A
 //! draft goes only to a PERSON the request listed, those the vault knows by a
-//! name the transcript says.
+//! name the transcript says; a name the Dreamer's model channel keeps from
+//! the model lists as the PERSON's handle (calendar_followup_recipient_names).
 //!
 //! Red on main: the producer does not exist, so this file does not build
 //! there.
@@ -301,10 +302,14 @@ fn parsable_transcript_yields_session_then_followups() {
         "only the PERSON the transcript names"
     );
     assert_eq!(request.recipients[0].label, "P1");
-    assert_eq!(request.recipients[0].name, "Yuki");
+    assert_eq!(request.recipients[0].heard, "yuki");
+    assert_ne!(
+        request.recipients[0].name, "Yuki",
+        "an unclaimed name is sensitive, above the Dreamer's default ceiling: its handle prints"
+    );
     let message = request.transcript_message();
     assert!(message.contains("[T1] Owen: I will send you the slides tomorrow"));
-    assert!(message.contains("P1 \"Yuki\""));
+    assert!(message.contains(", named in the transcript as \"yuki\""));
 
     let drafts = fx.follow_up_claims(yuki);
     assert_eq!(drafts.len(), 1, "one draft, about its recipient");
@@ -501,7 +506,7 @@ fn a_name_in_an_unspaced_script_is_heard_inside_its_sentence() {
     assert!(asked[0].turns[0].owner, "大野 is the owner's first word");
     assert!(!asked[0].turns[1].owner);
     assert_eq!(asked[0].recipients.len(), 1);
-    assert_eq!(asked[0].recipients[0].name, "田中");
+    assert_eq!(asked[0].recipients[0].heard, "田中");
     assert_eq!(written.len(), 1);
     assert_eq!(fx.follow_up_claims(tanaka).len(), 1);
 }
