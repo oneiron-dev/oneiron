@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::CacheIdentity;
 use super::segments::hex_bytes;
 use oneiron_contracts::EntityId;
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 
 /// The hello capability that advertises session ops.
 pub const SESSIONS_CAPABILITY: &str = "sessions";
@@ -145,15 +146,16 @@ impl SessionKey {
             &self.identity,
             &self.conditioning,
         );
-        SessionBinding(digest(b"oneiron.llm.session.binding.v1\0", &line))
+        SessionBinding(digest(purposes::llm::SESSION_BINDING, &line))
     }
 }
 
-fn digest<T: Serialize>(domain: &[u8], value: &T) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(&super::canonical_json_bytes(value).unwrap_or_default());
-    *hasher.finalize().as_bytes()
+/// The binding crosses the native channel and a worker refuses an op on a
+/// handle bound to another, so it keeps its bytes (K, PLAN-UC-04 stage 6.4).
+fn digest<T: Serialize>(purpose: LegacyPurpose, value: &T) -> [u8; 32] {
+    LegacyDigest::new(purpose)
+        .raw(&super::canonical_json_bytes(value).unwrap_or_default())
+        .finish()
 }
 
 /// A canonical checkpoint as the worker verified it: the token digest of
