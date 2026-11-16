@@ -147,8 +147,6 @@ pub use scoped_read::*;
 // On its own line so no other change to the re-export list below collides
 // with it (FIX 11766).
 pub(crate) use scoped_read::CompanionProfileSourceJudgement;
-#[cfg(oneiron_test_support)]
-pub(crate) use scoped_read::exposed_records_in;
 pub(crate) use scoped_read::{
     Admitted, ClaimReadStatusExt, SearchPlan, claim_access_axes,
     erase_weave_decision_labels_in_txn, invalidate_weave_digest_source_in_txn,
@@ -170,3 +168,8 @@ pub mod reaction_record;
 #[cfg(feature = "sync")]
 pub mod selector_world;
 pub(crate) mod tables;
+
+// The door test_doors/read_exposure.rs reads through (L8-65); at the file's end, clear of the
+// re-export list above that other changes edit.
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped_read::exposed_records_in;
