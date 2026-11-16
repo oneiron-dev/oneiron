@@ -14,6 +14,8 @@
 //! - an approval spends only over the row it was asked over;
 //! - over a row the owner set, a non-owner makes no widening: a person tightens the owner's row
 //!   of their own choice and is refused a loosening;
+//! - the owner's equal value over a row the owner did not set writes, and the row becomes the
+//!   owner's: on a key that reads one row, its holder then asks even to tighten it;
 //! - every catalogue key states an order its read can keep, and the list shows it.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_order`.
@@ -544,6 +546,42 @@ fn every_catalogue_key_states_an_order_its_read_can_keep_and_the_list_shows_it()
     );
     assert_eq!(listed["keys"][0]["order"], json!("lower"), "{listed}");
     assert_eq!(listed["keys"][0]["quorum"], json!("one"), "{listed}");
+}
+
+#[test]
+fn the_owners_equal_value_over_a_holders_row_writes_and_the_row_becomes_the_owners() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let them = fx.as_agent(holder(&fx));
+    let key = "test.custom_window";
+
+    let held = call(&them, SET, set(key, vault_scope(), json!(8)));
+    assert_eq!(status(&held), "applied", "{held}");
+    let confirmed = call(&me, SET, set(key, vault_scope(), json!(8)));
+    let sequence = confirmed["sequence"].as_u64().unwrap_or_else(|| {
+        panic!("the owner's equal value over a holder's row writes: {confirmed}")
+    });
+    let change = setting_change(&fx.vault, sequence)
+        .expect("the change stream reads")
+        .expect("the change stands");
+    assert_eq!(change.setter, Setter::Owner);
+    assert_eq!(
+        change.prior, change.value,
+        "prior equals value: the row became the owner's"
+    );
+
+    let shorter = call(&them, SET, set(key, vault_scope(), json!(6)));
+    assert_eq!(
+        status(&shorter),
+        "pending",
+        "on a key that reads one row the holder stays clear of the owner's row: {shorter}"
+    );
+    let again = call(&me, SET, set(key, vault_scope(), json!(8)));
+    assert_eq!(
+        again["sequence"],
+        Value::Null,
+        "over the owner's own row an equal value writes nothing: {again}"
+    );
 }
 
 #[test]
