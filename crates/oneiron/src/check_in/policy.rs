@@ -25,8 +25,10 @@
 //! 3-5). `ask_per` (`send` or `batch`) says whether a `manual` send asks once
 //! per send or once for a reviewed batch (ARCH-0046 #send-grant). It is
 //! allowed only on an `outbound_send` row at `manual`; absent, it reads
-//! `send`. A `mode` row's ref is at most [`MODE_ROW_REF_MAX_BYTES`] bytes,
-//! because a send's Gate decision is indexed by the row's ref.
+//! `send`. A `mode` row's ref is a lowercase token (ASCII letters, digits,
+//! `_`, `.` and `-`) of at most [`MODE_ROW_REF_MAX_BYTES`] bytes, because a
+//! send's Gate decision names it in a receipt reason, `check_in_row_<ref>`,
+//! whose vocabulary and length the decision ledger bounds.
 //!
 //! A malformed row, an unknown version, an unknown field, a wait of zero, a
 //! `row_ref` used twice (in one list or across both), or two rows of one list
@@ -47,9 +49,10 @@ pub const CHECK_IN_ROW_VERSION: u16 = 1;
 /// The wait per person rung when no row names one (ruling R2: 24 hours).
 pub const DEFAULT_RUNG_WAIT_SECS: u64 = 24 * 60 * 60;
 
-/// The longest `mode` row ref, in bytes. A send the row decides names the
-/// ref in its Gate decision's grant-ref index key, which LMDB bounds.
-pub const MODE_ROW_REF_MAX_BYTES: usize = 128;
+/// The longest `mode` row ref, in bytes: a send the row decides names it in
+/// the receipt reason `check_in_row_<ref>`, which the decision ledger bounds
+/// at 128 bytes (and in its grant-ref index key, `check_in:row:<ref>`).
+pub const MODE_ROW_REF_MAX_BYTES: usize = 128 - "check_in_row_".len();
 
 #[doc(hidden)]
 pub use oneiron_records::check_in::policy::{CheckInScope, ClassWait, WaitSource};
@@ -348,7 +351,11 @@ fn decode_rung_wait(value: &Value) -> Option<RungWaitRow> {
 fn decode_mode_row(value: &Value) -> Option<ModeRow> {
     let fields = known_fields(value, &MODE_ROW_FIELDS)?;
     let row_ref = text_field(fields, "row_ref")??;
-    if row_ref.len() > MODE_ROW_REF_MAX_BYTES {
+    if row_ref.len() > MODE_ROW_REF_MAX_BYTES
+        || !row_ref.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'.' | b'-')
+        })
+    {
         return None;
     }
     let act = ActClass::from_token(&text_field(fields, "act_class")??)?;

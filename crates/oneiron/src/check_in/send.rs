@@ -13,7 +13,8 @@
 //!   ruling L3-35-ROLE = A; the role column of ARCH-0082 #role-defaults joins
 //!   with PR 2's role resolver); an unreadable policy counts as `AlwaysAsk`.
 //!
-//! The Gate's decision record names the rows that decided and the answer.
+//! The Gate's decision record names the rows that decided and the answer, in
+//! its receipt vocabulary (`check_in_row_<ref>`, `check_in_go_never_ask`).
 //!
 //! The row does not reach these sends; the Gate gives them no check-in:
 //! * a person's own send: "a send from the actor's own identity is go"
@@ -25,17 +26,24 @@
 //!   A), and the engine records no principal on it, so its press per send
 //!   stays;
 //! * a native-mail cold send, or a recipient of a message that takes one: it
-//!   keeps its own graduation (OF-399), as it keeps it from an envelope slot.
+//!   keeps its own graduation (OF-399), as it keeps it from an envelope slot;
+//! * a campaign leg: it names its pinned sender only as its actor (FIX 11641
+//!   leaves its channel identity unset), so the Gate cannot tell a member
+//!   mailbox or a cold recipient from it; the leg is judged as before the row.
 
 use super::act_class::ActClass;
 use super::asker::AlwaysUnsure;
 use super::mode::CheckInMode;
 use super::policy::{CheckInPolicyRead, CheckInScope};
 use super::resolve::{CheckInAnswer, GoReason, WaitReason, check_in_with_mode};
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 
-/// The prefix of the covering ref a send row gives, and of its receipt token.
+/// The prefix of the covering ref a send row gives.
 const SEND_ROW_REF_PREFIX: &str = "check_in:row:";
+
+/// The prefix of the receipt reason that names a send row (the decision
+/// ledger's `check_in_row_` family; the row decoder bounds the ref to fit).
+const SEND_ROW_REASON_PREFIX: &str = "check_in_row_";
 
 /// Where an agent send's mode came from.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,22 +92,22 @@ impl SendCheckIn {
         }
     }
 
-    /// The Gate decision record's reasons: `check_in:row:<ref>` for each row
-    /// that set the mode (or `check_in:shipped_default`, or
-    /// `check_in:unreadable`), then the answer: `check_in:go:never_ask` or
-    /// `check_in:wait:<reason>`.
+    /// The Gate decision record's reasons, in the decision ledger's
+    /// `check_in_` family: `check_in_row_<ref>` for each row that set the mode
+    /// (or `check_in_shipped_default`, or `check_in_unreadable`), then the
+    /// answer: `check_in_go_never_ask` or `check_in_wait_<reason>`.
     pub(crate) fn receipt_reasons(&self) -> Vec<String> {
         let mut reasons = match &self.source {
             SendModeSource::Rows(row_refs) => row_refs
                 .iter()
-                .map(|row_ref| format!("{SEND_ROW_REF_PREFIX}{row_ref}"))
+                .map(|row_ref| format!("{SEND_ROW_REASON_PREFIX}{row_ref}"))
                 .collect(),
-            SendModeSource::ShippedDefault => vec!["check_in:shipped_default".to_owned()],
-            SendModeSource::Unreadable => vec!["check_in:unreadable".to_owned()],
+            SendModeSource::ShippedDefault => vec!["check_in_shipped_default".to_owned()],
+            SendModeSource::Unreadable => vec!["check_in_unreadable".to_owned()],
         };
         reasons.push(match self.answer {
-            SendAnswer::NeverAsk => "check_in:go:never_ask".to_owned(),
-            SendAnswer::Wait(reason) => format!("check_in:wait:{}", reason.as_str()),
+            SendAnswer::NeverAsk => "check_in_go_never_ask".to_owned(),
+            SendAnswer::Wait(reason) => format!("check_in_wait_{}", reason.as_str()),
         });
         reasons
     }
@@ -114,7 +122,14 @@ pub(crate) fn send_check_in(
     effect: &ExternalEffectGateInput,
     delegated_or_cold: bool,
 ) -> Option<SendCheckIn> {
-    if effect.actor.actor_class != "agent" || effect.verb != "send" || delegated_or_cold {
+    if effect.actor.actor_class != "agent"
+        || effect.verb != "send"
+        || delegated_or_cold
+        || matches!(
+            effect.provenance.approval_target,
+            Some(ApprovalTarget::Campaign(_))
+        )
+    {
         return None;
     }
     let (mode, source) = match read {
