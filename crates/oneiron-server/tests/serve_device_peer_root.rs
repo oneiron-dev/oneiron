@@ -16,10 +16,9 @@ use std::sync::Arc;
 
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
 use oneiron_server::test_doors::embedded_peer_fixture::enrolled_device;
-use oneiron_server::test_doors::embedded_peer_path::persist_link_learned_window;
-use oneiron_server::test_doors::serve_device_link::{
-    ServedDeviceLink, persisted_root_windows, root_windows, root_windows_after,
-    start_served_device_link,
+use oneiron_server::test_doors::embedded_peer_path::{
+    ServedDeviceLink, persist_link_learned_window, persisted_root_windows, root_windows,
+    root_windows_after, start_served_device_link,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
