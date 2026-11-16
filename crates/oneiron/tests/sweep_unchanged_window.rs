@@ -118,7 +118,8 @@ fn carries_entity(vault: &Vault, window: &str, id: &EntityId) -> bool {
 struct FirstPass {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
-    manager: Arc<WindowManager>,
+    /// Kept alive: the vault's delete router holds it by `Weak`.
+    _manager: Arc<WindowManager>,
     erased: EntityId,
 }
 
@@ -165,13 +166,19 @@ fn after_a_first_pass() -> FirstPass {
     FirstPass {
         _dir: dir,
         vault,
-        manager,
+        _manager: manager,
         erased,
     }
 }
 
-/// Erases a second FEB entity after it was mirrored into the window, so the
-/// next pass has an obligation and FEB has history again; MAR is not opened.
+/// Erases a second FEB entity, so the next pass has an obligation, and gives
+/// FEB history again: one operation on top of its first-pass cut, stored as a
+/// snapshot that keeps the cut's root. MAR is not touched. FEB is not reopened
+/// for this: a run (15 Nov, gce-ci-3 job 1115-155906-5b36) found FEB with no
+/// history after an open, an erase and an unload, because after the first
+/// pass its persist stores only the cut at its newest operation. So the
+/// history is written into its stored snapshot directly, as the guard test
+/// writes MAR's residue.
 fn erase_again_in_feb(pass: &FirstPass) -> EntityId {
     let second = EntityId::now();
     put(
@@ -180,17 +187,17 @@ fn erase_again_in_feb(pass: &FirstPass) -> EntityId {
         LEARNED_FEB + 60,
         b"second-erased-body",
     );
-    let feb = pass
-        .manager
-        .open_window(&WindowKey::new(WINDOW_FEB))
-        .unwrap();
     erase(&pass.vault, &second);
-    drop(feb);
-    assert!(
-        pass.manager
-            .unload_window(&WindowKey::new(WINDOW_FEB))
-            .unwrap()
-    );
+    let snapshot = row(&pass.vault, "d:w:", WINDOW_FEB).expect("FEB snapshot");
+    let doc = LoroDoc::from_snapshot(&snapshot).unwrap();
+    doc.get_map("unchanged-window-probe")
+        .insert("after-the-first-pass", b"one-more-operation".as_slice())
+        .unwrap();
+    doc.commit();
+    let with_history = doc.export(ExportMode::Snapshot).unwrap();
+    pass.vault
+        .sync_state_put(&format!("d:w:{WINDOW_FEB}"), &with_history)
+        .unwrap();
     assert!(
         !history_free(&pass.vault, WINDOW_FEB),
         "fixture: FEB holds history again before the second pass"
