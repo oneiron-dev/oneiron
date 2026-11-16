@@ -52,6 +52,7 @@ mod node_batch;
 mod note_reads;
 mod outbox;
 mod peer_session;
+mod predicted;
 mod residence_mode;
 mod server_close;
 mod session;
@@ -113,6 +114,16 @@ pub struct SyncConnection {
     /// Wakes the owner's residence directives naming this machine: the
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
+    /// Wakes the predicted level's upkeep on this machine: the residence upkeep rings it once
+    /// the authority history is in, a newly applied prediction rings it, and the app shell's
+    /// fetch conditions ring it (ARCH-0023b #predicted-residence).
+    predicted_wake: Arc<tokio::sync::Notify>,
+    /// A (re)connect completed since the predicted upkeep last asked for a prediction, so it
+    /// asks again even before its 6 h are up (Engine ruling L7-46-MERGE A).
+    predicted_connected: std::sync::atomic::AtomicBool,
+    /// What the app shell last reported about fetching predictions on this machine, both false
+    /// until it reports (a phone fetches only on a reported unmetered and powered state).
+    fetch_conditions: std::sync::Mutex<FetchConditions>,
     /// Wakes the steady loop to judge again which worlds this machine
     /// follows: a world pick, each residence upkeep tick and an authority
     /// catch-up that took rows ring it. A changed set renegotiates at once
@@ -167,6 +178,17 @@ pub struct ResidenceModeChange {
     pub pruned_items: usize,
 }
 
+/// What the app shell reports about fetching predictions on this machine (ARCH-0023b
+/// #predicted-residence: "Phones fetch only on Wi-Fi and power"). A computer fetches whatever
+/// the shell reports; a phone fetches only when both hold, closed by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FetchConditions {
+    /// Whether the machine is on an unmetered network.
+    pub unmetered: bool,
+    /// Whether the machine is on power.
+    pub powered: bool,
+}
+
 impl SyncConnection {
     /// Creates a new connection manager over manager-owned windows. An own
     /// device runs its persisted residence choice (the elected home runs
@@ -208,6 +230,9 @@ impl SyncConnection {
             mode,
             mode_publish: std::sync::Mutex::new(()),
             directive_wake: Arc::default(),
+            predicted_wake: Arc::default(),
+            predicted_connected: std::sync::atomic::AtomicBool::new(false),
+            fetch_conditions: std::sync::Mutex::default(),
             follow_wake: Arc::default(),
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
@@ -499,9 +524,9 @@ impl SyncConnection {
         *self.mode.borrow()
     }
 
-    /// Switch this machine between sync-all and sync-what-you-opened. The
-    /// choice persists; the live socket closes and reconnects with the new
-    /// hello. To sync-all, the opened read caches are dropped (full windows
+    /// Switch this machine between sync-all and sync-what-you-opened, off
+    /// the predicted level. The choice persists; the live socket closes and
+    /// reconnects with the new hello. To sync-all, the opened read caches are dropped (full windows
     /// replace them). To opened, each window held in full is granted again
     /// by the home before it keeps syncing as a promoted window; that needs
     /// the home reachable, and an offline home leaves the mode unchanged.
@@ -513,15 +538,46 @@ impl SyncConnection {
         &self,
         mode: SyncResidenceMode,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
-        self.switch_residence_mode(mode, |_, _| Ok(())).await
+        self.switch_residence_mode(mode, false, |_, _| Ok(())).await
+    }
+
+    /// Rings the owner's residence directives naming this machine, so a
+    /// directive this host just issued to it runs now rather than at the
+    /// next residence upkeep.
+    pub fn wake_residence_directives(&self) {
+        self.directive_wake.notify_one();
+    }
+
+    /// Records what the app shell reports about fetching predictions on this machine, and rings
+    /// the predicted upkeep so a newly opened gate fetches now rather than at the next upkeep.
+    pub fn set_fetch_conditions(&self, conditions: FetchConditions) {
+        if let Ok(mut current) = self.fetch_conditions.lock() {
+            *current = conditions;
+        }
+        self.predicted_wake.notify_one();
+    }
+
+    /// Whether the predicted upkeep may ask and fetch now: a computer always may, and any other
+    /// machine only on a reported unmetered and powered state. A poisoned lock reads as closed.
+    fn fetch_gate_open(&self) -> bool {
+        if self.manager.vault().config.machine_device_class
+            == crate::authority::MachineDeviceClass::Computer
+        {
+            return true;
+        }
+        self.fetch_conditions
+            .lock()
+            .is_ok_and(|conditions| conditions.unmetered && conditions.powered)
     }
 
     /// [`Self::set_residence_mode`], with `finish` run in the transaction
     /// that records the choice, beside the read caches a switch to sync-all
     /// drops; the new mode is published once that commits. The owner's mode
-    /// directives record their result there (OF-534). A switch to sync-opened
-    /// withdraws this install's full-copy mark in that same transaction
-    /// (L7-47).
+    /// directives record their result there (OF-534). `predicted` puts an
+    /// opened machine at the predicted level (ARCH-0023b
+    /// #predicted-residence), which the transport runs as opened. A switch to
+    /// sync-opened, the predicted level included, withdraws this install's
+    /// full-copy mark in that same transaction (L7-47).
     ///
     /// The home read first only plans the switch: whether the held windows
     /// must be granted again before sync opened. Those grants wait on the
@@ -541,6 +597,7 @@ impl SyncConnection {
     async fn switch_residence_mode(
         &self,
         mode: SyncResidenceMode,
+        predicted: bool,
         finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
         let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
@@ -604,7 +661,9 @@ impl SyncConnection {
         let running = *self.mode.borrow();
         let change = vault
             .with_write_txn_grouped(|txn| {
-                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
+                crate::sync::residence::set_device_sync_preference_in_txn(
+                    vault, txn, mode, predicted,
+                )?;
                 let effective = vault.resolve_residence_mode_in_txn(txn, configured)?;
                 let mut change = ResidenceModeChange {
                     mode: effective,

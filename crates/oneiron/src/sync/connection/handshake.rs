@@ -118,7 +118,8 @@ impl SyncConnection {
     /// owner's residence directives naming this machine run beside it, across
     /// its reconnects, each time the residence upkeep wakes them (OF-534),
     /// and the home handoff's delivery worker beside both (FIX 5661 C2a), and
-    /// the mode that follows the committed home (FIX 8869).
+    /// the mode that follows the committed home (FIX 8869), and the predicted
+    /// level's upkeep on this machine (ARCH-0023b #predicted-residence).
     async fn drive(
         &self,
         client: SyncClient,
@@ -127,11 +128,13 @@ impl SyncConnection {
         // Under the host's admission, set by now (FIX 12036).
         self.collect_left_env_bodies();
         let directives = self.run_residence_directives(client.event_tx.clone());
+        let predicted = self.run_predicted_residence(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
         let residence_mode = self.run_residence_mode(client.event_tx.clone());
         tokio::select! {
             result = self.drive_loop(client, shutdown_rx) => result,
             never = directives => match never {},
+            never = predicted => match never {},
             never = home_handoff => match never {},
             never = residence_mode => match never {},
         }
@@ -236,6 +239,10 @@ impl SyncConnection {
                     // A home session opens once its first round completed:
                     // the home served this machine's sync (FIX 4748).
                     reach.opened(peer);
+                    // The predicted upkeep asks again after a (re)connect, once the
+                    // authority history it needs is in (Engine ruling L7-46-MERGE A).
+                    self.predicted_connected
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     // Reset backoff on successful connect
                     // Note: open_sync_session already emits Synced, so we don't emit Connected here
                     // to avoid regressing status for observers.
