@@ -100,8 +100,9 @@ fn owner_labelled(key: AuthorityKey) -> DeviceAuthority {
 
 /// Will over substrate: after the managed host migrates its root (a ReRoot,
 /// which retires every roster key), the owner's "yours" for this install,
-/// given under his act from his authenticated surface, stands. The new root
-/// is the host's, and no custody check stands in the owner's way.
+/// given under his act from his authenticated surface and proven by the
+/// owner key he enrols here, stands. The new root is the host's, and no
+/// custody check stands in the owner's way.
 #[test]
 fn the_owners_answer_stands_on_a_hosted_vault_after_a_host_reroot() {
     let hosted = HostedVault::open();
@@ -143,6 +144,17 @@ fn the_owners_answer_stands_on_a_hosted_vault_after_a_host_reroot() {
         .expect("this install's machine")
         .id;
 
+    // A carried "yours" stands with an owner key's proof (row
+    // CARRIER-OWNER-PROOF), and the host's custodial root proves nothing: he
+    // enrols this install's owner signing key, and the answer door adds its
+    // proof.
+    hosted
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(proof.clone(), ActSurface::ThisInstall),
+            &next,
+        )
+        .expect("the owner enrols this install's owner signing key under the new root");
     hosted
         .vault
         .set_machine_role(
