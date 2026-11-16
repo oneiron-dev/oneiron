@@ -250,11 +250,14 @@ fn a_turn_outside_the_dreamer_grant_is_refused() -> ExtractionVerdictTestResult<
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
     let actor = dreamer(&vault)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
     let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "yuki likes tea"])?;
     let outside = witnessed.turns[1];
+    let unserved = source_version(&vault, actor, EdgeActorClass::System, outside)?
+        .unwrap_or_else(|| panic!("the Dreamer reads the turn before it leaves the grant"));
+    let unserved = serde_json::to_value(unserved)?;
     let project = EntityId::now();
     settle_extraction_rows_in_project(&vault, &[outside, witnessed.messages[1]], project)?;
-    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
     narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
     let subject = EntityId::now();
     seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
@@ -263,10 +266,6 @@ fn a_turn_outside_the_dreamer_grant_is_refused() -> ExtractionVerdictTestResult<
     let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(id))?;
     let turns = page_turns_with_versions(&page);
     assert_eq!(turns.len(), 1);
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let unserved = source_version(&vault, owner, EdgeActorClass::Human, outside)?
-        .unwrap_or_else(|| panic!("the owner reads the outside turn"));
-    let unserved = serde_json::to_value(unserved)?;
     let pack = json!({
         "read": "resolution",
         "part": {"kind": "whole"},

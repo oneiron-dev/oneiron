@@ -166,12 +166,15 @@ fn a_bound_step_refuses_unserved_inputs_before_the_backend() -> ExtractionStepTe
     let outside_dir = tempfile::tempdir()?;
     let outside_vault = Arc::new(open_extraction_step_vault(&outside_dir)?);
     let actor = dreamer(&outside_vault)?;
+    let grant = stand_steward_grant(&outside_vault, actor, &STEWARD_VERBS)?;
     let witnessed =
         witness_extraction_turns(&outside_vault, &["owen likes tea", "yuki likes tea"])?;
     let outside = witnessed.turns[1];
+    let unserved = source_version(&outside_vault, actor, EdgeActorClass::System, outside)?
+        .unwrap_or_else(|| panic!("the Dreamer reads the turn before it leaves the grant"));
+    let unserved = serde_json::to_value(unserved)?;
     let project = EntityId::now();
     settle_extraction_rows_in_project(&outside_vault, &[outside, witnessed.messages[1]], project)?;
-    let grant = stand_steward_grant(&outside_vault, actor, &STEWARD_VERBS)?;
     narrow_steward_grant_to_project(&outside_vault, grant, oneiron::claim::default_project_id())?;
     let (outside_id, outside_admitted) =
         enqueue_admitted_extraction_attempt(&outside_vault, &witnessed.turns, QUEUE_NOW)?;
@@ -182,10 +185,6 @@ fn a_bound_step_refuses_unserved_inputs_before_the_backend() -> ExtractionStepTe
     let page = read_bound_extraction_page(&outside_binding, &extraction_attempt_hex(outside_id))?;
     let turns = page_turns_with_versions(&page);
     assert_eq!(turns.len(), 1);
-    let owner = outside_vault.ensure_embedded_owner_actor()?;
-    let unserved = source_version(&outside_vault, owner, EdgeActorClass::Human, outside)?
-        .unwrap_or_else(|| panic!("the owner reads the outside turn"));
-    let unserved = serde_json::to_value(unserved)?;
     let request = extraction_step_request(json!([
         extraction_step_evidence(&turns[0].0, turns[0].1.clone(), None),
         extraction_step_evidence(&outside.to_hex(), unserved, None),
