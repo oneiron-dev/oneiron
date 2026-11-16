@@ -1,10 +1,11 @@
 //! HOME-ELECTION-NEEDS-FULL-COPY (CROSS-ARCH-0024 `#my-network` item 04:
 //! "Only a full copy can become home."): the MACRO home election ranks a
 //! machine's declared candidacy only while that machine holds a full copy,
-//! once any candidate does. The home the host's own candidacy names holds
-//! the home copy, with or without a mark. With no full copy anywhere, the
-//! election ranks as before. An owner pick of a machine with no full copy
-//! waits for its mark.
+//! once any declaration it ranks does. With no full copy anywhere, the
+//! election ranks as before. A home that marks its own copy keeps the home
+//! on every machine, whatever that machine's host names as its own
+//! candidate. An owner pick of a machine with no full copy waits for its
+//! mark.
 //!
 //! The fixture is one owned vault: this install profiled as the owner's own
 //! machine, and two enrolled machines that declare MACRO candidacies under
@@ -27,12 +28,13 @@ use oneiron::test_doors::full_copy_mark::{
 };
 use oneiron::{DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, Vault, VaultConfig};
 
-/// The node id of the home the host's own candidacy names.
-const HOST_HOME: u64 = 20;
-/// Machine A's declared node id: below the host's home, so the default
-/// order's node-id tie-break ranks A first.
+/// The node id the home declares: machine B, always on, which marks its own
+/// copy as a served home does.
+const HOME_NODE: u64 = 20;
+/// Machine A's declared node id: below the home's, so the default order's
+/// node-id tie-break ranks A first.
 const A_NODE: u64 = 7;
-/// Machine B's declared node id.
+/// Machine B's declared node id as a primary device.
 const B_NODE: u64 = 9;
 
 /// A fresh owned vault with this install profiled as the owner's own
@@ -145,19 +147,39 @@ fn a_candidacy_with_a_full_copy_is_elected_over_one_without() {
 }
 
 #[test]
-fn the_home_the_host_names_stands_without_a_mark() {
+fn a_home_that_marks_its_own_copy_keeps_the_home_on_every_machine() {
     let (fixture, _dir) = fixture();
     let Fixture {
-        vault, a, a_key, ..
+        vault,
+        a,
+        a_key,
+        b: home,
+        b_key: home_key,
+        ..
     } = fixture;
     declare_macro_candidacy_for(&vault, a, &a_key, A_NODE, true, false)
         .expect("FIXTURE: A declares an always-on candidacy");
-    let host = [DreamerHomeNodeCandidate::always_on_local(HOST_HOME)];
+    declare_macro_candidacy_for(&vault, home, &home_key, HOME_NODE, true, false)
+        .expect("FIXTURE: the home declares an always-on candidacy");
+    assert!(
+        sign_full_copy_mark(&vault, home, &home_key, true)
+            .expect("the home's own mark signs")
+            .is_some(),
+        "FIXTURE: the home marks its own copy, as a served home does"
+    );
     assert_eq!(
-        elect(&vault, &host),
-        Some(HOST_HOME),
-        "the home the host names holds the home copy; A, with no full copy, is not elected \
-         though its node id ranks first"
+        elect(&vault, &[]),
+        Some(HOME_NODE),
+        "a machine whose host names no home elects the home: A holds no full copy, though its \
+         node id ranks first"
+    );
+    assert_eq!(
+        elect(
+            &vault,
+            &[DreamerHomeNodeCandidate::always_on_local(HOME_NODE)]
+        ),
+        Some(HOME_NODE),
+        "the home's own host elects the same home"
     );
     assert!(
         sign_full_copy_mark(&vault, a, &a_key, true)
@@ -180,15 +202,23 @@ fn an_owner_pick_without_a_full_copy_waits_for_its_mark() {
         owner,
         a,
         a_key,
-        ..
+        b: home,
+        b_key: home_key,
     } = fixture;
     declare_macro_candidacy_for(&vault, a, &a_key, A_NODE, false, true)
         .expect("FIXTURE: A declares a primary-device candidacy");
-    let host = [DreamerHomeNodeCandidate::always_on_local(HOST_HOME)];
+    declare_macro_candidacy_for(&vault, home, &home_key, HOME_NODE, true, false)
+        .expect("FIXTURE: the home declares an always-on candidacy");
+    assert!(
+        sign_full_copy_mark(&vault, home, &home_key, true)
+            .expect("the home's own mark signs")
+            .is_some(),
+        "FIXTURE: the home marks its own copy, as a served home does"
+    );
     assert_eq!(
-        elect(&vault, &host),
-        Some(HOST_HOME),
-        "the always-on home the host names is elected"
+        elect(&vault, &[]),
+        Some(HOME_NODE),
+        "the always-on home is elected"
     );
     let receipt = consolidation_home_pick_as(
         &vault,
@@ -207,7 +237,7 @@ fn an_owner_pick_without_a_full_copy_waits_for_its_mark() {
     );
     assert_eq!(
         designated(&vault),
-        Some(HOST_HOME),
+        Some(HOME_NODE),
         "the election passes over the pick of A while A holds no full copy"
     );
     assert!(

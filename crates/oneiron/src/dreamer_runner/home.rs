@@ -9,17 +9,17 @@
 //! picked node wins outright when it is a live eligible candidate; without
 //! one, an attached cloud, then an always-on node, then a primary device;
 //! the lowest node id breaks a tie in a tier. Only a full copy can become
-//! home (CROSS-ARCH-0024 `#my-network` item 04): once any candidate holds
-//! one, a machine's declaration stands only while that machine's full-copy
-//! mark says held (`authority::full_copy_mark`), and the home the host's own
-//! candidacy names holds the home copy, marked or not. With no full copy
-//! anywhere, the election ranks as before. A pick that is absent, cleared,
-//! in conflict, unknown here or not eligible now (a machine with no full
-//! copy included) leaves the default order, and stays recorded until a
-//! matching declaration or mark lands. Picks and
-//! declarations are signed rows of the vault's main authority log, so every
-//! linked machine folds the same ones; each elects on its own fold, and the
-//! designation it writes is its own.
+//! home (CROSS-ARCH-0024 `#my-network` item 04): while any machine's
+//! declaration the election ranks holds a full copy (its signed full-copy
+//! mark says held, `authority::full_copy_mark`; a served home marks its own),
+//! a declaration whose machine holds none is no candidate. With none, the
+//! election ranks as before. A pick that is absent, cleared, in conflict,
+//! unknown here or not eligible now (a machine with no full copy included)
+//! leaves the default order, and stays recorded until a matching
+//! declaration or mark lands. Picks, declarations and marks are signed rows
+//! of the vault's main authority log, so every linked machine folds the same
+//! ones; each elects on its own fold, and the designation it writes is its
+//! own.
 //!
 //! This node keeps the host's own candidacy as the host last supplied it,
 //! never inferred from the winner or the pick, and reads the declarations
@@ -84,14 +84,16 @@ impl HomeCandidates {
     ///
     /// Only a full copy can become home (HOME-ELECTION-NEEDS-FULL-COPY;
     /// CROSS-ARCH-0024 `#my-network` item 04). A declaration holds one when
-    /// its machine's full-copy mark says held, or when the host's own
-    /// candidacy names its node: the host names itself as home, the home it
-    /// dials, or its topology's cloud nodes, and each holds the home copy,
-    /// which no mark declares (a machine marks itself only after a session
-    /// with its home). While any candidate with a class holds a full copy, a
-    /// declaration that holds none is no candidate. While none does, every
-    /// declaration ranks as before, so a vault whose machines carry no mark
-    /// keeps its home.
+    /// its machine's newest full-copy mark says held under the key the
+    /// machine still proves: a fact of the folded log alone, so every
+    /// machine that folds the same rows filters the same declarations,
+    /// whatever its host's own candidacy. A served home marks its own copy
+    /// where it declares its candidacy; any other machine marks after its
+    /// first full round under sync all. While a declaration this election
+    /// ranks holds a full copy, every declaration that holds none is no
+    /// candidate. While none does, every declaration ranks as before, so the
+    /// filter never leaves the election without a candidate it had. The
+    /// host's own candidates are not filtered: they are this host's word.
     pub(super) fn of(declared: &[JudgedHomeCandidacy], local: &[DreamerHomeNodeCandidate]) -> Self {
         // Each declared node: how many standing machines declare it, and
         // whether one of them can run MACRO now.
@@ -110,16 +112,16 @@ impl HomeCandidates {
             .iter()
             .find(|(_, (machines, _))| *machines > 1)
             .map(|(node_id, _)| *node_id);
-        let host_named = |node_id: u64| local.iter().any(|candidate| candidate.node_id == node_id);
         let declared_candidates: Vec<_> = declared
             .iter()
             .filter_map(|declaration| {
-                declared_home_candidate(declaration).map(|candidate| {
-                    let full_copy = declaration.full_copy || host_named(candidate.node_id);
-                    (candidate, full_copy)
-                })
+                declared_home_candidate(declaration)
+                    .map(|candidate| (candidate, declaration.full_copy))
             })
             .collect();
+        let full_copy_stands = declared_candidates
+            .iter()
+            .any(|(candidate, full_copy)| *full_copy && candidate.designation_class().is_some());
         let named: BTreeSet<u64> = declared_candidates
             .iter()
             .map(|(candidate, _)| candidate.node_id)
@@ -137,11 +139,6 @@ impl HomeCandidates {
                     .get(&candidate.node_id)
                     .is_some_and(|(_, ready)| !*ready)
             });
-        let ranked = |candidate: &DreamerHomeNodeCandidate| candidate.designation_class().is_some();
-        let full_copy_stands = ready.iter().chain(&unready).any(ranked)
-            || declared_candidates
-                .iter()
-                .any(|(candidate, full_copy)| *full_copy && ranked(candidate));
         let mut candidates: Vec<_> = declared_candidates
             .into_iter()
             .filter(|(_, full_copy)| *full_copy || !full_copy_stands)
