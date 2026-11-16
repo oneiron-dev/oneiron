@@ -140,6 +140,7 @@ pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
+pub mod owner_key_enrolment_read;
 pub mod owner_key_release;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
