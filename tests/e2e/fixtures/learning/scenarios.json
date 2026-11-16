@@ -411,16 +411,17 @@
         "revision": "fixture-archive-v1",
         "axes": [
           {
-            "key": "length",
-            "values": [
+            "name": "length",
+            "bins": [
               "short",
               "long"
             ]
           },
           {
-            "key": "style",
-            "values": [
-              "plain"
+            "name": "style",
+            "bins": [
+              "plain",
+              "structured"
             ]
           }
         ]
@@ -443,6 +444,14 @@
             "plain"
           ],
           "score": 0.7
+        },
+        {
+          "label": "short-mid",
+          "cell": [
+            "short",
+            "plain"
+          ],
+          "score": 0.8
         },
         {
           "label": "short-best",
@@ -499,7 +508,8 @@
         "candidate_admitted": false,
         "blocking_axis": "coverage",
         "goal_rewritten_by_descriptor": false,
-        "mix_descriptor_versions": false
+        "mix_descriptor_versions": false,
+        "bunched_after_records": true
       }
     },
     {
