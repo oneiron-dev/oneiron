@@ -307,7 +307,7 @@ impl Memory<'_> {
             .map(EntityId::from_hex)
             .transpose()?;
         let actor = self.actor();
-        self.with_verified_actor_write_txn(|txn| {
+        let (id, receipt) = self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
             require_pack_active_in(vault, txn)?;
             if let Some(identity) = &channel_identity
@@ -423,10 +423,13 @@ impl Memory<'_> {
                 row.updated_at = at;
                 SOURCES.put(&vault.store, txn, &id, &row)?;
                 let source = self.connected_view_in(txn, &id, &row)?;
-                return Ok(MailSourceConnectReceipt {
-                    source,
-                    resumed: true,
-                });
+                return Ok((
+                    id,
+                    MailSourceConnectReceipt {
+                        source,
+                        resumed: true,
+                    },
+                ));
             }
             let audience =
                 source_audience::create_source_policy_in_txn(vault, txn, readers, open, actor, at)?;
@@ -452,11 +455,21 @@ impl Memory<'_> {
             SOURCES.put(&vault.store, txn, &id, &row)?;
             SOURCE_INDEX.put(&vault.store, txn, &key, &id)?;
             let source = self.connected_view_in(txn, &id, &row)?;
-            Ok(MailSourceConnectReceipt {
-                source,
-                resumed: false,
-            })
-        })
+            Ok((
+                id,
+                MailSourceConnectReceipt {
+                    source,
+                    resumed: false,
+                },
+            ))
+        })?;
+        // A host steps a mailbox at once: search works on connect, recent
+        // mail copies first, and the copy's time is known from that first
+        // step (ARCH-0063 #mail-copy). The receipt reads no provider.
+        if input.kind.is_mailbox() {
+            super::local_sync::wake_connected_mailbox(self.vault(), id);
+        }
+        Ok(receipt)
     }
 
     /// The sources the bound actor sees: its own mailboxes and calendars,

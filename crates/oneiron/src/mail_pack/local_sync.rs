@@ -88,6 +88,16 @@ impl Vault {
         ))
     }
 
+    /// Mailbox sources as they are connected or connected again, each sent
+    /// once its write commits, so a host steps each at once: the copy starts,
+    /// and its time is known, within seconds of the connect. A lagged
+    /// receiver has lost ids; a host's periodic pass still steps every due
+    /// source.
+    #[cfg(feature = "sync")]
+    pub fn subscribe_mail_source_wakes(&self) -> tokio::sync::broadcast::Receiver<EntityId> {
+        self.store.mail_source_wakes.subscribe()
+    }
+
     /// One act on the push channel of the mail source `source` through this
     /// host's wire for its provider, under the host's Pub/Sub `topic`
     /// ([`Vault::mail_watch_step`]); `None` for a source whose provider has
@@ -111,6 +121,15 @@ impl Vault {
         let wire = HttpGmailMailWire::new(self)?;
         self.mail_watch_step(source, &wire, topic)
     }
+}
+
+/// Wakes a host's mail worker for the mailbox `source`, once its connect
+/// committed ([`Vault::subscribe_mail_source_wakes`]).
+pub(super) fn wake_connected_mailbox(vault: &Vault, source: EntityId) {
+    #[cfg(feature = "sync")]
+    let _ = vault.store.mail_source_wakes.send(source);
+    #[cfg(not(feature = "sync"))]
+    let _ = (vault, source);
 }
 
 impl Memory<'_> {

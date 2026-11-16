@@ -176,6 +176,17 @@ pub enum MailHistoryRead {
     Expired,
 }
 
+/// The provider's change anchor and, where the same answer gives it, how
+/// many messages the mailbox holds (Gmail `users.getProfile`: `historyId`
+/// and `messagesTotal`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailboxAnchor {
+    pub anchor: String,
+    /// The messages in the mailbox; `None` from a provider whose anchor read
+    /// does not count them.
+    pub messages_total: Option<u64>,
+}
+
 /// What a wire whose provider has no push channel answers to
 /// [`MailProviderWire::watch`].
 pub const MAIL_PUSH_NOT_SERVED: &str = "mail_push_not_served";
@@ -188,6 +199,21 @@ pub trait MailProviderWire {
     /// `historyId`), taken before a listing starts so no change made during
     /// it is missed.
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String>;
+
+    /// [`Self::current_anchor`] with the mailbox's size, when the same
+    /// provider read gives it (Gmail's profile does): the importer takes its
+    /// anchor through this, so a copy's time is known from its first step at
+    /// no further call. By default the anchor alone.
+    ///
+    /// # Errors
+    ///
+    /// The provider's own failure.
+    fn mailbox_anchor(&self, source: &MailSyncSource) -> Result<MailboxAnchor> {
+        Ok(MailboxAnchor {
+            anchor: self.current_anchor(source)?,
+            messages_total: None,
+        })
+    }
 
     /// One page of the mailbox's messages, newest first, trash and spam
     /// excluded.

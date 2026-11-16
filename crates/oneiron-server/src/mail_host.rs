@@ -14,6 +14,11 @@
 //! (`push_hook`) wakes the worker on a notice, which steps each woken
 //! source at once. A notice can be dropped; the pass reads every source from
 //! its committed anchor, so it is the reconcile.
+//!
+//! A mailbox connected, or connected again, is stepped at once too
+//! (`Vault::subscribe_mail_source_wakes`; ARCH-0063 #mail-copy): search
+//! works on connect, recent mail copies first, and the copy's time is known
+//! from that first step. A lost wake waits for the next pass.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,6 +27,7 @@ use std::time::Duration;
 use oneiron::mail_pack::MailSyncBudget;
 use oneiron::{EntityId, Vault};
 use tokio::sync::Notify;
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::server::{HousekeepingAdmission, SyncServer};
 use oneiron_mail_pack::ext::MailPackLocalSyncVaultExt as _;
@@ -42,10 +48,22 @@ pub(crate) fn spawn_mail_source_syncs(
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(MAIL_SYNC_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut connected = server.vault().subscribe_mail_source_wakes();
         loop {
             let pass = tokio::select! {
                 _ = interval.tick() => Pass::Every,
-                () = server.mail_push_wakes.notify.notified() => Pass::Woken,
+                () = server.mail_source_wakes.notify.notified() => Pass::Woken,
+                received = connected.recv() => match received {
+                    Ok(source) => {
+                        server.mail_source_wakes.add(source);
+                        Pass::Woken
+                    }
+                    // Wakes were lost: every due source steps now.
+                    Err(RecvError::Lagged(_)) => Pass::Every,
+                    // The vault's store holds the sender while this server
+                    // holds the vault.
+                    Err(RecvError::Closed) => return,
+                },
             };
             let Some(admission) = admit() else {
                 continue;
@@ -63,16 +81,17 @@ pub(crate) fn spawn_mail_source_syncs(
     })
 }
 
-/// The mail sources Gmail's notices woke, for the worker to step before its
-/// next pass. The hook adds to it; the worker takes it whole. A notice that
-/// comes while a step runs leaves one more wake.
+/// The mail sources woken to step before the worker's next pass: by Gmail's
+/// notices, which the hook adds, and by a mailbox's connect. The worker
+/// takes it whole. A notice that comes while a step runs leaves one more
+/// wake.
 #[derive(Default)]
-pub(crate) struct MailPushWakes {
+pub(crate) struct MailSourceWakes {
     woken: Mutex<BTreeSet<EntityId>>,
     notify: Notify,
 }
 
-impl MailPushWakes {
+impl MailSourceWakes {
     /// Adds `sources` and wakes the worker, when there are any.
     pub(crate) fn wake(&self, sources: Vec<EntityId>) {
         if sources.is_empty() {
@@ -83,6 +102,15 @@ impl MailPushWakes {
             .unwrap_or_else(PoisonError::into_inner)
             .extend(sources);
         self.notify.notify_one();
+    }
+
+    /// Adds `source` for the pass the worker runs next, without a wake of
+    /// its own.
+    fn add(&self, source: EntityId) {
+        self.woken
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(source);
     }
 
     /// Takes every woken source.
@@ -96,7 +124,7 @@ impl MailPushWakes {
 enum Pass {
     /// Every due source, then every push channel that owes an act.
     Every,
-    /// The sources notices woke.
+    /// The sources notices and connects woke.
     Woken,
 }
 
@@ -114,7 +142,7 @@ fn run_pass(server: &SyncServer, pass: Pass) {
         }
     };
     // A full pass steps every due source, so it takes the woken ones too.
-    let woken = server.mail_push_wakes.take();
+    let woken = server.mail_source_wakes.take();
     let sources = match pass {
         Pass::Woken => woken.into_iter().collect(),
         Pass::Every => match vault.mail_sources_due() {

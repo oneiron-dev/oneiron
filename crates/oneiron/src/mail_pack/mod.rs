@@ -146,9 +146,9 @@ pub use source::{
     MailSourceKind, MailSourceStatus, MailSourceView,
 };
 pub(crate) use state::erase_occurrence_rows_in_txn;
-pub use state::{MailPresence, MailStage, MailSyncStatusView};
+pub use state::{MailCopyBound, MailCopyEstimate, MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
     MAIL_PUSH_NOT_SERVED, MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders,
     MailHistoryChange, MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef,
-    MailProviderWire, MailSyncSource,
+    MailProviderWire, MailSyncSource, MailboxAnchor,
 };

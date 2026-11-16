@@ -36,5 +36,27 @@ included. `vault.mail.sources.sync_status` shows the
 same time, and its `last_error` stays empty. Until that time the host's pass
 skips the source, and a step of it makes no Gmail call.
 
+## The copy's time
+
+A mailbox connected, or connected again, is stepped by the host at once, not at
+its next 300 s pass. That first step reads the profile for the change anchor,
+and the same answer gives `messagesTotal`, the mailbox's size; no further call
+is made. From then on `vault.mail.sources.sync_status`, and the report of each
+step, carries `copy_estimate`:
+
+- `messages_total` and `read_at`: the size Gmail gave, and when;
+- `seconds_left`: the time the copy has left;
+- `bound`: `units` or `bytes`, the limit that sets that time;
+- `at_most`: true when the source keeps its recent months only, because Gmail
+  counts the whole mailbox.
+
+Each message not yet copied costs its metadata read and its full read (80
+units), and each message landed by its headers its full read (60), at the
+copy's 4,500 units a minute. Once a step has read whole messages, their
+average download size gives the time at 2,500 MB a day; the larger of the two
+times is the estimate. A 100,000-message mailbox takes about 30 h by units.
+Search only has no estimate, and neither has a provider whose wire paces
+nothing.
+
 Microsoft Graph, IMAP and calendar sources declare no quota, so the meter does
 not charge them.
