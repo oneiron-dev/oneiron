@@ -9,8 +9,11 @@
 //! and an Owner's own leave all go this way.
 //!
 //! The device here is an independent signing key, outside this install,
-//! through [`sign_owner_key_move`]; the last test runs the device door on an
-//! install that holds the owner's key. Every test is new with the plan and
+//! through [`sign_owner_key_move`]; the last two tests run the device door on
+//! an install that holds the owner's key, the last one through the three
+//! verbs' JSON (`vault.shared.owner_key_move_plan`,
+//! `vault.shared.owner_key_move_sign`, `vault.shared.execute` with
+//! `owner_key_revokes`). Every test is new with the plan and
 //! confirm doors (red on the base, #9057, by not compiling); the base-API pin
 //! is `owner_key_move_proof.rs`'s refusal test (`enrol_owner_device`, `act:`).
 //!
@@ -560,6 +563,112 @@ fn the_device_door_signs_the_plan_with_the_key_this_install_holds() {
         .expect("the device door signs the plan");
     hosted
         .confirm(hosted.owner, &act, &rows)
+        .expect("the confirmed removal runs");
+    assert!(!hosted.key_is_live(public(&co_key)));
+    assert_eq!(
+        hosted.revoke_of(public(&co_key)).signer.public_key,
+        AuthorityKey::Ed25519(held),
+        "the held key signs as primary"
+    );
+}
+
+/// The three verbs carry the move as JSON: the server's plan
+/// (`vault.shared.owner_key_move_plan`, byte fields in hex) goes to the
+/// device as it is, the rows the device signs
+/// (`vault.shared.owner_key_move_sign`) go back to `vault.shared.execute` as
+/// they are, and the confirmed run lands the removal. An execute input with
+/// no rows field is the plain run, whose refusal names the act and the step;
+/// a plan field that is not its 64 lowercase hex is a bad request.
+#[test]
+fn the_verbs_carry_the_plan_and_the_confirm_as_json() {
+    use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
+    use oneiron::task_verb::sdk::{
+        self, SharedActExecuteRequest, SharedActRequest, SharedOwnerKeyMoveSignRequest,
+    };
+    use serde_json::json;
+
+    let hosted = hosted();
+    let co_key = hosted.enrol_device_key(hosted.co_owner, CO_OWNER_SEED);
+    let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
+    let executor = proof(&hosted.vault, hosted.owner);
+
+    let plain: SharedActExecuteRequest =
+        serde_json::from_value(json!({ "act_id": act })).expect("an input with no rows field");
+    assert!(plain.owner_key_revokes.is_empty());
+    assert_eq!(
+        serde_json::to_value(&plain).expect("the input as JSON"),
+        json!({ "act_id": act }),
+        "no rows, no field"
+    );
+    let refused = sdk::execute_shared_act(&hosted.vault, &executor, Some(&hosted.issuer), plain)
+        .expect_err("the plain run needs an owner key the executor holds");
+    assert_eq!(
+        refused.reason_codes,
+        vec![
+            "owner_key_required".to_owned(),
+            "next_step:enrol_owner_device".to_owned(),
+            format!("member:{}", hosted.co_owner.to_hex()),
+            format!("act:{act}"),
+        ],
+        "the verb's refusal names the step, the member and the act"
+    );
+
+    let held = hosted
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(proof(&hosted.vault, hosted.owner), ActSurface::ThisInstall),
+            &hosted.issuer,
+        )
+        .expect("the owner enrols this install's owner signing key")
+        .public_key;
+    let plan = sdk::plan_shared_owner_key_move(
+        &hosted.vault,
+        &executor,
+        Some(&hosted.issuer),
+        SharedActRequest {
+            act_id: act.clone(),
+        },
+    )
+    .expect("the plan verb answers the plan");
+    assert_eq!(plan.member, hosted.co_owner.to_hex(), "{plan:?}");
+    assert_eq!(
+        plan.revoked,
+        vec![oneiron_hex::encode(&public(&co_key))],
+        "{plan:?}"
+    );
+    assert_eq!(
+        plan.signers
+            .iter()
+            .map(|signer| signer.public_key.clone())
+            .collect::<Vec<_>>(),
+        vec![oneiron_hex::encode(&held)],
+        "{plan:?}"
+    );
+
+    let mut malformed = plan.clone();
+    malformed.authority_vault_id.push_str("00");
+    let refused = sdk::sign_shared_owner_key_move(
+        &hosted.vault,
+        &executor,
+        SharedOwnerKeyMoveSignRequest { plan: malformed },
+    )
+    .expect_err("33 bytes are no authority vault id");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+
+    let sign_input: SharedOwnerKeyMoveSignRequest = serde_json::from_value(
+        json!({ "plan": serde_json::to_value(&plan).expect("the plan as JSON") }),
+    )
+    .expect("the device reads the plan the server answered");
+    let confirm = sdk::sign_shared_owner_key_move(&hosted.vault, &executor, sign_input)
+        .expect("the device signs the plan");
+    assert_eq!(confirm.owner_key_revokes.len(), 1, "{confirm:?}");
+
+    let confirmed: SharedActExecuteRequest = serde_json::from_value(json!({
+        "act_id": act,
+        "owner_key_revokes": serde_json::to_value(&confirm).expect("the confirm as JSON")["owner_key_revokes"],
+    }))
+    .expect("execute reads the device's rows");
+    sdk::execute_shared_act(&hosted.vault, &executor, Some(&hosted.issuer), confirmed)
         .expect("the confirmed removal runs");
     assert!(!hosted.key_is_live(public(&co_key)));
     assert_eq!(
