@@ -1694,6 +1694,60 @@ fn a_claim_learned_from_caller_a_does_not_read_in_caller_bs_call() {
     );
 }
 
+/// Astra review of R1+R2, finding 1, under the default: the owner's pick
+/// does not carry another caller's words (owner 16 Nov 00:44: under the
+/// default, caller B's call cannot retrieve caller A's words). Of two picked
+/// CLAIMs, the one whose birth names A's kept MESSAGE as its evidence does
+/// not read in B's call; the one born from B's own MESSAGE does.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn under_the_default_a_picked_claim_learned_from_caller_a_does_not_read_in_bs_call() {
+    use oneiron::provenance::made_by::MadeByInputRole;
+
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    let subject = ordinary_subject_person(&got.fixture.vault);
+    let from_a = claim_born_from(
+        &got,
+        subject,
+        got.msg_a_caller,
+        MadeByInputRole::Input,
+        "from_a",
+    );
+    let from_b = claim_born_from(
+        &got,
+        subject,
+        got.msg_b_caller,
+        MadeByInputRole::Input,
+        "from_b",
+    );
+    let mut picked = vec![from_a.to_hex(), from_b.to_hex()];
+    picked.sort();
+    set_reach_as_owner(&got.fixture, PhoneReach::Default { documents: picked });
+    let key = got
+        .fixture
+        .vault
+        .phone_line_answer_read_key(
+            &got.l_proof,
+            got.fixture.identity,
+            &got.receipt_b.record.payload_ref,
+        )
+        .expect("preset Default{from_a, from_b}: B's new call key");
+    let call = got.fixture.vault.scoped_read(key);
+    assert!(
+        call.is_entity_readable(&from_b)
+            .expect("B's call reads from_b"),
+        "precondition: B's call reads the picked CLAIM from_b",
+    );
+    assert!(
+        !call
+            .is_entity_readable(&from_a)
+            .expect("B's call reads from_a"),
+        "LEAK: B's call reads a picked CLAIM learned from caller A's words",
+    );
+}
+
 /// An ordinary subject PERSON, never a phone row: the lineage walks follow
 /// a CLAIM's subject, so it must be clean for a control CLAIM to ride or
 /// read.
