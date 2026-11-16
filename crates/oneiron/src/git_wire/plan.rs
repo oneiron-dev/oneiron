@@ -3,9 +3,10 @@
 
 pub use oneiron_store::git_wire::plan::*;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::argv::FrozenGitArgv;
 use super::failure::invalid;
-use super::record::hash_field;
 use super::retained_object::GitRetainedObject;
 use super::{
     GIT_WIRE_DOMAIN, GitCommitRequest, GitOid, GitRefExpectation, GitRefName, GitTreeEntry,
@@ -159,26 +160,69 @@ impl GitWirePlan {
     /// The stable content hash of the plan: object payload hashes plus the
     /// publications, so two textually identical plans claim one stage key and
     /// two different plans never collide.
+    ///
+    /// The stage key binds it, so it keeps its bytes (K, PLAN-UC-04 3.3): each
+    /// field framed by its length as a u32 big-endian.
     pub(super) fn plan_hash(&self) -> GitWireResult<[u8; 32]> {
-        let mut hasher = blake3::Hasher::new();
-        hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-        hash_field(&mut hasher, b"plan");
+        let mut digest = LegacyDigest::new(purposes::git_wire::PLAN_HASH);
+        for field in [GIT_WIRE_DOMAIN, b"plan".as_slice()] {
+            digest.len_u32_be_saturating(field.len()).raw(field);
+        }
         for write in &self.objects {
             let argv = write.argv()?;
-            hash_field(&mut hasher, argv.operation().as_str().as_bytes());
+            let operation = argv.operation().as_str();
+            digest
+                .len_u32_be_saturating(operation.len())
+                .raw(operation.as_bytes());
             match write {
                 // The spool's own sealed bytes, in the same framing.
-                GitWireObjectWrite::Retained(object) => object.spool().hash_framed(&mut hasher)?,
-                _ => hash_field(&mut hasher, argv.stdin().unwrap_or(&[])),
+                GitWireObjectWrite::Retained(object) => object.spool().hash_framed(&mut digest)?,
+                _ => {
+                    let stdin = argv.stdin().unwrap_or(&[]);
+                    digest.len_u32_be_saturating(stdin.len()).raw(stdin);
+                }
             }
         }
         for oid in &self.existing {
-            hash_field(&mut hasher, oid.as_str().as_bytes());
+            let oid = oid.as_str();
+            digest.len_u32_be_saturating(oid.len()).raw(oid.as_bytes());
         }
         for publication in &self.publications {
-            hash_field(&mut hasher, publication.name.as_str().as_bytes());
-            hash_publication_target(&mut hasher, publication);
+            let name = publication.name.as_str();
+            digest
+                .len_u32_be_saturating(name.len())
+                .raw(name.as_bytes());
+            hash_publication_target(&mut digest, publication);
         }
-        Ok(*hasher.finalize().as_bytes())
+        Ok(digest.finish())
+    }
+}
+
+/// Seams for `test_doors::fingerprint_keep_git_wire` (PLAN-UC-04 3.3).
+#[cfg(oneiron_test_support)]
+impl GitWirePlan {
+    /// The plan hash staging keys this plan by.
+    pub(crate) fn plan_hash_for_test(&self) -> GitWireResult<[u8; 32]> {
+        self.plan_hash()
+    }
+
+    /// What the plan hash reads: the object writes, the existing objects and
+    /// the publications.
+    pub(crate) fn parts_for_test(
+        &self,
+    ) -> (&[GitWireObjectWrite], &[GitOid], &[PlannedPublication]) {
+        (&self.objects, &self.existing, &self.publications)
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl GitWireObjectWrite {
+    /// What the plan hash reads of this write's frozen argv: its operation and
+    /// its stdin.
+    pub(crate) fn argv_parts_for_test(
+        &self,
+    ) -> GitWireResult<(super::GitWireOperation, Option<Vec<u8>>)> {
+        let argv = self.argv()?;
+        Ok((argv.operation(), argv.stdin().map(<[u8]>::to_vec)))
     }
 }

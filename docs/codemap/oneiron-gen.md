@@ -23,4 +23,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/openrouter/backend.rs` | src | s | 6 struct · 1 trait · 5 fn · 1 type · 1 crate-vis | OpenRouterImageBackend, OpenRouterImageConfig, OpenRouterImageHttpRequest, OpenRouterImageHttpResponse, OpenRouterImageModel, OpenRouterImageTransport, PromptShim | Model-local prompt configuration and host-owned HTTP transport |
 | `src/openrouter/mod.rs` | src | s | 2 re-export | — | OpenRouter Image API adapter |
 | `src/openrouter/wire.rs` | src | s | 3 fn | — | Buffered `/api/v1/images` request and response mapping |
+| `tests/media_release.rs` | test | s | — | — | UC-16 (census FD-07): a released media call re-checks its caller's release before it sends |
 | `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |

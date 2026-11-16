@@ -11,108 +11,50 @@
 
 use crate::side_table::codec::CodecError;
 use crate::side_table::codec::RawValue;
-use crate::side_table::key::SideKey;
+use crate::side_table::key::{HexId, HexU32, HexU64, SideKey};
 use oneiron_base::error::Error;
 
 /// [`ROOT_UPDATE`]'s key: an 8-hex-digit sequence number, exactly the
 /// pre-typed `u:root:{seq:08x}` spelling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HexSeqKey(pub u32);
-
-impl SideKey for HexSeqKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(format!("{:08x}", self.0).as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let seq = oneiron_hex::decode::<4>(std::str::from_utf8(bytes).ok()?)?;
-        Some(Self(u32::from_be_bytes(seq)))
-    }
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+pub struct HexSeqKey(#[side_key(with = HexU32)] pub u32);
 
 /// Key after the `pt:` prefix: a window label, `:`, then the entity's 32
 /// lower-case hex characters — split from the END (fixed-width hex tail) so
 /// a window label containing `:` still decodes correctly, mirroring
 /// `deletion::tombstone::PendingTombstoneKey`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 pub struct WindowEntityHexKey {
+    #[side_key(rest)]
     pub window: String,
+    #[side_key(with = HexId)]
     pub id: oneiron_contracts::entity_id::EntityId,
-}
-
-impl SideKey for WindowEntityHexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.window.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(self.id.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(32)?;
-        let (head, hex) = bytes.split_at(split);
-        let window = head.strip_suffix(b":")?;
-        Some(Self {
-            window: String::from_utf8(window.to_vec()).ok()?,
-            id: oneiron_contracts::entity_id::EntityId::from_lower_hex(
-                std::str::from_utf8(hex).ok()?,
-            )
-            .ok()?,
-        })
-    }
 }
 
 /// A `{window} ":" {entity_hex32}` key shape: the bytes after a window+entity
 /// marker table's own prefix (the `pm:` family here; other declared window+
 /// entity marker families spell the identical layout).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 pub struct WindowEntityKey {
+    #[side_key(rest)]
     pub window: String,
+    #[side_key(with = HexId)]
     pub entity: oneiron_contracts::entity_id::EntityId,
-}
-
-impl SideKey for WindowEntityKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.window.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(self.entity.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        let (window, hex) = text.rsplit_once(':')?;
-        let entity = oneiron_contracts::entity_id::EntityId::from_lower_hex(hex).ok()?;
-        Some(Self {
-            window: window.to_owned(),
-            entity,
-        })
-    }
 }
 
 /// [`WINDOW_UPDATE`]'s key: a window key (never itself containing `:` — the
 /// `YYYY-MM` format is fixed 7 bytes) then `:` then the update's 16-hex-digit
 /// sequence number (`u:w:{key}:{seq:016x}`). The fixed width keeps the byte
 /// order of the keys the sequence order (FIX 8883).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 pub struct WindowUpdateKey {
+    #[side_key(rest)]
     pub window: String,
+    #[side_key(with = HexU64)]
     pub seq: u64,
-}
-
-impl SideKey for WindowUpdateKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.window.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(format!("{:016x}", self.seq).as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        let (window, seq_hex) = text.rsplit_once(':')?;
-        Some(Self {
-            window: window.to_owned(),
-            seq: u64::from_be_bytes(oneiron_hex::decode::<8>(seq_hex)?),
-        })
-    }
 }
 
 /// Verdict text carried by the corrupt-`m:u_seq:w:` row [`Error::CorruptedIndex`].
