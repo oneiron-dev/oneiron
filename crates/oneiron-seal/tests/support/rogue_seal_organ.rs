@@ -1277,7 +1277,7 @@ mod rogue {
                 prehash: Mutex::new(None),
             });
             let backend: Arc<dyn SealBackend> = Arc::<Capture>::clone(&capture);
-            let engine = native(self.anchors, self.now_ms, backend)?;
+            let engine = native(self.anchors, self.now_ms, backend, None)?;
             let request = SealRequest {
                 operation_id: self.operation.to_owned(),
                 target_profile: PadesProfile::BaselineB,
