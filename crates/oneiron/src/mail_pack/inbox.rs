@@ -11,6 +11,7 @@ use super::source::{MailSourceRow, SOURCES};
 use super::state::{MailOccurrence, MailPresence, OCCURRENCES};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault, source_audience};
+use oneiron_contracts::cursor_text::{join_at_id, split_at_id};
 
 /// The inbox page size when a request names none.
 const DEFAULT_INBOX_PAGE: u32 = 50;
@@ -47,16 +48,9 @@ fn place_of(item: &MailInboxItem) -> MemoryResult<InboxPlace> {
     Ok((item.received_at, EntityId::from_hex(&item.turn_ref)?))
 }
 
-fn cursor_text(place: InboxPlace) -> String {
-    format!("{}:{}", place.0, place.1.to_hex())
-}
-
 fn parse_cursor(cursor: &str) -> MemoryResult<InboxPlace> {
-    let bad = || MemoryError::bad_request("the inbox cursor is not one this inbox gave");
-    let (at, turn) = cursor.split_once(':').ok_or_else(bad)?;
-    let at = at.parse::<u64>().map_err(|_| bad())?;
-    let turn = EntityId::from_hex(turn).map_err(|_| bad())?;
-    Ok((at, turn))
+    split_at_id(cursor)
+        .ok_or_else(|| MemoryError::bad_request("the inbox cursor is not one this inbox gave"))
 }
 
 /// The mailbox sources by their audience policy, for finding a thread's
@@ -135,7 +129,8 @@ impl Memory<'_> {
         }
         items.sort_by(|a, b| (b.received_at, &b.turn_ref).cmp(&(a.received_at, &a.turn_ref)));
         let next_cursor = if items.len() > limit {
-            Some(cursor_text(place_of(&items[limit - 1])?))
+            let (at, turn) = place_of(&items[limit - 1])?;
+            Some(join_at_id(at, turn))
         } else {
             None
         };
