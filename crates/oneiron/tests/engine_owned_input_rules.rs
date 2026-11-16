@@ -16,14 +16,22 @@
 //! - The three expression-preference rows, the doors only napi's
 //!   `ActorScopedVault` had, run through the generic invoke; an omitted
 //!   `occurred_at` on the write is the vault's recording clock.
+//! - The read row answers only what the caller's own read lane reads
+//!   (REVIEW-8147 P1): a preference claim a verified credential withholds
+//!   shows no value and no ref, and a subject it withholds is NOT_FOUND, as a
+//!   missing one is.
 //! - The retrieval quality report writes `confidence_adjustment`; a body
 //!   with the old `confidenceAdjustment` key still reads.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test engine_owned_input_rules`
 #![cfg(feature = "test-support")]
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use oneiron::authority::VerifiedSlip;
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, OutboundScheduleContext, WitnessMessage,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, OutboundScheduleContext,
+    WitnessMessage,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::task_verb::sdk::invoke;
@@ -307,6 +315,150 @@ fn the_expression_preference_rows_run_through_the_generic_invoke() {
     )
     .expect("the preferences after the retraction");
     assert_eq!(after["language"], Value::Null, "{after}");
+}
+
+const CHALLENGE: &[u8] = b"oneiron-request:engine-owned-input-rules";
+
+fn next_slip_id() -> [u8; 32] {
+    static NEXT: AtomicU8 = AtomicU8::new(1);
+    [NEXT.fetch_add(1, Ordering::Relaxed); 32]
+}
+
+/// A fresh PERSON row.
+fn person(vault: &Vault, body: &[u8]) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            body,
+        )
+        .expect("a PERSON row");
+    id
+}
+
+/// The live `human` credential the test host mints `holder`, held by a
+/// records caveat to `records`, verified as a transport verifies the slip a
+/// request presents.
+fn held_credential(vault: &Vault, holder: EntityId, records: &[EntityId]) -> VerifiedSlip {
+    let issuer = test_host_issuer();
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("the host root slip")
+        .claims;
+    claims.slip_id = next_slip_id();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some("human".to_owned());
+    claims.records = records.iter().map(EntityId::to_hex).collect();
+    let slip = vault
+        .mint_capability_slip(&issuer, claims)
+        .expect("mint the credential");
+    let binding = issuer
+        .binding_proof(&slip, CHALLENGE)
+        .expect("the binding proof");
+    vault
+        .verify_capability_slip(&issuer.public_key(), &slip, CHALLENGE, &binding)
+        .expect("verify the credential")
+}
+
+/// One owner-stated `language` preference in force on a fresh subject:
+/// the subject and the preference claim.
+fn owner_preference(vault: &Vault) -> (EntityId, EntityId) {
+    install_expression_policy(vault);
+    let subject = person(vault, b"subject");
+    invoke(
+        &owner_memory(vault),
+        "vault.expression_preferences.set",
+        json!({
+            "subject_ref": subject.to_hex(),
+            "value": {"kind": "language", "value": "en-US"},
+            "origin": "explicit_user",
+            "valid_from": vault.now_recorded_at() - 60
+        }),
+    )
+    .expect("the owner's preference");
+    let in_force = vault
+        .expression_preferences(&subject, vault.now_recorded_at())
+        .expect("the preferences in force")
+        .winning_claim_ids;
+    assert_eq!(in_force.len(), 1, "one preference in force: {in_force:?}");
+    let claim = in_force.into_values().next().expect("the preference claim");
+    (subject, claim)
+}
+
+fn preferences_of(memory: &Memory<'_>, subject: EntityId) -> Result<Value, MemoryError> {
+    invoke(
+        memory,
+        "vault.expression_preferences.get",
+        json!({ "subject_ref": subject.to_hex() }),
+    )
+}
+
+/// (f) A credential that reads the subject but not the preference claim
+/// reads no value and no ref for it (REVIEW-8147 P1: the read took no lane).
+#[test]
+fn a_credential_that_withholds_the_preference_reads_no_value() {
+    let (_directory, vault) = fresh_vault();
+    let (subject, _claim) = owner_preference(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let proof = held_credential(&vault, owner, &[owner, subject]);
+    let reader = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let view = preferences_of(&reader, subject).expect("the held credential reads the subject");
+    assert_eq!(view["language"], Value::Null, "{view}");
+    assert_eq!(view["winning_refs"], json!({}), "{view}");
+}
+
+/// (f) Guard: a credential that reads the preference claim reads its value
+/// and the same ref the owner reads.
+#[test]
+fn a_credential_that_reads_the_preference_reads_its_value_and_ref() {
+    let (_directory, vault) = fresh_vault();
+    let (subject, claim) = owner_preference(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let unbound = preferences_of(&owner_memory(&vault), subject).expect("the owner's read");
+    let proof = held_credential(&vault, owner, &[owner, subject, claim]);
+    let reader = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let view = preferences_of(&reader, subject).expect("the held credential reads the subject");
+    assert_eq!(view["language"], json!("en-US"), "{view}");
+    assert_eq!(
+        view["winning_refs"]["language"], unbound["winning_refs"]["language"],
+        "{view} / {unbound}"
+    );
+    assert!(view["winning_refs"]["language"].is_string(), "{view}");
+}
+
+/// (f) A subject the caller's credential withholds is NOT_FOUND, exactly as
+/// a subject that does not exist, so the door is no existence oracle.
+#[test]
+fn a_subject_the_credential_withholds_reads_as_missing() {
+    let (_directory, vault) = fresh_vault();
+    let (subject, _claim) = owner_preference(&vault);
+    let stranger = person(&vault, b"a person with no grant");
+    let proof = held_credential(&vault, stranger, &[stranger]);
+    let reader = vault
+        .memory(stranger, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let withheld = refused(
+        preferences_of(&reader, subject),
+        "a subject the credential withholds",
+    );
+    let missing = refused(
+        preferences_of(&reader, EntityId::now()),
+        "a subject that does not exist",
+    );
+    assert_eq!(missing.code, MEMORY_CODE_NOT_FOUND, "{missing:?}");
+    assert_eq!(
+        (withheld.code.as_str(), withheld.message.as_str()),
+        (missing.code.as_str(), missing.message.as_str()),
+        "{withheld:?} / {missing:?}"
+    );
 }
 
 /// The retrieval quality report writes `confidence_adjustment`, as every
