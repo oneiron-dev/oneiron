@@ -23,8 +23,8 @@ use serde::Serialize;
 
 use super::system_agent_grant::{SystemAgent, steward_reach_in};
 use super::{
-    FederationGrantKind, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
-    decode_federation_grant_body, grant_scope,
+    FederationGrantKind, FederationGrantPreset, FederationGrantRole, FederationGrantScope, Scope,
+    ScopeAxis, decode_federation_grant_body, grant_scope,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -169,6 +169,13 @@ impl Vault {
     ) -> Result<Option<EntityId>> {
         let root = self.steward_root_scope_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
+        // Over a shared vault only a Grant the fold stands behind holds a verb (pass 28 R3),
+        // never a row alone; an own-device root's Grants are read as derived in R4.
+        let fold = if matches!(root, FederationGrantScope::Vault { .. }) {
+            Some(self.authority_fold_readonly_in_txn(txn)?)
+        } else {
+            None
+        };
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -194,6 +201,9 @@ impl Vault {
                 && matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
                     if verbs.contains(verb))
                 && (reach == GrantReach::Any || reaches_whole_vault(&grant.authority_scope))
+                && fold.as_ref().is_none_or(|fold| {
+                    super::shared_grant_row_in_fold(fold, id, &raw.body, now).is_some()
+                })
             {
                 return Ok(Some(id));
             }

@@ -185,6 +185,13 @@ impl Vault {
         {
             return Ok(false);
         }
+        // A Grant over the shared vault pays only while the fold stands behind it (pass 28
+        // R3), never as a row alone.
+        if matches!(grant.scope, FederationGrantScope::Vault { .. })
+            && super::shared_grant_row_in_fold(&context.fold, id, &body, context.now).is_none()
+        {
+            return Ok(false);
+        }
         Ok(!self.guest_grant_withdrawn_in_txn(txn, &id)?)
     }
 }
