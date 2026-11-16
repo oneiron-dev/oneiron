@@ -454,7 +454,7 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
                     ),
                 }
             }
-            let able = config(vec![LlmCapability::Streaming, capability.clone()]);
+            let able = config(vec![LlmCapability::Streaming, capability]);
             let body = super::build_openai_chat_request(&able, &call, false)
                 .expect("a capable model takes the raw control")
                 .body;

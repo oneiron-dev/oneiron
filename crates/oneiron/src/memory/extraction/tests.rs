@@ -52,6 +52,7 @@ impl ExtractionEncoder for Scripted {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: None,
             })
         })();
@@ -290,6 +291,7 @@ fn a_shadow_of_messages_sent_out_of_order_is_saved() {
                     context_links: Vec::new(),
                     speaker_links: Vec::new(),
                     mood_parts: Vec::new(),
+                    relations: None,
                     stack_sha16: None,
                 })
             })();
