@@ -244,6 +244,10 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<Option<CalendarEventOutcome>>> {
         let event = event_id(&input.event_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // The disputing machine outcomes are mostly claims the answer
+        // superseded, which the surfaceable lane never admits: the caller's own
+        // lane at the record verbs' status admits each one.
+        let records = self.read_lane(ClaimReadStatus::Recorded)?;
         Ok(lane.read_projected(
             &[PointRead::id(event)],
             None,
@@ -257,9 +261,10 @@ impl Memory<'_> {
                     event_ref: event.to_hex(),
                     outcome: outcome::project_event_outcome(claim),
                     claim,
-                    disputing_machine_outcomes: outcome::disputing_machine_outcomes_in(
+                    disputing_machine_outcomes: outcome::readable_disputing_machine_outcomes_in(
                         self.vault(),
                         txn,
+                        &records,
                         &event,
                     )?,
                 }))

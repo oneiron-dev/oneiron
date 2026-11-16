@@ -48,12 +48,8 @@ use super::claims::{
     decode_status_value, encode_event_outcome_value, require_event_subject,
 };
 use crate::blob_artifact::BlobArtifactBody;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    claim_surfaceable,
-};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, claim_surfaceable};
 use crate::codebase::entity_id_from_hash_material;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::lens::{
@@ -61,7 +57,6 @@ use crate::lens::{
     LensTextSpan, MetaLineAtom, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId,
     SelfUiOptionValue, SelfUiValue, TextBlockAtom,
 };
-use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
@@ -237,6 +232,10 @@ use conditional::record_event_outcome_in_txn;
 pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
 
+mod dispute;
+pub use dispute::read_disputing_machine_outcomes;
+pub(in crate::calendar) use dispute::readable_disputing_machine_outcomes_in;
+
 /// Reads the EVENT's live outcome claim.
 ///
 /// Absence of a live claim returns `None`; projection maps `None` to `Unknown`
@@ -337,70 +336,6 @@ impl OutcomeHead {
         self.value.basis == EventOutcomeBasis::OwnerAttested
             && self.value.outcome != EventOutcome::Unknown
     }
-}
-
-/// The machine outcomes that dispute the EVENT's current owner answer, oldest
-/// first: each machine claim the answer superseded that disagrees with it, and
-/// each readable machine head beside it across a sync fork that disagrees.
-///
-/// A superseded claim is either evidence that arrived after the answer, or the
-/// machine head the answer corrected. Empty when the current outcome is no owner
-/// answer. A new answer settles the dispute: the evidence stays linked to the
-/// answer it disputed, which the new answer supersedes.
-///
-/// # Errors
-///
-/// Storage errors, and [`crate::error::Error::InvalidClaimBody`] when a stored
-/// outcome value does not match the ratified wire shape.
-pub fn read_disputing_machine_outcomes(
-    vault: &Vault,
-    event_ref: EntityId,
-) -> Result<Vec<EventOutcomeClaimValue>> {
-    let rtxn = vault.store.env.read_txn()?;
-    disputing_machine_outcomes_in(vault, &rtxn, &event_ref)
-}
-
-pub(in crate::calendar) fn disputing_machine_outcomes_in(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    event_ref: &EntityId,
-) -> Result<Vec<EventOutcomeClaimValue>> {
-    let heads = live_outcome_heads_in(vault, rtxn, event_ref)?;
-    let Some(answer) = current_head(&heads).filter(|head| head.is_owner_answer()) else {
-        return Ok(Vec::new());
-    };
-    let disputes = |value: &EventOutcomeClaimValue| {
-        value.basis == EventOutcomeBasis::Machine && value.outcome != answer.value.outcome
-    };
-    let mut disputing: Vec<EventOutcomeClaimValue> = heads
-        .iter()
-        .filter(|head| head.surfaceable && disputes(&head.value))
-        .map(|head| head.value)
-        .collect();
-    for superseded in vault.port_edge_peers(
-        rtxn,
-        &answer.claim_id,
-        EdgeDirection::Out,
-        EdgeKind::Supersedes,
-    )? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &superseded?)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME
-            || !matches!(
-                body.approval,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
-        {
-            continue;
-        }
-        let value = decode_event_outcome_value(&body.value)?;
-        if disputes(&value) {
-            disputing.push(value);
-        }
-    }
-    disputing.sort_by_key(|value| value.recorded_at);
-    Ok(disputing)
 }
 
 /// The EVENT's current `calendar.status`, under the same latest-evidence rule
