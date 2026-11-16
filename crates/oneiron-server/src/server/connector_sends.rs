@@ -205,7 +205,7 @@ impl SyncServer {
     pub(crate) fn run_connector_send_pass(&self) -> oneiron::Result<Option<u64>> {
         let mut clients = None;
         send_pass(
-            self.vault(),
+            self,
             self.config.line.monthly_push_allowance(),
             &mut clients,
             false,
