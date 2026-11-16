@@ -3,6 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v34 (row HOSTED-ROOT-REVOKES-OWNER-KEY): stored authority-log rows keep
+/// their bytes and change meaning. A `RevokeDevice` of an owner key counts
+/// only with an owner key's proof, as its signer or a cosign, so a revoke the
+/// custodial root signed alone (a hosted membership move's, or one written by
+/// hand) is refused, the key stays live, and every row above the revoke is
+/// refused with it (a refused revoke is no row the fold crosses). The
+/// authority fold schema moves 41 -> 42 with it. No old-meaning reader or
+/// migration is provided (the lead's M-1 stored-change rule, path "loud").
+///
 /// v33 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
 /// authority-log rows keep their bytes and change meaning. A carried machine
 /// answer that makes a machine the owner's stands only with an owner key's

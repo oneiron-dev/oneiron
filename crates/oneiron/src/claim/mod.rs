@@ -106,6 +106,7 @@ mod scope;
 mod scope_stamp;
 // The setting catalogue names `scoped_read::weave_digest::setting_keys`.
 pub(crate) mod scoped_read;
+pub(crate) mod setting_keys;
 mod source_trust;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
@@ -126,9 +127,8 @@ pub use lexical_query_hint::*;
 pub(crate) use lifecycle::is_observed_preference;
 pub(crate) use machine_birth::SignedClaimBirth;
 pub(crate) use observed_preference::{
-    OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS,
-    is_preference_predicate, observed_preference_support_in_txn, preference_answers_agree,
-    stated_preference_peers_in_txn,
+    is_preference_predicate, observed_preference_bar_in_txn, observed_preference_support_in_txn,
+    preference_answers_agree, stated_preference_peers_in_txn,
 };
 pub use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
