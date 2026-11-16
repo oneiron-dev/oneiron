@@ -158,13 +158,8 @@ impl Memory<'_> {
         let target = self.read_target(reference, mode)?;
         // Opened after the lane and target, whose own snapshots have closed:
         // LMDB allows one read snapshot per thread.
-        let txn = self
-            .vault
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::Error::from)?;
-        self.read_named_view_in_txn(&lane, &txn, target)
+        let snapshot = self.lane_snapshot()?;
+        self.read_named_view_in_txn(&lane, snapshot.txn(), snapshot.known(), target)
     }
 
     /// Reads LIVE, the last indexed revision, or an exact retained pin.
