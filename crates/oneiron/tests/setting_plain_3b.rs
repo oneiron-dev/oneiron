@@ -209,7 +209,10 @@ fn a_new_vault_reads_the_shipped_default() {
 #[test]
 fn the_owners_set_is_what_the_status_reads_and_the_host_is_told_after_commit() {
     let fixture = Fixture::rooted();
-    let owner = fixture.owner_proof.actor();
+    let owner = fixture
+        .owner_proof
+        .actor_for_read(&fixture.vault)
+        .expect("the proof is this vault's");
     let world = fixture.vault.new_entity_id().expect("world id");
 
     let value = json!({"enabled": false, "excluded_worlds": [world.to_hex()]});
@@ -221,7 +224,12 @@ fn the_owners_set_is_what_the_status_reads_and_the_host_is_told_after_commit() {
     let status = fixture.status();
     assert!(!status.policy.enabled, "the owner switched it off");
     assert_eq!(
-        status.policy.excluded_worlds.iter().copied().collect::<Vec<_>>(),
+        status
+            .policy
+            .excluded_worlds
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
         vec![world]
     );
     assert!(status.policy.recipe.is_none());
