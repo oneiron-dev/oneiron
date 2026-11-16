@@ -15,10 +15,14 @@
 //!   own check-in would let it do, that is no widening. An act its Grant
 //!   does not hold, and a widening (an add to a room), pass up to the owner.
 //! - A root run's ask still pins the owner who granted it.
+//! - The parent's erase takes its id off the child's open ask, as the
+//!   table's actor scrub takes it off every pinned rung (review of
+//!   UNBUILT-09, P3).
 //!
 //! On main the first, second and fourth cases fail at their first rung
 //! assert: the child's Grant names the owner as `delegated_by`, so rung 2
-//! pins the owner.
+//! pins the owner. Before the scrub took the spawn parent too, the last case
+//! failed at its assert on the scrubbed row.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_spawn_parent`.
@@ -42,6 +46,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::HostBinding;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::check_in::{FixedVerdicts, open_as_caller};
+use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -437,5 +442,41 @@ fn a_root_runs_rung_two_still_asks_the_owner_who_granted_it() {
         rungs(&row).first().cloned(),
         Some(("grantor", None, vec![fx.owner])),
         "a root run has no spawn parent: rung 2 pins the owner who minted its Grant"
+    );
+}
+
+#[test]
+fn erasing_the_spawn_parent_takes_its_id_off_the_open_ask() {
+    let fx = Fixture::rooted();
+    let (parent, child, leased) = fx.spawned(&[SPAWN], &[SPAWN]);
+    let row = open(&fx, &fx.in_run(child, &leased), SPAWN, 0x64);
+    assert_eq!(
+        row.spawn_parent,
+        Some(parent),
+        "the open stores the spawn parent"
+    );
+
+    assert_eq!(
+        erase_actor_in_tables_in_order(&fx.vault, &parent, &["CHECK_IN_PENDING"])
+            .expect("the pending check-in actor erase runs"),
+        1,
+        "the pending check-in table registers an actor erase"
+    );
+    let scrubbed = fx
+        .vault
+        .pending_check_in(&row.id)
+        .expect("read")
+        .expect("the child's ask stays");
+    assert_eq!(
+        (scrubbed.spawn_parent, scrubbed.asker, &scrubbed.state),
+        (None, child, &PendingState::Open),
+        "the erased parent's id is gone from the child's ask, which stays open"
+    );
+    let rungs = rungs(&scrubbed);
+    assert!(
+        rungs
+            .iter()
+            .all(|(_, _, holders)| !holders.contains(&parent)),
+        "no rung pins the erased parent: {rungs:?}"
     );
 }
