@@ -196,3 +196,19 @@ fn send_pass(
     }
     vault.next_connector_send_ready_at()
 }
+
+#[cfg(oneiron_test_support)]
+impl SyncServer {
+    /// One connector-send pass now, as the drain runs it, with fresh send
+    /// clients and no timer work: the test door
+    /// `test_doors::connector_sends`. Blocking.
+    pub(crate) fn run_connector_send_pass(&self) -> oneiron::Result<Option<u64>> {
+        let mut clients = None;
+        send_pass(
+            self.vault(),
+            self.config.line.monthly_push_allowance(),
+            &mut clients,
+            false,
+        )
+    }
+}

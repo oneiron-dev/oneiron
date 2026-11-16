@@ -198,7 +198,10 @@ pub struct RetrievalQualityReport {
     pub quality: RetrievalQuality,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degradation: Vec<RetrievalDegradation>,
-    #[serde(rename = "confidenceAdjustment")]
+    /// Written `confidence_adjustment`, as every other field of this report
+    /// and of the recall's `RetrievalMeta` (UC-02 B1a); a body written with
+    /// the old camelCase key still reads.
+    #[serde(alias = "confidenceAdjustment")]
     pub confidence_adjustment: ConfidenceAdjustment,
 }
 

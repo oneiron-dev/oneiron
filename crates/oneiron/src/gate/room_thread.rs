@@ -1,5 +1,6 @@
 //! Manifest-owned room working-set policy with restrictive composition.
 use crate::EntityId;
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -144,9 +145,7 @@ impl Default for RoomThreadManifest {
     }
 }
 fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    let mut rows = entries.iter().filter(|(key, _)| key.as_str() == Some(name));
-    let row = &rows.next()?.1;
-    rows.next().is_none().then_some(row)
+    Entries::new(entries).get(name).ok().flatten()
 }
 impl RoomThreadManifest {
     pub(crate) fn decode(value: &Value) -> Option<Self> {

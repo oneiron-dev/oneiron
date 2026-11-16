@@ -74,9 +74,8 @@ pub(crate) async fn vault_calendar_instances_move(
 }
 
 use oneiron::calendar::connectors::door::{
-    self as connector, CalendarConnectorConfigureRequest, CalendarConnectorKillRequest,
-    CalendarConnectorRegistration, CalendarConnectorRequest, CalendarConnectorWriteRequest,
-    CalendarImipTransportConfig,
+    self as connector, CalendarConnectorKillRequest, CalendarConnectorRegistration,
+    CalendarConnectorRequest, CalendarConnectorWriteRequest,
 };
 use oneiron::calendar::{CalDavConnector, CalendarSyncOutcome, RemoteWriteReceipt};
 use oneiron::consent::AuthenticatedOwner;
@@ -102,20 +101,6 @@ async fn as_owner<T: Send + 'static>(
         (actor, EdgeActorClass::Human),
         verb,
         move |server, _, memory| act(server, memory, owner),
-    )
-    .await
-}
-
-pub(crate) async fn calendar_connector_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarConnectorConfigureRequest,
-) -> Listed<CalendarConnectorRegistration> {
-    as_owner(
-        server,
-        auth,
-        "calendar.connector.configure",
-        move |_, memory, owner| connector::configure(&memory, &owner, &input),
     )
     .await
 }
@@ -238,54 +223,11 @@ pub(crate) async fn calendar_connector_write(
     .await
 }
 
-pub(crate) async fn calendar_imip_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarImipTransportConfig,
-) -> Listed<CalendarImipTransportConfig> {
-    as_owner(
-        server,
-        auth,
-        "calendar.imip.configure",
-        move |_, memory, owner| connector::configure_imip(&memory, &owner, &input),
-    )
-    .await
-}
-
-pub(crate) async fn calendar_imip_get(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    _input: oneiron::task_verb::sdk::EmptyRequest,
-) -> Listed<Option<CalendarImipTransportConfig>> {
-    as_owner(
-        server,
-        auth,
-        "calendar.imip.get",
-        move |_, memory, owner| connector::get_imip(&memory, &owner),
-    )
-    .await
-}
-
 use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedConsent,
-    CalendarIcsFeedRegistration, CalendarIcsFeedRequest, CalendarIcsFeedReviewRequest,
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewRequest,
     CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
-
-pub(crate) async fn calendar_ics_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarIcsFeedConfigureRequest,
-) -> Listed<CalendarIcsFeedRegistration> {
-    as_owner(
-        server,
-        auth,
-        "calendar.ics.configure",
-        move |_, memory, owner| feed::configure(&memory, &owner, &input),
-    )
-    .await
-}
 
 pub(crate) async fn calendar_ics_status(
     server: &Arc<SyncServer>,
