@@ -348,8 +348,9 @@ const OWNER_PREFIX: &str = "/v1/owner/";
 /// The app's action transport: `POST /v1/core/actions/{verb}`.
 const ACTIONS_PREFIX: &str = "/v1/core/actions/";
 
-/// A held lens card's transports: `POST /v1/core/lens-frames/{card_id}/events`
-/// and `DELETE /v1/core/lens-frames/{card_id}`.
+/// A held lens card's transports: `POST /v1/core/lens-frames/{card_id}/events`,
+/// `DELETE /v1/core/lens-frames/{card_id}` and `GET` (with its HEAD) of the
+/// same path.
 const LENS_FRAMES_PREFIX: &str = "/v1/core/lens-frames/";
 
 /// Whether a `ManagedOwnerAction` may name the owner for this request on
@@ -416,14 +417,17 @@ fn console_attestable(method: &Method, path: &str) -> bool {
 
 /// The owner's action and frame transports, each matched exactly (WILL-PLAN
 /// L13 row 01): `POST /v1/core/actions/{verb}`, `POST
-/// /v1/core/lens-frames/{card_id}/events` and `DELETE
-/// /v1/core/lens-frames/{card_id}`, each `{..}` one non-empty path segment.
-/// The other `/v1/core/*` routes are [`console_attestable`]'s and
-/// [`super::attested_routes`]'s. The assertion is verified over the method,
-/// path, raw query, placing headers and exact body as for the facade.
+/// /v1/core/lens-frames/{card_id}/events`, `DELETE
+/// /v1/core/lens-frames/{card_id}`, and `GET` of that path with its HEAD (a
+/// reload of the held card, GENUI-STATE-PERSIST), each `{..}` one non-empty
+/// path segment. The other `/v1/core/*` routes are [`console_attestable`]'s
+/// and [`super::attested_routes`]'s. The assertion is verified over the
+/// method, path, raw query, placing headers and exact body as for the facade.
 fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
     let segment = |rest: &str| !rest.is_empty() && !rest.contains('/');
-    if *method == Method::POST {
+    if super::attested_routes::registered_method_matches(method, Method::GET.as_str()) {
+        path.strip_prefix(LENS_FRAMES_PREFIX).is_some_and(segment)
+    } else if *method == Method::POST {
         path.strip_prefix(ACTIONS_PREFIX).is_some_and(segment)
             || path
                 .strip_prefix(LENS_FRAMES_PREFIX)

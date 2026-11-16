@@ -123,7 +123,8 @@ impl MachineDeviceClass {
 pub enum MachineRole {
     /// A machine the owner added at the pairing ceremony.
     Owned(MachineOwnership),
-    /// A hosted home node.
+    /// A hosted node: the cloud's machine of this vault, a managed host's
+    /// own node or the peer `oneiron link` adds. It is never mine.
     HostedNode,
     /// A rented execution node (ARCH-0023b).
     ExecutionNode,
