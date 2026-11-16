@@ -44,6 +44,7 @@ pub use proposal_doors::{
 mod carrier_erase;
 mod proposals;
 mod run_review;
+pub(crate) mod setting_keys;
 pub(crate) use run_review::{
     RunNoteUndo, revert_run_note_in_txn, run_note_review_in_txn, settle_run_note_in_txn,
 };
