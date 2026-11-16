@@ -421,8 +421,26 @@ impl Vault {
         subject: &EntityId,
         at: u64,
     ) -> Result<ExpressionPreferenceSet> {
-        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
-            BTreeMap::new();
+        self.expression_preferences_admitted_in_txn(rtxn, subject, at, |ids| {
+            Ok(vec![true; ids.len()])
+        })
+    }
+
+    /// [`Self::expression_preferences_in_txn`] over the claims `admit` lets
+    /// through: given the ids of the claims in force, in one call, it answers
+    /// for each whether the reader may read it. A bound caller passes its own
+    /// read lane (REVIEW-8147 P1), so the winner of each kind is chosen among
+    /// the claims that reader may read. A claim it may not read neither shows
+    /// its value or ref nor hides a value the reader may see, so the view says
+    /// nothing about it. An id `admit` leaves unanswered is not admitted.
+    pub(crate) fn expression_preferences_admitted_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        at: u64,
+        admit: impl FnOnce(&[EntityId]) -> Result<Vec<bool>>,
+    ) -> Result<ExpressionPreferenceSet> {
+        let mut in_force: Vec<(ExpressionPreferenceKind, EntityId, ClaimBody, u64)> = Vec::new();
         for predicate in [
             PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
             PREDICATE_COMPANION_EXPRESSION_REGISTER,
@@ -462,17 +480,27 @@ impl Vault {
                     PREDICATE_COMPANION_EXPRESSION_KEIGO => ExpressionPreferenceKind::Keigo,
                     _ => ExpressionPreferenceKind::Style,
                 };
-                let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
-                    Self::expression_preference_wins(
-                        (body.source, body.valid_from, learned_at, id),
-                        (old.source, old.valid_from, *old_learned_at, *old_id),
-                    )
-                });
-                if replace {
-                    best.insert(kind, (id, body, learned_at));
-                }
+                in_force.push((kind, id, body, learned_at));
                 Ok(())
             })?;
+        }
+        let ids: Vec<EntityId> = in_force.iter().map(|(_, id, _, _)| *id).collect();
+        let admitted = admit(&ids)?;
+        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
+            BTreeMap::new();
+        for ((kind, id, body, learned_at), admitted) in in_force.into_iter().zip(admitted) {
+            if !admitted {
+                continue;
+            }
+            let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
+                Self::expression_preference_wins(
+                    (body.source, body.valid_from, learned_at, id),
+                    (old.source, old.valid_from, *old_learned_at, *old_id),
+                )
+            });
+            if replace {
+                best.insert(kind, (id, body, learned_at));
+            }
         }
         let mut out = ExpressionPreferenceSet::default();
         for (kind, (id, body, _learned_at)) in best {

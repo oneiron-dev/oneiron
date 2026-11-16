@@ -32,7 +32,7 @@ use super::*;
 use std::collections::BTreeMap;
 
 use crate::claim::{
-    ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind,
+    ClaimReadStatus, ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind,
     ExpressionPreferenceOrigin, ExpressionPreferenceValue, ExpressionRegister,
 };
 
@@ -248,10 +248,17 @@ impl Memory<'_> {
     /// check as the writes beside it, so a caller cannot read a subject's
     /// preferences from an actor the store never admitted.
     ///
+    /// It reads through the bound actor's own read lane, as every Memory read
+    /// verb does (REVIEW-8147 P1): the subject and each preference claim are
+    /// judged by the caller's credential and its live Grants. A claim the
+    /// lane withholds takes no part in choosing a kind's winner, so the view
+    /// holds only what the caller may read.
+    ///
     /// # Errors
     ///
     /// The bound actor must resolve and match its class, and the subject ref
-    /// must resolve.
+    /// must resolve to a subject the caller may read: one its lane withholds
+    /// is NOT_FOUND, as one that does not exist is.
     pub fn expression_preferences(
         &self,
         subject_ref: &str,
@@ -260,6 +267,9 @@ impl Memory<'_> {
         self.verified_actor_class()?;
         let subject = self.resolve_ref(subject_ref)?;
         let at = at.unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
+        // Opened before the snapshot below: the lane's room resolver opens
+        // its own snapshots, and LMDB allows one per thread.
+        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         // ONE snapshot for everything this view asserts — the subject's
         // existence, the values, and the refs that label them. A short ref
         // carries the claim's content hash, so resolving refs after the read's
@@ -283,13 +293,18 @@ impl Memory<'_> {
         // the entity exists, so without this a caller cannot tell "this
         // subject has no preferences" from "there is no such subject" — two
         // answers that call for opposite next steps. Every other id-taking
-        // door in this surface says which one it is.
-        if self.vault.get_raw_in(&rtxn, &subject)?.is_none() {
+        // door in this surface says which one it is. A subject the caller's
+        // lane withholds answers the same, so the door is no existence oracle.
+        if self.vault.get_raw_in(&rtxn, &subject)?.is_none()
+            || lane.entities_readable_in_txn(&rtxn, &[subject])?.first() != Some(&true)
+        {
             return Err(MemoryError::from(crate::error::Error::EntityNotFound));
         }
-        let resolved = self
-            .vault
-            .expression_preferences_in_txn(&rtxn, &subject, at)?;
+        let resolved =
+            self.vault
+                .expression_preferences_admitted_in_txn(&rtxn, &subject, at, |ids| {
+                    lane.entities_readable_in_txn(&rtxn, ids)
+                })?;
         let mut winning_refs = BTreeMap::new();
         for (kind, id) in &resolved.winning_claim_ids {
             winning_refs.insert(
