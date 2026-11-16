@@ -263,17 +263,10 @@ fn validate_arm_report(
     Ok(())
 }
 
-fn effective_taste_score(smoke: &CampaignSmokeOutcome, taste: &CampaignTaste) -> f64 {
-    if smoke_is_killed(smoke) {
-        0.0
-    } else {
-        taste.score
-    }
-}
-
-pub(super) fn smoke_is_killed(smoke: &CampaignSmokeOutcome) -> bool {
-    matches!(smoke, CampaignSmokeOutcome::Killed { .. })
-}
+#[doc(hidden)]
+use oneiron_records::autoreason_campaign::report::effective_taste_score;
+#[doc(hidden)]
+pub(super) use oneiron_records::autoreason_campaign::report::smoke_is_killed;
 
 fn validate_smoke(smoke: &CampaignSmokeOutcome) -> CampaignResult<()> {
     match smoke {

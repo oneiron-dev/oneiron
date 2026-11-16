@@ -25,7 +25,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const RECOVERY_MANIFEST_ARTIFACT_TYPE: u16 = 2;
+#[doc(hidden)]
+pub use oneiron_records::recovery::ladder::RECOVERY_MANIFEST_ARTIFACT_TYPE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoveryTier {

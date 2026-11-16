@@ -1,3 +1,5 @@
+pub use crate::repo_mutation::oplog::REPO_MUTATION_OPLOG_SCHEMA_VERSION;
+pub use crate::repo_mutation::proposal::actor_erase::ProposalActor;
 #[allow(unused_imports)]
 pub(crate) use oneiron_store::git_wire::bundle_tree::BundleTreeEdit as ReceivedTreeEdit;
 pub use oneiron_store::repo_mutation_record::REPO_MUTATION_ALLOWED_OPERATION_KINDS;
@@ -14,4 +16,8 @@ pub use oneiron_store::repo_mutation_record::RepoMutationStatus;
 pub use oneiron_store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_KEY;
 pub use oneiron_store::repo_provenance_trailer::parse_repo_provenance_trailer;
 
+pub mod bundle;
+pub mod external_import;
+pub mod oplog;
 pub mod proposal;
+pub mod snapshot;

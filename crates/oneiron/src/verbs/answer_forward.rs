@@ -27,26 +27,8 @@ pub struct TaskAnswerForwardChallengeRequest {
     pub act: AskForwardAct,
 }
 
-/// `tasks.answer.forward.challenge`'s answer (FIX 20468): the challenge
-/// bytes the engine door builds, in lowercase hex, so a transport carries
-/// them whole as one value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAnswerForwardChallenge {
-    /// The challenge, two lowercase hex characters per byte. The person
-    /// signs `CapabilitySlip::binding_transcript` of the decoded bytes.
-    pub challenge: String,
-}
-
-impl TaskAnswerForwardChallenge {
-    /// The answer for the challenge bytes `challenge`.
-    #[must_use]
-    pub fn from_bytes(challenge: &[u8]) -> Self {
-        Self {
-            challenge: crate::entity_id::bytes_to_hex_lower(challenge),
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::answer_forward::TaskAnswerForwardChallenge;
 
 /// `tasks.answer.forward`'s input: the challenge request's fields and the
 /// person's proof over that challenge (FIX 20468). The proof's token is no

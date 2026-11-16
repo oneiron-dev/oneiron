@@ -325,21 +325,8 @@ fn plan(held: &CarriedFork, carried: &CarriedFork) -> Plan {
     }
 }
 
-/// Whether version `a` holds every operation version `b` does. A version
-/// not recorded (empty) holds none and is held by none, but by another not
-/// recorded.
-fn version_covers(a: &[u8], b: &[u8]) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return a.is_empty() && b.is_empty();
-    }
-    VersionVector::decode(b).is_ok_and(|b| version_covers_vv(a, &b))
-}
-
-/// Whether version `a`, encoded, holds every operation `b` does. A version
-/// not recorded holds none.
-fn version_covers_vv(a: &[u8], b: &VersionVector) -> bool {
-    !a.is_empty() && VersionVector::decode(a).is_ok_and(|a| a.includes_vv(b))
-}
+#[doc(hidden)]
+use oneiron_records::typed_body::carried_fork::{version_covers, version_covers_vv};
 
 /// Whether open copy `a`, of another base than `b`'s, holds all of `b`: its
 /// version holds `b`'s, and its base holds `b`'s base, read in `a`'s

@@ -76,9 +76,8 @@ struct InterviewRow {
 
 const INTERVIEW_SCHEMA_VERSION: u8 = 1;
 
-fn interview_corrupt() -> Error {
-    Error::CorruptedIndex("interview session record")
-}
+#[doc(hidden)]
+use oneiron_records::edit_distance::publisher::interview::interview_corrupt;
 
 impl RawValue for InterviewRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {

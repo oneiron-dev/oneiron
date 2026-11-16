@@ -119,10 +119,8 @@ pub struct EditNoteRequest {
     pub edit: crate::note::NoteProgramEdit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobContent {
-    pub content_base64: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::memory_requests::BlobContent;
 
 /// Decodes the content once and lets the encoded text go before the write
 /// opens, so the version's bytes are held once, not beside their base64.

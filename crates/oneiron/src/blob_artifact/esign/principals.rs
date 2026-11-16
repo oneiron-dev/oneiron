@@ -13,22 +13,9 @@ const PRINCIPALS: SideTable<HexId, SigningPrincipal, LegacyJson> =
 /// Signing principal set owner stamp. Key: ().
 const OWNER_STAMP: SideTable<(), [u8; 16], Raw> =
     SideTable::new(&side_table::ESIGN_PRINCIPAL_OWNER_STAMP);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SigningAutonomy {
-    ScopedRead,
-    Draft,
-    SendWithApproval,
-    AutonomousInEnvelope,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SigningPrincipal {
-    pub principal_ref: String,
-    pub autonomy: SigningAutonomy,
-    /// Defaults closed. This is a legal-reality dial, not a fixed safety ban.
-    pub automated_sign_action: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::esign::principals::{SigningAutonomy, SigningPrincipal};
+
 pub(super) fn verify_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

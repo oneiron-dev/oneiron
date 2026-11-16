@@ -19,22 +19,13 @@ use crate::error::{Error, Result};
 use crate::outbound::{OutboundRecipient, OutboundRecipientRole};
 use crate::write_envelope::thread_claim::{canonical_message_id, canonical_message_id_list};
 
-/// The prefix of a frozen reply's content ref.
-pub(super) const REPLY_MESSAGE_REF_PREFIX: &str = "mail-reply:message:v1:";
-/// The longest Subject a reply carries, in bytes.
-const MAX_SUBJECT_BYTES: usize = 900;
-/// The longest body a reply carries, in bytes.
-const MAX_BODY_BYTES: usize = 64 * 1024;
-/// The most hygiene headers one send carries.
-const MAX_HYGIENE_HEADERS: usize = 16;
-/// The longest hygiene header value, in bytes.
-const MAX_HYGIENE_VALUE_BYTES: usize = 900;
-/// The most references a reply carries: the oldest go first beyond it.
-const MAX_REFERENCES: usize = 50;
-
-fn invalid(message: &str) -> Error {
-    Error::InvalidConfig(format!("mail reply message: {message}"))
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::mail_pack::reply_mime::REPLY_MESSAGE_REF_PREFIX;
+#[doc(hidden)]
+use oneiron_records::mail_pack::reply_mime::{
+    MAX_BODY_BYTES, MAX_HYGIENE_HEADERS, MAX_HYGIENE_VALUE_BYTES, MAX_REFERENCES,
+    MAX_SUBJECT_BYTES, encode_word, hash_part, header_text, invalid, owned_header, push_header,
+};
 
 /// One reply, frozen as the owner approves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,79 +268,4 @@ impl ReplyMessage {
         push_mail_body(&mut out, &self.body, self.html.as_deref());
         Ok(out.into_bytes())
     }
-}
-
-fn hash_part(hasher: &mut blake3::Hasher, part: &str) {
-    hasher.update(&(part.len() as u64).to_le_bytes());
-    hasher.update(part.as_bytes());
-}
-
-fn push_header(out: &mut String, name: &str, value: &str) {
-    out.push_str(name);
-    out.push_str(": ");
-    out.push_str(value);
-    out.push_str("\r\n");
-}
-
-/// A header the message writes itself; a hygiene header may not restate it.
-fn owned_header(name: &str) -> bool {
-    [
-        "from",
-        "sender",
-        "reply-to",
-        "to",
-        "cc",
-        "bcc",
-        "subject",
-        "date",
-        "message-id",
-        "in-reply-to",
-        "references",
-        "mime-version",
-        "content-type",
-        "content-transfer-encoding",
-    ]
-    .iter()
-    .any(|owned| name.eq_ignore_ascii_case(owned))
-}
-
-/// Header text carries no line break or other control character: that is
-/// how a value would smuggle a second header into the block.
-fn header_text(value: &str, max: usize) -> Result<()> {
-    if value.len() > max {
-        return Err(invalid("a header is too long"));
-    }
-    if value.chars().any(char::is_control) {
-        return Err(invalid("a header carries a control character"));
-    }
-    Ok(())
-}
-
-/// RFC 2047 `B` encoded words for non-ASCII header text; ASCII passes as it
-/// is. No word passes 75 bytes.
-fn encode_word(text: &str) -> String {
-    if text.is_ascii() {
-        return text.to_owned();
-    }
-    let mut words = Vec::new();
-    let mut chunk = String::new();
-    for character in text.chars() {
-        if chunk.len() + character.len_utf8() > 45 {
-            words.push(std::mem::take(&mut chunk));
-        }
-        chunk.push(character);
-    }
-    if !chunk.is_empty() {
-        words.push(chunk);
-    }
-    words
-        .iter()
-        .map(|word| {
-            format!(
-                "=?UTF-8?B?{}?=",
-                base64::engine::general_purpose::STANDARD.encode(word.as_bytes())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\r\n ")
 }

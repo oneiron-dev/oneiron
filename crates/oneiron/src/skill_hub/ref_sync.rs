@@ -31,20 +31,8 @@ struct RefSyncRow {
     latest_trusted: Option<String>,
 }
 
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(reason.to_owned())
-}
-
-/// Each policy follows one kind of pin: a commit, a tag, or a frozen content
-/// hash. A mirror has no pin of its own, so it has no ref row.
-fn check_policy_pin(policy: HubSyncPolicy, pin: &HubPin) -> Result<()> {
-    match (policy, pin) {
-        (HubSyncPolicy::PinnedCommit, HubPin::Commit(_))
-        | (HubSyncPolicy::PinnedRef, HubPin::Tag(_) | HubPin::Semver(_))
-        | (HubSyncPolicy::ContentHashFrozen, HubPin::ContentHash(_)) => Ok(()),
-        _ => Err(invalid("hub ref pin does not fit its sync policy")),
-    }
-}
+#[doc(hidden)]
+use oneiron_records::skill_hub::ref_sync::{check_policy_pin, invalid};
 
 /// A ref with no stored row follows the policy its own pin implies.
 pub(crate) fn pinned_tracking(hub_ref: HubRef) -> Result<TrackedHubRef> {

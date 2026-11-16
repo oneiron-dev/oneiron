@@ -38,15 +38,8 @@ pub struct PackSetupReceipt {
     pub owner_ask: Option<PackSetupOwnerAsk>,
 }
 
-/// The owner secrets door to open for one declared credential name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackSetupStoreSecret {
-    pub door: String,
-    pub connection: String,
-    pub name: String,
-    /// The binding the stored credential needs, with the read scope.
-    pub effector: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::verbs::host::pack_setup::PackSetupStoreSecret;
 
 impl PackSetupReceipt {
     fn new(setup: PackSetupView) -> MemoryResult<Self> {

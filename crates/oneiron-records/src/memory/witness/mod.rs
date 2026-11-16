@@ -3,4 +3,5 @@ pub use oneiron_verb_wire::memory::witness::reply_assertions::MessageReplyAssert
 pub use oneiron_verb_wire::memory::witness::wake_outcome::TurnProgramWakeOutcome;
 pub use oneiron_verb_wire::memory::witness::wake_outcome::UnpersistedWakeReason;
 
+pub mod codec;
 pub mod stream;

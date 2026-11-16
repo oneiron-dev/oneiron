@@ -11,7 +11,8 @@ pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
 
 pub const FILE_DROP_TRANSCRIPT_SOURCE_ID: &str = "file-drop-transcript";
 
-pub const MEETING_TRANSCRIPT_SOURCE_ID: &str = "meeting-transcript";
+#[doc(hidden)]
+pub use oneiron_records::ingest::registry::MEETING_TRANSCRIPT_SOURCE_ID;
 
 /// CAL-02's ICS feed source, canonical registry entry #3.
 pub const ICS_FEED_SOURCE_ID: &str = "ics-feed";

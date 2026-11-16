@@ -32,32 +32,8 @@ struct StoredFile {
     jsonl: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgUiFileReceipt {
-    pub claim_ref: String,
-    pub source_hash: String,
-    pub event_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgUiFileView {
-    pub claim_ref: String,
-    pub source_hash: String,
-    pub capture_actor_ref: String,
-    pub project_ref: String,
-    pub app_id: String,
-    pub custom_mappings: Vec<AgUiCustomMapping>,
-    pub jsonl: String,
-    pub event_count: usize,
-    pub observations: Vec<AgUiAppObservation>,
-    pub repair_links: Vec<AgUiRepairLink>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgUiFileRead {
-    pub source: Option<AgUiFileView>,
-    pub receipt: ScopedReadReceipt,
-}
+#[doc(hidden)]
+pub use oneiron_records::ingest::ag_ui::file::{AgUiFileRead, AgUiFileReceipt, AgUiFileView};
 
 fn fingerprint(file: &StoredFile) -> Result<String> {
     let bytes = serde_json::to_vec(file)

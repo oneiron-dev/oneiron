@@ -52,31 +52,8 @@ pub struct DocxBody {
     pub stories: Vec<DocxStoryBody>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BodyBlock {
-    pub id: String,
-    pub kind: BodyBlockKind,
-    pub role: Option<String>,
-    /// Read from the imported package rather than written in the body.
-    pub imported: bool,
-    /// Read-only: its content would not survive a whole-paragraph replace.
-    pub locked: bool,
-    pub text: String,
-    /// The paragraph's text as runs of one mark set each, joining to `text`;
-    /// empty for other blocks.
-    pub runs: Vec<DocxRun>,
-    /// `(row, col)` to text, for a table.
-    pub cells: BTreeMap<(usize, usize), String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BodyBlockKind {
-    Paragraph,
-    Heading(u8),
-    Table,
-    Opaque,
-}
+#[doc(hidden)]
+pub use oneiron_records::office_body::docx::{BodyBlock, BodyBlockKind};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::office_body::docx::DocxBodyOp;

@@ -28,7 +28,8 @@ use super::types::{
 use super::worktree::prune_queue_owned_worktrees;
 use crate::error::CodeError;
 
-pub const REPO_MUTATION_OPLOG_SCHEMA_VERSION: u8 = 1;
+#[doc(hidden)]
+pub use oneiron_records::repo_mutation::oplog::REPO_MUTATION_OPLOG_SCHEMA_VERSION;
 
 /// Per-repo mutation sequence counter. Key: string (repo key hash, hex64).
 pub(super) const SEQ: SideTable<String, u64, Raw> = SideTable::new(&side_table::REPO_MUTATION_SEQ);

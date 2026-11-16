@@ -96,30 +96,8 @@ fn scrub_paragraph(judgment: &mut ParagraphJudgment) {
     scrub_labels(&mut judgment.labels);
 }
 
-/// Whether `effect` names only ids, parts and relationships, no word of the document. A variant
-/// not listed here is dropped, so a new one never keeps words by default.
-fn carries_only_ids(effect: &Effect) -> bool {
-    matches!(
-        effect,
-        Effect::GluedConnector { .. }
-            | Effect::PreviousMedia { .. }
-            | Effect::NotesCreated { .. }
-            | Effect::ShapeAdded { .. }
-            | Effect::Unglued { .. }
-            | Effect::TimingRemoved { .. }
-            | Effect::Unreferenced { .. }
-            | Effect::MediaReleased { .. }
-            | Effect::MediaKept { .. }
-            | Effect::SlideAdded { .. }
-            | Effect::PartCloned { .. }
-            | Effect::CommentsOmitted { .. }
-            | Effect::SlideRemoved { .. }
-            | Effect::ShapeCopied { .. }
-            | Effect::CustomGeometryReplaced
-            | Effect::InheritedGeometryOwned
-            | Effect::FontSizeClamped { .. }
-    )
-}
+#[doc(hidden)]
+use oneiron_records::edit_settle::discarded_words::carries_only_ids;
 
 impl DiscardedDeck {
     fn of(deck: crate::edit_roundtrip::DeckSettleEvidence) -> Self {

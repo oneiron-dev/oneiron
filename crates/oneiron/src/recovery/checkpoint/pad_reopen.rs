@@ -62,27 +62,8 @@ pub struct PadReopenReport {
     pub custody_note: Option<String>,
 }
 
-/// One stage of a world's reopen that did not complete.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct PadReopenFault {
-    /// The world, by hex id; `None` for the epoch's reconciliation.
-    pub world: Option<String>,
-    pub stage: PadReopenStage,
-    /// The error's kind; `None` when the stage committed but what it wrote
-    /// did not read back.
-    pub error_kind: Option<ErrorKind>,
-}
-
-/// The stages a world's reopen goes through, in order, then the epoch's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PadReopenStage {
-    Install,
-    ReadBack,
-    Rest,
-    Verify,
-    Reconcile,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::checkpoint::pad_reopen::{PadReopenFault, PadReopenStage};
 
 /// What resting one owed reference again came to.
 #[derive(Clone, Copy, PartialEq, Eq)]

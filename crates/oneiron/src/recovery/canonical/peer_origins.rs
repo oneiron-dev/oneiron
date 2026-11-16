@@ -12,14 +12,8 @@ use crate::error::Result;
 /// The window root map of peer origins, as sync files it.
 const PEER_ORIGINS: &str = "peer_origins";
 
-/// One row's peer origin: the blake3 digest of the whole entity blob a
-/// peer's import brought for it, which the snapshot's row still holds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalPeerOrigin {
-    pub id: [u8; 16],
-    pub digest: [u8; 32],
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::canonical::peer_origins::CanonicalPeerOrigin;
 
 /// Carries each origin `doc` holds for a row of the snapshot's final entity
 /// set, sorted by id, when that row's blob is the one it names. An origin of

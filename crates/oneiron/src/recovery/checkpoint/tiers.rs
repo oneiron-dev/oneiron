@@ -3,9 +3,9 @@
 use crate::side_table::SideDb;
 pub use crate::side_table::row_classes::StorageTier;
 use StorageTier::*;
-/// Host orders and the host-only log (OF-470 C2): a restore carries them from
-/// the live vault, never from an image (`host_holds`).
-pub(super) const HOST_HOLD_PREFIX: &[u8] = b"legal_hold:host:";
+#[doc(hidden)]
+pub(super) use oneiron_records::recovery::checkpoint::tiers::HOST_HOLD_PREFIX;
+
 pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
     match database {
         "entities" | "edges_out" | "edges_in" | "short_ids" | "short_ids_reverse"

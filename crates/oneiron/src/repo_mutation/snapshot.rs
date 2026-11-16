@@ -56,18 +56,8 @@ pub(super) struct StoredRepoSnapshotEntry {
     pub(super) symlink_target: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum StoredRepoSnapshotEntryKind {
-    File,
-    Symlink,
-    /// An index gitlink: content is its OID, never the linked repository.
-    Gitlink,
-    /// A file snapshot custody keeps out ([`SnapshotCustody`]): its path and
-    /// mode, none of its bytes. A restore leaves the file the checkout holds
-    /// there as it is.
-    Withheld,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::repo_mutation::snapshot::StoredRepoSnapshotEntryKind;
 
 /// Snapshot custody (ARCH-0069 S4/S5) over the checkout a mutation snapshots
 /// (OF-067): the declared-path exclusion and undeclared-secret quarantine a

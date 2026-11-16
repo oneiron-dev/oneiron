@@ -23,12 +23,9 @@ const AUTHORITY: SideTable<EntityId, OriginAuthority, Named> =
 const AUTHORITY_PERMIT: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::ORIGIN_AUTHORITY_PERMIT);
 
-/// The writer an erased host leaves in the authority row, its admission
-/// stamps and its intents (FIX 3877; a call, L02's ruling): one fixed marker,
-/// never Nil and never a dropped field, so it can never read as an
-/// unconfigured origin. The repository and epoch stay; no host holds the
-/// repository until the owner's explicit cutover, and nothing fails over.
-pub(crate) const ORIGIN_ERASED_WRITER: &str = ERASED_CALL_IDENTITY;
+#[doc(hidden)]
+pub(crate) use oneiron_records::origin::residence::ORIGIN_ERASED_WRITER;
+
 /// What a write against an origin whose writer was erased is told (FIX 5024;
 /// a call): it names the owner's cutover, never another host. A live writer
 /// elsewhere keeps its own refusal.

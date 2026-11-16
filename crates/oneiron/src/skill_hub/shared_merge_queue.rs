@@ -11,25 +11,10 @@ use crate::dreamer_runner::maintenance::team_shape_tree_judge;
 use crate::skill_optimize::HeldOutReplayNotes;
 use crate::{Vault, consent::AuthenticatedOwner, entity_id::EntityId, error::Result};
 
-/// Where an offered shared-skill delta stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedSkillMergeState {
-    /// No merge has ruled on it: never asked, or waiting on the owner's
-    /// answer.
-    Pending,
-    /// A merge ruled it out. It may be asked again.
-    Refused,
-    /// A merge put it in force.
-    Admitted,
-}
-
-/// One offered delta and where it stands.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct SharedSkillMergeEntry {
-    pub delta: SharedSkillDelta,
-    pub state: SharedSkillMergeState,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_hub::shared_merge_queue::{
+    SharedSkillMergeEntry, SharedSkillMergeState,
+};
 
 impl Vault {
     /// Every offered shared-skill delta no merge has ruled on, in candidate

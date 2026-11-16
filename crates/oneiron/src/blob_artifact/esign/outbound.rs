@@ -31,21 +31,13 @@ pub(super) struct DispatchMarker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) ledger_identity_ref: Option<String>,
 }
-/// The vault owner's act an admitted e-sign act records.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum OwnerSendAct {
-    /// His own send, remind or void: his actor and the decision his
-    /// revalidated proof carried.
-    Direct { actor: String, decision_ref: String },
-    /// His one-time press on an agent's send or reminder, as the gate spent
-    /// it admitting this act: the ledger intent the press released and the
-    /// effect digest it approved, both lower-hex (FIX 6362).
-    Approved {
-        intent_ref: String,
-        effect_digest: String,
-    },
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::blob_artifact::esign::outbound::OwnerSendAct;
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::esign::outbound::{
+    EsignOutboundCommand, EsignOutboundVerb,
+};
+
 impl RawValue for DispatchMarker {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
         serde_json::to_vec(self).map_err(|_| invalid("dispatch marker encoding").into())
@@ -130,31 +122,6 @@ pub(super) fn dispatch_marker_in(
         SideGet::DecodeError(unreadable) => Ok(Err(unreadable)),
         SideGet::StoreError(error) => Err(error),
     }
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EsignOutboundVerb {
-    SendForSignature,
-    Remind,
-    Void,
-}
-impl EsignOutboundVerb {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SendForSignature => "send_for_signature",
-            Self::Remind => "remind",
-            Self::Void => "void",
-        }
-    }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EsignOutboundCommand {
-    pub document: String,
-    /// Reviewed recipient count. Rechecked even on remind/resend.
-    pub recipient_count: usize,
-    pub verb: EsignOutboundVerb,
-    pub reason: Option<String>,
 }
 struct EsignSink<'a> {
     vault: &'a Vault,

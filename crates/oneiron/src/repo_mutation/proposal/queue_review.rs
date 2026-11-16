@@ -42,59 +42,10 @@ pub struct RepoProposalCritique {
     pub critique: CritiqueArtifact,
 }
 
-/// The review a merge stack admitted one member under, sealed in the
-/// admission's own writer: replay and the applied claim read it, never a
-/// later policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueueReviewAdmission {
-    /// The batch whose stack admitted it.
-    pub batch: String,
-    /// Its own catalog's critics were required, and met.
-    pub explicit: bool,
-    /// The digest of the vault policy catalog it was held to and met, by its
-    /// critics or the owner's Approve; `None` when no policy applied.
-    pub policy: Option<String>,
-}
-
-/// What a removed-name person review is bound to (FIX 4365): the red
-/// verdict, its baseline, the exact tree it judged and every proposal on
-/// that tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContractReviewEvidence {
-    /// The content id of the verdict that lists the removed names.
-    pub verdict: String,
-    /// The contract baseline the verdict compared against.
-    pub baseline: String,
-    /// The batch whose staged path the verdict judged.
-    pub batch: String,
-    /// The exact candidate tree the verdict judged.
-    pub tree: String,
-    /// Every proposal on that tree, as hex ids in batch order.
-    pub proposals: Vec<String>,
-}
-
-/// One person review a removed public name routed a proposal to (FIX
-/// 4365). Its decision answers this evidence only. Approve leaves the
-/// verdict red. Reject requires a repair.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractReviewRequest {
-    pub evidence: ContractReviewEvidence,
-    /// The person's decision and its receipt, once a person decided.
-    pub decision: Option<ContractReviewSettlement>,
-}
-
-/// A person's decision on a removed-name review, with its receipt claim
-/// (FIX 4365). An actor erase names no one in its place. The decision and
-/// its time stay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractReviewSettlement {
-    pub receipt: EntityId,
-    /// The owner who decided; [`ProposalActor::Erased`] once that actor
-    /// was erased.
-    pub actor: ProposalActor,
-    pub decision: RepoProposalDecision,
-    pub settled_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::repo_mutation::proposal::queue_review::{
+    ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
+};
 
 /// What a queue decision waits for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

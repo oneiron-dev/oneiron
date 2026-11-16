@@ -18,38 +18,10 @@ use crate::store::Store;
 const SKIPPED_MESSAGES: SideTable<(EntityId, [u8; 32]), GmailSkippedMessage, Named> =
     SideTable::new(&side_table::GMAIL_MAILBOX_SKIPPED);
 
-/// Where a polled message stopped before it could be admitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GmailSkipStage {
-    /// Its Gmail ids or metadata did not normalize into an email envelope.
-    ProviderInbound,
-    /// The adapter refused the normalized envelope.
-    Parse,
-    /// Inbound routing rejected this message on its own account.
-    Routing,
-}
-
-/// One polled Gmail message set aside so its page could go on: what it was,
-/// where it stopped and why, never its text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GmailSkippedMessage {
-    /// Lower-case hex id of the delegated identity whose mailbox was read.
-    pub identity_ref: String,
-    /// Normalized address of that mailbox.
-    pub mailbox_address: String,
-    /// The provider's message id, exactly as the wire returned it.
-    pub message_id: String,
-    /// The provider's thread id: the message's reference back at Gmail.
-    pub thread_id: String,
-    /// The provider's internal date of the message, in seconds.
-    pub internal_date_secs: u64,
-    pub stage: GmailSkipStage,
-    /// The full error or rejection reason.
-    pub reason: String,
-    /// When a run first set it aside; a retried page keeps this time.
-    pub skipped_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::channel_identity_provider::mailbox_skipped::{
+    GmailSkipStage, GmailSkippedMessage,
+};
 
 fn message_key(identity_id: EntityId, message_id: &str) -> (EntityId, [u8; 32]) {
     (identity_id, Sha256::digest(message_id.as_bytes()).into())

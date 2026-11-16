@@ -19,14 +19,8 @@ use crate::error::Result;
 /// The window root map of references, as sync files it.
 const ASSET_BODY_REFS: &str = "asset_body_refs";
 
-/// One reference of a window's map: its owner's id, and the reference's
-/// bytes as the map holds them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalAssetBodyRef {
-    pub id: [u8; 16],
-    pub value: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::canonical::asset_body_refs::CanonicalAssetBodyRef;
 
 /// Carries each reference `doc` holds that binds the carrier the snapshot's
 /// final entity set holds for its id, sorted by id. A reference that binds

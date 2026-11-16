@@ -127,11 +127,8 @@ pub struct ArtifactAskOutcome {
     pub next_sheet_row: Option<u32>,
 }
 
-/// Whether a held organ call was let go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReleasedWait {
-    pub released: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::verbs::ReleasedWait;
 
 /// The one version of an artifact an organ call reads (L4-15, L4-16), as a
 /// handle's own lane admitted it whole: the artifact, the version, and the

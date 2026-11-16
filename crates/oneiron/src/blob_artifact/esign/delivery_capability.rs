@@ -93,15 +93,6 @@ pub(super) struct Mintable {
     grant: Option<Box<EsignDeliveryCall>>,
 }
 
-impl EsignNotice {
-    /// Whether this notice's delivery carries a signing link: an invitation
-    /// or a reminder. Every other notice goes out without one.
-    #[must_use]
-    pub fn carries_signing_link(&self) -> bool {
-        matches!(self.transition.as_str(), "invite" | "reminder")
-    }
-}
-
 impl Vault {
     /// Mints the signing link of the invitation or reminder that `attempt`
     /// delivers under its current lease (`lease_owner`, `attempt_count`),

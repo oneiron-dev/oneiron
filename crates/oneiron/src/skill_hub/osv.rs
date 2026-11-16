@@ -33,18 +33,9 @@ impl DependencyCoordinate {
         Ok(())
     }
 }
-fn token(s: &str, package: bool) -> bool {
-    !s.is_empty()
-        && s.len() <= 256
-        && s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b"._+-".contains(&b) || (package && b"/@:".contains(&b))
-        })
-        && !s.contains("://")
-        && !s.contains("..")
-}
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid OSV dependency query or response".into())
-}
+#[doc(hidden)]
+use oneiron_records::skill_hub::osv::{invalid, token};
+
 /// Ordered OSV result, one advisory-id list for each input coordinate.
 pub trait OsvQuery {
     fn query(&self, coordinates: &[DependencyCoordinate]) -> Result<Vec<Vec<String>>>;

@@ -114,27 +114,8 @@ fn count_journal_bytes(encoded: Result<Vec<u8>>) {
     JOURNAL_BYTES_WRITTEN.with(|written| written.set(written.get() + len));
 }
 
-/// Per-ref completion, independent of the backend's transport success.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ReceivePackRefStatus {
-    /// Publication and its attachments are durable.
-    Published,
-    /// The backend did not leave this ref at the proposed value.
-    NotApplied,
-    /// A previously observed effect was replaced; recovery never overwrites it.
-    Superseded,
-    /// An observed effect still needs publication or attachment recovery.
-    Pending,
-    /// The backend applied this ref's move, but a `Published` publication
-    /// had already made that move, and this push needs objects it never
-    /// certified. Terminal: the move is consumed, so no publication of it can
-    /// certify more, and retrying it would only refuse again.
-    Uncertified,
-    /// The backend applied this ref's move, but an erase took the push's
-    /// pusher or admitting host before it was published: recovery observed
-    /// the move and publishes nothing under them (FIX 5022). Terminal.
-    AppliedUnpublished,
-}
+#[doc(hidden)]
+pub use oneiron_records::origin::smart_http::intent::ReceivePackRefStatus;
 
 /// One ref's result. A multi-ref operation can contain different results.
 #[derive(Debug, Clone, PartialEq, Eq)]

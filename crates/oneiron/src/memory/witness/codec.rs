@@ -168,10 +168,8 @@ pub(super) fn encode_witness_turn_body(
     encode_rmpv(&Value::Map(fields))
 }
 
-/// The TURN and CONVERSATION body key naming the source an imported transcript
-/// came from (ARCH-0027). Its presence is what makes a turn imported evidence:
-/// the Dreamer classifies such a turn `Imported` whatever its speaker.
-pub(crate) const IMPORTED_SOURCE_KEY: &str = "import_source";
+#[doc(hidden)]
+pub(crate) use oneiron_records::memory::witness::codec::IMPORTED_SOURCE_KEY;
 
 /// An imported TURN's body: the grouping speaker and the source. No PERSON
 /// byline — the source's speaker wrote these words, not whoever imported them.

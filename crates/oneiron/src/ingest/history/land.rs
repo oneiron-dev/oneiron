@@ -208,10 +208,8 @@ fn label(text: &str) -> String {
     text[..end].to_owned()
 }
 
-pub(super) fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
-    let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
-    EntityId::derive(domain, &parts)
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::ingest::history::land::derive;
 
 /// The MESSAGE an imported message lands as. The dry run builds the same one
 /// to scan exactly the bytes the write door would.

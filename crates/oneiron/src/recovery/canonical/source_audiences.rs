@@ -42,14 +42,8 @@ use crate::source_audience::{self, SourceAudienceKind, SourceAudiencePolicy};
 /// The window root map of source audiences, as sync files it.
 const SOURCE_AUDIENCES: &str = "source_audiences";
 
-/// One carried binding or policy revision: its key and its bytes, as the
-/// window map holds them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalSourceAudience {
-    pub key: String,
-    pub value: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_records::recovery::canonical::source_audiences::CanonicalSourceAudience;
 
 /// Files `value` under `key` in `rows`; a different value under the same key
 /// refuses.

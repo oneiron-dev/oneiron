@@ -196,9 +196,8 @@ pub fn default_strategy(vault: &Vault) -> Result<Option<AuthoringStrategyPin>> {
     }
     Ok(Some(receipt.strategy))
 }
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(reason.into())
-}
+#[doc(hidden)]
+use oneiron_records::autoreason_campaign::beam_promotion::invalid;
 
 fn valid_referee_pin(pin: &str) -> bool {
     pin.split_once("@sha256:")

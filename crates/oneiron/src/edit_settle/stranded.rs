@@ -9,28 +9,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use serde::{Deserialize, Serialize};
 
-/// Recovery payload. The original manifest is not replayed on the newer head.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StrandedEditProposal {
-    pub artifact_ref: String,
-    pub proposal_ref: String,
-    pub base_version: Option<u64>,
-    pub base_content_hash: [u8; 32],
-    pub head_version: u64,
-    pub head_content_hash: [u8; 32],
-    pub new_bytes: Vec<u8>,
-    pub manifest_bytes: Vec<u8>,
-    pub actor_ref: String,
-    pub actor_class: u8,
-    pub retained_at: u64,
-}
-
-impl StrandedEditProposal {
-    pub fn manifest(&self) -> Result<EditManifest> {
-        EditManifest::from_msgpack(&self.manifest_bytes)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_settle::stranded::StrandedEditProposal;
 
 /// Recovery payload for a stale-base retained proposal. Key: id16 + hash32(blake3 of the
 /// proposal ref).

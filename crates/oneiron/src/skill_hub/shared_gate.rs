@@ -39,26 +39,9 @@ impl SharedSkillMergeAsk {
         self.candidate
     }
 }
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SharedSkillMergeReceipt {
-    pub receipt_id: String,
-    pub delta: SharedSkillDelta,
-    pub consent_digest: String,
-    pub binding: String,
-    pub useful_upstream: bool,
-    pub resident: String,
-    pub question: DecisionQuestion,
-    pub decision: TypedDecision,
-    pub before: Option<f32>,
-    pub after: Option<f32>,
-    pub held_out_digest: String,
-    pub accepted: bool,
-    pub judge_revision: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub displaced_by_revision: Option<String>,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_hub::shared_gate::SharedSkillMergeReceipt;
+
 /// What a shared-skill rollback did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SharedSkillRollback {

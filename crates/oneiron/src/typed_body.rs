@@ -68,23 +68,8 @@ const FORKS: SideTable<(EntityId, EntityId), TypedBodyFork, Named> =
 const FORK_DOCS: SideTable<(EntityId, EntityId), Vec<u8>, Raw> =
     SideTable::new(&side_table::TYPED_BODY_FORK_DOC);
 
-/// One entity's typed body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TypedBodyHead {
-    pub entity: EntityId,
-    /// The owning module's shape tag, e.g. `office.docx.v1`.
-    pub schema: String,
-    /// The body as born: an owner's base for what changed since.
-    pub birth: Vec<u8>,
-    pub frontier: Vec<u8>,
-    /// Commits on the body, a merged fork's included.
-    pub commits: u64,
-    /// When a fork's commits last landed on the body. They keep the times
-    /// they were made at, so a quiet clock runs from here too (FIX 11983).
-    #[serde(default)]
-    pub landed_at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_records::typed_body::TypedBodyHead;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]

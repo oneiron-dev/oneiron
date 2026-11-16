@@ -31,12 +31,10 @@ mod unit;
 
 pub use unit::MeetingAudioSeats;
 
-const PROTOCOL: &str = "oneiron.meeting_audio.host.v3";
-
-/// How long a native host process may write nothing (no unit, progress,
-/// end or reply) before its stage faults (CALLS, FIX 3765). A recording runs
-/// as long as its units progress.
-pub const UNIT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(600);
+#[doc(hidden)]
+use oneiron_records::ingest::meeting_audio::command::PROTOCOL;
+#[doc(hidden)]
+pub use oneiron_records::ingest::meeting_audio::command::UNIT_PROGRESS_TIMEOUT;
 
 /// Native process configuration. Every path is absolute and host-owned.
 /// No launcher, shell, remote URL, package installer or model downloader runs.

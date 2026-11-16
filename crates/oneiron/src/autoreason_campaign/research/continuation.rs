@@ -64,8 +64,13 @@ const CONTINUATION_CURSOR: SideTable<(), Vec<u8>, Raw> =
 const MAX_STEPS_PER_PASS: usize = 16;
 /// Campaigns one pass advances.
 const MAX_ROOTS_PER_PASS: usize = 32;
-/// The one hold a pass retries: the reservation found no room.
-const BUDGET_HELD: &str = "budget";
+#[doc(hidden)]
+use oneiron_records::autoreason_campaign::research::continuation::BUDGET_HELD;
+#[doc(hidden)]
+pub use oneiron_records::autoreason_campaign::research::continuation::{
+    ResearchSplit, ResearchTask,
+};
+
 /// Exposure one serving of the sealed cohort spends: the cohort ledger
 /// counts servings, so one release is one exposure.
 const SERVING_EXPOSURE: u64 = 1;
@@ -95,31 +100,6 @@ impl ResearchWork {
             Self::Round(round) => round.saturating_add(1),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchSplit {
-    Search,
-    HeldOut,
-}
-
-/// One unit of work a continuation runs, in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchTask {
-    /// Score `node`'s candidate on a split with the scorer, outside the
-    /// experiment's write scope.
-    Measure {
-        node: AttemptId,
-        split: ResearchSplit,
-    },
-    /// Run the experimenter under `parent` for one child candidate.
-    Experiment { parent: AttemptId, kind: ForkKind },
-    /// Decide promotion of `candidate` against the incumbent once.
-    Basis { candidate: AttemptId },
-    /// Spend the sealed confirmation shot and run the referee on it.
-    Confirm { candidate: AttemptId },
 }
 
 /// The task in flight: its reservation and, once dispatched, its run.

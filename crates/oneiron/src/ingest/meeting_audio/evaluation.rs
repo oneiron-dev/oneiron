@@ -12,29 +12,10 @@ use serde::{Deserialize, Serialize};
 use super::metrics::{WerCounts, aggregate_wer};
 use super::{AudioError, AudioResult};
 
-/// One E1 arm: a candidate model id plus its exact per-language WER counts.
-/// Keys are opaque language tags from the corpus manifest; the engine never
-/// invents an arm for a language the corpus did not score.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct E1Arm {
-    pub model_id: String,
-    pub model_revision: String,
-    pub model_sha256: String,
-    pub runtime_sha256: String,
-    pub wer_by_lang: HashMap<String, WerCountsSerde>,
-}
-
-/// Exact per-language WER counts in receipt form. Integer counts only; a
-/// float WER ratio is not accepted because rounding hides the arm sizes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WerCountsSerde {
-    pub substitutions: u64,
-    pub deletions: u64,
-    pub insertions: u64,
-    pub reference_len: u64,
-}
+#[doc(hidden)]
+use oneiron_records::ingest::meeting_audio::evaluation::is_lower_hex_sha256;
+#[doc(hidden)]
+pub use oneiron_records::ingest::meeting_audio::evaluation::{CohortFile, E1Arm, WerCountsSerde};
 
 impl From<WerCountsSerde> for WerCounts {
     fn from(counts: WerCountsSerde) -> Self {
@@ -163,19 +144,6 @@ impl E1SelectionReceipt {
     }
 }
 
-/// One labelled E3 cohort file: source audio hash, reference transcript hash,
-/// and the consent record the host checked before scoring. The engine binds
-/// hashes; consent itself stays a host-side record referenced, never attested,
-/// here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CohortFile {
-    pub file_id: String,
-    pub audio_sha256: String,
-    pub reference_sha256: String,
-    pub consent_ref: String,
-}
-
 /// Strict evaluation-cohort manifest. `cohort_sha256` binds the exact file
 /// list; an E1 receipt names this manifest hash in its `corpus_sha256` when
 /// the bake-off actually scored this cohort.
@@ -227,11 +195,4 @@ impl CohortManifest {
         }
         Ok(())
     }
-}
-
-fn is_lower_hex_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }

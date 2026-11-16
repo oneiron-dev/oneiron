@@ -36,12 +36,11 @@ pub(super) const CANONICAL: SideTable<EntityId, SealedDocument, LegacyJson> =
 pub(super) const RESULT: SideTable<[u8; 16], EsignSealAttemptResult, LegacyJson> =
     SideTable::new(&side_table::ESIGN_SEAL_RESULT);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
-pub(super) enum EsignSealAttemptResult {
-    Sealed(SealedDocument),
-    VerificationFailed { verify_reasons: Vec<String> },
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::blob_artifact::esign::seal::EsignSealAttemptResult;
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::esign::seal::{SealedDocument, SealedItem};
+
 #[derive(Debug, thiserror::Error)]
 pub enum EsignSealError {
     #[error(transparent)]
@@ -56,24 +55,6 @@ pub enum EsignSealError {
     ProducerBooking { lent_bytes: u64 },
     #[error("sealed PDF failed post-seal verification")]
     Verification { verify_reasons: Vec<String> },
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SealedItem {
-    pub original_artifact: String,
-    pub original_version: u64,
-    pub sealed_artifact: String,
-    pub sealed_version: u64,
-    pub sha256: [u8; 32],
-    pub profile: SealProfileEvidence,
-    pub active_content: super::sealer::SealActiveContentFacts,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SealedDocument {
-    pub document: String,
-    pub attempt_ref: String,
-    pub audit_chain_sha256: [u8; 32],
-    pub items: Vec<SealedItem>,
-    pub rejected: bool,
 }
 fn snapshot_hash(rows: &[EsignEventRow]) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(rows).map_err(|_| invalid("seal snapshot encoding"))?;

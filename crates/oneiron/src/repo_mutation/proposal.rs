@@ -174,9 +174,9 @@ pub struct RepoProposal {
 
 pub use crate::store::repo_proposal_record::RepoProposalOperation;
 
-pub(super) fn invalid(reason: &'static str) -> Error {
-    Error::Code(CodeError::InvalidRepoMutationRecord(reason))
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::repo_mutation::proposal::invalid;
+
 pub(super) fn store(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &RepoProposal) -> Result<()> {
     PROPOSAL.put(&vault.store, txn, &row.id, row)
 }

@@ -92,15 +92,8 @@ pub struct SettledAnchor {
     pub drifted: bool,
 }
 
-/// Selected Office author and the separate identities behind a review comment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PptxReviewIdentity {
-    pub thread_id: EntityId,
-    pub asked_by: EntityId,
-    pub answered_by: EntityId,
-    pub export_author_guid: String,
-    pub export_author_name: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_settle::records::PptxReviewIdentity;
 
 /// The durable consume-once ledger entry for one settled proposal, and the
 /// substrate the settle receipt projects from.

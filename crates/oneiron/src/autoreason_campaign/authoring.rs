@@ -53,15 +53,10 @@ const TOURNAMENT_CURSOR: SideTable<([u8; 16], [u8; 16]), TournamentLineageCursor
 
 const MAX_REF_BYTES: usize = 256;
 
-/// The exact revision of the strategy skill the campaign runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimAuthoringSkillPin {
-    pub skill: EntityId,
-    pub version: String,
-    /// Hex of the skill's content hash.
-    pub content_hash: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::autoreason_campaign::authoring::{
+    AuthoringWinner, ClaimAuthoringChoice, ClaimAuthoringSkillPin, TournamentStop,
+};
 
 /// A bound claim-authoring campaign: its strategy skill, the fixed OF-366
 /// config it was evaluated under, that config's content pin, and the BEAM
@@ -75,25 +70,6 @@ pub struct AuthoringCampaign {
     pub strategy: AuthoringStrategyPin,
     pub promotion: Option<PromotionReceipt>,
     pub bound_at: u64,
-}
-
-/// The typed choice the strategy skill returns for one claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimAuthoringChoice {
-    SinglePass,
-    Tournament,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TournamentStop {
-    Consensus,
-    RoundCap,
-    ExhaustedRounds,
-    /// A round discarded every candidate: the run failed and landed no
-    /// claim.
-    AllDiscarded,
 }
 
 /// What the host observed about one tournament run's team.
@@ -115,18 +91,6 @@ pub struct TournamentTeam {
     pub spend_cap: Option<f64>,
     pub elapsed_secs: u64,
     pub calls: u64,
-}
-
-/// The winner a tournament run landed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthoringWinner {
-    pub claim: EntityId,
-    pub candidate_ref: String,
-    pub branch: AttemptId,
-    pub score: u64,
-    /// The winner claim's approval as the gate left it: rank never approves.
-    pub approval: ClaimApprovalStatus,
 }
 
 /// One finalized tournament run on the campaign.

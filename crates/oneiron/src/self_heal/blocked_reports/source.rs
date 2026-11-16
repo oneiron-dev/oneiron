@@ -180,18 +180,8 @@ pub(crate) struct BlockedRunHost {
     pub(crate) read_worlds: Option<crate::code_run::ReadWorldSeal>,
 }
 
-/// The worlds a run's host scoped it to, as the report's filing read them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum RunWorlds {
-    /// The agent dispatch the run served: its scope's world and its task's.
-    Scoped { worlds: Vec<EntityId> },
-    /// The host bound the run to no dispatch: any world it could read may
-    /// have been read.
-    Unscoped,
-    /// A world of the dispatch it served could not be proved.
-    Unproved,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::self_heal::blocked_reports::source::RunWorlds;
 
 /// One blocked report's replay source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

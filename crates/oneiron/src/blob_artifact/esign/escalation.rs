@@ -36,10 +36,10 @@ use serde::{Deserialize, Serialize};
 /// Held automated sign act, one per recipient. Key: document hex32/recipient.
 const HELD: SideTable<String, HeldSigning, Named> = SideTable::new(&side_table::ESIGN_HELD_SIGNING);
 
-/// The answer that lands the held signature.
-pub const HOLD_ALLOW: &str = "allow";
-/// The answer that keeps the signature from landing.
-pub const HOLD_DECLINE: &str = "decline";
+#[doc(hidden)]
+pub use oneiron_records::blob_artifact::esign::escalation::{
+    HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigningState,
+};
 
 /// The producer of the inbox notice each vault owner gets when a held sign
 /// act's ask lapses unanswered at the owners.
@@ -59,44 +59,6 @@ pub const ESIGN_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
     };
 /// The most bytes of the document title the question quotes.
 const TITLE_MAX_BYTES: usize = 256;
-
-/// Where one hold stands.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum HeldSigningState {
-    /// Held; the host's next pass asks its first role.
-    Held,
-    /// Waits in the role ask queue under `question` (hex). `wait` is the
-    /// role the ask's wait is timed at and since when: the role its ask was
-    /// put to, from the ask, then set at each climb. A hold asked before
-    /// that first role was recorded has none: its climb times it from the
-    /// ask, and its lapse from when a pass first sees it at the owners.
-    Asked {
-        question: String,
-        wait: Option<HeldAskWait>,
-    },
-    /// A role holder allowed it, and the signature landed.
-    Allowed { at: u64 },
-    /// A role holder declined it; the signature did not land.
-    Declined { at: u64 },
-    /// The document moved on before the answer could land: the recipient's
-    /// turn passed or the document ended.
-    Superseded { at: u64 },
-    /// No vault owner answered its ask within the vault's
-    /// `esign.held_signing.owner_lapse`: the signature did not land, the ask
-    /// left the owners' queue, and the recipient's turn stays open for the
-    /// document's sender, as after a decline.
-    Lapsed { at: u64 },
-}
-
-/// The rung a held sign act's ask waits at, and since when: each rung of a
-/// multi-hop chain waits its own [`ESIGN_ASK_CLIMB_HOURS`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HeldAskWait {
-    pub role: AskRole,
-    pub since: u64,
-}
 
 /// A role holder's answer to one hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
