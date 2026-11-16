@@ -16,14 +16,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 
-use super::space::{EmbeddingSpace, InputKind, embedding_space_in_txn};
+use super::space::{
+    EmbeddingSpace, InputKind, delete_text_media_vector_in_space_in_txn, embedding_space_in_txn,
+    embedding_spaces_in_txn,
+};
 use super::space_move::space_fill_kinds_in_txn;
-use crate::Vault;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY};
 use crate::store::Store;
+use crate::{HostingPrivacyPosture, Vault};
 
 #[cfg(feature = "sync")]
 mod sweep;
@@ -54,11 +60,27 @@ impl WorldTextSpaces {
     /// that is a space declared here, accepting text, whose model runs on the device. A world
     /// that inherits, or a vault root in conflict (no world's order is known), names none.
     pub(crate) fn read_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
-        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        Self::read_for_store_in(&vault.store, vault.privacy_posture(), txn)
+    }
+
+    /// [`Self::read_in`] where only the store is in reach (a batch's apply), with the vault's
+    /// hosting posture. With no declared text space on the device, no world can name one, and
+    /// the authority fold is not read.
+    pub(crate) fn read_for_store_in(
+        store: &Store,
+        posture: HostingPrivacyPosture,
+        txn: &RoTxn<'_>,
+    ) -> Result<Self> {
+        if !embedding_spaces_in_txn(store, txn)?.iter().any(|space| {
+            space_runs_on_device(&space.id) && space.accepts.contains(&InputKind::Text)
+        }) {
+            return Ok(Self::default());
+        }
+        let fold = crate::authority::authority_view_readonly_for_store_in_txn(store, posture, txn)?;
         let mut by_world = BTreeMap::new();
         for (world, routes) in fold.ordered_world_model_routes() {
             for route in routes.iter().filter(|route| space_runs_on_device(route)) {
-                if let Some(space) = embedding_space_in_txn(&vault.store, txn, route)?
+                if let Some(space) = embedding_space_in_txn(store, txn, route)?
                     && space.accepts.contains(&InputKind::Text)
                 {
                     by_world.insert(world, space);
@@ -108,6 +130,179 @@ impl WorldTextSpaces {
     }
 }
 
+/// Drops the vault-index vector of each of `written` that a world with its own text space
+/// carries, as the batch that wrote them ends (DEC-0005 #private-world-vectors). Every writer
+/// of the vault's index reaches a batch's apply: a birth batch, `Vault::put_vector`, a sync or
+/// promotion replay, the home reuse. Only the batch's final state says whether the row may
+/// keep the vector, since its world edge may come after the vector in the same batch. The row
+/// keeps a way back for when no world's space takes it: a row whose pending embedding the
+/// batch's vector completed is pending again (its job queued anew), and any other row with no
+/// pending embedding is marked for the idle refill. `written` maps each id to whether its
+/// vector completed its pending embedding. The worlds' spaces are read only when `written` is
+/// not empty.
+pub(crate) fn keep_world_rows_out_of_vault_index_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &mut RwTxn<'_>,
+    written: &BTreeMap<EntityId, bool>,
+) -> Result<()> {
+    if written.is_empty() {
+        return Ok(());
+    }
+    let spaces = WorldTextSpaces::read_for_store_in(store, posture, txn)?;
+    if spaces.by_world.is_empty() {
+        return Ok(());
+    }
+    for (id, completed_pending) in written {
+        if spaces.of_row(store, txn, id)?.is_empty() {
+            continue;
+        }
+        crate::vault::entity_revision::drop_index_vector_in_txn(store, txn, id)?;
+        if store.has_current_pending_embedding_in_txn(txn, id)? {
+            continue;
+        }
+        if *completed_pending {
+            let Some(record) = store.port_entity_record(txn, id)? else {
+                continue;
+            };
+            store.mark_pending_embedding(txn, id, &record.body)?;
+            #[cfg(feature = "sync")]
+            {
+                crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+                crate::sync::queue::push_embed_job_in_txn(
+                    store,
+                    txn,
+                    id,
+                    super::EMBED_PRIORITY_BACKFILL,
+                )?;
+            }
+        } else {
+            crate::vault::entity_revision::mark_vector_refill_in_txn(store, txn, id)?;
+        }
+    }
+    Ok(())
+}
+
+/// Moves the text vectors of each of `sources`, and of every row that derives from one, to the
+/// worlds that carry it now, as the batch that wrote or deleted their world-carrying edges ends
+/// (DEC-0005 #private-world-vectors). An InWorld or DerivedFrom edge moves a row between worlds
+/// with no vector write the batch judges and no order edit the sweep watches, and a caption
+/// follows its picture. A row a world's own text space now takes keeps no vector of the vault's
+/// index; a device space that no longer takes a row keeps no text vector of it. The world's
+/// media pass embeds the row into the space that takes it now. A row that lost a vector and has
+/// no pending embedding gets its way back to the vault's index ([`queue_way_back_in_txn`]). The
+/// worlds' spaces are read only when `sources` is not empty.
+pub(crate) fn reconcile_world_edge_rows_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &mut RwTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if sources.is_empty() {
+        return Ok(());
+    }
+    let spaces = WorldTextSpaces::read_for_store_in(store, posture, txn)?;
+    if spaces.by_world.is_empty() {
+        return Ok(());
+    }
+    let mut device_spaces = Vec::new();
+    for space in embedding_spaces_in_txn(store, txn)? {
+        if space_runs_on_device(&space.id) {
+            let slot_text = space_fill_kinds_in_txn(store, txn, &space)?.contains(&InputKind::Text);
+            device_spaces.push((space, slot_text));
+        }
+    }
+    for id in derived_closure_in_txn(store, txn, sources)? {
+        let own = spaces.of_row(store, txn, &id)?;
+        let mut dropped_index = false;
+        if !own.is_empty() {
+            dropped_index =
+                crate::vault::entity_revision::drop_index_vector_in_txn(store, txn, &id)?;
+        }
+        let mut dropped_space = false;
+        for (space, slot_text) in &device_spaces {
+            let takes = if own.is_empty() {
+                *slot_text
+            } else {
+                own.contains(space.id.as_str())
+            };
+            if !takes && delete_text_media_vector_in_space_in_txn(store, txn, space, &id)? {
+                dropped_space = true;
+            }
+        }
+        if (dropped_index || dropped_space)
+            && !store.has_current_pending_embedding_in_txn(txn, &id)?
+        {
+            queue_way_back_in_txn(store, txn, &id, own.is_empty() && dropped_space)?;
+        }
+    }
+    Ok(())
+}
+
+/// The way back to the vault's index for `id`, which lost a vector as its worlds moved and has
+/// no pending embedding. A row the vault's index takes again (`returned`: no world's space
+/// takes it now, and it held a text vector in one) whose text the pending worker embeds (a
+/// CLAIM, a SUMMARY, a text ASSET) is queued for that worker, as the sweep queues such a row;
+/// any other row is marked for the idle refill, which embeds its published revision once no
+/// world's space takes it (a NOTE, a caption).
+fn queue_way_back_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    returned: bool,
+) -> Result<()> {
+    if returned
+        && let Some(record) = store.port_entity_record(txn, id)?
+        && matches!(
+            record.entity_type,
+            ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_ASSET
+        )
+    {
+        store.mark_pending_embedding(txn, id, &record.body)?;
+        #[cfg(feature = "sync")]
+        {
+            crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+            crate::sync::queue::push_embed_job_in_txn(
+                store,
+                txn,
+                id,
+                super::EMBED_PRIORITY_BACKFILL,
+            )?;
+        }
+        return Ok(());
+    }
+    crate::vault::entity_revision::mark_vector_refill_in_txn(store, txn, id)
+}
+
+/// `sources` and every row that carries the worlds of one of them, transitively
+/// (`settings::carried_worlds_in`): a row that derives from one through a DerivedFrom edge (a
+/// caption carries the worlds of the picture it derives from), and a row whose birth names one
+/// as a prompt input (a claim a model wrote from a prompt that carried it carries its words,
+/// FIX 8192). The births are read once per call.
+fn derived_closure_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let prompted = crate::store::birth_record::prompted::rows_prompted_by_input_in_txn(store, txn)?;
+    let mut closure = sources.clone();
+    let mut frontier: Vec<EntityId> = sources.iter().copied().collect();
+    while let Some(id) = frontier.pop() {
+        for derived in store.port_edge_peers(txn, &id, EdgeDirection::In, EdgeKind::DerivedFrom)? {
+            let derived = derived?;
+            if closure.insert(derived) {
+                frontier.push(derived);
+            }
+        }
+        for row in prompted.get(&id).into_iter().flatten() {
+            if closure.insert(*row) {
+                frontier.push(*row);
+            }
+        }
+    }
+    Ok(closure)
+}
+
 /// Which text documents one media pass for a space takes: a row a world with its own text
 /// space carries goes to that space alone; any other row to the space a kind slot binds for
 /// text, or an open move carries text to.
@@ -148,5 +343,24 @@ impl TextDocumentRoute {
         } else {
             own.contains(self.space_id.as_str())
         })
+    }
+
+    /// Whether some world names this route's space as its own text space.
+    pub(crate) fn world_names_space(&self) -> bool {
+        self.world_spaces.names(&self.space_id)
+    }
+
+    /// Whether a world with its own text space carries `id` and sends it to this route's
+    /// space: the only way a NOTE or a caption enters a text-bound space.
+    pub(crate) fn takes_world_row(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .world_spaces
+            .of_row(store, txn, id)?
+            .contains(self.space_id.as_str()))
     }
 }
