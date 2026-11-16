@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "timeout": 15,
+        "command": "oneiron hook --host cursor session-start --credential-file \"$HOME/.config/oneiron/cursor-hooks.cred\""
+      }
+    ],
+    "preCompact": [
+      {
+        "type": "command",
+        "timeout": 10,
+        "command": "oneiron hook --host cursor hand-over"
+      }
+    ],
+    "stop": [
+      {
+        "type": "command",
+        "timeout": 10,
+        "command": "oneiron hook --host cursor hand-over"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "timeout": 5,
+        "command": "oneiron hook --host cursor hand-over --timeout 4"
+      }
+    ]
+  }
+}
