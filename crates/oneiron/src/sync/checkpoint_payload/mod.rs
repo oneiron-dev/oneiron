@@ -43,6 +43,7 @@
 mod author_carrier;
 mod binding;
 mod classify;
+mod descriptor;
 mod documents;
 mod frame;
 mod joined_turns;
@@ -59,9 +60,10 @@ use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 
 pub(in crate::sync) use self::binding::PartedRows;
-pub(crate) use self::owners::WINDOW_ROOTS;
+pub(in crate::sync) use self::descriptor::PartLookup;
+pub(crate) use self::descriptor::WINDOW_ROOTS;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
-pub(crate) use self::owners::root_entry;
+pub(crate) use self::descriptor::root_entry;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::parts::PartHolders;
 use crate::entity_id::EntityId;
@@ -666,9 +668,8 @@ pub(crate) fn restore_checkpoint_windows(
 /// (E0364): each is called from here, under its own name, with its own
 /// signature. Compiled only under `--cfg oneiron_test_support`.
 ///
-/// At the PR 6 head `key_refusal` and `withheld_part_key` live in
-/// `super::descriptor`: those two bodies name `descriptor` there, and the
-/// other two stay in `owners`.
+/// `key_refusal` and `withheld_part_key` read the window map rows
+/// (`super::descriptor`); the other two stay in `owners`.
 #[cfg(oneiron_test_support)]
 pub(crate) mod test_support {
     use super::{Holder, SyncUnclassified, ValueSplit};
@@ -677,12 +678,12 @@ pub(crate) mod test_support {
     /// Why `key` of the window root map `root` cannot stand plaintext in a
     /// skeleton; `None` for an opaque id or a schema name.
     pub(crate) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
-        super::owners::key_refusal(root, key)
+        super::descriptor::key_refusal(root, key)
     }
 
     /// Whether the skeleton withholds `key` of `root` as a part's digest.
     pub(crate) fn withheld_part_key(root: &str, key: &str) -> bool {
-        super::owners::withheld_part_key(root, key)
+        super::descriptor::withheld_part_key(root, key)
     }
 
     /// The client the skeleton withholds `key` of `root` for, beside that

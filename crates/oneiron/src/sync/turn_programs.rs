@@ -477,7 +477,7 @@ pub(crate) fn scrub_turn_programs(
 /// conversation it names is, so the actor's erase retires it; a decided
 /// wake is ids alone under its turn. A row that does not decode is
 /// undecodable.
-pub(in crate::sync) fn checkpoint_entry(root: &str, value: &[u8]) -> Placement {
+pub(in crate::sync) fn checkpoint_entry(root: &str, _key: &str, value: &[u8]) -> Placement {
     let placement = if root == TURN_PROGRAM_ARMS_MAP {
         replica::arming_row_placement(value)
     } else {
