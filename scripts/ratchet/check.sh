@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Ratchet: recompute 7 metrics and fail if any exceeds baseline.json. No jq
-# dependency — baseline's 7 "count" fields are the only ones at that depth,
+# Ratchet: recompute 8 metrics and fail if any exceeds baseline.json. No jq
+# dependency — baseline's 8 "count" fields are the only ones at that depth,
 # extracted in fixed order: giant_files, allow_attrs, print_macros,
-# process_global_statics, keyspace_census, raw_core_writes, raw_hasher_starts. That order is
+# process_global_statics, keyspace_census, raw_core_writes, raw_hasher_starts,
+# hand_name_tables. That order is
 # positional, so a new metric goes LAST in baseline.json's "metrics" object
 # and last in the `read -r` line below.
 #
@@ -87,18 +88,24 @@ raw_writes=$(python3 scripts/ratchet/raw_write_census.py) \
   || die "metric collection failed for raw_write_census"
 
 # Hand-started hashes outside the fingerprint door and its allowlist (PLAN-UC-04
-# stage 0). Its own script, because the pipeline pre-flight also runs it as the
-# merge gate (`--check`, lead 13:55 Sun 15 Nov), and the allowlist needs per-file scopes.
+# stage 0). Its own script, because the allowlist needs per-file scopes. The count blocks
+# no merge: the merge pipeline reports a raise to the change's author (AGENTS.md, Ratchets).
 raw_hashers=$(python3 scripts/ratchet/raw_hasher_starts.py --count .) \
   || die "metric collection failed for raw_hasher_starts"
 
-for v in "$giants" "$allows" "$prints" "$globals" "$keyspace" "$raw_writes" "$raw_hashers"; do
+# Lists of names spelled by hand outside a Register (Fable pass 25). Its own script for the same
+# reason as raw_hasher_starts: the allowlist carries a reason per path. It blocks no merge
+# either. It also fails on two Registers with one name.
+hand_names=$(python3 scripts/ratchet/hand_name_tables.py --count .) \
+  || die "metric collection failed for hand_name_tables"
+
+for v in "$giants" "$allows" "$prints" "$globals" "$keyspace" "$raw_writes" "$raw_hashers" "$hand_names"; do
   is_num "$v" || die "computed metric is not numeric: '$v'"
 done
 
 [ -f "$BASE" ] && [ -r "$BASE" ] || die "baseline unreadable/invalid"
-read -r base_giants base_allows base_prints base_globals base_keyspace base_raw_writes base_raw_hashers <<<"$(grep -oE '"count": [0-9]+' "$BASE" | awk '{print $2}' | tr '\n' ' ')"
-for v in "${base_giants:-}" "${base_allows:-}" "${base_prints:-}" "${base_globals:-}" "${base_keyspace:-}" "${base_raw_writes:-}" "${base_raw_hashers:-}"; do
+read -r base_giants base_allows base_prints base_globals base_keyspace base_raw_writes base_raw_hashers base_hand_names <<<"$(grep -oE '"count": [0-9]+' "$BASE" | awk '{print $2}' | tr '\n' ' ')"
+for v in "${base_giants:-}" "${base_allows:-}" "${base_prints:-}" "${base_globals:-}" "${base_keyspace:-}" "${base_raw_writes:-}" "${base_raw_hashers:-}" "${base_hand_names:-}"; do
   is_num "$v" || die "baseline unreadable/invalid"
 done
 
@@ -113,5 +120,6 @@ check process_global_statics "$globals" "$base_globals"
 check keyspace_census "$keyspace" "$base_keyspace"
 check raw_core_writes "$raw_writes" "$base_raw_writes"
 check raw_hasher_starts "$raw_hashers" "$base_raw_hashers"
+check hand_name_tables "$hand_names" "$base_hand_names"
 
 [ "$fail" -eq 0 ] && echo "RATCHET-OK" || exit 1
