@@ -120982,18 +120982,22 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "GeminiEventStream"
+     ],
      "path": "src/gemini/stream.rs",
      "purpose": "Gemini typed stream decoding",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -121410,8 +121414,7 @@
      "path": "src/openai_compat/stream.rs",
      "purpose": "OpenAI chunk decoding with correlated text, reasoning, and tool fragments",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -156710,7 +156713,7 @@
      "path": "src/models/anthropic.rs",
      "purpose": "The Anthropic-compatible transport: any `/v1/messages` server",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -156796,6 +156799,16 @@
      "notable": [],
      "path": "src/models/broker_responses.rs",
      "purpose": "OpenAI Responses through the credential broker, one upgraded socket per call",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_stream.rs",
+     "purpose": "A brokered streamed reply read as the HTTP transport reads its own (`http.rs` `next_sse`), so the OpenAI and…",
      "surface": {
       "crate-vis": 2
      }
@@ -157045,7 +157058,7 @@
      "path": "src/models/gemini_chat.rs",
      "purpose": "The Gemini API's chat transport (FIX 1816): a `gemini` provider's chat rungs send `generateContent` and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -157670,7 +157683,7 @@
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -162045,6 +162058,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/broker_stream_key_secret.rs",
+     "purpose": "L6-29: a `key_secret` provider's chat streams through the credential broker, on the runtime's same-user…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -163503,7 +163524,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 153,
+     "files": 154,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -163680,8 +163701,8 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1900,
-   "test_files": 292
+   "source_files": 1901,
+   "test_files": 293
   },
   "oneiron-setting-contract": {
    "files": [
@@ -167289,7 +167310,7 @@
      "surface": {
       "const": 11,
       "enum": 1,
-      "fn": 6,
+      "fn": 5,
       "struct": 4
      }
     },
@@ -167328,9 +167349,9 @@
      "path": "src/gate_reason.rs",
      "purpose": "Gate outcomes, stable reason codes, and pure metric classification",
      "surface": {
-      "const": 3,
+      "const": 2,
       "enum": 4,
-      "fn": 11
+      "fn": 9
      }
     },
     {
@@ -173274,6 +173295,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/gate_engine_part_names.rs",
+     "purpose": "`GateEnginePart`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/gate_receipt_outcome_tokens.rs",
      "purpose": "UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2)",
      "surface": {}
@@ -174956,7 +174985,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 20
+   "test_files": 21
   },
   "oneiron-testkit": {
    "files": [
