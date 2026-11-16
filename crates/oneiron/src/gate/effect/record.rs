@@ -23,6 +23,7 @@ pub(crate) fn record_external_effect_policy(
         envelope_wait,
         budget_target: _,
         scoped_capability: _,
+        send_check_in,
     } = governance;
     // FIX 7948: an Allow that stands on a place in a full window's line
     // admits nothing; only the chokepoint keeps that place, and it records no
@@ -70,6 +71,11 @@ pub(crate) fn record_external_effect_policy(
             }))
             .chain(decision.delegation_narrowing_receipt())
             .chain(decision.charter_stamp_receipt())
+            .chain(
+                send_check_in
+                    .iter()
+                    .flat_map(crate::check_in::SendCheckIn::receipt_reasons),
+            )
             .collect(),
         system_notices: Vec::new(),
         actor_class: input.actor.actor_class.clone(),

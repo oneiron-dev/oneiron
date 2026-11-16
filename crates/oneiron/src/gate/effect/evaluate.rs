@@ -127,7 +127,8 @@ pub(crate) fn judge_external_effect_in_txn(
 /// 17645); `false` for a send to one, judged on its own.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one recipient's read-only judgment under its message's operation and approval context"
+    clippy::too_many_lines,
+    reason = "one recipient's read-only judgment under its message's operation and approval context, every stage in its one order"
 )]
 fn judge_counterparty_policy(
     store: &Store,
@@ -311,6 +312,9 @@ fn judge_counterparty_policy(
     {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
+    // PLAN L3-35: an agent's send checks in on the vault's send row.
+    let send_check_in =
+        fold_send_check_in(policy, &hydrated_effect, mail_once, &mut consent_grants);
     if let (Some(requirement), Some(effect_ctx)) =
         (requirement, provisional.external_effect.as_ref())
     {
@@ -445,6 +449,16 @@ fn judge_counterparty_policy(
             && let Some(reservation) = envelope_reservation.as_ref()
         {
             effect.standing_grant_ref = Some(reservation.consent_grant_ref().to_owned());
+        }
+        // PLAN L3-35: a send the vault's send row releases stands on that
+        // row, as the send above stands on its envelope slot; a matched grant
+        // or a slot keeps its own ref.
+        if effect.standing_grant_ref.is_none()
+            && let Some(row_ref) = send_check_in
+                .as_ref()
+                .and_then(crate::check_in::SendCheckIn::release_grant_ref)
+        {
+            effect.standing_grant_ref = Some(row_ref);
         }
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
@@ -773,7 +787,32 @@ fn judge_counterparty_policy(
         envelope_wait,
         budget_target,
         scoped_capability: scoped_mcp_capability,
+        send_check_in,
     })
+}
+
+/// PLAN L3-35 (ARCH-0046 #send-grant): `effect`'s check-in on the vault's
+/// send row, when it is an agent's send the row reaches; `delegated_or_cold`:
+/// the Gate found it a member-mailbox send, or a native-mail cold send, or a
+/// recipient of a message that takes one (`mail_once`).
+/// `full-access` covers it in `consent_grants`, as an envelope slot does, and
+/// the caller gives it the row's ref as its authority; any other answer folds
+/// nothing, so the send keeps its other coverage or its press per send.
+fn fold_send_check_in(
+    policy: &PolicyManifestResolution,
+    effect: &ExternalEffectGateInput,
+    delegated_or_cold: bool,
+    consent_grants: &mut Vec<crate::consent::StandingConsentGrant>,
+) -> Option<crate::check_in::SendCheckIn> {
+    let check_in =
+        crate::check_in::send_check_in(policy.check_in_policy(), effect, delegated_or_cold)?;
+    if check_in.releases()
+        && let Some(requirement) = external_effect_action_requirement(effect)
+        && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
+    {
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
+    Some(check_in)
 }
 
 /// The campaign stages' hold on `effect`, before the approval guards: the

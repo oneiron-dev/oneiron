@@ -38,9 +38,14 @@
 //!   pinned on the current rung settles the ask over its exact effect on
 //!   their own human proof; the same answer again echoes the settlement.
 //!
+//! * the send grant on rows (PR 5, PLAN L3-35 PR 1): `mode` rows in the
+//!   `check_in` policy row ([`ModeRow`], [`CheckInPolicy::explicit_mode`]),
+//!   and the Gate's check-in of each agent send under them (`send`).
+//!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
-//! because its mode comes from its own manifest rows. The change path and
-//! the key and quorum proofs are later builds.
+//! because its mode comes from its own manifest rows; the Gate's send
+//! check-in is the second. The change path and the key and quorum proofs are
+//! later builds.
 
 mod act_class;
 mod asker;
@@ -52,6 +57,7 @@ mod policy;
 mod receipt;
 mod resolve;
 mod role_preset;
+mod send;
 pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
@@ -86,17 +92,18 @@ pub(crate) use pending::{
     RungResolver, consume_pending_check_in_in_txn, extend_pending_check_in_in_txn,
     open_pending_check_in_in_txn, record_objection_in_txn,
 };
-pub(crate) use policy::{CHECK_IN_ROW_KEY, CheckInPolicyRead};
 pub use policy::{
-    CHECK_IN_ROW_VERSION, CheckInPolicy, CheckInScope, ClassWait, DEFAULT_RUNG_WAIT_SECS,
-    RungWaitRow, WaitSource,
+    AskPer, CHECK_IN_ROW_VERSION, CheckInPolicy, CheckInScope, ClassWait, DEFAULT_RUNG_WAIT_SECS,
+    ExplicitMode, MODE_ROW_REF_MAX_BYTES, ModeRow, RungWaitRow, WaitSource,
 };
+pub(crate) use policy::{CHECK_IN_ROW_KEY, CheckInPolicyRead};
 pub(crate) use receipt::{check_in_receipts, erase_check_in_receipt_actor_in_txn};
 pub use resolve::{
     CheckInAnswer, CheckInRequest, GoReason, ModeSource, ResolvedMode, UnsureTest, WaitReason,
     check_in, check_in_with_mode, resolve_mode,
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
+pub(crate) use send::{SendCheckIn, send_check_in};
 pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
