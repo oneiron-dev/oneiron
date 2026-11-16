@@ -432,7 +432,7 @@ impl Vault {
         // This answer settles its ask's TASK outside the write door: a
         // task-held inquiry answer of that TASK leaves memory here (FIX
         // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE).
-        self.vault().evict_inquiry_answers_after_raw_commit();
+        self.evict_inquiry_answers_after_raw_commit();
         Ok(answer)
     }
 
