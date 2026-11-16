@@ -6,6 +6,7 @@ use crate::genui::consent_cards::BundleApprovalScope;
 use crate::genui::consent_cards::ConsentScopeEscalator;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_contracts::register::Register;
 use oneiron_lens_wire::lens::atom::LensText;
 use serde::Deserialize;
 use serde::Serialize;
@@ -86,27 +87,15 @@ impl ConsentConfirmOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("consent.surface")]
 pub enum ConsentSurface {
     CompanionConversation,
     Dashboard,
     SharedSlack,
     McpUi,
     Voice,
-}
-
-impl ConsentSurface {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CompanionConversation => "companion_conversation",
-            Self::Dashboard => "dashboard",
-            Self::SharedSlack => "shared_slack",
-            Self::McpUi => "mcp_ui",
-            Self::Voice => "voice",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

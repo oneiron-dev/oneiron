@@ -47,7 +47,7 @@ impl Vault {
         let staged = store
             .vectors
             .staged_rows()
-            .map(|staged| self.staged_vectors(store, txn, query, skip_rescore, (staged, &admits)))
+            .map(|staged| self.staged_vectors(query, skip_rescore, staged))
             .transpose()?;
         let mut rows = match &staged {
             Some(staged) if staged.clear_base => Vec::new(),
@@ -74,19 +74,45 @@ impl Vault {
                 Some(&admits),
             )?,
         };
-        if let Some(staged) = staged {
-            rows.extend(staged.scored);
-            rows.sort_unstable_by(|left, right| {
-                right
-                    .score
-                    .total_cmp(&left.score)
-                    .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
-            });
+        let Some(staged) = staged else {
+            let mut visible = filter_results(store, txn, rows, private_note_ids)?;
+            visible.truncate(limit);
+            return Ok(visible);
+        };
+        rows.sort_unstable_by(best_first);
+        // Base's hits and the room's scored rows, best first. A room row
+        // takes its place only once the reads a base hit passed in the walk
+        // admit it, so those reads run for the rows the page reaches, never
+        // for every row the room staged (FIX 197).
+        let mut page = Vec::with_capacity(limit.min(rows.len() + staged.scored.len()));
+        let mut base = rows.into_iter().peekable();
+        let mut room = staged.scored.into_iter().peekable();
+        while page.len() < limit {
+            let from_base = match (base.peek(), room.peek()) {
+                (Some(hit), Some(row)) => best_first(hit, row).is_le(),
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let Some(row) = (if from_base { base.next() } else { room.next() }) else {
+                break;
+            };
+            let admitted = from_base || (live_in(store, txn, &row.id)? && admits(txn, &row.id)?);
+            if admitted && visible_in(store, txn, &row.id, private_note_ids)? {
+                page.push(row);
+            }
         }
-        let mut visible = filter_results(store, txn, rows, private_note_ids)?;
-        visible.truncate(limit);
-        Ok(visible)
+        Ok(page)
     }
+}
+
+/// Best score first, then the smaller id: the one order base's hits and a
+/// room's rows merge in. No id is in both, so it is total.
+fn best_first(left: &ScoredEntity, right: &ScoredEntity) -> std::cmp::Ordering {
+    right
+        .score
+        .total_cmp(&left.score)
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }
 
 /// A hit, base's or the room's, names a row this read finds and has not
@@ -97,7 +123,8 @@ fn live_in(store: &crate::store::StoreRead<'_>, txn: &RoTxn<'_>, id: &EntityId) 
 }
 
 /// The vectors a room stages: every id whose base vector it replaced or
-/// removed, and its live rows the read admits scored against the query.
+/// removed, and each row it gave a vector, scored against the query, best
+/// first. Whether this read admits a row is judged in the merge.
 struct StagedVectors {
     clear_base: bool,
     ids: std::collections::HashSet<EntityId>,
@@ -107,14 +134,9 @@ struct StagedVectors {
 impl Vault {
     fn staged_vectors(
         &self,
-        store: &crate::store::StoreRead<'_>,
-        txn: &RoTxn<'_>,
         query: &[f32],
         skip_rescore: bool,
-        (staged, admits): (
-            crate::session_overlay::StagedRows,
-            &crate::store::vector_index::Admission<'_>,
-        ),
+        staged: crate::session_overlay::StagedRows,
     ) -> Result<StagedVectors> {
         let mut ids = std::collections::HashSet::with_capacity(staged.rows.len());
         let mut scored = Vec::new();
@@ -126,13 +148,12 @@ impl Vault {
             ids.insert(id);
             let Some(raw) = value else { continue };
             let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
-            if live_in(store, txn, &id)? && admits(txn, &id)? {
-                scored.push(ScoredEntity {
-                    id,
-                    score: crate::hnsw::exact_score(&self.config, query, &vector, skip_rescore)?,
-                });
-            }
+            scored.push(ScoredEntity {
+                id,
+                score: crate::hnsw::exact_score(&self.config, query, &vector, skip_rescore)?,
+            });
         }
+        scored.sort_unstable_by(best_first);
         Ok(StagedVectors {
             clear_base: staged.clear_base,
             ids,

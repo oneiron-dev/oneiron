@@ -27,7 +27,7 @@ use crate::{Error, Result};
 /// Missing causal dependencies are refused rather than relaying uninspected
 /// pending operations; a peer can negotiate the missing prefix and retry.
 pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<()> {
-    validate_window_update(doc, update, None, None, &HashMap::new())
+    validate_window_update(doc, update, None, None, &HashMap::new()).map(drop)
 }
 
 /// Checks a peer's complete operation range against the window's world axis.
@@ -38,7 +38,7 @@ pub(in crate::sync) fn validate_window_update_residence(
     update: &[u8],
     key: &crate::sync::WindowKey,
 ) -> Result<()> {
-    validate_window_update(doc, update, Some(key), None, &HashMap::new())
+    validate_window_update(doc, update, Some(key), None, &HashMap::new()).map(drop)
 }
 
 /// A home's promotion snapshot: the locality admission, with `vault` to judge
@@ -48,7 +48,7 @@ pub(in crate::sync) fn validate_promotion_snapshot(
     doc: &LoroDoc,
     snapshot: &[u8],
 ) -> Result<()> {
-    validate_window_update(doc, snapshot, None, Some(vault), &HashMap::new())
+    validate_window_update(doc, snapshot, None, Some(vault), &HashMap::new()).map(drop)
 }
 
 /// Owner-lane admission with the vault's durable entity residence as proof
@@ -59,6 +59,19 @@ pub fn validate_window_update_residence_with_vault(
     update: &[u8],
     key: &crate::sync::WindowKey,
 ) -> Result<()> {
+    admit_window_update_residence_with_vault(vault, doc, update, key).map(drop)
+}
+
+/// [`validate_window_update_residence_with_vault`], returning the entity ids
+/// the admitted update's history inserts, for the writer that makes it
+/// durable to owe a compaction by (census L6-05,
+/// [`super::UpdateInserts::owe_in_txn`]).
+pub fn admit_window_update_residence_with_vault(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+) -> Result<super::UpdateInserts> {
     validate_window_update(doc, update, Some(key), Some(vault), &HashMap::new())
 }
 
@@ -71,7 +84,7 @@ pub(in crate::sync) fn validate_window_update_with_staged_worlds(
     key: &crate::sync::WindowKey,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
-    validate_window_update(doc, update, Some(key), Some(vault), staged)
+    validate_window_update(doc, update, Some(key), Some(vault), staged).map(drop)
 }
 
 /// [`validate_window_update_with_staged_worlds`] without its write: it
@@ -115,7 +128,7 @@ fn validate_window_update(
     key: Option<&crate::sync::WindowKey>,
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
-) -> Result<()> {
+) -> Result<super::UpdateInserts> {
     let admitted = check_window_update(doc, update, key, vault, staged)?;
     // OF-013: a cutoff another machine of this vault carries is staged before
     // the update reaches the live window, so its entity doors refuse the
@@ -138,7 +151,7 @@ fn validate_window_update(
     if let Some(vault) = vault {
         crate::sync::source_audiences::stage_derived_floors(vault, &admitted.derived_floors)?;
     }
-    Ok(())
+    Ok(super::UpdateInserts::of_ids(admitted.inserted))
 }
 
 /// What an admitted update asks [`validate_window_update`] to write.
@@ -151,6 +164,9 @@ struct AdmittedWrites {
     /// The policies a derived row's carriers name, by row (fix list row
     /// 17207).
     derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// Every entity id the update's history inserts, and a snapshot's root
+    /// winners (census L6-05, [`super::UpdateInserts`]).
+    inserted: BTreeSet<EntityId>,
 }
 
 /// Every refusal of [`validate_window_update`]; returns what the caller
@@ -676,10 +692,21 @@ fn check_window_update(
     // binding, states the source-audience obligation refuses every version
     // that drops or changes it, wherever it comes in the range.
     audiences.refuse_dropped_obligations(vault, doc)?;
+    let mut inserted: BTreeSet<EntityId> = historical.keys().copied().collect();
+    if metadata.mode.is_snapshot()
+        && let Some(Some(root)) = encoded_root_state(update)
+    {
+        root.get_map("entities").for_each(|raw_key, _| {
+            if let Ok(id) = EntityId::from_hex(raw_key) {
+                inserted.insert(id);
+            }
+        });
+    }
     Ok(AdmittedWrites {
         cutoffs,
         history_free: audiences.names_erased(),
         derived_floors: audiences.into_derived_floors(),
+        inserted,
     })
 }
 
