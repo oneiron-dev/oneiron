@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The image organ: inspect, crop, resize, annotate and export still images"
 repository.workspace = true
-homepage.workspace = true
 
 # An organ runs as its own process behind the organ host. The engine never
 # depends on it, and it never depends on the engine (the of060 F4 fence in
@@ -30,10 +29,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 png = "0.18"
 crc32fast = "1"
 rmp-serde = { workspace = true }
-rmpv = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+# The organ_host bench decodes replies as rmpv values; the organ itself names no rmpv.
+rmpv = { workspace = true }
 # The e2e check runs the organ process through the host over a real vault.
 oneiron = { path = "../oneiron", features = ["test-support"] }
 oneiron-organ-host = { path = "../oneiron-organ-host" }

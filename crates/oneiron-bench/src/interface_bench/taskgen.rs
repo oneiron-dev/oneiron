@@ -15,6 +15,7 @@ use super::reports_and_fixture_helpers::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
 pub(super) fn build_task_bundle() -> TaskBundle {
     let fixture = FixtureVault {
@@ -389,12 +390,12 @@ pub(super) fn write_taskgen_outputs(
         ),
     ]);
 
-    write_json(&out_dir.join("campaign_config.json"), &bundle.config)?;
-    write_json(&out_dir.join("fixture_vault.json"), &bundle.fixture)?;
-    write_json(&out_dir.join("tasks_full.json"), &bundle.full_tasks)?;
-    write_json(&out_dir.join("tasks_smoke.json"), &bundle.smoke_tasks)?;
-    write_json(&out_dir.join("holdout_freeze.json"), &bundle.holdout)?;
-    write_json(
+    write_json_atomic(&out_dir.join("campaign_config.json"), &bundle.config)?;
+    write_json_atomic(&out_dir.join("fixture_vault.json"), &bundle.fixture)?;
+    write_json_atomic(&out_dir.join("tasks_full.json"), &bundle.full_tasks)?;
+    write_json_atomic(&out_dir.join("tasks_smoke.json"), &bundle.smoke_tasks)?;
+    write_json_atomic(&out_dir.join("holdout_freeze.json"), &bundle.holdout)?;
+    write_json_atomic(
         &out_dir.join("owner_spotcheck_sample.json"),
         &bundle.spotcheck,
     )?;
@@ -423,31 +424,39 @@ pub(super) fn write_taskgen_outputs(
             .collect(),
         output_files: files,
     };
-    write_json(&out_dir.join("taskgen_report.json"), &report)?;
+    write_json_atomic(&out_dir.join("taskgen_report.json"), &report)?;
 
     Ok(report)
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    let file = File::create(path).map_err(|error| format!("create {}: {error}", path.display()))?;
-    serde_json::to_writer_pretty(file, value)
-        .map_err(|error| format!("write {}: {error}", path.display()))
-}
-
+/// Writes `value` at `path` whole or not at all: into a temp file beside it,
+/// synced, renamed into place, and the directory synced, so a crash leaves
+/// either the old file or the new one under `path`, never a torn one.
 pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("create {}: {error}", parent.display()))?;
-    }
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    fs::create_dir_all(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|error| format!("serialize {}: {error}", path.display()))?;
     let tmp_path = path.with_extension("json.tmp");
-    write_json(&tmp_path, value)?;
+    let mut file = File::create(&tmp_path)
+        .map_err(|error| format!("create {}: {error}", tmp_path.display()))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("write {}: {error}", tmp_path.display()))?;
+    drop(file);
     fs::rename(&tmp_path, path).map_err(|error| {
         format!(
             "rename {} to {}: {error}",
             tmp_path.display(),
             path.display()
         )
-    })
+    })?;
+    File::open(dir)
+        .and_then(|handle| handle.sync_all())
+        .map_err(|error| format!("sync {}: {error}", dir.display()))
 }
 
 pub(super) fn read_json<T>(path: &Path) -> Result<T, String>

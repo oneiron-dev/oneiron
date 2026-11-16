@@ -8,9 +8,10 @@ use std::collections::{HashMap, HashSet};
 
 use heed::RoTxn;
 
+use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
-use crate::disclosure::{DisclosureContext, DisclosureMode};
+use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -35,6 +36,7 @@ fn context_pack_validation_error(id: EntityId, reason: &'static str) -> Error {
 /// OF-365 candidate-sweep admission (enforcement point 1). Fail-closed: a
 /// scored id whose payload row is missing is not admitted.
 pub(super) fn disclosure_admits_candidate(
+    vault: &Vault,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     ctx: &DisclosureContext,
@@ -49,7 +51,7 @@ pub(super) fn disclosure_admits_candidate(
     };
     super::retained_copies::clamp_admits(
         ctx,
-        store.base(),
+        vault,
         rtxn,
         id,
         header.entity_type,
@@ -62,6 +64,7 @@ pub(super) fn disclosure_admits_candidate(
 /// in a serialized edge list — even the bare target id names the room.
 /// `None` clamp admits everything (legacy behavior).
 pub(crate) fn disclosure_admits_target(
+    vault: &Vault,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     clamp: Option<&DisclosureContext>,
@@ -70,7 +73,7 @@ pub(crate) fn disclosure_admits_target(
     let Some(ctx) = clamp else {
         return Ok(true);
     };
-    if ctx.mode() == DisclosureMode::OwnerAlone {
+    if !ctx.clamps() {
         return Ok(true);
     }
     let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
@@ -79,7 +82,7 @@ pub(crate) fn disclosure_admits_target(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    super::retained_copies::clamp_admits(ctx, store.base(), rtxn, id, header.entity_type, None)
+    super::retained_copies::clamp_admits(ctx, vault, rtxn, id, header.entity_type, None)
 }
 
 /// OF-365 enforcement point 4 — the final fail-closed sweep: re-checks every
@@ -88,19 +91,20 @@ pub(crate) fn disclosure_admits_target(
 /// serving a leaky pack. The red-team suite asserts this cannot fire
 /// spuriously.
 pub(super) fn validate_pack_disclosure(
+    vault: &Vault,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     ctx: &DisclosureContext,
     results: &[ContextEntity],
     neighbors: &[ContextEntity],
 ) -> Result<()> {
-    if ctx.mode() == DisclosureMode::OwnerAlone {
+    if !ctx.clamps() {
         return Ok(());
     }
     for entity in results.iter().chain(neighbors.iter()) {
         if !super::retained_copies::clamp_admits(
             ctx,
-            store.base(),
+            vault,
             rtxn,
             &entity.id,
             entity.entity_type,
@@ -114,7 +118,7 @@ pub(super) fn validate_pack_disclosure(
             continue;
         };
         for edge in edges {
-            if !disclosure_admits_target(store, rtxn, Some(ctx), &edge.target)? {
+            if !disclosure_admits_target(vault, store, rtxn, Some(ctx), &edge.target)? {
                 return Err(Error::Gate(GateError::DisclosureClampViolation(
                     "non-admitted edge target survived pack assembly",
                 )));

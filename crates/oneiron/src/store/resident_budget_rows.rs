@@ -10,12 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// Which allocation a lease draws on: its id and generation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AllocationRef {
-    pub id: String,
-    pub generation: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::resident_budget_rows::AllocationRef;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::store::resident_budget_rows::ResidentShare;
