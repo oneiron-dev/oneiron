@@ -571,6 +571,94 @@ fn equal_arms_are_no_comparison() -> TestResult {
     Ok(())
 }
 
+/// A seed proves a skill repair: its two arms serve one model at one
+/// revision and pin two different skill digests, so the gate never confirms
+/// a case where only the model, its revision or the run differed (Muse
+/// Wonder review of #8716, F1).
+#[test]
+fn a_seed_compares_two_skills_on_one_model() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let one_skill_two_revisions = EvalRepairSeedRequest {
+        source: source.clone(),
+        old: arm("one-skill"),
+        candidate: EvalArmPin {
+            revision: "r2".to_owned(),
+            ..arm("one-skill")
+        },
+    };
+    let one_skill_two_models = EvalRepairSeedRequest {
+        candidate: EvalArmPin {
+            model: "other-model".to_owned(),
+            ..arm("one-skill")
+        },
+        ..one_skill_two_revisions.clone()
+    };
+    let one_skill_two_spellings = EvalRepairSeedRequest {
+        old: arm("abcdef0123"),
+        candidate: arm("ABCDEF0123"),
+        ..one_skill_two_revisions.clone()
+    };
+    let two_skills_two_revisions = EvalRepairSeedRequest {
+        candidate: EvalArmPin {
+            revision: "r2".to_owned(),
+            ..arm("candidate-skill-digest")
+        },
+        ..request(&source)
+    };
+    for (request, case) in [
+        (&one_skill_two_revisions, "one skill on two revisions"),
+        (&one_skill_two_models, "one skill on two models"),
+        (
+            &one_skill_two_spellings,
+            "one skill digest in two spellings",
+        ),
+        (&two_skills_two_revisions, "two skills on two revisions"),
+    ] {
+        let refused = fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .propose_eval_repair_seed(request, PROPOSED_AT);
+        assert!(refused.is_err(), "{case} is no skill repair: {refused:?}");
+    }
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    Ok(())
+}
+
+/// The host reads a seed back under its source as the caller spells it: the
+/// claim ref is an entity id in any letter case, as the capture's reader
+/// takes it (Muse Wonder review of #8716, F2).
+#[test]
+fn a_seed_reads_back_under_any_spelling_of_its_claim_ref() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let upper = EvalRepairTaskSource {
+        claim_ref: source.claim_ref.to_ascii_uppercase(),
+        ..source.clone()
+    };
+    assert_ne!(
+        upper.claim_ref, source.claim_ref,
+        "the fixture's ref has hex letters"
+    );
+    assert_eq!(
+        fixture.vault.eval_repair_seed(&upper)?,
+        Some(proposed.clone()),
+        "the seed reads back under an upper-case claim ref"
+    );
+    let replayed = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .propose_eval_repair_seed(&request(&upper), PROPOSED_AT)?;
+    assert_eq!(
+        replayed.seed,
+        Some(proposed),
+        "a replay finds the same seed"
+    );
+    Ok(())
+}
+
 #[test]
 fn an_erased_capture_takes_its_seed() -> TestResult {
     let fixture = fixture()?;
