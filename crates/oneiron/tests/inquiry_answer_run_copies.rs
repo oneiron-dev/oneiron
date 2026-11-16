@@ -28,6 +28,11 @@
 //!   context (FIX 6351) keeps no `vault.inquire` response the guest read
 //!   through a view, as it keeps no `reveal.wait` response; any other verb's
 //!   view is kept. Red on main: the context keeps the view.
+//! - `a_vault_inquire_action_is_not_offered` (review of #9225): an action
+//!   answers its caller from its replay record, which keeps the withheld
+//!   form, so the app's action table offers no `vault.inquire`; another read
+//!   row is still offered. Red on main: the table offers it, and its record
+//!   kept the statements.
 //!
 //! The doors build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_answer_run_copies`.
@@ -40,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_run::actions::ActionRegistry;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, CodeRunDeterminism, CodeRunReplayRecord,
     GatedActorWrite, RunCall, RunSpeechDestination, SelfAgentVerbCall, SelfCall, SelfEffect,
@@ -388,5 +394,20 @@ fn a_step_replay_context_keeps_no_inquiry_answer_view() {
     assert!(
         step_context_keeps_response(&call(AgentVerb::VaultRecall), Some(&view)),
         "another verb's view is kept as before"
+    );
+}
+
+#[test]
+fn a_vault_inquire_action_is_not_offered() {
+    let registry = ActionRegistry::app().expect("the app's action table");
+    assert!(
+        registry.resolve("vault.inquire").is_err(),
+        "no action answers vault.inquire from a record that withholds its statements"
+    );
+    assert_eq!(registry.row_verb("vault.inquire"), None);
+    assert_eq!(
+        registry.row_verb("vault.recall"),
+        Some("vault.recall"),
+        "another read row is still offered"
     );
 }

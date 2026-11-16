@@ -191,6 +191,10 @@ struct RegisteredVerb {
     definition: ActionVerbDefinition,
     build: ActionBuild,
 }
+/// The verb-table rows whose answer a run's record keeps only in part, so
+/// no action offers them (INQUIRE-SHAPE Q6 = A).
+const WITHHELD_ANSWER_ROWS: [AgentVerb; 1] = [AgentVerb::VaultInquire];
+
 #[derive(Default)]
 pub struct ActionRegistry {
     verbs: BTreeMap<String, RegisteredVerb>,
@@ -250,6 +254,10 @@ impl ActionRegistry {
     /// run row registered below. A custody row whose input carries a
     /// secret's value or its sealed input (`CUSTODY_VALUE_ROWS`, FIX 4993)
     /// is not offered: an action keeps its whole input in its replay record.
+    /// Nor is `vault.inquire` (`WITHHELD_ANSWER_ROWS`, INQUIRE-SHAPE Q6 = A):
+    /// a run's record keeps a task-kept answer without its statements, and an
+    /// action answers its caller from that record, so its caller would read
+    /// no statement. Its facade door keeps no reply (`UNKEPT_REPLY_VERBS`).
     pub fn register_sdk_verbs(&mut self) -> Result<()> {
         for verb in AgentVerb::ALL.iter().copied().filter(|verb| {
             verb.is_facade()
@@ -257,6 +265,7 @@ impl ActionRegistry {
                 && !RunVerb::from_name(verb.as_str())
                     .is_some_and(|run| RunVerb::MEMORY_RUN.contains(&run))
                 && !CUSTODY_VALUE_ROWS.contains(&verb.as_str())
+                && !WITHHELD_ANSWER_ROWS.contains(verb)
         }) {
             let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
                 continue;
