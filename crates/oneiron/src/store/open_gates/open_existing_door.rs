@@ -453,9 +453,6 @@ impl Store {
             policy_version: None,
             docs_url: None,
         }];
-        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
-            self.clock.now_recorded_at(),
-        ));
         self.record_gate_receipt_in_txn(&mut wtxn, receipt)?;
         Ok(wtxn.commit()?)
     }

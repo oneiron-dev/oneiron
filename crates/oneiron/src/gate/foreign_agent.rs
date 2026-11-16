@@ -14,7 +14,6 @@ use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
-use oneiron_contracts::RecordedSeconds;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -237,9 +236,6 @@ impl Vault {
                 PolicyBasis::frontier(frontier),
             );
             receipt.grant_ref = Some(format!("foreign:{}", foreign.to_hex()));
-            // Wall-clock seconds, as before the draft (FIX
-            // GATE-ROW-WALL-CLOCK-CREATED-AT).
-            receipt.decided_at = Some(RecordedSeconds::from_secs(crate::unix_seconds_now()));
             self.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(allow)
         })

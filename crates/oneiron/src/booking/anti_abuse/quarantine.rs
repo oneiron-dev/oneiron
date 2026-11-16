@@ -23,7 +23,6 @@ use crate::store::{
 };
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
-use oneiron_contracts::RecordedSeconds;
 
 // -------------------------------------------------------------------------
 // Quarantine (pending-review record through the gate's own ledger rows)
@@ -186,7 +185,6 @@ fn quarantine_borderline_submission_in_txn(
     );
     decision.about = Some(claim_ref);
     decision.id = Some(decision_id);
-    decision.decided_at = Some(RecordedSeconds::from_secs(created_at));
     let pending = PendingGateConsentRecord {
         version: PENDING_GATE_CONSENT_VERSION,
         claim_id,

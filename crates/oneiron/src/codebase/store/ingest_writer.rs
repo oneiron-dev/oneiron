@@ -521,9 +521,6 @@ impl Vault {
             PolicyBasis::NOT_READ,
         );
         receipt.about = Some(artifact);
-        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
-            self.store.clock.now_recorded_at(),
-        ));
         let record = self.store.record_gate_receipt_in_txn(txn, receipt)?;
         Ok(format!("gate:{}", record.decision_id.to_hex()))
     }

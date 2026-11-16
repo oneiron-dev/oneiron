@@ -19,7 +19,6 @@ use crate::store::{
     PolicyBasis, ReceiptActor,
 };
 use crate::{EntityId, Vault, WriteActor};
-use oneiron_contracts::RecordedSeconds;
 
 use super::authority::Standing;
 use super::types::{
@@ -164,7 +163,7 @@ pub(super) fn admit_in_txn(
         WAKE.put(vault, txn, &wake.key(), &wake)?;
         return Ok(WakeAdmission::Held);
     }
-    let receipt_id = gate_decision_in_txn(vault, txn, &wake, &admission, refused, now)?;
+    let receipt_id = gate_decision_in_txn(vault, txn, &wake, &admission, refused)?;
     let mut record = TurnProgramAdmissionRecord {
         admission,
         wake: wake.clone(),
@@ -332,7 +331,6 @@ fn gate_decision_in_txn(
     wake: &TurnProgramWake,
     admission: &[u8; 32],
     refused: Option<&str>,
-    now: u64,
 ) -> Result<[u8; 16]> {
     let authority = &wake.authority;
     let (outcome, reason) = match refused {
@@ -371,7 +369,6 @@ fn gate_decision_in_txn(
             Some(_) => GateDecisionReadContext::about(None, Vec::new()),
         },
     );
-    decision.decided_at = Some(RecordedSeconds::from_secs(now));
     let decision = vault.store.record_gate_receipt_in_txn(txn, decision)?;
     Ok(decision.decision_id.as_bytes())
 }

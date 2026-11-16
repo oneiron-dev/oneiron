@@ -121,7 +121,6 @@ impl AgentDispatcher<'_> {
         act: &BoardAct,
         proposal: &ContextWidenProposal,
         outcome: GateReceiptOutcome,
-        at: u64,
     ) -> Result<()> {
         let mut receipt = GateReceipt::new(
             outcome,
@@ -131,7 +130,6 @@ impl AgentDispatcher<'_> {
             proposal.consent.effect_digest.as_bytes().to_vec(),
             PolicyBasis::NOT_READ,
         );
-        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(at));
         self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
         Ok(())
     }
