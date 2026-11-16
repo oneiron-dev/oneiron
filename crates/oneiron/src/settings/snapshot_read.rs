@@ -124,7 +124,15 @@ impl Vault {
     /// Storage errors, and a stored row that does not decode.
     pub fn snapshot_read_settings(&self) -> Result<SnapshotReadSettings> {
         let txn = self.store.env.read_txn()?;
-        Ok(SETTINGS.get(&self.store, &txn, &())?.unwrap_or_default())
+        self.snapshot_read_settings_in_txn(&txn)
+    }
+
+    /// Reads the effective snapshot bounds in the caller's existing transaction.
+    pub(crate) fn snapshot_read_settings_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<SnapshotReadSettings> {
+        Ok(SETTINGS.get(&self.store, txn, &())?.unwrap_or_default())
     }
 
     /// [`Self::snapshot_read_settings`] under the owner's proof.
@@ -171,8 +179,10 @@ impl Vault {
     /// own expiry is not a bound of this row and does not move.
     ///
     /// The next page of any handle is held to the new page and handle
-    /// bounds. A handle that is already open keeps the lifetime it was
-    /// opened with, and stays open when fewer may now be open at once.
+    /// bounds, and so is a page being read when they change: the write that
+    /// counts its rows judges it against them. A handle that is already open
+    /// keeps the lifetime it was opened with, and stays open when fewer may
+    /// now be open at once.
     /// Returns the receipt.
     ///
     /// # Errors
