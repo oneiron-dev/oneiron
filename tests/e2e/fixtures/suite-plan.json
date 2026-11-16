@@ -60,6 +60,18 @@
         "file": "artifacts.test.ts",
         "ruling": "Engine ANSWER 2026-11-10 11:52 JST (MUSE-LOOP-REGISTRATION; Muse Wonder loop cases)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "FEDERATION-09",
+          "FEDERATION-10",
+          "FEDERATION-11",
+          "FEDERATION-12",
+          "FEDERATION-13",
+          "FEDERATION-14"
+        ],
+        "file": "federation.test.ts",
+        "ruling": "Engine TASK 2026-11-15 08:32 JST (RULING INQUIRE-NEXT-ORDER = A; ASK-YOUR-VAULT = A, 11 Nov 13:03)"
       }
     ]
   },
@@ -1966,7 +1978,7 @@
       "file": "federation.test.ts",
       "area": "Sync and federation",
       "slots": 2,
-      "estimatedSeconds": 65,
+      "estimatedSeconds": 220,
       "tests": [
         {
           "id": "FEDERATION-01",
@@ -2088,6 +2100,67 @@
             "/registry/oneiron/#OF-168",
             "/registry/oneiron/#OF-275",
             "/registry/oneiron/#OF-292"
+          ]
+        },
+        {
+          "id": "FEDERATION-09",
+          "name": "A company agent receives only the member's words for its task, while only the Owner may open the route",
+          "estimatedSeconds": 24,
+          "rows": [],
+          "source": [
+            "/oneiron/federation/#inquiry",
+            "/oneiron/federation/#inquiry-keep",
+            "/oneiron/federation/#inquiry-checkin"
+          ]
+        },
+        {
+          "id": "FEDERATION-10",
+          "name": "A member answers Out Thursday without exposing a private health claim or indexing either text at the company",
+          "estimatedSeconds": 25,
+          "rows": [],
+          "source": [
+            "/oneiron/federation/#inquiry",
+            "/oneiron/federation/#inquiry-keep"
+          ]
+        },
+        {
+          "id": "FEDERATION-11",
+          "name": "Ending a task stops its answer, while choosing copy recalls one attributed member statement in the company's foreign world",
+          "estimatedSeconds": 29,
+          "rows": [],
+          "source": [
+            "/oneiron/federation/#inquiry-keep",
+            "/oneiron/federation/#inquiry-copy"
+          ]
+        },
+        {
+          "id": "FEDERATION-12",
+          "name": "A member's never setting answers the next task inquiry with no answer and no pending item",
+          "estimatedSeconds": 24,
+          "rows": [],
+          "source": [
+            "/oneiron/federation/#inquiry",
+            "/oneiron/federation/#inquiry-checkin"
+          ]
+        },
+        {
+          "id": "FEDERATION-13",
+          "name": "Revoking an inquiry edge stops new questions without removing the member's opened words",
+          "estimatedSeconds": 24,
+          "rows": [],
+          "source": [
+            "/oneiron/federation/#inquiry",
+            "/oneiron/federation/#inquiry-keep"
+          ]
+        },
+        {
+          "id": "FEDERATION-14",
+          "name": "A company can reach its connected member but cannot ask a seated member with no inquiry edge or route",
+          "estimatedSeconds": 29,
+          "rows": [],
+          "source": [
+            "/oneiron/federation/#inquiry",
+            "/oneiron/federation/#inquiry-checkin"
           ]
         }
       ]
