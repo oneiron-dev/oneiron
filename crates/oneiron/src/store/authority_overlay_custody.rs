@@ -817,6 +817,69 @@ mod carrier_tests {
         }
     }
 
+    /// An erase that reached this install as refs alone, while it held no
+    /// key of the subject, refuses a new seal of the subject and mints no
+    /// key of it: while the retirement is staged, and after custody's
+    /// finisher carried it out (blind review of #8960, census L5-22, P1).
+    #[test]
+    fn a_subject_erased_here_by_refs_alone_refuses_a_new_seal_and_mints_no_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        let subject = EntityId::now();
+        let delivered_ref = [0x7D; 32];
+        vault
+            .with_write_txn_grouped(|txn| {
+                super::retire_subject_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &subject,
+                    &[],
+                    &[delivered_ref],
+                )
+            })
+            .unwrap();
+        let only_the_delivered_ref = Some(BTreeSet::from([delivered_ref]));
+
+        let staged = vault.with_write_txn_grouped(|txn| {
+            seal(&vault.store, txn, &subject, &[0x5A; 32], b"overlay record")
+        });
+        assert!(
+            staged.is_err(),
+            "a subject erased here by refs alone must refuse a new seal while its retirement is staged"
+        );
+        let inventory = overlay_inventory(&vault.store).unwrap();
+        assert_eq!(
+            inventory
+                .erased
+                .get(&subject)
+                .map(|erased| erased.refs.clone()),
+            only_the_delivered_ref,
+            "the refused seal mints no key of the erased subject"
+        );
+
+        vault.store.finish_erasable_retirements().unwrap();
+        let finished = vault.with_write_txn_grouped(|txn| {
+            seal(&vault.store, txn, &subject, &[0x5B; 32], b"overlay record")
+        });
+        assert!(
+            finished.is_err(),
+            "a subject erased here by refs alone must refuse a new seal after custody's finisher"
+        );
+        let inventory = overlay_inventory(&vault.store).unwrap();
+        assert_eq!(
+            inventory
+                .erased
+                .get(&subject)
+                .map(|erased| erased.refs.clone()),
+            only_the_delivered_ref,
+            "no key of the erased subject is minted after the finisher either"
+        );
+        assert!(
+            inventory.ready.iter().all(|(held, _)| *held != subject),
+            "no key of the erased subject is ready here"
+        );
+    }
+
     /// A seal to the right session opens for its own receiver and binding,
     /// naming its subject and secret.
     #[test]
