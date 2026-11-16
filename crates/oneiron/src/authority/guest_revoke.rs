@@ -234,7 +234,7 @@ impl Vault {
         // the absence of an end alone (review #8855 P1-1).
         if grant.member_ref.to_hex() != claims.holder_ref
             || crate::federation::grant_end_owed_in_txn(&self.store, txn, grant_ref)
-            || !self.grant_row_stands_in_txn(txn, grant_ref, &body, now)?
+            || !self.grant_row_stands_at_in_txn(txn, grant_ref, &body, now)?
             || !grant.confers_at(now)
             || live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.live_type()
                 != Some(crate::registry::ENTITY_TYPE_PERSON)

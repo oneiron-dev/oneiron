@@ -547,7 +547,7 @@ impl Vault {
     /// # Errors
     ///
     /// A store or authority-fold read failure.
-    pub(crate) fn grant_row_stands_in_txn(
+    pub(crate) fn grant_row_stands_at_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
