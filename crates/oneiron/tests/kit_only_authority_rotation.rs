@@ -468,6 +468,10 @@ fn switching_back_to_standard_changes_no_roster_and_released_1_serves() {
         .expect("the switch back");
     assert_eq!(back.previous, RecoveryPreset::NobodyButMe);
     assert_eq!(back.preset, RecoveryPreset::Standard);
+    assert!(
+        back.box_recovery_needs_new_kit,
+        "the answer says sign-in and the PIN restore nothing until a new kit"
+    );
     assert!(fixture.live(&gen1), "generation 1 stays live");
     assert!(!fixture.live(&gen0), "generation 0 stays revoked");
 
@@ -1091,6 +1095,10 @@ fn a_standard_call_while_standard_writes_no_marker() {
         )
         .expect("setting Standard while Standard");
     assert!(!change.box_release_pending);
+    assert!(
+        !change.box_recovery_needs_new_kit,
+        "staying on Standard leaves the box's way back as it was"
+    );
     assert_eq!(*hold.calls.borrow(), vec![false]);
     assert_eq!(*hold.seen.borrow(), vec![None]);
     assert_eq!(
