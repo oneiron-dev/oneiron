@@ -14,13 +14,10 @@ use super::{ClaimScope, Memory, MemoryError, MemoryResult};
 use crate::affect::Vad;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::consent::AuthenticatedOwner;
+use crate::gate::policy_manifest_doors::{NearestStateMetric, affect_lookup_in_txn};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::write_envelope::coping_outcome::CopingStrategy;
 use crate::{EntityId, Error};
-
-/// The outcome count below which the ledger answers generic priors: the
-/// starting value of the manifest's `affect_lookup.cold_start_min_outcomes`.
-pub(crate) const COPING_COLD_START_MIN_OUTCOMES: u64 = 3;
 
 /// The confidence every generic regulation prior carries: the Low band of
 /// the house ladder (below 0.4).
@@ -76,6 +73,8 @@ impl Memory<'_> {
         let current = self.coping_state_in_txn(txn, &lane, turn)?.ok_or_else(|| {
             MemoryError::bad_request("coping lookup state turn has no VAD annotation")
         })?;
+        // The owner's manifest row `affect_lookup`, or its starting values.
+        let policy = affect_lookup_in_txn(self.vault, txn)?;
         let mut outcomes = Vec::new();
         let mut observed_n = 0_u64;
         for AdmittedCopingHead {
@@ -91,15 +90,18 @@ impl Memory<'_> {
             observed_n = observed_n
                 .checked_add(outcome.observed_n)
                 .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
+            let distance = match policy.nearest_state_metric {
+                NearestStateMetric::PadDistance => pad_distance(current, state),
+            };
             outcomes.push(CopingLookupOutcome {
-                pad_distance: pad_distance(current, state),
+                pad_distance: distance,
                 state,
                 learned_at,
                 outcome,
             });
         }
         outcomes.sort_by(nearest_then_ranked);
-        let cold_start_min_outcomes = COPING_COLD_START_MIN_OUTCOMES;
+        let cold_start_min_outcomes = policy.cold_start_min_outcomes;
         let (basis, priors) = if observed_n < cold_start_min_outcomes {
             (CopingLookupBasis::GenericPriors, generic_priors())
         } else {
