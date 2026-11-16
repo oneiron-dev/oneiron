@@ -21,7 +21,7 @@ use crate::dreamer_consolidation::{OpenConflict, open_conflicts_in_txn, rmpv_to_
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::{EntityId, Result, Vault, WriteActor};
+use crate::{EntityId, Result, Vault};
 
 /// The cursor prefix naming the last conflict a page served, by its marker.
 const CONFLICTS_CURSOR_PREFIX: &str = "conflicts:";
@@ -156,7 +156,6 @@ fn bound_conflicts_page(
         binding.check_in_txn(&txn)?;
     }
     let reader = conflict_reader_in_txn(memory, &txn, owner.as_ref())?;
-    let actor = memory.write_actor();
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
         let mut page = ConflictsPage {
             conflicts: Vec::new(),
@@ -169,7 +168,7 @@ fn bound_conflicts_page(
         let mut bytes = 0u64;
         let mut shown = after;
         while let Some(conflict) = rows.next() {
-            if !conflict_served_in_txn(vault, txn, &read, &reader, actor, &conflict)? {
+            if !conflict_served_in_txn(vault, txn, &read, &reader, &conflict)? {
                 continue;
             }
             let mut observed = observed_conflict_in_txn(vault, txn, &conflict)?;
@@ -193,7 +192,7 @@ fn bound_conflicts_page(
             if page.conflicts.len() as u64 >= u64::from(limit) {
                 let mut later = false;
                 for later_conflict in rows.by_ref() {
-                    if conflict_served_in_txn(vault, txn, &read, &reader, actor, &later_conflict)? {
+                    if conflict_served_in_txn(vault, txn, &read, &reader, &later_conflict)? {
                         later = true;
                         break;
                     }
@@ -237,7 +236,6 @@ pub(crate) fn conflict_served_in_txn(
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
     reader: &ConflictReader,
-    actor: WriteActor,
     conflict: &OpenConflict,
 ) -> Result<bool> {
     let scope = match reader {
@@ -251,8 +249,10 @@ pub(crate) fn conflict_served_in_txn(
     }
     match reader {
         ConflictReader::Owner => Ok(true),
+        // The owner's hold names the Dreamer, and it leaves the subject's
+        // conflicts to the owner for every delegate.
         ConflictReader::Delegate(_) => Ok(!conflict.reverted
-            && crate::memory::conflict_review_held_in(vault, txn, actor, conflict.subject)?
+            && crate::memory::dreamer_conflict_review_held_in(vault, txn, conflict.subject)?
                 .is_none()),
     }
 }
