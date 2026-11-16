@@ -38,10 +38,10 @@ impl Vault {
     /// The plain text an outbound content ref sends, when this engine has a
     /// typed loader for it: an agent's connector reply body, a campaign
     /// program step's filed body, approved representation content, a
-    /// commitment reminder, a soft-confirm notice (scheduled by its bare
-    /// notice id, FIX 1469), or a trusted contact's fixed check-in line: the
-    /// default line for the bare notice ref, the line in `<lang>` for the
-    /// ref followed by `:<lang>`.
+    /// commitment reminder, an approved meeting follow-up, a soft-confirm
+    /// notice (scheduled by its bare notice id, FIX 1469), or a trusted
+    /// contact's fixed check-in line: the default line for the bare notice
+    /// ref, the line in `<lang>` for the ref followed by `:<lang>`.
     pub fn outbound_content_text(&self, content_ref: &str) -> Result<Option<String>> {
         if let Some(rest) = content_ref
             .strip_prefix(crate::counterparty_contact::TRUSTED_CONTACT_NOTICE_CONTENT_REF)
@@ -71,6 +71,9 @@ impl Vault {
                 .map_err(|_| Error::InvalidClaimBody("representation content is not text"));
         }
         if let Some(text) = self.commitment_reminder_text(content_ref)? {
+            return Ok(Some(text));
+        }
+        if let Some(text) = self.meeting_follow_up_text(content_ref)? {
             return Ok(Some(text));
         }
         let Ok(id) = EntityId::from_hex(content_ref) else {
