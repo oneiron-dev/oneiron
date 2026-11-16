@@ -355,6 +355,7 @@ impl SyncServer {
             ephemeral_store,
             message_scopes,
             broadcast_tx,
+            broadcast_sessions: Default::default(),
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
             reassert_manager,
