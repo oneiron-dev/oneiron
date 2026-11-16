@@ -166,11 +166,13 @@ impl ActorScopedVault {
             value: value_from_wire(&input.kind, &input.value).map_err(boundary_error)?,
             origin: origin_from_wire(&input.origin).map_err(boundary_error)?,
             valid_from: ts_to_engine(input.valid_from, "validFrom").map_err(boundary_error)?,
+            occurred_at: Some(
+                ts_to_engine(input.occurred_at, "occurredAt").map_err(boundary_error)?,
+            ),
         };
-        let occurred_at = ts_to_engine(input.occurred_at, "occurredAt").map_err(boundary_error)?;
         let receipt = self
             .facade()?
-            .set_expression_preference(&engine_input, occurred_at)
+            .set_expression_preference(&engine_input)
             .map_err(facade_error)?;
         Ok(NapiExpressionPreferenceReceipt {
             claim_short_id: receipt.claim_short_id,
@@ -200,7 +202,7 @@ impl ActorScopedVault {
         let at = ts_to_engine(at, "at").map_err(boundary_error)?;
         let resolved = self
             .facade()?
-            .expression_preferences(&subject_ref, at)
+            .expression_preferences(&subject_ref, Some(at))
             .map_err(facade_error)?;
         Ok(NapiExpressionPreferences {
             language: resolved.language,
