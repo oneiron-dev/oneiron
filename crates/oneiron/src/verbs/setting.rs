@@ -86,6 +86,10 @@ pub struct SettingSetRequest {
     /// The approved check-in this change waited on, 32 hex.
     #[serde(default)]
     pub check_in_ref: Option<String>,
+    /// A learned key's seed: its weight in runs, finite and above zero. Only a value row of a
+    /// learned key carries one, and it must.
+    #[serde(default)]
+    pub weight_runs: Option<f64>,
 }
 
 fn bad_request(message: String) -> MemoryError {
@@ -197,5 +201,6 @@ fn set_request(input: SettingSetRequest) -> MemoryResult<SetSetting> {
         expected_revision: input.expected_revision,
         why: input.why,
         check_in_ref,
+        weight_runs: input.weight_runs,
     })
 }

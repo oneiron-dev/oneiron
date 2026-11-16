@@ -31,24 +31,18 @@
 //!    provider-side secret-URL reset pauses loudly: paused state on the
 //!    attempt row and the feed cursor, one inbox exception, no retry storm,
 //!    no event cancellation.
-//!
-//! ## Declared deviations from the blueprint
-//!
-//! * SECRET-02's `inject_secret_at_door` / `materialize_secret_lease` are not
-//!   merged at this branch base, so [`CustodyDoorIcsFeedFetcher`] implements
-//!   the door inline: it resolves via `Vault::resolve_secret_ref` and reads
-//!   the value through the crate-private `get_secret_value_in_txn` door
-//!   (binding-enforced), consuming it inside the transport call so the URL
-//!   never escapes the fetch. The internals swap to the formal SECRET-02 API
-//!   with no signature change when it lands.
-//! * No HTTP client stack exists at HEAD and Cargo manifests are non-claims
-//!   for this lane, so the egress itself is a host-injected
-//!   [`IcsHttpTransport`]; the reqwest reservation lands with its owner.
+//! 8. The feed URL is a credential. [`CustodyDoorIcsFeedFetcher`] reads it at
+//!    the SECRET-02 door (`Vault::inject_secret_at_door`) and consumes it
+//!    inside the transport call, so the URL never escapes the fetch. The
+//!    engine has no HTTP stack: the egress is a host-injected
+//!    [`IcsHttpTransport`], and the server builds it on the shared network
+//!    boundary (ARCH-0046), whose hosted guard refuses private addresses.
 
 mod admission;
 mod calendar_source;
 pub mod door;
 pub(crate) use admission::ensure_ics_import_actor;
+mod consent;
 pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
     delete_connector_resource, preflight_connector_feed, sweep_connector_resource,

@@ -1,9 +1,9 @@
 //! The facets of one result read (OF-190 B++): `slice`, `search`, `query`
 //! and `chunks`, over a run's body or a shadow arm's, each answer checked
-//! for an unmarked secret before it leaves. A read can also answer which
+//! for an unmarked secret before it leaves. A read of a tainted body's
+//! redacted view says `redacted` (L6-31). A read can also answer which
 //! ranges of the body its reply shows (FIX 7735).
 
-use super::run_body::RunBody;
 use super::{
     ReadBounds, Reply, ResultBody, ResultFacet, ResultRead, chunks, occurrence_ref, query, search,
     slice, unmarked_secret,
@@ -43,23 +43,17 @@ impl ResultRead {
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
-        let body = RunBody::of(self, storage);
-        let search_max_context = storage.result_search_max_context()?;
-        self.read_of(
-            &body,
-            storage.limit_watch(),
-            search_max_context,
-            facet,
-            input,
-            spill,
-        )
+        Ok(self.read_delivered(storage, facet, input, spill)?.0)
     }
 
     /// [`Self::read`] over `body`, under the `[limits]` rows of `watch` and
-    /// the owner's search context bound `search_max_context`.
+    /// the owner's search context bound `search_max_context`. `redacted`:
+    /// `body` is the occurrence's redacted view, so a tainted occurrence
+    /// shows it.
     pub(super) fn read_of(
         &self,
         body: &dyn ResultBody,
+        redacted: bool,
         watch: &LimitWatch,
         search_max_context: usize,
         facet: ResultFacet,
@@ -67,7 +61,15 @@ impl ResultRead {
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
         Ok(self
-            .read_delivered_of(body, watch, search_max_context, facet, input, spill)?
+            .read_delivered_of(
+                body,
+                redacted,
+                watch,
+                search_max_context,
+                facet,
+                input,
+                spill,
+            )?
             .0)
     }
 
@@ -80,31 +82,35 @@ impl ResultRead {
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<(Reply, DeliveredRanges)> {
-        let body = RunBody::of(self, storage);
         let search_max_context = storage.result_search_max_context()?;
-        self.read_delivered_of(
-            &body,
-            storage.limit_watch(),
-            search_max_context,
-            facet,
-            input,
-            spill,
-        )
+        self.with_shown_body(storage, |body, redacted| {
+            self.read_delivered_of(
+                body,
+                redacted,
+                storage.limit_watch(),
+                search_max_context,
+                facet,
+                input,
+                spill,
+            )
+        })
     }
 
     /// [`Self::read_of`], with the ranges of `body` its reply shows (FIX
     /// 7735): a withheld body, and a reply the unmarked-secret check
-    /// withholds, show none.
+    /// withholds, show none. The ranges of a redacted view are those it
+    /// shows, its blanked bytes included.
     fn read_delivered_of(
         &self,
         body: &dyn ResultBody,
+        redacted: bool,
         watch: &LimitWatch,
         search_max_context: usize,
         facet: ResultFacet,
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<(Reply, DeliveredRanges)> {
-        if self.state.is_tainted() {
+        if self.state.is_tainted() && !redacted {
             return Ok((Reply::Output(self.withheld()), DeliveredRanges::default()));
         }
         let bounds = ReadBounds {
@@ -141,13 +147,20 @@ impl ResultRead {
                 None,
             ),
         };
-        // A spilled selection is a new body, which its own sink's scan marks.
+        // A spilled selection is a new body, which its own sink's scan marks
+        // and which inherits its parent's marks, so a selection of a view
+        // reads redacted too.
         Ok(match reply {
-            Reply::Output(answer) => match unmarked_secret(&answer) {
-                None => (
-                    Reply::Output(answer),
-                    DeliveredRanges(delivered.into_iter().collect()),
-                ),
+            Reply::Output(mut answer) => match unmarked_secret(&answer) {
+                None => {
+                    if redacted && let Some(fields) = answer.as_object_mut() {
+                        fields.insert("redacted".to_owned(), Value::Bool(true));
+                    }
+                    (
+                        Reply::Output(answer),
+                        DeliveredRanges(delivered.into_iter().collect()),
+                    )
+                }
                 Some(reason) => (
                     Reply::Output(self.withheld_as(ArtifactTaintState::TaintedLive, Some(reason))),
                     DeliveredRanges::default(),
