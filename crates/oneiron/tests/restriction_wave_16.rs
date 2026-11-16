@@ -2,7 +2,8 @@
 //!
 //! In plain sentences: a commitment longer than 8 KiB writes once the owner raises
 //! `commitment.content.max_text_bytes`, is refused at the default, and still reads after the
-//! owner lowers the cap again. A reminder quotes the promise up to
+//! owner lowers the cap again. With the key unset, the generic claim commit, an import batch and a
+//! docs deep review each refuse a 9,000-byte promise, as main does. A reminder quotes the promise up to
 //! `commitment.reminder.max_quoted_chars`, 400 chars at the default. Reminder wording over 4 KiB
 //! files once the owner raises `commitment.reminder.max_wording_bytes`, and is refused at the
 //! default. A cursor idle 8 days keeps its place under a 30-day `feeds.retention.idle_secs`, and
@@ -17,6 +18,7 @@ use oneiron::claim::ScopedReadActorKey;
 use oneiron::commitment::{
     CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
     CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
+    PREDICATE_COMMITMENT_RECORD, encode_commitment_value,
 };
 use oneiron::commitment_wake::COMMITMENT_REMINDER_CONTENT_PREFIX;
 use oneiron::consent::AuthenticatedOwner;
@@ -25,9 +27,15 @@ use oneiron::feeds::{
     FEED_RETENTION_SECS, FeedGap, FeedOp, FeedPage, FeedRead, FeedReadRequest, FeedResyncFrom,
     FeedSelector, FeedSource, FeedStart, FeedSubscribeRequest,
 };
+use oneiron::ingest::{
+    DOCS_EXPORT_SOURCE_ID, DocsDeepClaim, DocsDeepExtractor, DocsDeepTrigger, DocsExport,
+    DocsImportCeiling, DocsPage, DocsSegment, ImportedClaimBatch, ImportedClaimBatchEntry,
+};
+use oneiron::memory::ClaimInput;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
 use oneiron::store::GateDecisionId;
+use oneiron::workspace_roster::{ProjectRecord, ProjectRole};
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
     WriteEnvelope, WriteProvenance,
@@ -44,6 +52,14 @@ const WORDING_KEY: &str = "commitment.reminder.max_wording_bytes";
 const RETENTION_KEY: &str = "feeds.retention.idle_secs";
 const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
 const EIGHT_DAYS: u64 = 8 * 24 * 60 * 60;
+/// Past the default 8 KiB cap and within the 64 KiB ceiling every decode admits.
+const PAST_DEFAULT_TEXT_BYTES: usize = 9000;
+/// The refusal of commitment text past the cap in force, at every door and in the codec.
+const TEXT_REFUSAL: &str = "commitment content text must be non-empty and bounded";
+/// The short text a value is encoded with before its long text is put in.
+const ENCODED_TEXT_MARKER: &str = "restriction wave 16 encoded text";
+/// The source sentence the docs deep extractor quotes.
+const DOCS_QUOTE: &str = "Gravity describes attraction";
 const OBLIGOR: u8 = 0x71;
 const BENEFICIARY: u8 = 0x72;
 
@@ -213,6 +229,105 @@ fn instant(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
+/// A `commitment.record` value whose obligor is `obligor` and whose promise text is
+/// `text_bytes` bytes, as JSON, for a generic door. The record is encoded with a short text and
+/// the long text is put in after, so the value builds under any encoder cap.
+fn commitment_value_json(obligor: EntityId, text_bytes: usize) -> serde_json::Value {
+    let record = CommitmentRecord::new(
+        CommitmentObligor::new(CommitmentObligorKind::Owner, obligor),
+        party(BENEFICIARY),
+        CommitmentContent::new(ENCODED_TEXT_MARKER.to_owned(), None).expect("short text"),
+        Value::Map(vec![
+            (Value::from("kind"), Value::from("once")),
+            (Value::from("due"), Value::from(10_000_u64)),
+        ]),
+        CommitmentStrength::Commitment,
+        CommitmentStatus::Open,
+        CommitmentBirthProvenance::new(CommitmentBirthKind::RunTreeNode, "run:restriction-wave-16")
+            .expect("birth provenance"),
+    )
+    .expect("commitment record");
+    let mut value = json_of(&encode_commitment_value(&record).expect("encoded commitment"));
+    assert!(
+        replace_text(&mut value, &"x".repeat(text_bytes)),
+        "the encoded value carries its text"
+    );
+    value
+}
+
+/// The JSON form of an encoded commitment value: text-keyed maps, text, integers and nil.
+fn json_of(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Nil => serde_json::Value::Null,
+        Value::Boolean(flag) => json!(flag),
+        Value::Integer(number) => number
+            .as_u64()
+            .map_or_else(|| json!(number.as_i64()), |unsigned| json!(unsigned)),
+        Value::String(text) => json!(text.as_str().expect("utf-8 text")),
+        Value::Array(items) => serde_json::Value::Array(items.iter().map(json_of).collect()),
+        Value::Map(entries) => serde_json::Value::Object(
+            entries
+                .iter()
+                .map(|(key, item)| (key.as_str().expect("text key").to_owned(), json_of(item)))
+                .collect(),
+        ),
+        other => panic!("an encoded commitment holds no {other:?}"),
+    }
+}
+
+/// Puts `text` where the encoded marker text stands. True when it stood somewhere.
+fn replace_text(value: &mut serde_json::Value, text: &str) -> bool {
+    match value {
+        serde_json::Value::String(current) if current == ENCODED_TEXT_MARKER => {
+            *current = text.to_owned();
+            true
+        }
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .fold(false, |found, item| replace_text(item, text) || found),
+        serde_json::Value::Object(entries) => entries
+            .values_mut()
+            .fold(false, |found, item| replace_text(item, text) || found),
+        _ => false,
+    }
+}
+
+/// Asserts `refused` is the text-cap refusal, from whichever check holds it.
+fn assert_text_refusal<T: std::fmt::Debug>(door: &str, refused: Result<T, String>) {
+    match refused {
+        Ok(admitted) => panic!(
+            "{door}: a {PAST_DEFAULT_TEXT_BYTES}-byte promise is refused at the default cap, \
+             not admitted as {admitted:?}"
+        ),
+        Err(error) => assert!(
+            error.contains(TEXT_REFUSAL),
+            "{door}: the refusal is the text cap's, not {error}"
+        ),
+    }
+}
+
+/// A docs extractor that finds one promise on the sentence it quotes.
+struct PromiseExtractor {
+    value: serde_json::Value,
+}
+
+impl DocsDeepExtractor for PromiseExtractor {
+    fn binding(&self) -> &str {
+        "fixture.restriction-wave-16.promise"
+    }
+
+    fn extract(&self, segment: &DocsSegment) -> oneiron::Result<Vec<DocsDeepClaim>> {
+        if !segment.text.contains(DOCS_QUOTE) {
+            return Ok(Vec::new());
+        }
+        Ok(vec![DocsDeepClaim {
+            predicate: PREDICATE_COMMITMENT_RECORD.to_owned(),
+            value: self.value.clone(),
+            quote: DOCS_QUOTE.to_owned(),
+        }])
+    }
+}
+
 /// A reminder content ref for `instance`, due at instant 1,000.
 fn reminder_ref(instance: &EntityId) -> String {
     format!(
@@ -330,6 +445,133 @@ fn a_long_commitment_still_reads_after_the_owner_lowers_the_cap() {
         stored.content.text.len(),
         9000,
         "the 9000-byte text still reads whole after the cap is lowered"
+    );
+}
+
+#[test]
+fn with_the_text_cap_unset_the_generic_claim_commit_refuses_a_9000_byte_promise() {
+    let fx = Fixture::rooted();
+    fx.seed_commitment_world();
+    let id = EntityId::now();
+    let refused = fx
+        .vault
+        .memory(fx.owner, EdgeActorClass::Human)
+        .claim_upsert(&ClaimInput {
+            id: Some(id.to_hex()),
+            predicate: PREDICATE_COMMITMENT_RECORD.to_owned(),
+            subject_ref: fx.owner.to_hex(),
+            value: commitment_value_json(fx.owner, PAST_DEFAULT_TEXT_BYTES),
+            confidence: 0.9,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+            confidence_details: None,
+        })
+        .map_err(|error| format!("{error:?}"));
+    assert_text_refusal("the generic claim commit", refused);
+    assert!(
+        fx.vault.get_claim(&id).expect("claim read").is_none(),
+        "the refused promise is not stored"
+    );
+}
+
+#[test]
+fn with_the_text_cap_unset_an_import_batch_refuses_a_9000_byte_promise() {
+    let fx = Fixture::rooted();
+    fx.seed_commitment_world();
+    let id = EntityId::now();
+    let batch = ImportedClaimBatch {
+        request_id: EntityId::now(),
+        source_id: DOCS_EXPORT_SOURCE_ID.to_owned(),
+        entries: vec![ImportedClaimBatchEntry {
+            claim_id: id,
+            subject: fx.owner,
+            source_record_id: "restriction-wave-16-import".to_owned(),
+            predicate: PREDICATE_COMMITMENT_RECORD.to_owned(),
+            value: commitment_value_json(fx.owner, PAST_DEFAULT_TEXT_BYTES),
+            occurred: instant(T0),
+            learned_at: T0,
+        }],
+    };
+    let refused = fx
+        .vault
+        .admit_imported_claim_batch(&fx.owner_proof, &batch)
+        .map_err(|error| format!("{error:?}"));
+    assert_text_refusal("an import batch", refused);
+    assert!(
+        fx.vault.get_claim(&id).expect("claim read").is_none(),
+        "the refused promise is not stored"
+    );
+}
+
+#[test]
+fn with_the_text_cap_unset_a_docs_deep_review_refuses_a_9000_byte_promise() {
+    let fx = Fixture::rooted();
+    fx.seed_commitment_world();
+    let docs = DocsExport {
+        corpus_id: "restriction-wave-16-manual".to_owned(),
+        project_id: party(0xD6),
+        registry: json!({"rows": []}),
+        pages: vec![DocsPage {
+            page_id: "promise-page".to_owned(),
+            path: "promise.md".to_owned(),
+            text: format!("# Gravity\n\n{DOCS_QUOTE}."),
+        }],
+    };
+    let root = fx.vault.root_project().expect("root project");
+    let mut corpus =
+        ProjectRecord::new(docs.project_id, Some(root), root, fx.owner).expect("corpus record");
+    corpus.role = ProjectRole::Corpus;
+    fx.vault
+        .put_project(docs.project_id, &corpus, 1)
+        .expect("corpus project");
+    let ceiling = DocsImportCeiling {
+        max_pages: 2,
+        max_bytes: 10_000,
+        allow_derivations: true,
+    };
+    let request = EntityId::now();
+    let digest = fx
+        .vault
+        .docs_import_effect(&fx.owner_proof, request, &docs, ceiling)
+        .expect("docs import effect")
+        .digest();
+    fx.vault
+        .approve_once(&fx.owner_proof, digest)
+        .expect("the owner approves the import");
+    let receipt = fx
+        .vault
+        .ingest_docs_export(&fx.owner_proof, request, &docs, ceiling, None, None, T0)
+        .expect("docs import");
+    let asset = EntityId::from_hex(&receipt.asset_refs[0]).expect("asset ref");
+    // The asset is the subject of every derived claim, so it is the promise's obligor: only the
+    // text can refuse it.
+    let extractor = PromiseExtractor {
+        value: commitment_value_json(asset, PAST_DEFAULT_TEXT_BYTES),
+    };
+    let refused = fx
+        .vault
+        .deep_ingest_docs_asset(
+            &fx.owner_proof,
+            asset,
+            DocsDeepTrigger::Explicit,
+            &extractor,
+            T0 + 1,
+        )
+        .map_err(|error| format!("{error:?}"));
+    assert_text_refusal("a docs deep review", refused);
+    assert!(
+        fx.vault
+            .claims_for_subject(&asset)
+            .expect("asset claims")
+            .is_empty(),
+        "the refused promise is not stored"
     );
 }
 
