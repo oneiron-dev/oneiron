@@ -110,13 +110,13 @@ impl RevokeFacts {
                     }
                 }
                 // An end of a family ends only a line no act of another family named, as its
-                // ordinary transition refuses one that did (Astra r1-r2d F2, F4).
+                // ordinary transition refuses one that did (Astra r1-r2d F2, F4), and withdraws
+                // its slips only where the merged line takes it as its end (review #8846 P1-1).
                 Restriction::GrantActEnd { grant, family } => {
                     if state.grant_lines.admits(*grant, *family) {
-                        state.slips.revoke_grant(grant.to_hex());
                         state
                             .grant_lines
-                            .end_in_family(*grant, fact.entry_hash, *family);
+                            .end_withdrawing_slips(*grant, fact.entry_hash, *family);
                     }
                 }
                 Restriction::OwnerAgentRevoke(grant) => {
