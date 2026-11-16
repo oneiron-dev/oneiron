@@ -86,9 +86,13 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
             json!({"label": fixture.label})
         }
         SelfCall::Context(context) => json!({"spec": to_json(&context.spec)?}),
-        SelfCall::Speak(speech) | SelfCall::Think(speech) | SelfCall::Express(speech) => {
+        SelfCall::Speak(speech)
+        | SelfCall::Think(speech)
+        | SelfCall::ThinkAloud(speech)
+        | SelfCall::Express(speech) => {
             json!({"text": speech.text})
         }
+        SelfCall::SayResult(say) => json!({"result": say.result}),
         SelfCall::ReportBlocked(blocked) => {
             json!({"category": to_json(&blocked.category)?, "detail": blocked.detail})
         }
