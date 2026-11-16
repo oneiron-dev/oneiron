@@ -8,7 +8,9 @@
 //! Tests with the clock 24 h past each event (restore with kit A, confirm kit
 //! B / switch to kit-only: the machine still carries, its wrap counts, the
 //! root door's binding stands). Also one guard: a standing the old R signed
-//! that was already revoked or stale is NOT carried.
+//! that was already revoked or stale is NOT carried. Each kit-change test has
+//! an aged twin whose kit change comes a window after the setup (`AGED`), so
+//! the old R's approvals go stale the moment it is revoked (Sol carry F1).
 //!
 //! Red before the carry (R4 PR 2 at ceeb4058e14a; the kit-only rotation PR
 //! at 824e4bda79a9): each kit-change test fails at its post-24 h assertion,
@@ -76,6 +78,10 @@ const WINDOW_SECS: u64 = 24 * 60 * 60;
 /// Margin past the window: 60 s, not 1 s, so the `+ window + 1` deadline is
 /// safely passed (see the module doc).
 const MARGIN_SECS: u64 = 60;
+/// When an aged test's kit change comes (Sol carry F1): a window and a margin
+/// past `T0`, so every approval of the setup is older than the window when
+/// the change revokes the R that signed it, and goes stale at that moment.
+const AGED: u64 = T0 + WINDOW_SECS + MARGIN_SECS;
 /// The source's vault password, which the fresh machine unlocks the data
 /// key with (see the module doc).
 const PASSWORD: &[u8] = b"correct horse battery staple";
@@ -151,11 +157,15 @@ fn passes_owner_verbs(vault: &Vault, person: EntityId) -> bool {
 /// Moves authority time to `T0 + window + margin` on `vault`: the wall clock
 /// plus the persisted floor, then a fresh fold observes it.
 fn advance_past_window(vault: &Vault, clock: &Arc<ManualClock>) {
-    let now = T0 + WINDOW_SECS + MARGIN_SECS;
+    advance_to(vault, clock, T0 + WINDOW_SECS + MARGIN_SECS);
+}
+
+/// Moves authority time to `now` on `vault`, as [`advance_past_window`].
+fn advance_to(vault: &Vault, clock: &Arc<ManualClock>, now: u64) {
     clock.set(now);
     vault
         .advance_authority_clock_for_test(now)
-        .expect("the authority clock moves past the window");
+        .expect("the authority clock moves");
     vault.authority_fold().expect("the fold at the new time");
 }
 
@@ -663,6 +673,26 @@ impl CoOwner {
 /// stands.
 #[test]
 fn a_new_kits_activation_keeps_the_kit_restored_machine_standing() {
+    new_kit_keeps_the_kit_restored_machine_standing(T0);
+}
+
+/// Test 1, aged (Sol carry F1): kit B is confirmed at `AGED`, so the roster
+/// row `R_A` signed at the restore is older than the window when kit B
+/// revokes `R_A`, and goes stale at that moment.
+///
+/// Red at the carry chosen after the revocation (fe9beb1d9758): kit B's
+/// confirm is refused, because its activation revoked `R_A` before it
+/// enrolled the new R, and the enrolment's carrier, this install, stood only
+/// on `R_A`'s now stale row (no carrier). Green when the activation enrols
+/// the new R first and the carry is chosen before the revocation: the new R
+/// signs the next revision, and 24 h later the standing is still live.
+#[test]
+fn a_new_kits_activation_keeps_an_aged_kit_restored_machine_standing() {
+    new_kit_keeps_the_kit_restored_machine_standing(AGED);
+}
+
+/// Test 1's body, kit B confirmed at `kit_change_at` (`T0` or `AGED`).
+fn new_kit_keeps_the_kit_restored_machine_standing(kit_change_at: u64) {
     let source = source();
     let issued_a = source.issue();
     let confirmed_a = source.confirm(&issued_a);
@@ -679,6 +709,11 @@ fn a_new_kits_activation_keeps_the_kit_restored_machine_standing() {
         restored.keys
     );
     fresh.assert_on_roster_by(&r_a);
+    if kit_change_at > T0 {
+        advance_to(&fresh.vault, &fresh.clock, kit_change_at);
+        // `R_A` is live, so its aged row still stands.
+        fresh.assert_on_roster_by(&r_a);
+    }
     fresh.unlock_data_key();
 
     // Kit B needs a predecessor on the fresh install, whose own host slot is
@@ -697,7 +732,11 @@ fn a_new_kits_activation_keeps_the_kit_restored_machine_standing() {
     assert_eq!(live.len(), 1, "one live R: kit B's");
     assert_ne!(live[0], r_a);
 
-    advance_past_window(&fresh.vault, &fresh.clock);
+    advance_to(
+        &fresh.vault,
+        &fresh.clock,
+        kit_change_at + WINDOW_SECS + MARGIN_SECS,
+    );
 
     let (machine, _) = fresh.me();
     let roster = fresh
@@ -738,6 +777,25 @@ fn a_new_kits_activation_keeps_the_kit_restored_machine_standing() {
 /// control.
 #[test]
 fn a_new_kits_activation_keeps_the_binding_the_root_door_signed() {
+    new_kit_keeps_the_binding_the_root_door_signed(T0);
+}
+
+/// Test 2, aged (Sol carry F1): kit B is confirmed at `AGED`, so the
+/// `BindActor` R signed at the root door is older than the window when kit B
+/// revokes R, and goes stale at that moment.
+///
+/// Red at the carry chosen after the revocation (fe9beb1d9758): that fold
+/// already reads the binding `Revoked`, so nothing carried it, and the
+/// post-24 h binding assertion fails. Green when the carry is chosen before
+/// the revocation: the new R signs the binding again, and 24 h later it is
+/// still active.
+#[test]
+fn a_new_kits_activation_keeps_an_aged_binding_the_root_door_signed() {
+    new_kit_keeps_the_binding_the_root_door_signed(AGED);
+}
+
+/// Test 2's body, kit B confirmed at `kit_change_at` (`T0` or `AGED`).
+fn new_kit_keeps_the_binding_the_root_door_signed(kit_change_at: u64) {
     let fixture = co_owner_fixture();
     assert!(
         passes_owner_verbs(&fixture.vault, fixture.co_owner),
@@ -783,6 +841,13 @@ fn a_new_kits_activation_keeps_the_binding_the_root_door_signed() {
         passes_owner_verbs(&fixture.vault, fixture.co_owner),
         "the co-Owner keeps owner control"
     );
+    if kit_change_at > T0 {
+        advance_to(&fixture.vault, &fixture.clock, kit_change_at);
+        assert!(
+            passes_owner_verbs(&fixture.vault, fixture.co_owner),
+            "R is live, so its aged binding still stands"
+        );
+    }
 
     // Kit B's activation needs a predecessor: the embedded owner enrols this
     // install's device key first (see `issue_world_kit`).
@@ -796,7 +861,11 @@ fn a_new_kits_activation_keeps_the_binding_the_root_door_signed() {
         .expect("kit B confirms on the self-hosted vault");
     assert!(!fixture.is_live(&r), "kit B revokes the old R");
 
-    advance_past_window(&fixture.vault, &fixture.clock);
+    advance_to(
+        &fixture.vault,
+        &fixture.clock,
+        kit_change_at + WINDOW_SECS + MARGIN_SECS,
+    );
 
     let still_bound = fixture
         .vault

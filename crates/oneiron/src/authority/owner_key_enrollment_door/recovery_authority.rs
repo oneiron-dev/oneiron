@@ -43,6 +43,43 @@ impl ActivationPredecessor {
 const CARRY_NOT_COUNTED: &str = "this install's fold does not count the new kit's carry of an \
                                  approval the old kit signed; nothing was written";
 
+/// What a kit change's new R must carry, chosen before the act revokes the
+/// R keys it replaces ([`Vault::recovery_authority_carry_in_txn`]).
+#[derive(Debug, Default)]
+pub(crate) struct RecoveryAuthorityCarry {
+    /// Each machine whose roster head the new R signs the next revision of.
+    machines: Vec<EntityId>,
+    /// Each binding's `RebindActor` one epoch on, which the new R signs.
+    rebinds: Vec<AuthorityOp>,
+}
+
+/// One standing's or binding's approvals, as the carry's one pass over the
+/// history counts them ([`Vault::recovery_authority_carry_in_txn`]).
+#[derive(Debug, Default)]
+struct CarrySupport {
+    /// An approval resting on no key revoked before the act exists.
+    open: bool,
+    /// An approval resting on no key revoked before the act, nor on a key
+    /// the act revokes, exists, or an anchor's row, which never goes stale.
+    independent: bool,
+}
+
+impl CarrySupport {
+    /// The act's revocation would leave no approval that keeps it live.
+    fn carried(&self) -> bool {
+        self.open && !self.independent
+    }
+}
+
+/// Whether `entry`'s primary signature or a cosign names a key `revoked`
+/// holds: the keys an approval rests on, as the stale-roster window reads
+/// them (`stale_roster.rs`).
+fn rests_on(entry: &AuthorityLogEntry, revoked: impl Fn(&AuthorityKey) -> bool) -> bool {
+    std::iter::once(&entry.signer)
+        .chain(&entry.cosigns)
+        .any(|signature| revoked(&signature.public_key))
+}
+
 /// A kit's activation found no predecessor for the root's authority key:
 /// this install holds no live owner key, and the vault is not a self-hosted
 /// one whose host root this install holds. Authority; nothing was written
@@ -279,7 +316,9 @@ impl Vault {
     /// `RevokeDevice` is signed by `predecessor`, the key that signs the new
     /// R's enrolment, through the one writer
     /// ([`Self::append_revoke_device_in_txn`]). Another owner's R stays: the
-    /// filter is the enrolment's owner, as at the membership move.
+    /// filter is the enrolment's owner, as at the membership move. Answers
+    /// what the activated R must carry, chosen before the first revocation
+    /// ([`Self::recovery_authority_carry_in_txn`]).
     ///
     /// # Errors
     /// The writer's: an entry the fold does not count.
@@ -289,7 +328,7 @@ impl Vault {
         actor: EntityId,
         kept: &AuthorityKey,
         predecessor: &ActivationPredecessor,
-    ) -> Result<Vec<AuthorityKey>> {
+    ) -> Result<RecoveryAuthorityCarry> {
         let earlier: Vec<AuthorityKey> = self
             .enrolled_owner_keys_in_txn(txn)?
             .into_iter()
@@ -301,6 +340,7 @@ impl Vault {
             .map(|key| AuthorityKey::Ed25519(key.public_key))
             .filter(|key| key != kept)
             .collect();
+        let carry = self.recovery_authority_carry_in_txn(txn, &earlier)?;
         let predecessor_key = predecessor.predecessor_key();
         let sign = |transcript: &[u8]| predecessor.sign(transcript);
         for revoked_key in &earlier {
@@ -310,100 +350,210 @@ impl Vault {
             };
             self.append_revoke_device_in_txn(txn, signer, revoked_key.clone())?;
         }
-        Ok(earlier)
+        Ok(carry)
     }
 
-    /// Carries what the R keys in `revoked` approved, in the act that
-    /// revoked them, under `next`, the R that replaces them and is live on
-    /// the roster (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A, Engine 07:13:
-    /// a kit change must not unpair the owner's own machines). An approval
-    /// a revoked key signed goes stale a window after the revocation
-    /// (`stale_roster.rs`), so `next` signs, as a host re-root carries its
-    /// standings ([`Self::carry_machine_standing_in_txn`]):
-    /// - the next revision of each machine's live, act-free roster head a
-    ///   revoked key signed ([`Self::carry_roster_standing_under_key_in_txn`]);
-    /// - a `RebindActor` one epoch on, with the same key, actor and class,
-    ///   for each active binding whose every valid approval of its tuple a
-    ///   revoked key signed or cosigned.
+    /// Binds `actor` to `key`, the R a kit activation enrolled, as `human`
+    /// on a self-hosted vault where `actor` holds no active `human` binding
+    /// once the activation revoked their earlier R keys and carried what
+    /// those signed: the enrolment's own rule
+    /// ([`Self::enrol_owner_signing_key_in_txn`]), judged after the
+    /// revocation, because the activation enrols R before it (the
+    /// enrolment's carrier may stand on an approval only a revoked R gave,
+    /// until the carry signs it again). Signed by `predecessor`, as the
+    /// enrolment's binding is.
     ///
-    /// A head already removed or stale, and a binding already revoked, are
-    /// not carried. Stored change: keep (ordinary rows).
+    /// # Errors
+    /// The binding's `BINDING_NOT_COUNTED`, as at the enrolment.
+    pub(crate) fn bind_owner_to_recovery_authority_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        key: AuthorityKey,
+        predecessor: &ActivationPredecessor,
+    ) -> Result<()> {
+        if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
+            return Ok(());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if actor_binding_is_active(&fold, &actor, ACTOR_CLASS_HUMAN) {
+            return Ok(());
+        }
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let bind = EnrolledKeyBinding {
+            fold: &fold,
+            vault_id,
+            predecessor: predecessor.predecessor_key(),
+            key,
+            owner: actor,
+        };
+        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
+        self.bind_enrolled_owner_key_in_txn(txn, bind, &mut sign)
+    }
+
+    /// Chooses, in the caller's write transaction and BEFORE any key in
+    /// `revoking` is revoked, what the R that replaces them must carry
+    /// (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A, Engine 07:13: a kit
+    /// change must not unpair the owner's own machines). The choice comes
+    /// first because an approval's stale deadline counts from the earlier of
+    /// its own first sight and its key's revocation (`stale_roster.rs`): one
+    /// older than the window goes stale the moment its key is revoked, so a
+    /// fold read after the revocation would miss every aged approval (Sol
+    /// carry F1).
+    ///
+    /// The test is the stale-roster window's own (Sol carry F2): an approval
+    /// rests on every key its primary signature or a cosign names. Of the
+    /// approvals that rest on no key revoked before this act, when at least
+    /// one exists and every one rests on a key in `revoking`, the act would
+    /// unpair the standing, so it is carried; one approval resting on none
+    /// keeps it live and nothing is carried; and a standing that only rests
+    /// on keys revoked before is already going stale (the ruling's guard).
+    /// - A machine's live, act-free roster head: its approvals are the valid
+    ///   roster rows with the head's exact profile (the rows that renew a
+    ///   stale head; an anchor's row renews none). A head an anchor's row
+    ///   carried never goes stale and is not carried.
+    /// - An active binding: its approvals are the valid `BindActor` and
+    ///   `RebindActor` rows of its current tuple (an anchor's row never goes
+    ///   stale, so it keeps the binding live). The binding of a key in
+    ///   `revoking` ends with that key and is not carried.
+    ///
+    /// A head at the last revision, or a binding at the last epoch, has no
+    /// next row, so it is not carried: no row the revoked key signed can
+    /// refuse the kit change that revokes the key (Sol carry F2, F3). The
+    /// history is read once (Sol carry F4).
+    ///
+    /// # Errors
+    /// A fold or history read's.
+    pub(crate) fn recovery_authority_carry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        revoking: &[AuthorityKey],
+    ) -> Result<RecoveryAuthorityCarry> {
+        if revoking.is_empty() {
+            return Ok(RecoveryAuthorityCarry::default());
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let revoked_before: std::collections::BTreeSet<&AuthorityKey> = fold
+            .roster
+            .iter()
+            .filter(|(_, device)| device.revoked)
+            .map(|(key, _)| key)
+            .collect();
+        let mut machines: std::collections::BTreeMap<_, _> = fold
+            .machines
+            .iter()
+            .filter_map(|(machine, folded)| {
+                let head = folded.roster.as_ref()?;
+                let carried = head.is_live()
+                    && head.profile.act.is_none()
+                    && head.profile.revision < u64::MAX
+                    && !fold.anchor_entries.contains(&head.entry);
+                carried.then(|| (*machine, (&head.profile, CarrySupport::default())))
+            })
+            .collect();
+        let mut bindings: std::collections::BTreeMap<_, _> = fold
+            .actor_bindings
+            .iter()
+            .filter(|(bound, binding)| {
+                matches!(binding.status, ActorBindingStatus::Active)
+                    && binding.epoch < u64::MAX
+                    && !revoking.contains(bound)
+            })
+            .map(|(bound, binding)| (bound, (binding, CarrySupport::default())))
+            .collect();
+        let history = crate::authority::history_transfer::history_in_txn(self, txn)?;
+        for (hash, (_, entry)) in &history {
+            if !fold.valid_entries.contains(hash) {
+                continue;
+            }
+            let anchor = fold.anchor_entries.contains(hash);
+            let support = match &entry.op {
+                AuthorityOp::MachineProfile(profile) if !anchor => {
+                    match machines.get_mut(&profile.machine) {
+                        Some((head, support)) if *head == profile => Some(support),
+                        _ => None,
+                    }
+                }
+                AuthorityOp::BindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                }
+                | AuthorityOp::RebindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                } => match bindings.get_mut(authority_key) {
+                    Some((binding, support))
+                        if binding.actor_ref == *actor_ref
+                            && binding.actor_class == *actor_class
+                            && binding.epoch == *epoch =>
+                    {
+                        Some(support)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(support) = support else {
+                continue;
+            };
+            if anchor {
+                support.independent = true;
+            } else if !rests_on(entry, |key| revoked_before.contains(key)) {
+                support.open = true;
+                if !rests_on(entry, |key| revoking.contains(key)) {
+                    support.independent = true;
+                }
+            }
+        }
+        let rebinds = bindings
+            .into_iter()
+            .filter(|(_, (_, support))| support.carried())
+            .map(|(bound, (binding, _))| {
+                Ok(AuthorityOp::RebindActor {
+                    authority_key: bound.clone(),
+                    actor_ref: binding.actor_ref,
+                    actor_class: binding.actor_class.clone(),
+                    epoch: binding.epoch.checked_add(1).ok_or_else(invalid_authority)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(RecoveryAuthorityCarry {
+            machines: machines
+                .into_iter()
+                .filter(|(_, (_, support))| support.carried())
+                .map(|(machine, _)| machine)
+                .collect(),
+            rebinds,
+        })
+    }
+
+    /// Carries `carry`, chosen before the act revoked the R keys it names
+    /// ([`Self::recovery_authority_carry_in_txn`]), under `next`, the R that
+    /// replaces them and is live on the roster, as a host re-root carries
+    /// its standings ([`Self::carry_machine_standing_in_txn`]): `next` signs
+    /// the next revision of each chosen machine's roster head
+    /// ([`Self::carry_roster_standing_under_key_in_txn`]), and a
+    /// `RebindActor` one epoch on, with the same key, actor and class, for
+    /// each chosen binding. Stored change: keep (ordinary rows).
     ///
     /// # Errors
     /// A carried row the fold does not count.
     pub(crate) fn carry_recovery_authority_approvals_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        revoked: &[AuthorityKey],
+        carry: RecoveryAuthorityCarry,
         next: &crate::world_keys::RecoveryAuthoritySigner,
     ) -> Result<()> {
-        if revoked.is_empty() {
-            return Ok(());
-        }
         let key = next.authority_key();
         let sign = |transcript: &[u8]| next.sign_authority_transcript(transcript);
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let machines: Vec<EntityId> = fold
-            .machines
-            .iter()
-            .filter(|(_, folded)| {
-                folded.roster.as_ref().is_some_and(|head| {
-                    head.is_live() && head.profile.act.is_none() && revoked.contains(&head.signer)
-                })
-            })
-            .map(|(machine, _)| *machine)
-            .collect();
-        let history = crate::authority::history_transfer::history_in_txn(self, txn)?;
-        let rests_on_revoked = |entry: &AuthorityLogEntry| {
-            std::iter::once(&entry.signer)
-                .chain(&entry.cosigns)
-                .any(|signature| revoked.contains(&signature.public_key))
-        };
-        let bindings: Vec<AuthorityOp> = fold
-            .actor_bindings
-            .iter()
-            .filter(|(_, binding)| matches!(binding.status, ActorBindingStatus::Active))
-            .filter_map(|(bound, binding)| {
-                let mut approvals = history
-                    .iter()
-                    .filter(|(hash, _)| fold.valid_entries.contains(*hash))
-                    .filter(|(_, (_, entry))| match &entry.op {
-                        AuthorityOp::BindActor {
-                            authority_key,
-                            actor_ref,
-                            actor_class,
-                            epoch,
-                        }
-                        | AuthorityOp::RebindActor {
-                            authority_key,
-                            actor_ref,
-                            actor_class,
-                            epoch,
-                        } => {
-                            authority_key == bound
-                                && *actor_ref == binding.actor_ref
-                                && *actor_class == binding.actor_class
-                                && *epoch == binding.epoch
-                        }
-                        _ => false,
-                    })
-                    .peekable();
-                approvals.peek()?;
-                if !approvals.all(|(_, (_, entry))| rests_on_revoked(entry)) {
-                    return None;
-                }
-                Some(AuthorityOp::RebindActor {
-                    authority_key: bound.clone(),
-                    actor_ref: binding.actor_ref,
-                    actor_class: binding.actor_class.clone(),
-                    epoch: binding.epoch.checked_add(1)?,
-                })
-            })
-            .collect();
-        for machine in machines {
+        for machine in carry.machines {
             self.carry_roster_standing_under_key_in_txn(txn, (&key, &sign), machine)?;
         }
-        for rebind in bindings {
+        for rebind in carry.rebinds {
             self.append_key_signed_op_in_txn(txn, (&key, &sign), rebind, CARRY_NOT_COUNTED)?;
         }
         Ok(())
