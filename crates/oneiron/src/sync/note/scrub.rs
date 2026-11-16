@@ -95,6 +95,12 @@ fn attachments_deleted(doc: &LoroDoc, notes: &[EntityId]) -> Result<bool> {
 /// outbound, as it routes every local change. Drop only: a window whose rows
 /// do not read is logged, and keeps them until its next export. An id whose
 /// stored row is another kind's is no NOTE, and is passed over.
+///
+/// Call it holding no materializer lock: it takes that lock for each window
+/// it changes, and lists the live windows through the window registry lock,
+/// which a replacement holds while it takes the materializer lock
+/// (FIX 25183). Observer B's tombstone batch calls it once its callback has
+/// dropped the lock (FIX 12128).
 pub(crate) fn deleted_elsewhere(
     vault: &Vault,
     window: &str,
@@ -104,24 +110,7 @@ pub(crate) fn deleted_elsewhere(
     if notes.is_empty() {
         return;
     }
-    scrub_other_windows(vault, window, &notes, true);
-}
-
-/// [`deleted_elsewhere`] for a caller that holds the shared materializer
-/// lock (Observer B's tombstone batch, FIX 12128): the same scrub, without
-/// locking — the lock is not reentrant, so locking here would deadlock.
-/// Each changed window still commits as a mirror of the delete, which that
-/// window's observer skips by origin while persisting and routing it.
-pub(crate) fn deleted_elsewhere_under_lock(
-    vault: &Vault,
-    window: &str,
-    notes: impl IntoIterator<Item = EntityId>,
-) {
-    let notes = note_ids(vault, notes);
-    if notes.is_empty() {
-        return;
-    }
-    scrub_other_windows(vault, window, &notes, false);
+    scrub_other_windows(vault, window, &notes);
 }
 
 /// The NOTEs among `notes`: an id whose stored row is another kind's is no
@@ -191,7 +180,7 @@ pub(crate) fn scrub_missed_note_deletes(
     Ok(())
 }
 
-fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId], take_lock: bool) {
+fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId]) {
     #[cfg(oneiron_test_support)]
     run_scrub_entry_hook(notes);
     for loaded in vault.live_windows() {
@@ -205,7 +194,7 @@ fn scrub_other_windows(vault: &Vault, window: &str, notes: &[EntityId], take_loc
         let Some((_, materializer, _)) = vault.live_window(&loaded.key) else {
             continue;
         };
-        let _guard = take_lock.then(|| materializer.lock());
+        let _guard = materializer.lock();
         match attachments_deleted(&loaded.doc, notes) {
             Ok(true) => {
                 loaded
