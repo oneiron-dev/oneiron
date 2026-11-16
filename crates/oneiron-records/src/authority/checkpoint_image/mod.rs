@@ -63,7 +63,10 @@ use serde::Serialize;
 /// 41: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 41;
+/// 42: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// waits for the owner's proof, and an enrolment of the owner's key outside the line of the
+/// enrolment that made it the owner's is refused (row CARRIER-PROOF-OLD-PARENTS).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
