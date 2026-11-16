@@ -186,6 +186,12 @@ pub enum McpCodeExecutionError {
         "execute_code run stopped: no provider answered a model call; call again with the same run_ref in {retry_after} s"
     )]
     ProviderUnavailable { retry_after: u64 },
+    /// An off-record session refused an act the run took in it (FIX
+    /// OFF-RECORD-RUN-POLICY-REFUSAL-500): the caller's refusal, answered as
+    /// the session's other refusals are, never as a failure of the run.
+    /// Entering the run again meets it again.
+    #[error("execute_code run refused: {}", .0.message)]
+    Refused(Box<oneiron::MemoryError>),
 }
 
 impl McpCodeExecutionError {
@@ -198,6 +204,7 @@ impl McpCodeExecutionError {
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
             Self::ProviderUnavailable { .. } => "model_unavailable",
+            Self::Refused(_) => "code_run_refused",
         }
     }
 }
@@ -722,7 +729,8 @@ impl<'a> ScopeMeter<'a> {
 ///
 /// A run its host lends a self-brief port (`brief`, FIX 17594) carries the
 /// brief it prepares on every backend this entry takes; with none, its
-/// requests carry no brief.
+/// requests carry no brief. `horizon` is the prefix the run's previous entry
+/// left cached (L2-37), `None` for a first entry.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -736,6 +744,7 @@ pub(crate) fn enter_engine_native_run(
     planned: Option<&PlannedModel>,
     listed: Vec<AgentModel>,
     brief: Option<&dyn SelfBriefPort>,
+    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -760,7 +769,7 @@ pub(crate) fn enter_engine_native_run(
             None => provider.backend(),
         };
         return enter_on(
-            vault, provider, backend, bound, config, compaction, reactor, seat, brief,
+            vault, provider, backend, bound, config, compaction, reactor, seat, brief, horizon,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -810,6 +819,7 @@ pub(crate) fn enter_engine_native_run(
             reactor,
             seat,
             brief,
+            horizon,
         )
     } else {
         enter_on(
@@ -822,6 +832,7 @@ pub(crate) fn enter_engine_native_run(
             reactor,
             seat,
             brief,
+            horizon,
         )
     };
     live.book_rest()
@@ -1095,11 +1106,13 @@ fn enter_on(
     reactor: &tokio::runtime::Runtime,
     seat: Option<&ModelSeat>,
     brief: Option<&dyn SelfBriefPort>,
+    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let mut routed_config = config.clone();
-    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);
+    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound)
+        .with_cache_horizon(horizon);
     if let Some(seat) = seat {
         routed_config.model = seat.model().clone();
         routed_config.model_locality = seat.locality();

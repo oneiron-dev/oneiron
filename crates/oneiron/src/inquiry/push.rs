@@ -496,7 +496,7 @@ impl Vault {
             }
             Ok((record, edge.company_vault_id, actor))
         })?;
-        let task_ref = match self.schedule_inquiry_push(actor, &record, &company) {
+        let task_ref = match self.schedule_inquiry_push(owner, actor, &record, &company) {
             Ok(task_ref) => task_ref,
             Err(error) => {
                 self.with_write_txn(|txn| drop_inquiry_push_in_txn(&self.store, txn, &record))?;
@@ -801,13 +801,15 @@ impl Vault {
     /// Schedules `record`'s send to `company` on `inquiry_push` through the
     /// schedule door, as the owner's own act, and returns its connector
     /// TASK. The owner's Human actor `actor` (the owner proof's, as
-    /// `revalidate_in_txn` gave it in the push's transaction) schedules it, so the enqueue holds it in
-    /// the owner's undo-send window when one is set. The Gate asks for an
-    /// approval of this one send (no standing grant covers an owner's push),
-    /// and the owner's [Now] is that approval: an approve-once of the digest
-    /// the Gate named, which the executor spends once the send is released.
+    /// `revalidate_in_txn` gave it in the push's transaction) schedules it,
+    /// so the enqueue holds it in the owner's undo-send window when one is
+    /// set. The Gate asks for an approval of this one send (no standing grant
+    /// covers an owner's push), and the owner's [Now] is that approval: an
+    /// approve-once of the digest the Gate named, minted under the same owner
+    /// proof `owner`, which the executor spends once the send is released.
     fn schedule_inquiry_push(
         &self,
+        owner: &AuthenticatedOwner,
         actor: EntityId,
         record: &InquiryPush,
         company: &AuthorityVaultId,

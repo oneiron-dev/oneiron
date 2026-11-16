@@ -233,6 +233,7 @@ fn event_type(buffer: u16) -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -498,6 +499,7 @@ impl SlotOracle for Offered {
                 rank: 1.0,
             }],
             flex_used: false,
+            full_days: Vec::new(),
             host_bindings: vec![SlotHostBinding {
                 start_utc: self.0.start,
                 end_utc: self.0.end,
@@ -539,6 +541,7 @@ fn book(vault: &Vault, page: EntityId, booker: EntityId, start: u64) -> Result<C
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: None,
+        cap_override: None,
     };
     let held = match turn(vault, BookingVerbRequest::Hold(hold), slot)? {
         BookingVerbReceipt::Held(held) => held,
