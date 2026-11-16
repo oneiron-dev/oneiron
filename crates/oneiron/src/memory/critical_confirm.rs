@@ -318,14 +318,7 @@ fn require_readable(
 
 fn parse_hex<const N: usize>(value: &str, field: &str) -> MemoryResult<[u8; N]> {
     let refused = || MemoryError::bad_request(format!("{field} must be {} hex characters", N * 2));
-    if value.len() != N * 2 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(refused());
-    }
-    let mut bytes = [0; N];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).map_err(|_| refused())?;
-    }
-    Ok(bytes)
+    oneiron_hex::decode_any_case::<N>(value).ok_or_else(refused)
 }
 
 fn no_pending() -> MemoryError {
