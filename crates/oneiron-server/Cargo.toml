@@ -377,6 +377,12 @@ name = "artifact_vault_hosts"
 path = "tests/artifact_vault_hosts.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The pack door promises root on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "vault_packs_owner_doors"
+path = "tests/vault_packs_owner_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
