@@ -256,6 +256,12 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
+# The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_policy_doors"
+path = "tests/vault_policy_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "it"
 path = "tests/it/main.rs"
