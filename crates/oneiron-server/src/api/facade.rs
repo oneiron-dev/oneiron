@@ -290,6 +290,7 @@ pub(crate) use host_doors::{
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;
+pub(crate) use model_step_doors::resume_parked_model_steps;
 pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
