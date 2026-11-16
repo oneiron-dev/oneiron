@@ -21,7 +21,7 @@ impl SyncServer {
 
     /// Exports root doc updates since the given version vector.
     pub(crate) fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
-        self.merge_link_root();
+        self.merge_link_root_for_read();
         self.root_doc
             .export(ExportMode::updates(from_vv))
             .map_err(|e| format!("root doc export failed: {e}"))
@@ -29,7 +29,7 @@ impl SyncServer {
 
     /// Exports all root doc state for a new client.
     pub(crate) fn export_root_snapshot(&self) -> Result<Vec<u8>, String> {
-        self.merge_link_root();
+        self.merge_link_root_for_read();
         self.root_doc
             .export(ExportMode::Snapshot)
             .map_err(|e| format!("root doc snapshot failed: {e}"))
@@ -41,9 +41,18 @@ impl SyncServer {
     /// link's client imports the home's root into its own doc and persists it
     /// to `d:root`; this server loaded `d:root` once, at start. Without the
     /// merge a peer would never learn a window the link learned since.
-    /// Importing adds no op of this server's. A root that cannot be read or
-    /// merged leaves this server's own, as before, with a warning.
-    fn merge_link_root(&self) {
+    /// Importing adds no op of this server's. What it takes in goes to every
+    /// socket of this server as any root update does, so a later update never
+    /// reaches a socket without the ops it rests on. A root that cannot be
+    /// read or merged leaves this server's own, as before, with a warning.
+    ///
+    /// The caller holds `lease_registrar`, the root writers' lock. Each root
+    /// write (a window added, a lease revoked or expired) merges first, under
+    /// it and before it takes the version a failed persist reverts to, so the
+    /// root it persists over `d:root` keeps what the link persisted there, and
+    /// its revert never undoes the merge. A read merges through
+    /// [`Self::merge_link_root_for_read`].
+    pub(super) fn merge_link_root(&self) {
         if !self.device_link_opened() {
             return;
         }
@@ -51,21 +60,40 @@ impl SyncServer {
             .map_err(|error| error.to_string())
             .and_then(|persisted| {
                 let Some(persisted) = persisted else {
-                    return Ok(());
+                    return Ok(None);
                 };
+                let before = self.root_doc.oplog_vv();
                 let missing = persisted
-                    .export(ExportMode::updates(&self.root_doc.oplog_vv()))
+                    .export(ExportMode::updates(&before))
                     .map_err(|error| error.to_string())?;
                 self.root_doc
                     .import(&missing)
-                    .map(drop)
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| error.to_string())?;
+                Ok((self.root_doc.oplog_vv() != before).then_some(missing))
             });
-        if let Err(reason) = merged {
-            tracing::warn!(
+        match merged {
+            Ok(Some(taken_in)) => {
+                let notice = crate::protocol::encode_root_update(&taken_in);
+                let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, notice);
+            }
+            Ok(None) => {}
+            Err(reason) => tracing::warn!(
                 %reason,
                 "device server: the link's persisted root did not merge; serving this server's own"
-            );
+            ),
+        }
+    }
+
+    /// [`Self::merge_link_root`] for a root export, only while no root writer
+    /// holds `lease_registrar`: a writer merged at its start, and a merge
+    /// during its write would be undone by its revert after a failed persist.
+    /// The next read merges what the link persisted since.
+    fn merge_link_root_for_read(&self) {
+        if !self.device_link_opened() {
+            return;
+        }
+        if let Ok(_writers) = self.lease_registrar.try_lock() {
+            self.merge_link_root();
         }
     }
 
@@ -97,6 +125,9 @@ impl SyncServer {
             .any(|existing| existing == key)
         {
             let _guard = self.lease_registrar.lock().await;
+            // A window the device link learned may be named already, and the
+            // root persisted below keeps what the link persisted.
+            self.merge_link_root();
             if !read_window_list(&self.root_doc)
                 .iter()
                 .any(|existing| existing == key)
