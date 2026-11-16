@@ -31,6 +31,8 @@ pub use oneiron_code_source::source;
 
 /// MicroVM execution lane for foreign and ingested guest code.
 pub mod microvm;
+/// The owner's Setting keys for code execution (DESIGN 15-setting-primitive).
+pub(crate) mod setting_keys;
 
 pub use self::adapter::{FakeSandboxAdapter, SandboxBoundaryAdapter};
 #[cfg(feature = "code-sandbox-wasmtime")]

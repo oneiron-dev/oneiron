@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use oneiron::llm::media::{
     AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaPart, MediaProgressFuture,
-    MediaRequest, MediaResponse, MediaUsage,
+    MediaRequest, MediaResponse, MediaUsage, run_once_released,
 };
 use oneiron::llm::{BrokerIsolation, DispatchRelease};
 use oneiron::{BudgetLease, FatalLlmError, LlmResult};
@@ -118,7 +118,7 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiTtsBackend<T> {
         release: Option<DispatchRelease<'a>>,
     ) -> MediaProgressFuture<'a> {
         if request.operation != AiOperation::Speech {
-            return self.run_progress(request, lease);
+            return run_once_released(self, request, lease, None);
         }
         Box::pin(async move {
             self.speech(request, lease, release)

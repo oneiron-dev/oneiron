@@ -8,11 +8,12 @@
 //! `record_run_edge_in_txn` its code-run edge writer,
 //! `record_run_topology_in_txn` its identity-topology writer,
 //! `record_run_deletion_in_txn` its delete and erase writer,
-//! `record_run_effect_in_txn` its external-effect writer and
-//! `record_run_note_in_txn` its NOTE fork writer, whose landing keeps its
-//! undo through `record_run_note_landing_in_txn`. A run nobody settled is
-//! reverted from this journal (`journal_members_in_txn`), and each change's
-//! compensation is kept on its first row.
+//! `record_run_effect_in_txn` its external-effect writer,
+//! `record_run_owner_task_cancel_in_txn` its writer of the owner's gate-free
+//! TASK cancel and `record_run_note_in_txn` its NOTE fork writer, whose
+//! landing keeps its undo through `record_run_note_landing_in_txn`. A run
+//! nobody settled is reverted from this journal (`journal_members_in_txn`),
+//! and each change's compensation is kept on its first row.
 
 use super::*;
 use crate::claim::ClaimApprovalStatus;
@@ -348,6 +349,33 @@ pub(super) fn journal_note_undo_in_txn(
         .and_then(|(_, row)| row.note_undo))
 }
 
+/// Records that `run` cancelled the vault owner's own TASK `task` on the
+/// owner's proof, with no gate asked (OWNER-SOFT-CANCEL), in the cancel's own
+/// write. No gate receipt stands for that cancel, so the change names the
+/// TASK and `cancel`, an id the cancel takes for itself. A revert never
+/// replays or undoes it; it reports it one-way (ruling
+/// RUNCHANGES-OWNER-CANCEL-IN-RUN = B, 16 Nov).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_owner_task_cancel_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    task: EntityId,
+    cancel: EntityId,
+) -> crate::Result<()> {
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::OwnerTaskCancel {
+            task_ref: task.to_hex(),
+            cancel_ref: cancel.to_hex(),
+        },
+    )
+}
+
 /// Appends `change` after the run's last recorded change.
 fn record_change_in_txn(
     store: &crate::store::Store,
@@ -482,6 +510,9 @@ fn journal_member_in_txn(
         RunReviewChange::Delete { .. } | RunReviewChange::Erase { .. } => {
             (RunChangeVerdict::Landed, None)
         }
+        // Journaled in the write that ran it, so it landed; it has no undo,
+        // so the revert reports it one-way.
+        RunReviewChange::OwnerTaskCancel { .. } => (RunChangeVerdict::Landed, None),
         // Its verdict as a settle reads it; it has no undo, so the revert
         // reports one that ran as one-way. A receipt redacted since may have
         // gone out, so it reads as landed.
@@ -687,6 +718,17 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &RunChangesRequest,
     ) -> MemoryResult<RunChanges> {
+        self.run_changes_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::run_changes_as_owner`] for the owner's proof or, without
+    /// one, an agent's own Grant naming `vault.runs.changes.get` while the
+    /// owner's setting `memory.run_review.agent_may_read` is on.
+    pub fn run_changes_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: &RunChangesRequest,
+    ) -> MemoryResult<RunChanges> {
         let run = run_key(&input.run_id)?;
         let txn = self
             .vault()
@@ -694,7 +736,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        require_owner(self, &txn, owner)?;
+        admit_run_reader(self, &txn, owner, "vault.runs.changes.get")?;
         let changes = run_changes_in_txn(&self.vault().store, &txn, &run)?;
         self.produced_from(
             changes
