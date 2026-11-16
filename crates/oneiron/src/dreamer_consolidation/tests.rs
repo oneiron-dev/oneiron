@@ -1147,7 +1147,10 @@ fn same_second_partition_batches_have_distinct_advisory_dedupe() -> Result<()> {
 #[test]
 fn partition_round_hash_conformance() {
     assert_eq!(
-        DREAMER_PARTITION_ROUND_HASH_DOMAIN, b"oneiron:dreamer-partition-round:v1",
+        oneiron_contracts::fingerprint::purposes::dreamer_consolidation::PARTITION_ROUND
+            .tag()
+            .as_bytes(),
+        b"oneiron:dreamer-partition-round:v1",
         "the advisory round-hash domain is pinned"
     );
 

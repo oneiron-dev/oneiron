@@ -44,6 +44,8 @@ use oneiron_model::llm::{Scope, ScopeResource};
 mod attribution;
 pub(super) mod compaction_span;
 pub(super) mod projection;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::attribution::attribution_hash_for_test;
 
 type SourceRow = (u8, u64, Vec<u8>);
 type BranchRead = (Vec<Option<SourceRow>>, BTreeMap<EntityId, TurnText>);

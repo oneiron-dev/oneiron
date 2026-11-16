@@ -244,6 +244,20 @@ pub(crate) fn side_door_turn_text_for_test(
     turn_text::read_turn_text(vault, turn)
 }
 
+/// The stored and compared digests' seams for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    call_labels::labels_digest_for_test,
+    follower_attempt::{cache_identity_digest_for_test, route_digest_for_test},
+    note_text::note_text_fingerprint_for_test,
+    scope_summary_attempt::{
+        arc_composition_params_hash_for_test, arc_parts_params_hash_for_test,
+        session_pages_params_hash_for_test,
+    },
+    turn_text::attribution_hash_for_test,
+};
+
 /// The writer's re-check of a side door's TURN record, read as the Dreamer in
 /// a fresh snapshot, for the integration regression doors (X01). Not API.
 #[cfg(oneiron_test_support)]
