@@ -283,6 +283,7 @@ async fn imported_update_vv_and_content_survive_server_recreation_without_commit
             .persist_imported_update(
                 &key,
                 &update,
+                &oneiron::sync::window::UpdateInserts::default(),
                 &oneiron::sync::selector::RepoSyncLandings::default(),
                 None,
             )

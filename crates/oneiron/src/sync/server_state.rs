@@ -47,15 +47,22 @@ use crate::sync::window_rows::{
 /// corruption and errors instead of silently resetting (which would let
 /// `next_seq = 1` overwrite an already-persisted update) — same policy as
 /// Observer A in `bridge::register_observer_a`.
+///
+/// `inserts`, the entity ids the update's history inserts as admission read
+/// them ([`crate::sync::window::admit_window_update_residence_with_vault`]),
+/// owe the erasure sweep a compaction of the window in the same transaction
+/// when one names a row hard-deleted here (census L6-05).
 pub fn persist_imported_window_update(
     vault: &Vault,
     key: &WindowKey,
     update_bytes: &[u8],
+    inserts: &crate::sync::window::UpdateInserts,
 ) -> Result<u64> {
     persist_admitted_window_update(
         vault,
         key,
         update_bytes,
+        inserts,
         &super::selector::RepoSyncLandings::default(),
         |_| true,
     )
@@ -70,6 +77,7 @@ pub fn persist_admitted_window_update(
     vault: &Vault,
     key: &WindowKey,
     update_bytes: &[u8],
+    inserts: &crate::sync::window::UpdateInserts,
     landings: &super::selector::RepoSyncLandings,
     session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
 ) -> Result<u64> {
@@ -104,6 +112,7 @@ pub fn persist_admitted_window_update(
         )?;
 
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[0u8])?;
+        inserts.owe_in_txn(vault, wtxn, key)?;
 
         Ok(next_seq)
     })
@@ -118,33 +127,39 @@ pub fn persist_admitted_window_update(
 /// tombstones delete is fenced as an observed import would fence it, so the
 /// persisted deletes read deleted at once.
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
-    // Read before the export, which consults it (census L6-05).
-    let history_free = crate::sync::window::history_free_window_required(vault, key)?;
-    let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
+    // The export reads the pin; a legal hold read in the writer keeps the
+    // history a pinned export dropped (census L6-05).
+    let state = crate::sync::window::export_scrubbed_window_state(vault, key, doc)?;
     let vv = doc_version_vector(doc);
     // Its pads persist by reference where custody here holds them (FIX 7107).
-    let persisted = crate::sync::window::persisted_window_pads(vault, key, &state, None);
+    let pads = |bytes: &[u8]| {
+        crate::sync::window::persisted_window_pads(vault, key, bytes, None).into_owned()
+    };
+    let persisted = pads(&state.bytes);
+    let persisted_whole = state.whole_bytes().map(pads);
 
-    vault.with_write_txn_grouped(|wtxn| {
+    let keeps_whole = vault.with_write_txn_grouped(|wtxn| {
         vault.fence_published_deletes_in_txn(wtxn, key.as_str(), doc)?;
+        let keeps_whole = state.keeps_whole_in_txn(vault, wtxn)?;
+        let (stored, history_free) = match (&persisted_whole, keeps_whole) {
+            (Some(whole), true) => (whole, false),
+            _ => (&persisted, state.history_free),
+        };
         crate::sync::window::owe_compaction_if_pinned_since_export_in_txn(
             vault,
             wtxn,
             key,
             history_free,
         )?;
-        WINDOW_SNAPSHOT.put(
-            &vault.store,
-            wtxn,
-            &key.as_str().to_owned(),
-            &persisted.to_vec(),
-        )?;
+        WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), stored)?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
-        Ok(())
+        Ok(keeps_whole)
     })?;
-
-    Ok(state)
+    if keeps_whole && let Some(whole) = state.whole_bytes() {
+        return Ok(whole.to_vec());
+    }
+    Ok(state.bytes)
 }
 
 /// Whether window `key` has a persisted snapshot (`d:w:{key}`), read in its own transaction
@@ -277,7 +292,8 @@ mod tests {
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
 
-        let seq = persist_imported_window_update(&vault, &key, b"update-one").unwrap();
+        let seq = persist_imported_window_update(&vault, &key, b"update-one", &Default::default())
+            .unwrap();
         assert_eq!(seq, 1);
         assert_eq!(
             vault
@@ -296,7 +312,8 @@ mod tests {
             "an appended update must mark the state vector stale (0)"
         );
 
-        let seq = persist_imported_window_update(&vault, &key, b"update-two").unwrap();
+        let seq = persist_imported_window_update(&vault, &key, b"update-two", &Default::default())
+            .unwrap();
         assert_eq!(seq, 2);
         assert_eq!(
             vault
@@ -319,12 +336,13 @@ mod tests {
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
 
-        persist_imported_window_update(&vault, &key, b"first").unwrap();
+        persist_imported_window_update(&vault, &key, b"first", &Default::default()).unwrap();
         vault
             .sync_state_put("m:u_seq:w:2026-02", &[1, 2, 3])
             .unwrap();
 
-        let err = persist_imported_window_update(&vault, &key, b"second").unwrap_err();
+        let err = persist_imported_window_update(&vault, &key, b"second", &Default::default())
+            .unwrap_err();
         assert_matches!(err, Error::CorruptedIndex(_), "got {err:?}");
         assert_eq!(
             vault

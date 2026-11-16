@@ -49,7 +49,7 @@ use super::super::loro_support::{
 };
 use super::super::types::WindowKey;
 use super::egress::{
-    export_scrubbed_window_snapshot, replay_pending_mirrors_kept, scrub_local_claim_carriers,
+    export_scrubbed_window_state, replay_pending_mirrors_kept, scrub_local_claim_carriers,
     scrub_local_only_carriers, scrub_redacted_attribution_carriers,
     scrub_withdrawn_delete_carriers,
 };
@@ -289,9 +289,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     reverse_rematerialize(vault, &candidate, key)?;
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
-    // Read before the export, which consults it (census L6-05).
-    let history_free = super::egress::history_free_window_required(vault, key)?;
-    let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
+    // The export reads the pin; a legal hold read in the writer keeps the
+    // candidate history a pinned export dropped (census L6-05).
+    let state = export_scrubbed_window_state(vault, key, &candidate)?;
     // The candidate is final once its snapshot is cut: the forward pass and the export scrubs can
     // still take a value out. A queued send retires only once each value it wrote is in the
     // window being installed or named as a conflict, and every other conflict is provisional
@@ -314,7 +314,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     };
     let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, key, &state, &vv, history_free)?;
+        let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, key, stored, &vv, history_free)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations. A peer's
         // copy keeps the queued sends for the home, which has not taken them (FIX 4748).

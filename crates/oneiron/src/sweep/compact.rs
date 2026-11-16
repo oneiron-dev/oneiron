@@ -346,7 +346,7 @@ pub(super) fn compact_registered_window(
 /// `#housekeeping-sla-open`). The holder's doc keeps the full history in
 /// memory, and an unpinned persist of it would store that history over the
 /// cut. So the window is pinned history-free first
-/// ([`crate::sync::window::require_history_free_window`]): from then on every
+/// ([`crate::sync::window::require_history_free_window_in_txn`]): from then on every
 /// persist of the holder's doc stores a history-free snapshot, and every
 /// export checks the history it ships, which holds back a value whose key a
 /// hard delete took out. Then its persisted rows are cut as a closed
@@ -355,11 +355,14 @@ pub(super) fn compact_registered_window(
 ///
 /// A window a legal hold keeps (OF-470) is neither pinned nor cut: the pin
 /// would make every later persist of the holder's doc history-free, which
-/// drops the held rows' history as a cut would ([`window_kept_by_legal_hold`]).
-/// A write that lands between the read and the compaction write defers the
-/// cut as raced; it is tried again, up to [`HELD_WINDOW_TRIES`] times in all.
-/// A hold placed after the pin, an unproved cut or a window that holds no
-/// history settles as on a closed window. The pin is never lifted.
+/// drops the held rows' history as a cut would. The hold check and the pin
+/// share one write transaction ([`pin_window_unless_held`]). A write that
+/// lands between the read and the pin or the compaction write defers the
+/// window as raced; it is tried again, up to [`HELD_WINDOW_TRIES`] times in
+/// all. A hold placed after the pin defers the cut as on a closed window, and
+/// the holder's persists keep the held history (census L6-05 round 1). An
+/// unproved cut or a window that holds no history settles as on a closed
+/// window. The pin is never lifted.
 #[cfg(feature = "sync")]
 fn compact_held_window(
     vault: &Vault,
@@ -368,13 +371,15 @@ fn compact_held_window(
     withdrawn: &mut WithdrawnSweep,
     full_carriers: bool,
 ) -> Result<CompactOutcome> {
-    if window_kept_by_legal_hold(vault, key)? {
-        return Ok(CompactOutcome::HeldDefer);
-    }
-    crate::sync::window::require_history_free_window(vault, key)?;
     let mut tries = 1;
     loop {
-        let outcome = compact_window_with(vault, key, erased, withdrawn, full_carriers)?;
+        let outcome = match pin_window_unless_held(vault, key)? {
+            HeldWindowPin::Pinned => {
+                compact_window_with(vault, key, erased, withdrawn, full_carriers)?
+            }
+            HeldWindowPin::Held => return Ok(CompactOutcome::HeldDefer),
+            HeldWindowPin::Raced => CompactOutcome::RacedDefer,
+        };
         if !matches!(outcome, CompactOutcome::RacedDefer) || tries == HELD_WINDOW_TRIES {
             return Ok(outcome);
         }
@@ -382,13 +387,35 @@ fn compact_held_window(
     }
 }
 
-/// Whether a legal hold keeps window `key` as it is (OF-470, FIX 3061): a hold
-/// on a row its persisted state carries, live or tombstoned, or on such a
-/// pad's world, judged on the rows [`compact_window_with`] judges in its write
-/// transaction. A window with no persisted state carries none. A missing
-/// indexed hold row keeps the window too, as the cut treats it.
+/// How [`pin_window_unless_held`] left a window.
 #[cfg(feature = "sync")]
-fn window_kept_by_legal_hold(vault: &Vault, key: &crate::sync::types::WindowKey) -> Result<bool> {
+enum HeldWindowPin {
+    /// Pinned history-free: no legal hold keeps a row it carries.
+    Pinned,
+    /// A legal hold keeps a row it carries, or its indexed hold row is
+    /// missing: not pinned.
+    Held,
+    /// Its persisted rows changed after they were read: not pinned.
+    Raced,
+}
+
+/// Pins window `key` history-free
+/// ([`crate::sync::window::require_history_free_window_in_txn`]) unless a
+/// legal hold keeps it (OF-470, FIX 3061): a hold on a row its persisted
+/// state carries, live or tombstoned, or on such a pad's world, judged as
+/// [`compact_window_with`] judges it. The rows are read and inventoried
+/// outside the write; the write proves they are the rows the window still
+/// holds (the same snapshot bytes and update keys, as the cut proves its
+/// own), checks the holds and pins, in one transaction (census L6-05 round
+/// 1). So a hold placed after the read keeps the window unpinned, and a row
+/// that landed after it is judged on the next try. A window with no
+/// persisted state carries no row and is pinned. A missing indexed hold row
+/// keeps the window too, as the cut treats it.
+#[cfg(feature = "sync")]
+fn pin_window_unless_held(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+) -> Result<HeldWindowPin> {
     use crate::ports::WindowAddress;
     use crate::sync::loro_support::{doc_from_snapshot, import_doc};
     use crate::sync::schema::create_window_doc;
@@ -403,35 +430,46 @@ fn window_kept_by_legal_hold(vault: &Vault, key: &crate::sync::types::WindowKey)
             .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
         let rows = vault
             .store
-            .port_window_updates(&rtxn, address, |_, bytes| bytes.to_vec())?
+            .port_window_updates(&rtxn, address, |k, bytes| {
+                (WINDOW_UPDATE.key_bytes(&k), bytes.to_vec())
+            })?
             .collect::<Result<Vec<_>>>()?;
         (snapshot, rows)
     };
-    if snapshot_bytes.is_none() && update_rows.is_empty() {
-        return Ok(false);
-    }
-    let doc = match &snapshot_bytes {
-        Some(bytes) => doc_from_snapshot(bytes)?,
-        None => create_window_doc("local", key),
-    };
-    for bytes in &update_rows {
-        import_doc(&doc, bytes)?;
-    }
-    let carried = crate::sync::carrier_holds::CarrierInventory::of_window(&doc);
-    let rtxn = vault.store.env.read_txn()?;
-    match carried.reject_held_in_txn(
-        &vault.store,
-        &rtxn,
-        &crate::store::legal_hold::HoldActor::TIMER,
-    ) {
-        Ok(()) => Ok(false),
-        Err(refused) if super::holds::refused_by_hold(&refused) => Ok(true),
-        Err(Error::CorruptedIndex("legal hold target")) => {
-            tracing::warn!("sweep: indexed legal hold row missing — held window kept unpinned");
-            Ok(true)
+    let carried = if snapshot_bytes.is_none() && update_rows.is_empty() {
+        None
+    } else {
+        let doc = match &snapshot_bytes {
+            Some(bytes) => doc_from_snapshot(bytes)?,
+            None => create_window_doc("local", key),
+        };
+        for (_, bytes) in &update_rows {
+            import_doc(&doc, bytes)?;
         }
-        Err(err) => Err(err),
-    }
+        Some(crate::sync::carrier_holds::CarrierInventory::of_window(
+            &doc,
+        ))
+    };
+    let read_keys: BTreeSet<Vec<u8>> = update_rows.into_iter().map(|(k, _)| k).collect();
+    vault.with_write_txn_grouped(|wtxn| {
+        let current_snapshot = vault
+            .store
+            .port_window_doc_with_raw(wtxn, address, |raw| Ok(raw.to_vec()))?;
+        let current_keys: BTreeSet<Vec<u8>> = vault
+            .store
+            .port_window_updates(wtxn, address, |k, _| WINDOW_UPDATE.key_bytes(&k))?
+            .collect::<Result<_>>()?;
+        if current_snapshot != snapshot_bytes || current_keys != read_keys {
+            return Ok(HeldWindowPin::Raced);
+        }
+        if let Some(carried) = &carried
+            && carried.held_in_txn(&vault.store, wtxn)?
+        {
+            return Ok(HeldWindowPin::Held);
+        }
+        crate::sync::window::require_history_free_window_in_txn(vault, wtxn, key)?;
+        Ok(HeldWindowPin::Pinned)
+    })
 }
 
 /// [`compact_window_with`] with no withdrawn generation to rewrite.

@@ -42,18 +42,20 @@ mod shallow;
 #[doc(hidden)]
 pub mod test_hooks;
 mod tombstones;
+mod update_inserts;
 mod withdrawn;
 
 pub(in crate::sync) use self::admission::encoded_root_state;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
+pub use self::admission::{
+    admit_window_update_residence_with_vault, validate_window_update_locality,
+    validate_window_update_residence_with_vault,
+};
 pub(in crate::sync) use self::admission::{
     check_promotion_snapshot, check_window_update_residence_with_vault,
     check_window_update_with_staged_worlds, validate_promotion_snapshot,
     validate_window_update_with_staged_worlds,
-};
-pub use self::admission::{
-    validate_window_update_locality, validate_window_update_residence_with_vault,
 };
 pub use self::device_only::{
     UpdateVerdict, Withhold, export_withheld, export_withheld_for, raw_update_verdict,
@@ -70,12 +72,14 @@ pub(crate) use self::discard_projection::{
     forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
+pub(crate) use self::egress::require_history_free_window_in_txn;
 pub(crate) use self::egress::scrub_withdrawn_delete_carriers;
 #[cfg(test)]
 use self::egress::window_packing_excludes_entity;
 use self::egress::window_packing_excludes_entity_with;
 pub(in crate::sync) use self::egress::{
-    export_scrubbed_window_snapshot, withdrawn_delete_carriers, withhold_audience_carriers,
+    export_scrubbed_window_snapshot, export_scrubbed_window_state, withdrawn_delete_carriers,
+    withhold_audience_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
@@ -125,6 +129,7 @@ pub use self::tombstones::{
 };
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
+pub use self::update_inserts::UpdateInserts;
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
 /// Whether the stored TURN `turn` can ride its base month window, judged in
@@ -362,19 +367,19 @@ impl LoadedWindow {
     /// the doc rather than shipping an `sv:w:` VV that omits the survivor's
     /// ops. It is never assumed fresh just because a snapshot was persisted.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
-        // Read before the export: a pin is never lifted, so a pin read here
-        // held for the export too (census L6-05, [`persist_window_doc_in_txn`]).
-        let history_free = history_free_window_required(vault, &self.key)?;
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
         // Scrub after merging persisted updates: a raw update may carry a
-        // local-only claim even when the live doc was already clean.
-        let state = export_scrubbed_window_snapshot(vault, &self.key, &self.doc)?;
+        // local-only claim even when the live doc was already clean. The
+        // export reads the pin; a legal hold read in the writer keeps the
+        // history a pinned export dropped (census L6-05).
+        let state = export_scrubbed_window_state(vault, &self.key, &self.doc)?;
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn_grouped(|wtxn| {
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv, history_free)?;
-            if history_free {
+            let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
+            persist_window_doc_in_txn(vault, wtxn, &self.key, stored, &vv, history_free)?;
+            if state.history_free {
                 HISTORY_FREE_WINDOW.put(
                     &vault.store,
                     wtxn,
@@ -385,10 +390,9 @@ impl LoadedWindow {
             prune_subsumed_window_updates_in_txn(vault, wtxn, &self.key, &subsumed_update_keys)?;
             // svf LAST: freshness is computed against the POST-PRUNE u:w:
             // set, so a surviving post-merge row forces stale (ONE-1151).
-            write_window_svf_in_txn(vault, wtxn, &self.key)
-        })?;
-
-        Ok(state)
+            write_window_svf_in_txn(vault, wtxn, &self.key)?;
+            Ok(stored.to_vec())
+        })
     }
 }
 

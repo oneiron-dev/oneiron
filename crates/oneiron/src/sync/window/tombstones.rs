@@ -1,7 +1,7 @@
 //! Tombstone apply/export/replay plus window rebuild from updates.
 
 use super::bridge::{self, BRIDGE_ORIGIN};
-use super::egress::export_scrubbed_window_snapshot;
+use super::egress::export_scrubbed_window_state;
 use super::loro_support::{
     TombstoneIndex, doc_version_vector, import_doc, map_delete, map_for_each_bytes,
     map_insert_bytes,
@@ -9,8 +9,8 @@ use super::loro_support::{
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use super::{
-    history_free_window_required, load_window_from_state, merge_persisted_state_into_doc,
-    persist_window_doc_in_txn, prune_subsumed_window_updates_in_txn, write_window_svf_in_txn,
+    load_window_from_state, merge_persisted_state_into_doc, persist_window_doc_in_txn,
+    prune_subsumed_window_updates_in_txn, write_window_svf_in_txn,
 };
 
 use crate::Vault;
@@ -349,13 +349,14 @@ fn replay_tombstone_markers(
     let delete_update = export_tombstone_commit_delta(doc, &vv_before)?;
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
-    // after CRDT commit + snapshot persistence succeed. The pin is read
-    // before the export, which consults it (census L6-05).
-    let history_free = history_free_window_required(vault, window_key)?;
-    let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
+    // after CRDT commit + snapshot persistence succeed. The export reads the
+    // pin; a legal hold read in the writer keeps the history a pinned export
+    // dropped (census L6-05).
+    let snapshot = export_scrubbed_window_state(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv, history_free)?;
+        let (stored, history_free) = snapshot.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, stored, &vv, history_free)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
             prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, merged_update_keys)?;

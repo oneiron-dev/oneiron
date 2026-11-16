@@ -299,7 +299,7 @@ impl Vault {
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
                         let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
                         let snapshot =
-                            Self::export_window_snapshot_in_mode(&window.doc, history_free)?;
+                            self.export_window_snapshot_in_mode(&wtxn, &window.doc, history_free)?;
                         let vv = doc_version_vector(&window.doc);
                         Ok((delete_update, snapshot, vv))
                     })?;
@@ -384,7 +384,8 @@ impl Vault {
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
-        let (snapshot, owes_compaction) = Self::export_window_snapshot_in_mode(&doc, history_free)?;
+        let (snapshot, owes_compaction) =
+            self.export_window_snapshot_in_mode(&wtxn, &doc, history_free)?;
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist_in_txn(
             &mut wtxn,
@@ -759,14 +760,27 @@ impl Vault {
     }
 
     /// Exports the window snapshot under a mode already resolved by
-    /// [`Self::resolve_window_snapshot_mode`] — a pure document operation,
-    /// safe to run inside the publish transaction — and whether it is a
-    /// history-free cut that failed its proof (FIX 6520).
+    /// [`Self::resolve_window_snapshot_mode`] — a document operation and a
+    /// hold read, safe to run inside the publish transaction `txn` — and
+    /// whether the window owes the erasure sweep a compaction for it: a
+    /// history-free cut that failed its proof (FIX 6520), or a cut not taken
+    /// because a legal hold keeps a row the doc's history carries (OF-470,
+    /// census L6-05 round 1). That snapshot keeps all the history, and the
+    /// compaction it owes defers while the hold stands.
     #[cfg(feature = "sync")]
     fn export_window_snapshot_in_mode(
+        &self,
+        txn: &heed::RoTxn<'_>,
         doc: &loro::LoroDoc,
         history_free: bool,
     ) -> Result<(Vec<u8>, bool)> {
+        if history_free
+            && crate::sync::carrier_holds::CarrierInventory::of_window(doc)
+                .held_in_txn(&self.store, txn)?
+        {
+            tracing::warn!("tombstone publish: a legal hold keeps the window's history");
+            return crate::store::loro_document::export_snapshot(doc).map(|bytes| (bytes, true));
+        }
         if history_free {
             let cut = crate::sync::window::tip_window_cut(doc)?;
             Ok((cut.bytes, !cut.proved))
