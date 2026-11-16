@@ -39,6 +39,11 @@ pub struct DataKeyGenerationWays<'a> {
     pub confirmed_removals: BTreeSet<String>,
 }
 
+/// The refusal of the act's own door under any recovery preset but
+/// Standard, checked before the act and again in its write.
+const PRESET_SWITCH_RUNS_THE_ACT: &str =
+    "under this recovery preset the act runs from the recovery settings switch";
+
 /// What the act did: the screen names `removed` before (preview) and after.
 pub struct DataKeyGenerationOutcome {
     /// The new generation number.
@@ -484,15 +489,26 @@ impl Vault {
         cause: DataKeyGenerationCause,
         ways: &DataKeyGenerationWays<'_>,
     ) -> Result<DataKeyGenerationOutcome> {
+        self.start_data_key_generation_across(authority, cause, ways, || {})
+    }
+
+    /// [`Self::start_data_key_generation_as`], running `between` after the
+    /// act's reads outside its write and before the write, where another
+    /// writer's commit (a recovery preset switch) can land.
+    pub(crate) fn start_data_key_generation_across(
+        &self,
+        authority: &ActAuthority,
+        cause: DataKeyGenerationCause,
+        ways: &DataKeyGenerationWays<'_>,
+        between: impl FnOnce(),
+    ) -> Result<DataKeyGenerationOutcome> {
         if matches!(authority, ActAuthority::Agent(_)) {
             return Err(refused(
                 "only the owner starts a new data-key generation; an agent may propose it",
             ));
         }
         if self.recovery_preset()? != RecoveryPreset::Standard {
-            return Err(refused(
-                "under this recovery preset the act runs from the recovery settings switch",
-            ));
+            return Err(refused(PRESET_SWITCH_RUNS_THE_ACT));
         }
         // No custody publication pass runs from here until the new key is
         // held, so none reads the old key's subkey and then stays pending at
@@ -501,6 +517,7 @@ impl Vault {
         let custody_policy = self.store.custody_policy_guard();
         let draft = self.prepare_data_key_generation(ways)?;
         let transition = self.begin_wrap_transition()?;
+        between();
         // The door can answer an error after its commit is durable (an owed
         // federation sweep, a claim VAD it pays). The act finishes at the
         // commit, before that work: the new key is held before snapshot
@@ -508,6 +525,16 @@ impl Vault {
         self.write_txn_door_after_commit(
             crate::store::Callback::Opaque,
             move |txn| {
+                // The preset is read again in the write: a switch committed
+                // since the read above (one that issued kit pieces of the
+                // replaced key) refuses the act, so no recovery way is left
+                // naming only the replaced key.
+                let preset = STATE
+                    .get(&self.store, txn, &())?
+                    .map_or(RecoveryPreset::Standard, |state| state.recovery);
+                if preset != RecoveryPreset::Standard {
+                    return Err(refused(PRESET_SWITCH_RUNS_THE_ACT));
+                }
                 let outcome = self.start_data_key_generation_in_txn(
                     txn,
                     authority,
