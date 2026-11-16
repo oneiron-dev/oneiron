@@ -256,16 +256,33 @@ impl Fixture {
             .expect("store the child's own result")
     }
 
-    /// The card `child`'s result `finding` reports as its finding, the child
-    /// lent `lent`, or the report's refusal.
+    /// The card read child `child`'s result `finding` reports as its
+    /// finding, the child lent `lent`, or the report's refusal.
     fn finding_card(
         &self,
         child: EntityId,
         finding: EntityId,
         lent: &[DelegatedSource],
     ) -> Result<serde_json::Value, String> {
-        doors::reader_finding_card(&self.vault, child, finding, lent)
-            .expect("admit the child's finding")
+        doors::reader_finding_card(&self.vault, child, finding, lent, false)
+            .expect("admit the read child's finding")
+    }
+
+    /// [`Self::finding_card`] for a scoped child.
+    fn scoped_finding_card(
+        &self,
+        child: EntityId,
+        finding: EntityId,
+        lent: &[DelegatedSource],
+    ) -> Result<serde_json::Value, String> {
+        doors::reader_finding_card(&self.vault, child, finding, lent, true)
+            .expect("admit the scoped child's finding")
+    }
+
+    /// Whether `self.spawn` lends the fixture result to a Read child.
+    fn shows_body(&self) -> bool {
+        doors::result_shows_body(&self.vault, self.run_id, self.occurrence)
+            .expect("check the result's reads")
     }
 
     fn mark_of(&self, run_id: EntityId, occurrence: EntityId) -> Option<String> {
@@ -368,4 +385,44 @@ fn a_finding_from_a_clean_source_lands_clean_and_a_non_json_one_does_not() {
         fixture.finding_card(child, text, &[fixture.lent()]),
         Err("finding_not_json".to_owned())
     );
+}
+
+#[test]
+fn a_scoped_childs_finding_lands_only_clean_since_its_host_reads_it_whole() {
+    let fixture = Fixture::new(clean_lines().into_bytes());
+    let child = EntityId::now();
+    let clean = fixture.child_result(child, "finding", FINDING);
+    let card = fixture
+        .scoped_finding_card(child, clean, &[fixture.lent()])
+        .expect("a scoped child's clean finding lands");
+    assert_eq!(card["taint"]["state"], "clean");
+    let body = format!(r#"{{"note": "{PHRASE}"}}"#).into_bytes();
+    let secret = fixture.child_result(child, "secret", &body);
+    assert_eq!(
+        fixture.scoped_finding_card(child, secret, &[fixture.lent()]),
+        Err("finding_tainted".to_owned())
+    );
+    let (marked, _) = Fixture::with_phrase();
+    let from_marked = marked.child_result(child, "finding", FINDING);
+    assert_eq!(
+        marked.scoped_finding_card(child, from_marked, &[marked.lent()]),
+        Err("finding_tainted".to_owned())
+    );
+}
+
+#[test]
+fn a_source_is_lent_while_a_read_shows_it_whole_or_through_its_view() {
+    let (marked, _) = Fixture::with_phrase();
+    assert!(marked.mark().is_some(), "the scan marked the phrase");
+    assert!(marked.shows_body(), "a marked body its view shows is lent");
+    assert!(Fixture::new(clean_lines().into_bytes()).shows_body());
+    let unplaced = Fixture::new(format!("{}{}", "[".repeat(200), "]".repeat(200)).into_bytes());
+    assert!(
+        !unplaced.shows_body(),
+        "a mark no rule places shows nothing"
+    );
+    let erased = Fixture::new(b"build output ready\n".to_vec());
+    doors::withdraw_result_body(&erased.vault, erased.run_id, erased.occurrence)
+        .expect("withdraw the exact owned occurrence");
+    assert!(!erased.shows_body(), "a withdrawn body shows nothing");
 }

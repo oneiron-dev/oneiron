@@ -479,6 +479,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "finding_not_own",
     "finding_tainted",
     "finding_not_json",
+    "finding_source_gone",
     "reader_task_settled",
     "task_wait_unbound",
     "task_wait_invalid",

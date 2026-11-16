@@ -100,13 +100,16 @@ impl ExecutorStorage<'_> {
     /// owner's record refuses the report (`finding_source_gone`) rather
     /// than leave its marks out. A tainted finding lands while its
     /// parent's reads show it through its redacted view; `finding_tainted`
-    /// refuses one they withhold, and `finding_not_json` one that is not a
-    /// stored JSON value.
+    /// refuses one they withhold, and any tainted finding of a `scoped`
+    /// child, whose host reads it whole (`read_scoped_finding`), not
+    /// through a view. `finding_not_json` refuses one that is not a stored
+    /// JSON value.
     pub(crate) fn reader_finding_card(
         &self,
         child: EntityId,
         output: &CodeRunRawOutput,
         lent: &[DelegatedSource],
+        scoped: bool,
     ) -> Result<std::result::Result<serde_json::Value, &'static str>> {
         let Some(from) = self.recorded_sources(lent)? else {
             return Ok(Err("finding_source_gone"));
@@ -115,7 +118,8 @@ impl ExecutorStorage<'_> {
             self.inherit_code_run_result_marks(child, output, &from)?;
         }
         let card = crate::code_run::result_card(self, child, output, None)?;
-        if card["taint"]["state"] != "clean" && card["redacted"] != true {
+        let shown = card["taint"]["state"] == "clean" || (!scoped && card["redacted"] == true);
+        if !shown {
             return Ok(Err("finding_tainted"));
         }
         if card["shape"]["format"] != "json" {

@@ -50,11 +50,12 @@ impl RecordingJsHost<'_, '_> {
     /// The source of a `self.spawn`: this run's own result or a Read child's
     /// inherited source, checked as a read of it is. A tainted source its
     /// redacted view shows is lent, and the child reads it through that
-    /// view (ARCH-0069 `#result-bodies`); one no read shows is refused
-    /// `tainted`. An inherited source keeps its original owner, narrowed
-    /// range, checked row witnesses and the origins its delegating run
-    /// froze; an own result's origins are this run's ledger, frozen now
-    /// (FIX 7084).
+    /// view (ARCH-0069 `#result-bodies`); one no read shows (withheld
+    /// whole, or a view that still scans as secret) is refused `tainted`,
+    /// so no fold receipt counts bytes no read showed as read. An inherited
+    /// source keeps its original owner, narrowed range, checked row
+    /// witnesses and the origins its delegating run froze; an own result's
+    /// origins are this run's ledger, frozen now (FIX 7084).
     pub(super) fn delegate_source(
         &mut self,
         source: &str,
@@ -74,7 +75,10 @@ impl RecordingJsHost<'_, '_> {
                 return Ok(Err(code.to_owned()));
             }
         };
-        if read.withheld_whole() {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        if !read.shows_body(storage)? {
             return Ok(Err("tainted".to_owned()));
         }
         let output = read.output();
@@ -246,9 +250,9 @@ impl RecordingJsHost<'_, '_> {
     /// resolved among its own results only, a whole stored JSON value, then
     /// the report dispatched with it bound. Its parent's source is not its
     /// own and is refused. The finding takes the marks of every source the
-    /// child was lent, and lands while its parent's reads show it
-    /// (`ExecutorStorage::reader_finding_card`). Its origins are the
-    /// child's ledger, frozen now (FIX 7084).
+    /// child was lent, and lands while its parent's reads show it; a scoped
+    /// child's lands only clean (`ExecutorStorage::reader_finding_card`).
+    /// Its origins are the child's ledger, frozen now (FIX 7084).
     pub(super) fn report_finding(
         &mut self,
         seq: u64,
@@ -266,7 +270,7 @@ impl RecordingJsHost<'_, '_> {
             )
         };
         if let Some(child) = self.gated_write.reader_child() {
-            let lent = child.lent_sources();
+            let (lent, scoped) = (child.lent_sources(), child.scoped.is_some());
             let storage = self.storage.ok_or(Error::InvalidConfig(
                 "executor result storage unavailable".into(),
             ))?;
@@ -277,7 +281,7 @@ impl RecordingJsHost<'_, '_> {
             else {
                 return Ok(failed("finding_not_own"));
             };
-            if let Err(code) = storage.reader_finding_card(self.run_id, &output, &lent)? {
+            if let Err(code) = storage.reader_finding_card(self.run_id, &output, &lent, scoped)? {
                 return Ok(failed(code));
             }
             report.bound = Some(ReaderFindingRef {

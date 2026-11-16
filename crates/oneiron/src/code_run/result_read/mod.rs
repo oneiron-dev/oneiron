@@ -257,6 +257,13 @@ impl ResultRead {
         })
     }
 
+    /// Whether any read of the occurrence shows its body: it is clean, or
+    /// its redacted view passes the scan. One withheld whole, or whose view
+    /// still scans as secret, shows no reader any byte of it.
+    pub(crate) fn shows_body(&self, storage: &ExecutorStorage<'_>) -> Result<bool> {
+        Ok(self.read_shown(storage, 0, 0)?.is_some())
+    }
+
     /// Runs `read` over the body this read shows in `storage`, and whether
     /// that is its redacted view: the stored bytes of a clean or withheld
     /// occurrence, else each secret span blanked (L6-31). A body that has
