@@ -75,6 +75,11 @@ pub struct BatchBuilder<'a> {
     /// answers ([`Self::authored_through`]). `None` writes each body as
     /// staged.
     agent_authoring: Option<crate::agent_def::AgentAuthoring>,
+    /// The person a door authors this batch through
+    /// ([`Self::authored_through`]), for a batch applied or committed with
+    /// no actor of its own: the door's mask names them as the writer of each
+    /// key it lifts (L6-03-WRITER-MARK).
+    person_writer: Option<EntityId>,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
     /// (FIX 9034), set by that door alone.
@@ -147,6 +152,7 @@ impl<'a> BatchBuilder<'a> {
             prepared_person_substrate: None,
             prepared_agent_birth: None,
             agent_authoring: None,
+            person_writer: None,
             marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
@@ -187,6 +193,9 @@ impl<'a> BatchBuilder<'a> {
     /// agent's own puts names its writer here, with the key of the read its
     /// write lane holds the caller to (`None` for an unbound lane): an agent
     /// with no definition of its own takes its slice from that credential.
+    /// A person `actor` is the batch's writer in their own name: the door's
+    /// mask names them on each key it lifts (L6-03-WRITER-MARK) when the
+    /// batch applies with no actor of its own, as a served core batch does.
     pub fn authored_through(
         mut self,
         actor: &crate::WriteActor,
@@ -194,7 +203,25 @@ impl<'a> BatchBuilder<'a> {
         read_key: Option<&crate::claim::ScopedReadActorKey>,
     ) -> Self {
         self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door, read_key);
+        self.person_writer = crate::federation::person_writing(actor);
         self
+    }
+
+    /// The person who writes this batch in their own name, whom the door's
+    /// mask names as the writer of each key it lifts (L6-03-WRITER-MARK):
+    /// its `actor` when it applies with one, else the person its door
+    /// authored it through ([`Self::authored_through`]). A promotion replay
+    /// names none: its saver chose the save, but the room or scratch text it
+    /// replays may be another person's, so its keys stay the owner's to
+    /// answer.
+    fn person_writer_for(&self, actor: Option<&crate::WriteActor>) -> Option<EntityId> {
+        if matches!(self.origin, BaseWriteOrigin::PromoteReplay(_)) {
+            return None;
+        }
+        match actor {
+            Some(actor) => crate::federation::person_writing(actor),
+            None => self.person_writer,
+        }
     }
 
     /// What the author writer makes of each AGENT_DEF put this batch stages,
