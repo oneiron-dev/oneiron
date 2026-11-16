@@ -66,6 +66,8 @@ const NO_SEALED_KEY: &str = "no owner signing key rests under the device PIN";
 const SEALED_KEY_UNOPENED: &str = "the owner signing key does not open under this device's PIN \
                                    key";
 const SEALED_KEY_MISNAMED: &str = "the sealed owner signing key is not the key its envelope names";
+const KEY_NO_LONGER_NAMED: &str = "this handle no longer names this owner signing key as the one \
+                                    it opened under the device PIN";
 const SEAL_NOT_READ_BACK: &str = "the owner signing key sealed under the device PIN did not read \
                                   back; its slot is kept";
 
@@ -121,15 +123,25 @@ struct PinBoundOwnerSigner {
 impl PinBoundOwnerSigner {
     /// Why the key does not sign on `vault` now, from what needs no key:
     /// `vault` is another vault's handle, the device PIN key was set or
-    /// forgotten since the seed was opened, or the roster no longer lists
-    /// the key live. `held` is the fold of a caller that signs inside its
-    /// own transaction ([`Vault::owner_key_on_live_roster`]).
+    /// forgotten since the seed was opened, `vault` no longer names this
+    /// key as the one it opened under the PIN, or the roster no longer
+    /// lists the key live. `held` is the fold of a caller that signs inside
+    /// its own transaction ([`Vault::owner_key_on_live_roster`]).
+    ///
+    /// The handle stops naming a key when the seed that rests was replaced,
+    /// also by a write the keystore answered a failure for, and when a
+    /// later window found another seed or none. A signer of that key may
+    /// still be held; it is refused here, so a pass and a door pass it over
+    /// in place of failing at its signature.
     fn refusal(&self, vault: &Vault, held: Option<&AuthorityFold>) -> Option<Error> {
         if self.slot.vault_id != *vault.vault_id().as_bytes() {
             return Some(authority_refused(OTHER_VAULT_KEY));
         }
         if self.pin.key_generation() != self.key_generation {
             return Some(refused(SEALED_KEY_UNOPENED));
+        }
+        if vault.opened_pin_bound_owner_key() != Some(self.public_key) {
+            return Some(refused(KEY_NO_LONGER_NAMED));
         }
         if !vault.owner_key_on_live_roster(&self.public_key, held) {
             return Some(authority_refused(KEY_NOT_LIVE));

@@ -19,8 +19,8 @@
 //! install does not hold yet waits, and so does one it cannot rebuild.
 //!
 //! The signer sits behind [`CheckpointRootSigner`]. The host root
-//! ([`HostSlipIssuer`]) is today's only one; a device-held owner key (FIX
-//! 4921) is another behind the same two calls. A host holds its signers on
+//! ([`HostSlipIssuer`]) is one; a device-held owner key (FIX 4921) is
+//! another behind the same trait. A host holds its signers on
 //! the vault handle ([`Vault::hold_checkpoint_root_signer`]) for the device
 //! sync's steady pass. An attestation made here goes to the writing host,
 //! which verifies it again, and never into this install's attestation table,
@@ -88,7 +88,8 @@ impl RootCheckpointAuthority {
 
 /// A root of the policy a vault counts, as a checkpoint signer: the root's
 /// raw signature over a checkpoint statement, a key binding's or an
-/// attestation's, and over nothing else.
+/// attestation's, and, as an owner key's proof, over the transcript of an
+/// owner act (row CARRIER-OWNER-PROOF). It signs nothing else.
 pub trait CheckpointRootSigner: Send + Sync {
     /// The root key it signs as.
     fn root(&self) -> AuthorityKey;
@@ -120,7 +121,10 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// transaction, so the roster is read from `fold`, the door's view of
     /// it, and the signer opens no transaction of the vault: a second one on
     /// the door's thread would fail, or read the roster as it was before the
-    /// door's own writes.
+    /// door's own writes. So `fold` must be the caller's own fold of
+    /// `vault`, the one the entry is signed on. A signature made over
+    /// another fold proves nothing: the vault's fold takes a proof only from
+    /// a key it trusts at the entry's parent state.
     fn sign_owner_proof(
         &self,
         vault: &Vault,
@@ -237,9 +241,10 @@ impl Vault {
             .clear();
     }
 
-    /// Every root signer this handle holds, in the order they were held,
-    /// whether or not it signs now. The list is a copy: a signer's answer
-    /// may read the vault, and none is asked under the list's lock.
+    /// Every root signer this handle holds, whether or not it signs now,
+    /// in the order of each one's latest hold: a signer held again moves to
+    /// the end. The list is a copy: a signer's answer may read the vault,
+    /// and none is asked under the list's lock.
     pub(super) fn held_checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
         self.world_keys
             .checkpoint_roots
@@ -249,7 +254,8 @@ impl Vault {
     }
 
     /// The root signers this handle holds that sign at this moment
-    /// ([`CheckpointRootSigner::signs_now`]), in the order they were held.
+    /// ([`CheckpointRootSigner::signs_now`]), in the order of each one's
+    /// latest hold.
     /// Each signer reads the vault's roster in a transaction of its own, so
     /// the caller holds none: a door that picks a signer inside its
     /// transaction asks the proof's pick (`Vault::owner_proof_signer`).

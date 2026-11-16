@@ -11,11 +11,13 @@
 //! the policy counts, and the rule that a received checkpoint never picks
 //! its signers, stay as they are.
 //!
-//! The key signs checkpoint statements alone, a key binding's or an
+//! The key signs checkpoint statements, a key binding's or an
 //! attestation's: a raw 64-byte Ed25519 signature over `domain || msgpack`.
-//! Its one other signature is the enrollment's proof of possession, made in
-//! this module. The seed is read from its home into guarded memory, the key
-//! is wiped on drop, and neither leaves this install.
+//! It signs two things more: the transcript of an owner act this install
+//! carries, as the owner's proof (row CARRIER-OWNER-PROOF), and the
+//! enrollment's proof of possession, made in this module. The seed is read
+//! from its home into guarded memory, the key is wiped on drop, and neither
+//! leaves this install.
 //!
 //! With `[keystore] backend = "off"` this install holds no device keys, so it
 //! has no owner signing key either (FIX 843, Engine 21:35): the explicit home

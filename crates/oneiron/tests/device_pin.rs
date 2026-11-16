@@ -2069,6 +2069,13 @@ fn a_replacement_whose_sealed_write_answers_a_failure_is_not_told_as_the_replace
         },
         "the handle no longer names the key whose sealed seed that write replaced"
     );
+    // The replaced key's signer is still held, the roster still lists the
+    // key live, and the window is open.
+    assert!(
+        device.listed_signer(replaced).is_none(),
+        "the signer of a key the handle no longer names signs nothing"
+    );
+    assert!(!device.held().can_confirm, "and it proves no owner act");
 
     // The next step inside the window opens what rests now, and names that.
     assert!(
