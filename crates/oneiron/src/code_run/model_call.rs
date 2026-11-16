@@ -5,6 +5,7 @@
 //! this row references them. Only a call that writes no message owns its
 //! Reasoning bytes here, until the agent is erased.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 use oneiron_model::llm::{LlmEndpointFlavor, ReasoningPartKind};
 use serde::{Deserialize, Serialize};
 
@@ -196,24 +197,34 @@ impl ModelCallReasoningPart {
     }
 }
 
+/// A canonical fingerprint: plain BLAKE3 of `value`'s sorted JSON. A replay
+/// capsule records each one and replay admission compares it, so each keeps
+/// its bytes (K, PLAN-UC-04 stage 6.4).
+fn sorted_json_digest<T: Serialize>(
+    purpose: LegacyPurpose,
+    value: &T,
+) -> std::result::Result<[u8; 32], serde_json::Error> {
+    Ok(LegacyDigest::new(purpose)
+        .raw(&crate::llm::canonical_json_bytes(value)?)
+        .finish())
+}
+
 /// Canonical request and prefix fingerprints used by replay admission.
 pub fn model_call_digests(request: &crate::LlmRequest) -> Result<ModelCallDigests> {
     let invalid = || Error::InvalidConfig("model call request did not canonicalize".to_owned());
     let request_hash = request.canonical_hash().map_err(|_| invalid())?;
     let messages_digest =
-        *blake3::hash(&crate::llm::canonical_json_bytes(&request.messages).map_err(|_| invalid())?)
-            .as_bytes();
+        sorted_json_digest(purposes::code_run::MODEL_CALL_MESSAGES, &request.messages)
+            .map_err(|_| invalid())?;
     let system = request
         .messages
         .iter()
         .filter(|message| message.role == crate::LlmMessageRole::System)
         .collect::<Vec<_>>();
-    let system_digest =
-        *blake3::hash(&crate::llm::canonical_json_bytes(&system).map_err(|_| invalid())?)
-            .as_bytes();
-    let tools_digest =
-        *blake3::hash(&crate::llm::canonical_json_bytes(&request.tools).map_err(|_| invalid())?)
-            .as_bytes();
+    let system_digest = sorted_json_digest(purposes::code_run::MODEL_CALL_SYSTEM, &system)
+        .map_err(|_| invalid())?;
+    let tools_digest = sorted_json_digest(purposes::code_run::MODEL_CALL_TOOLS, &request.tools)
+        .map_err(|_| invalid())?;
     Ok(ModelCallDigests {
         request_hash,
         messages_digest,
@@ -255,20 +266,17 @@ pub fn native_read_digests(
         })
         .collect::<Vec<_>>();
     let canonical = NativeReadCanonical { state, questions };
-    let request_hash =
-        *blake3::hash(&crate::llm::canonical_json_bytes(&canonical).map_err(|_| invalid())?)
-            .as_bytes();
+    let request_hash = sorted_json_digest(purposes::code_run::NATIVE_READ_REQUEST, &canonical)
+        .map_err(|_| invalid())?;
     Ok(NativeReadDigests { request_hash })
 }
 
 /// Canonical JSON-tree fingerprint of the actual built native-seat body.
 /// This is not a hash of wire bytes, headers or credentials.
 pub fn native_seat_read_digests(body: &serde_json::Value) -> Result<NativeReadDigests> {
-    let canonical = crate::llm::canonical_json_bytes(body)
+    let request_hash = sorted_json_digest(purposes::code_run::NATIVE_READ_REQUEST, body)
         .map_err(|_| invalid("native seat request did not canonicalize"))?;
-    Ok(NativeReadDigests {
-        request_hash: *blake3::hash(&canonical).as_bytes(),
-    })
+    Ok(NativeReadDigests { request_hash })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

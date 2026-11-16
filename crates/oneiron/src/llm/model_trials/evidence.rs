@@ -9,6 +9,8 @@ use crate::llm::decision::{AnswerContract, DecisionAnswer};
 use crate::llm::registry::invalid;
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 pub(super) fn freeze_cases(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -162,6 +164,33 @@ pub(super) fn measure(
     )
 }
 
+/// The measurements hash: plain BLAKE3 of the sorted JSON of the trial's set
+/// pin, its frozen cases and the measurements. A trial's quality refuses an
+/// assessment naming another, so it keeps its bytes (K, PLAN-UC-04 stage 6.4).
+fn trial_measurements_hash(
+    set: &TrialSetPin,
+    cases: &[FrozenTrialCase],
+    measurements: &[TrialMeasurement],
+) -> Result<[u8; 32]> {
+    let encoded = crate::llm::canonical_json_bytes(&(set, cases, measurements))
+        .map_err(|error| invalid(error.to_string()))?;
+    Ok(LegacyDigest::new(purposes::llm::TRIAL_MEASUREMENTS)
+        .raw(&encoded)
+        .finish())
+}
+
+/// [`trial_measurements_hash`] for the K-proof
+/// (`tests/fingerprint_keep_oneiron_json_digests.rs`); `None` when the values do
+/// not encode.
+#[cfg(oneiron_test_support)]
+pub(crate) fn trial_measurements_hash_for_test(
+    set: &TrialSetPin,
+    cases: &[FrozenTrialCase],
+    measurements: &[TrialMeasurement],
+) -> Option<[u8; 32]> {
+    trial_measurements_hash(set, cases, measurements).ok()
+}
+
 /// The trial's evidence from one kept read pair per case. An unknown arm
 /// leaves its case without a decision or a known cost: the losses are then
 /// unknown, and the costs are the known billed spend (FIX 9920).
@@ -238,12 +267,11 @@ pub(super) fn measure_reads(trial: &ModelTrial, reads: Vec<CaseReads>) -> Result
             .sum::<f64>()
             / families.len() as f64
     });
-    let encoded =
-        crate::llm::canonical_json_bytes(&(&trial.request.set, &trial.cases, &measurements))
-            .map_err(|error| invalid(error.to_string()))?;
+    let measurements_hash =
+        trial_measurements_hash(&trial.request.set, &trial.cases, &measurements)?;
     Ok(TrialEvidence {
         measurements,
-        measurements_hash: *blake3::hash(&encoded).as_bytes(),
+        measurements_hash,
         incumbent_loss,
         candidate_loss,
         independent_families: families.len(),

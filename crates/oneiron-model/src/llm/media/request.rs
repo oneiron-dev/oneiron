@@ -196,16 +196,22 @@ impl MediaRequest {
         self.references.iter().map(MediaPart::as_image).collect()
     }
 
-    /// The digest of the call's canonical bytes: what its dispatch receipt
-    /// names, and the request half of its replay key
-    /// ([`super::MediaReplayKey`]), so it keeps its bytes (K, PLAN-UC-04
-    /// stage 6.4).
-    pub fn canonical_hash_hex(&self) -> Result<String, serde_json::Error> {
+    /// The digest of the call's canonical bytes: its dispatch receipt names it
+    /// ([`Self::canonical_hash_hex`]), it is the request half of its replay key
+    /// ([`super::MediaReplayKey`]) and a durable media step's step hash, so it
+    /// keeps its bytes (K, PLAN-UC-04 stage 6.4).
+    pub fn canonical_hash(&self) -> Result<[u8; 32], serde_json::Error> {
         let bytes = crate::llm::canonical_json_bytes(self)?;
+        Ok(LegacyDigest::new(purposes::llm::MEDIA_REQUEST)
+            .raw(&bytes)
+            .finish())
+    }
+
+    /// [`Self::canonical_hash`] as 64 lowercase hex digits: what the call's
+    /// dispatch receipt names.
+    pub fn canonical_hash_hex(&self) -> Result<String, serde_json::Error> {
         Ok(oneiron_contracts::entity_id::bytes_to_hex_lower(
-            &LegacyDigest::new(purposes::llm::MEDIA_REQUEST)
-                .raw(&bytes)
-                .finish(),
+            &self.canonical_hash()?,
         ))
     }
 

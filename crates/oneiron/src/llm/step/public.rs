@@ -35,6 +35,7 @@ use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
 use crate::task_verb::HostBinding;
 use crate::{EdgeActorClass, Vault, WriteActor};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
@@ -325,6 +326,25 @@ async fn resume_saved(
     submit(vault, submitter, frozen, None).await
 }
 
+/// The submit's canonical call hash, which its invocation claim holds: plain
+/// BLAKE3 of the submit's sorted JSON (its step key, request and retry policy).
+/// It keeps its bytes (K, PLAN-UC-04 stage 6.4).
+fn submit_call_hash(input: &ModelStepSubmit) -> MemoryResult<[u8; 32]> {
+    let call = super::super::canonical_json_bytes(input)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    Ok(LegacyDigest::new(purposes::llm::STEP_SUBMIT)
+        .raw(&call)
+        .finish())
+}
+
+/// [`submit_call_hash`] for the K-proof
+/// (`tests/fingerprint_keep_oneiron_json_digests.rs`); `None` when the submit
+/// does not encode.
+#[cfg(oneiron_test_support)]
+pub(crate) fn submit_call_hash_for_test(input: &ModelStepSubmit) -> Option<[u8; 32]> {
+    submit_call_hash(input).ok()
+}
+
 async fn submit(
     vault: &Vault,
     submitter: Submitter<'_>,
@@ -345,9 +365,8 @@ async fn submit(
         .canonical_hash()
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let invocation = InvocationId::of_run_step(id.as_bytes(), 0);
-    let call = super::super::canonical_json_bytes(&input)
-        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    let _claim = match vault.claim_invocation(invocation, *blake3::hash(&call).as_bytes()) {
+    let call = submit_call_hash(&input)?;
+    let _claim = match vault.claim_invocation(invocation, call) {
         InvocationEntry::Claimed(claim) => claim,
         InvocationEntry::Busy(_) => {
             return receipt(

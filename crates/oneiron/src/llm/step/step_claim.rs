@@ -32,6 +32,7 @@ use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 pub(super) use super::step_index::{
@@ -344,11 +345,22 @@ pub(super) fn load_step_response_sighted_in_txn(
 
 /// The WITH-WHAT params identity: BLAKE3 of the request's canonical params
 /// JSON, lowercase hex. The terminal claim writer and the memo-hit provenance
-/// check MUST agree byte-for-byte, so both go through this one helper.
+/// check MUST agree byte-for-byte, so both go through this one helper. A
+/// terminal claim stores it, so it keeps its bytes (K, PLAN-UC-04 stage 6.4).
 pub(super) fn request_params_hash(request: &LlmRequest) -> DurableStepResult<String> {
     Ok(bytes_to_hex_lower(
-        blake3::hash(&canonical_json_bytes(&request.params)?).as_bytes(),
+        &LegacyDigest::new(purposes::llm::STEP_PARAMS)
+            .raw(&canonical_json_bytes(&request.params)?)
+            .finish(),
     ))
+}
+
+/// [`request_params_hash`] for the K-proof
+/// (`tests/fingerprint_keep_oneiron_json_digests.rs`); `None` when the params do
+/// not encode.
+#[cfg(oneiron_test_support)]
+pub(crate) fn request_params_hash_for_test(request: &LlmRequest) -> Option<String> {
+    request_params_hash(request).ok()
 }
 
 /// True iff a stored terminal `dreamer.step` claim was recorded for exactly
