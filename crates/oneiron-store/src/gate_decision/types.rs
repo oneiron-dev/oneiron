@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::side_table::key::SideKey;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::register::Register;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, SideKey)]
 pub struct GateDecisionId {
@@ -39,31 +40,21 @@ impl GateDecisionId {
 /// the `actor_class` tokens that are not edge classes (`human`, `agent`,
 /// `system`). `Owner` and `Engine` keep the two tokens writers use today
 /// beside `human` and `system`, so no reader of `actor_class` changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// A Register (`gate.engine_part`): `as_str` is the `actor_class` token a receipt from this part
+/// carries, and `Register::named` reads one back. It has no serde derive, so the register line
+/// states the spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Register)]
+#[register("gate.engine_part", rename_all = "snake_case")]
 pub enum GateEnginePart {
     PolicyModel,
     Sandbox,
+    #[register(name = "booking.http_guard")]
     BookingHttpGuard,
     ConnectorCaller,
     FirstParty,
     Owner,
     Engine,
-}
-
-impl GateEnginePart {
-    /// The `actor_class` token a receipt from this part carries.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::PolicyModel => "policy_model",
-            Self::Sandbox => "sandbox",
-            Self::BookingHttpGuard => "booking.http_guard",
-            Self::ConnectorCaller => "connector_caller",
-            Self::FirstParty => "first_party",
-            Self::Owner => "owner",
-            Self::Engine => "engine",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

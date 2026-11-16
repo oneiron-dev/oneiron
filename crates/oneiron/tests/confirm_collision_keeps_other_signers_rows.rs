@@ -21,8 +21,14 @@
 //! evidence still spends: a later confirmation on a frontier that holds B
 //! and R, reusing C's id, is refused and takes no row with it.
 //!
+//! Since #7987 (the revocation fence, REVOKED-OWNER-ROOT-SIBLING-ENROL) R
+//! closes a fence on A, so A's rows outside R's ancestry, B and Z, never
+//! stand: delivered last the door refuses them, delivered first the fold
+//! refuses them, while C, D, R and the admission stand either way. The
+//! collision still drops no row of any other signer.
+//!
 //! Expected (estimate, not run yet): every test red on main (B wins, C and
-//! its descendants go), green on this branch.
+//! its descendants go), green at the #7987 merge with A's rows refused.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test confirm_collision_keeps_other_signers_rows`.
@@ -32,11 +38,12 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityConfirmAction,
-    AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry,
-    AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
-    MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerKeyEnrollment,
-    authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
+    AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
+    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole,
+    OwnerKeyEnrollment, authority_entry_hash, authority_transcript,
+    machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -111,7 +118,7 @@ fn admit_machine(rooted: &Rooted, seed: u8) -> EntityId {
         encryption_key,
         machine_proof,
     };
-    let folded = rooted
+    let landing = rooted
         .vault
         .enroll_machine(
             &rooted.proof,
@@ -121,7 +128,10 @@ fn admit_machine(rooted: &Rooted, seed: u8) -> EntityId {
             None,
         )
         .expect("the owner admits the machine");
-    assert!(folded.is_mine(None), "the admitted machine is the owner's");
+    assert!(
+        landing.machine().is_some_and(|folded| folded.is_mine(None)),
+        "the admitted machine is the owner's: {landing:?}"
+    );
     machine
 }
 
@@ -353,14 +363,36 @@ fn collision_keeps_the_other_signers_rows(collision: Collision, arrival: Arrival
         );
         put_attackers_rows(&mut puts);
     }
-    assert!(
-        puts.iter().all(|outcome| outcome == "stored"),
-        "{label} setup: every signed row is stored; puts {puts:?}"
-    );
+    // The fence (#7987): A's rows outside R's ancestry never stand. Last,
+    // the door refuses them; first, they arrive while A is live and the
+    // fold refuses them below.
+    let attacker_rows = 1 + usize::from(harmless.is_some());
+    match arrival {
+        Arrival::First => assert!(
+            puts.iter().all(|outcome| outcome == "stored"),
+            "{label} setup: every signed row is stored; puts {puts:?}"
+        ),
+        Arrival::Last => {
+            let refused: Vec<_> = puts
+                .iter()
+                .filter(|outcome| outcome.as_str() != "stored")
+                .collect();
+            assert_eq!(
+                refused.len(),
+                attacker_rows,
+                "{label} setup: only A's rows are refused; puts {puts:?}"
+            );
+            assert!(
+                refused
+                    .iter()
+                    .all(|outcome| outcome.as_str() == "refused: InvalidAuthorityLogBody"),
+                "{label} setup: the door refuses A's rows outside R's ancestry; puts {puts:?}"
+            );
+        }
+    }
 
     let fold = rooted.vault.authority_fold().expect("the fold");
     let kept = [
-        ("B", &collision_row),
         ("C", &confirmed),
         ("D", &others_confirmation),
         ("R", &revocation),
@@ -372,16 +404,38 @@ fn collision_keeps_the_other_signers_rows(collision: Collision, arrival: Arrival
         .collect();
     assert!(
         dropped.is_empty(),
-        "{label}: a collision drops no row, of A's or any other signer's; dropped {dropped:?}, issues {:?}",
+        "{label}: a collision drops no row of any other signer; dropped {dropped:?}, issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&collision_row)),
+        "{label}: B, A's row outside R's ancestry, never stands under the fence; issues {:?}",
         fold.issues
     );
     assert!(
         harmless
             .iter()
-            .all(|row| fold.valid_entries.contains(&hash_of(row))),
-        "{label}: A's harmless row Z stays valid; issues {:?}",
+            .all(|row| !fold.valid_entries.contains(&hash_of(row))),
+        "{label}: A's harmless row Z never stands under the fence; issues {:?}",
         fold.issues
     );
+    // A row the door refused never reaches the fold, so only the
+    // first-delivered rows carry the fold's refusal.
+    if matches!(arrival, Arrival::First) {
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(hash_of(&collision_row),)),
+            "{label}: the fold refuses B for its signer; issues {:?}",
+            fold.issues
+        );
+        assert!(
+            harmless.iter().all(|row| fold
+                .issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(hash_of(row)))),
+            "{label}: the fold refuses Z for its signer; issues {:?}",
+            fold.issues
+        );
+    }
     assert!(
         is_mine(&fold, second_machine),
         "{label}: the owner's admission above R stands; issues {:?}",
@@ -394,15 +448,17 @@ fn collision_keeps_the_other_signers_rows(collision: Collision, arrival: Arrival
     );
     assert!(
         fold.federation_confirms.contains_key(&hash_of(&confirmed))
-            && fold
+            && !fold
                 .federation_confirms
                 .contains_key(&hash_of(&collision_row)),
-        "{label}: B and C both stay spent evidence; issues {:?}",
+        "{label}: C stays spent evidence; B, refused, spends nothing; issues {:?}",
         fold.issues
     );
 
     // The spent evidence still spends: H's confirmation on B and R, with
-    // C's id, is refused, and takes no row with it.
+    // C's id, is refused, and takes no row with it. The refusal path
+    // depends on the order (the fold refuses it where B never arrived,
+    // the door where B did), so the assertion reads the fold only.
     let mut joined = vec![hash_of(&collision_row), hash_of(&revocation)];
     joined.sort();
     let reuse = row_signed_by(
