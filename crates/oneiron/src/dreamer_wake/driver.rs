@@ -18,7 +18,7 @@ pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelec
 use self::dispatch::Dispatch;
 use self::observe::WakePassClock;
 pub(crate) use self::park_cause::{
-    executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
+    executor_error_ends_pass, llm_waits_on_owner_act, refuses_attempt_input, waits_on_owner_act,
 };
 pub(crate) use self::rewrite::check_host_wake_rewrite;
 use self::stop::boundary_stop;

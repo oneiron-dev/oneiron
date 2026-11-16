@@ -37,7 +37,8 @@ pub(crate) use self::arc_backstop::arc_policy_in_txn;
 pub use self::deadline::*;
 pub use self::driver::*;
 pub(crate) use self::driver::{
-    check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
+    check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act,
+    refuses_attempt_input, waits_on_owner_act,
 };
 pub use self::grain::*;
 pub use self::legibility::*;

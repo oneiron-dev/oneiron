@@ -30,7 +30,7 @@ impl RecipeFailure {
         let kind = error.kind();
         if crate::dreamer_wake::waits_on_owner_act(kind) {
             Self::OwnerAct
-        } else if matches!(kind, crate::error::ErrorKind::InvalidRelationship) {
+        } else if crate::dreamer_wake::refuses_attempt_input(kind) {
             Self::Permanent
         } else {
             Self::Transient
