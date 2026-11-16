@@ -774,8 +774,8 @@ fn link_client(
     .unwrap()
 }
 
-/// The home's root as the stored root reads now: a doc of the home's own.
-fn home_root(vault: &oneiron::Vault) -> LoroDoc {
+/// The root as `d:root` holds it, in a doc of its own.
+fn stored_root(vault: &oneiron::Vault) -> LoroDoc {
     oneiron::sync::server_state::load_root_from_state(vault)
         .unwrap()
         .expect("a root is stored")
@@ -800,7 +800,7 @@ fn mirrored_lease_status(vault: &oneiron::Vault, vault_id: u64, client: u64) -> 
 /// A lease's status in the registry of the root `d:root` holds.
 fn stored_root_lease_status(vault: &oneiron::Vault, vault_id: u64, client: u64) -> LeaseStatus {
     let entry = deep_map_bytes(
-        &home_root(vault),
+        &stored_root(vault),
         ROOT_LEASES_MAP,
         &lease::lease_registry_key(vault_id, client),
     )
@@ -817,7 +817,8 @@ async fn lease_revoke_survives_a_root_persist_of_the_device_link() {
 
     // The link opens: its client's doc reads the lease as active.
     let (mut link, _events) = link_client(&server);
-    let home = home_root(&vault);
+    // The home's own doc holds the root this device has stored.
+    let home = stored_root(&vault);
 
     // This server revokes the lease after the link opened.
     assert!(
@@ -836,7 +837,7 @@ async fn lease_revoke_survives_a_root_persist_of_the_device_link() {
     oneiron::sync::schema::add_window_to_root(&home, &WindowKey::new("2026-03"));
     link.handle_server_message(&home_root_frame(&home)).unwrap();
     assert!(
-        read_window_list(&home_root(&vault))
+        read_window_list(&stored_root(&vault))
             .iter()
             .any(|key| key.as_str() == "2026-03"),
         "the link persisted the home's root"
@@ -863,7 +864,8 @@ async fn lease_write_keeps_a_revoke_the_device_link_persisted() {
     seed_historical_lease(&server, 10, revoked_at_home, [43; 32], LeaseStatus::Active);
 
     let (mut link, _events) = link_client(&server);
-    let home = home_root(&vault);
+    // The home's own doc holds the root this device has stored.
+    let home = stored_root(&vault);
 
     // The home revokes one lease; the link imports that root and persists.
     // This server's doc does not hold the revoke.
