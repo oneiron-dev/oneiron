@@ -117718,6 +117718,16 @@
   "oneiron-guest": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch.rs",
+     "purpose": "The batch transcript channel a vendor's sandbox runs the guest over (L8-43, VENDOR-BOUNDARY = A: a batch…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -117769,7 +117779,7 @@
      "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 2,
       "type": 1
      }
@@ -117844,12 +117854,27 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/batch_transcript.rs",
+     "purpose": "A run on a vendor's sandbox (L8-43, VENDOR-BOUNDARY = A): the real QuickJS foreign component runs one…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/cli.rs",
      "purpose": "Native CLI artifact generation and pinning, not microVM boot evidence",
      "surface": {}
     }
    ],
    "modules": {
+    "batch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The batch transcript channel a vendor's sandbox runs the guest over (L8-43, VENDOR-BOUNDARY = A: a batch…"
+    },
     "boot": {
      "files": 1,
      "impl_vault": false,
@@ -117916,8 +117941,8 @@
    },
    "over_bar": 0,
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
-   "source_files": 11,
-   "test_files": 2
+   "source_files": 12,
+   "test_files": 3
   },
   "oneiron-hex": {
    "files": [

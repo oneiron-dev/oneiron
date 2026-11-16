@@ -35,7 +35,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
 | [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 9 | 1 | 0 |
 | [oneiron-gen](codemap/oneiron-gen.md) | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… | 8 | 0 | 0 |
-| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 11 | 2 | 0 |
+| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 12 | 3 | 0 |
 | [oneiron-hex](codemap/oneiron-hex.md) | Hex text for bytes: encode, decode and check in one place | 1 | 0 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 5 | 1 |
 | [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 15 | 3 | 2 |
@@ -632,6 +632,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `batch` | file | 1 | s | The batch transcript channel a vendor's sandbox runs the guest over (L8-43, VENDOR-BOUNDARY = A: a batch… |
 | `boot` | file | 1 | m | Linux-only PID-1 setup, isolated execution, and final-delivery custody |
 | `conformance` | file | 1 | s | Typed Component Model fixture |
 | `egress` | file | 1 | s | The native microVM supervisor's network reaches only the engine's vsock |
