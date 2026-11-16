@@ -325,6 +325,8 @@ impl<'a> RepoReadSelection<'a> {
 pub(super) struct RepoReadPin<'a> {
     selection: RepoReadSelection<'a>,
     fork_hash: [u8; 32],
+    /// The exact base snapshot CODE, when the caller selected a candidate.
+    code_id: Option<EntityId>,
     commit: String,
 }
 
@@ -391,14 +393,15 @@ impl Memory<'_> {
     /// The read join under `admitted` at the work's pinned base commit
     /// `base_green` (FIX RUN-REVEAL-BASE-HASH-DOMAIN): as
     /// [`Self::repo_read_join_under`], but the snapshot is the ingested one
-    /// `fork_hash` names at that immutable commit, never at the ref's
-    /// current pin. Only the base reveal joins here: every ref read joins
-    /// at its current pin.
+    /// `code_id` names, with `fork_hash` at that immutable commit, never at
+    /// the ref's current pin. Only the base reveal joins here: every ref
+    /// read joins at its current pin.
     pub(super) fn repo_base_read_join_under<M: RepoReadMember>(
         &self,
         binding: &RepoRunBinding,
         admitted: &RepoRunAdmitted,
         selection: &RepoReadSelection<'_>,
+        code_id: EntityId,
         fork_hash: [u8; 32],
         base_green: &str,
         member: M,
@@ -406,6 +409,7 @@ impl Memory<'_> {
         let pin = RepoReadPin {
             selection: *selection,
             fork_hash,
+            code_id: Some(code_id),
             commit: base_green.to_owned(),
         };
         let lane = self
@@ -435,6 +439,7 @@ impl Memory<'_> {
         Ok(RepoReadPin {
             selection,
             fork_hash,
+            code_id: None,
             commit: commit.as_str().to_owned(),
         })
     }
@@ -473,8 +478,7 @@ impl Memory<'_> {
         {
             return Err(Error::ConcurrentWrite("the run's repo read admission changed").into());
         }
-        let Some(mount) = self.pinned_mount_in_txn(txn, &again, &pin.fork_hash, &pin.commit)?
-        else {
+        let Some(mount) = self.pinned_mount_in_txn(txn, &again, pin)? else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
         // The anchor and the snapshot first: the run's lane reads both, and
@@ -526,26 +530,29 @@ impl Memory<'_> {
         })
     }
 
-    /// The snapshot of the fork `fork_hash` at `commit`, of the admitted
-    /// folder, that belongs to the admitted anchor or to no anchor, read in
-    /// `txn`; `None` when there is none.
+    /// The snapshot of `pin`'s fork and commit, of the admitted folder,
+    /// that belongs to the admitted anchor or to no anchor, read in `txn`;
+    /// `None` when there is none. A base pin selects only its exact CODE.
     fn pinned_mount_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         admitted: &RepoRunAdmitted,
-        fork_hash: &[u8; 32],
-        commit: &str,
+        pin: &RepoReadPin<'_>,
     ) -> Result<Option<CodebaseSnapshotMount<'_>>> {
         let membership = &admitted.membership;
-        for artifact in self
-            .vault
-            .codebase_snapshots_by_fork_hash_in_txn(txn, fork_hash)?
-        {
+        let artifacts = match pin.code_id {
+            Some(artifact) => vec![artifact],
+            None => self
+                .vault
+                .codebase_snapshots_by_fork_hash_in_txn(txn, &pin.fork_hash)?,
+        };
+        for artifact in artifacts {
             let Some(mount) = self.vault.mount_codebase_snapshot_in_txn(txn, &artifact)? else {
                 continue;
             };
             let held = mount.snapshot();
-            if held.commit_hash.as_deref() == Some(commit)
+            if held.fork_hash == pin.fork_hash
+                && held.commit_hash.as_deref() == Some(pin.commit.as_str())
                 && same_folder(&held.repo_ref, &membership.repo_ref)
                 && held
                     .repository
