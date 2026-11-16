@@ -190,7 +190,7 @@ fn a_turn_whose_source_no_longer_stands_leaves_the_read_and_never_holds_it() {
         1,
         "the owner's line names Yuki"
     );
-    assert_eq!(source.request.recipients[0].name, "Yuki");
+    assert_eq!(source.request.recipients[0].heard, "yuki");
 }
 
 #[test]

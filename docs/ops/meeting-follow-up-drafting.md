@@ -12,6 +12,14 @@ speaker label is one of the owner's names, so until the owner's name is in the
 vault, no transcript yields a draft. A draft goes only to a PERSON the vault
 knows by a name the transcript says.
 
+The model reads a recipient's vault name only where the Dreamer's model
+channel prints it (the `agent:<Dreamer id>` connection's `names` ceiling on the
+disclosure registry, `vault.disclosure.ceiling.set`). An agent
+connection's default ceiling is public and an unstamped name is sensitive, so
+by default each recipient is listed by its PERSON handle beside the words the
+transcript named it by; above the ceiling a handle prints, never a stand-in
+and never a drop (canon ARCH-0069 S9). Raise that ceiling to let names print.
+
 ## Host configuration
 
 The worker runs on the existing `generative_reasoner` model role. Each attempt
