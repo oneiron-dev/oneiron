@@ -43,3 +43,17 @@ pub fn revision_at(
 pub fn raw_at(vault: &Vault, id: &EntityId, revision: RevisionRef) -> Result<Option<Vec<u8>>> {
     vault.get_raw_with_mode(id, ReadMode::Pinned(revision))
 }
+
+/// Red-run stub (L3-39 PR 2): PR 1's head keeps every revision it names, so
+/// this door forgets nothing. PR 2 adds the door that drops the bytes.
+///
+/// # Errors
+///
+/// None.
+pub fn forget_retained_revision(
+    _vault: &Vault,
+    _id: &EntityId,
+    _revision: RevisionRef,
+) -> Result<()> {
+    Ok(())
+}
