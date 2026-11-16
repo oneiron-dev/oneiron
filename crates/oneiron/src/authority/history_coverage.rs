@@ -144,7 +144,28 @@ pub(crate) fn authority_missing_history_in_txn(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityHistoryRequest> {
-    authority_history_request_in_txn(store, posture, txn, &BTreeSet::new())
+    authority_history_request_in_txn(store, posture, txn, &BTreeSet::new(), NamingRows::Every)
+}
+
+/// [`Vault::authority_missing_believed_history`] on the caller's snapshot.
+pub(crate) fn authority_missing_believed_history_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+) -> Result<AuthorityHistoryRequest> {
+    authority_history_request_in_txn(store, posture, txn, &BTreeSet::new(), NamingRows::Believed)
+}
+
+/// Which held rows' parents a history request names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NamingRows {
+    /// Every held row's, whoever admitted it: what delivery fetches.
+    Every,
+    /// Only the rows this install believes (`AuthorityDoorView::believes`):
+    /// what the peer route's settled gate waits for. A chain is read only by
+    /// a reader that believes its admitter (design pass 29), so a parent only
+    /// a stranger's row names is not history this install lacks.
+    Believed,
 }
 
 /// [`Vault::authority_history_request`] on the caller's snapshot: what a
@@ -159,8 +180,9 @@ pub(crate) fn authority_history_request_in_txn(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     required: &BTreeSet<AuthorityEntryHash>,
+    naming: NamingRows,
 ) -> Result<AuthorityHistoryRequest> {
-    let mut request = held_history_request_in_txn(store, posture, txn, required)?;
+    let mut request = held_history_request_in_txn(store, posture, txn, required, naming)?;
     if let Some(pending) =
         super::history_admission::pending_history_request_in_txn(store, posture, txn)?
     {
@@ -169,18 +191,28 @@ pub(crate) fn authority_history_request_in_txn(
     Ok(request)
 }
 
-/// [`authority_history_request_in_txn`] of the held log alone.
+/// [`authority_history_request_in_txn`] of the held log alone. Under
+/// [`NamingRows::Believed`] a held row's parents count only when the store
+/// gate's view of this snapshot believes the row; the checkpoint cover, the
+/// resumed hashes and `required` count either way. An adopted image's request
+/// is the fold's own past the image, which a gap below a stranger's row
+/// alone never moves.
 fn held_history_request_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     required: &BTreeSet<AuthorityEntryHash>,
+    naming: NamingRows,
 ) -> Result<AuthorityHistoryRequest> {
     if let Some(request) =
         super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required)?
     {
         return Ok(request);
     }
+    let believed = match naming {
+        NamingRows::Every => None,
+        NamingRows::Believed => Some(super::log_budget::door_view(store, txn)?),
+    };
     let mut held = BTreeSet::new();
     let mut named = required.clone();
     named.extend(super::readonly_fold::resumed_hashes_in_txn(store, txn)?);
@@ -188,7 +220,9 @@ fn held_history_request_in_txn(
     for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
         let entry = decode_authority_log_entry_body(&body)?;
         held.insert(authority_entry_hash(&entry)?);
-        named.extend(entry.parent_hashes.iter().copied());
+        if believed.as_ref().is_none_or(|view| view.believes(&entry)) {
+            named.extend(entry.parent_hashes.iter().copied());
+        }
         if vault_id.is_none() {
             vault_id = entry.vault_id;
         }
@@ -238,6 +272,18 @@ impl Vault {
         authority_missing_history_in_txn(&self.store, self.privacy_posture(), &txn)
     }
 
+    /// The history [`Self::authority_missing_history`] names that this
+    /// install believes it lacks: the parents only rows it believes name
+    /// (the roster's and its own anchors'), with the checkpoint cover, the
+    /// resumed hashes and the pending evidence's needs as there. A parent only
+    /// a stranger's row names leaves it as it was before that row arrived
+    /// (FIX [STRANGER-WITHHELD-PARENT-STALLS-PEER-SETTLED]). The peer route's
+    /// settled gate reads this; delivery still fetches the whole request.
+    pub fn authority_missing_believed_history(&self) -> Result<AuthorityHistoryRequest> {
+        let txn = self.store.env.read_txn()?;
+        authority_missing_believed_history_in_txn(&self.store, self.privacy_posture(), &txn)
+    }
+
     /// [`Vault::authority_missing_history`], also naming the rows the fold
     /// this vault resumes from has folded and the `required` hashes an
     /// evaluation or delivery needs (a tail manifest's expectations, a
@@ -249,7 +295,13 @@ impl Vault {
         required: &BTreeSet<AuthorityEntryHash>,
     ) -> Result<AuthorityHistoryRequest> {
         let txn = self.store.env.read_txn()?;
-        authority_history_request_in_txn(&self.store, self.privacy_posture(), &txn, required)
+        authority_history_request_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            &txn,
+            required,
+            NamingRows::Every,
+        )
     }
 
     /// Which of `requested` this vault holds, by evidence, and where its
