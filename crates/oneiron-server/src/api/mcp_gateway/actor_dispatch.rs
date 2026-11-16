@@ -125,6 +125,8 @@ impl McpCallEffect {
             | Effect::RepoMergeQueueEnqueue
             | Effect::RepoCheckoutBind
             | Effect::RepoExport
+            | Effect::RepoChecksStart
+            | Effect::RepoChecksFinish
             | Effect::Leader
             | Effect::LeaderSplit
             | Effect::SkillsCall

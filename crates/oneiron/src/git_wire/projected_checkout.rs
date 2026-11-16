@@ -261,6 +261,26 @@ impl GitWire<'_> {
         })
     }
 
+    /// HEAD's tree of the copy checkout when its worktree is clean, else
+    /// `None`: opened as the teardown inspection opens it, through the copy
+    /// store's handle, read without mutation or lock.
+    ///
+    /// # Errors
+    /// A failed read.
+    pub(crate) fn projected_checkout_head_tree(
+        &self,
+        lease: &CheckoutLeaseAct,
+        binding: &RepoProjectedCheckoutBinding,
+    ) -> CheckoutResult<Option<GitOid>> {
+        let tree =
+            checkout_handle_dir_for(&self.process_env, &binding.copy_store, lease).join("tree");
+        if !tree.exists() || !self.worktree_registered(&binding.copy_store, &tree)? {
+            return Ok(None);
+        }
+        let worktree = self.open_repo(binding.copy_store.repo_ref().clone(), &tree)?;
+        self.clean_head_tree(&worktree)
+    }
+
     /// Collects only the proven owned copy handle, and reconciles the copy
     /// store's worktree registration afterwards.
     ///

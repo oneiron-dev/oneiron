@@ -167,6 +167,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::RepoCheckoutBind
             | SelfEffect::RepoExport
+            | SelfEffect::RepoChecksStart
+            | SelfEffect::RepoChecksFinish
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
@@ -417,7 +419,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // owner's own act.
         | SelfEffect::RepoCheckoutBind
         | SelfEffect::RepoExport
-        | SelfEffect::RepoSymbolsObserve => false,
+        | SelfEffect::RepoSymbolsObserve
+        | SelfEffect::RepoChecksStart
+        | SelfEffect::RepoChecksFinish => false,
     }
 }
 

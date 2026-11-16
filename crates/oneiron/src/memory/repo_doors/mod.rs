@@ -19,6 +19,7 @@
 //! (`read_join`): anchor, pinned snapshot, path and ASSET or symbol rows in
 //! one read snapshot, under the run's admission and its own read lane.
 
+mod checks;
 mod custody;
 mod neighbor_types;
 mod neighbors;
@@ -33,6 +34,9 @@ mod symbols;
 mod types;
 mod work;
 
+pub use checks::{
+    RepoCheckFinishInput, RepoCheckFinishOutput, RepoCheckStartInput, RepoCheckStartOutput,
+};
 pub use custody::{
     REPO_PUBLICATION_POLICY_REQUIRED, RepoCheckoutBindInput, RepoCheckoutBindOutput,
     RepoExportInput, RepoExportOutput, with_host_door_base,

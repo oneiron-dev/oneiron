@@ -595,6 +595,14 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
                 SelfEffect::RepoCheckoutBind
             ),
             (
+                "self.memory.self.code.checks.finish".to_owned(),
+                SelfEffect::RepoChecksFinish
+            ),
+            (
+                "self.memory.self.code.checks.start".to_owned(),
+                SelfEffect::RepoChecksStart
+            ),
+            (
                 "self.memory.self.code.export".to_owned(),
                 SelfEffect::RepoExport
             ),

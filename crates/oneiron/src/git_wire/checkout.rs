@@ -81,6 +81,42 @@ pub(super) fn checkout_handle_dir_for(
         .join(format!("{}-{}", lease.checkout_id, lease.epoch))
 }
 
+impl GitWire<'_> {
+    /// The tree a check stands on: HEAD's tree of a clean worktree, or `None` when the tree is not pinned.
+    ///
+    /// `None` when the worktree is missing or unregistered, HEAD does not
+    /// resolve, or `status_porcelain` prints anything: an uncommitted or
+    /// untracked change means the tree is not pinned. A masked copy's checkout
+    /// reads through its copy store, as the teardown inspection does. No
+    /// mutation, no lock.
+    pub fn checkout_head_tree(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<Option<GitOid>> {
+        if let Some(binding) = self.projected_checkout_binding(lease)? {
+            return self.projected_checkout_head_tree(lease, &binding);
+        }
+        let repo = self.checkout_repo(lease)?;
+        let tree = checkout_handle_dir_for(&self.process_env, &repo, lease).join("tree");
+        if !tree.exists() || !self.worktree_registered(&repo, &tree)? {
+            return Ok(None);
+        }
+        let worktree = self.open_repo(repo.repo_ref().clone(), &tree)?;
+        self.clean_head_tree(&worktree)
+    }
+
+    /// HEAD's tree of the open worktree, or `None` when HEAD does not
+    /// resolve or the worktree is dirty.
+    pub(super) fn clean_head_tree(&self, worktree: &GitWireRepo) -> CheckoutResult<Option<GitOid>> {
+        let Ok(head) = self.resolve_commit(worktree, "HEAD") else {
+            return Ok(None);
+        };
+        let status = self.run_read(worktree, &FrozenGitArgv::status_porcelain())?;
+        if !status.stdout.is_empty() {
+            return Ok(None);
+        }
+        let mut trees = self.commit_trees(worktree, &[head.clone()])?;
+        Ok(trees.remove(&head))
+    }
+}
+
 /// ONE-1901's repo port, served by the same frozen seam as every other git
 /// effect, so neither ONE-1904 dispatch nor ORIGIN ever constructs a
 /// subprocess of its own.

@@ -1,0 +1,9 @@
+{
+  "name": "self.code.checks.start",
+  "input": "crate::memory::repo_doors::RepoCheckStartInput",
+  "output": "crate::memory::repo_doors::RepoCheckStartOutput",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "context": "run",
+  "effect": "RepoChecksStart"
+}

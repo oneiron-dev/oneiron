@@ -95,8 +95,13 @@ pub enum SelfEffect {
     RepoCheckoutBind,
     RepoExport,
     /// The run's read of its own symbol declaration (NO-DOOR
-    /// SYMBOL-LEASE-OBSERVATION). Last, so no earlier label moves.
+    /// SYMBOL-LEASE-OBSERVATION).
     RepoSymbolsObserve,
+    /// The run's native check record (ARCH-0068 RC5, FIX
+    /// [L4-30-CHECK-REUSE-RECORD]): start and finish. Last, so no earlier
+    /// label moves.
+    RepoChecksStart,
+    RepoChecksFinish,
 }
 
 impl SelfEffect {
@@ -158,6 +163,8 @@ impl SelfEffect {
             Self::RepoCheckoutBind => "self.code.checkout.bind",
             Self::RepoExport => "self.code.export",
             Self::RepoSymbolsObserve => "self.code.symbols.observe",
+            Self::RepoChecksStart => "self.code.checks.start",
+            Self::RepoChecksFinish => "self.code.checks.finish",
         }
     }
 
@@ -218,7 +225,9 @@ impl SelfEffect {
             | Self::RepoMergeQueueEnqueue
             | Self::RepoCheckoutBind
             | Self::RepoExport
-            | Self::RepoSymbolsObserve => None,
+            | Self::RepoSymbolsObserve
+            | Self::RepoChecksStart
+            | Self::RepoChecksFinish => None,
         }
     }
 
