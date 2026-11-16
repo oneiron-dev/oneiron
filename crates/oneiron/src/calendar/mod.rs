@@ -43,6 +43,10 @@
 //! Like [`outcome`] it owns no clock — it hands the host an exact wake and a
 //! small home-node job payload, and itself persists no prep artifact.
 //!
+//! CAL-08 adds [`follow_up`]: a follow-up a meeting transcript yields is a
+//! draft in the owner's inbox, and only the owner's approval of its run sends
+//! it, to the recipient's native route.
+//!
 //! [`inbox_card`] delivers both cards to the owners' INBOX (FIX 12004): the
 //! host's home-node pass fires each due prep wake and check-in, keeps the
 //! lens the owners were shown, and asks an unanswered check-in once more on
@@ -61,6 +65,7 @@ pub mod caldav;
 pub mod claims;
 pub mod connectors;
 pub mod door;
+pub mod follow_up;
 pub mod freebusy;
 mod generic_put;
 pub mod google_internal;
