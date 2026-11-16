@@ -46,6 +46,11 @@ impl SettingValue for u32 {
 impl SettingValue for u64 {
     const CLOSED: bool = true;
 }
+/// A count that is never zero, such as the most rows one page serves: a zero is refused when
+/// the value is decoded, before it is stored.
+impl SettingValue for std::num::NonZeroU32 {
+    const CLOSED: bool = true;
+}
 impl SettingValue for i64 {
     const CLOSED: bool = true;
 }
