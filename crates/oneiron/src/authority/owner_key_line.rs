@@ -57,13 +57,14 @@
 //! every row is. An enrolment taken in one fold that a later fold ends keeps
 //! its line, narrowed to its ancestry for an owner choice, which only adds
 //! waits. That holds for the enrolment taken last too: a row its own line lets
-//! fold can prune its ancestry (a sibling confirm reusing an ancestor confirm's
-//! nonce once a wait frees its parent, Astra review OP-02, 16 Nov), or another
-//! line can refuse it. The rows outside then wait for the owner's proof with no
-//! key yet to give it, and the owner answers them with the next key it enrols.
-//! A line dropped with its enrolment would let the rows that ended it stand
-//! outside it, the dodge this row closes; a contending row that ends the
-//! enrolment with no line in force leaves it no line, as it ends any other row.
+//! fold can end it (an enrolment of another key that folds once a wait frees
+//! its parent, whose own line then refuses this enrolment's ancestry, Astra
+//! review OP-02, 16 Nov), or another line can refuse it. The rows outside then
+//! wait for the owner's proof with no key yet to give it, and the owner
+//! answers them with the next key it enrols. A line dropped with its
+//! enrolment would let the rows that ended it stand outside it, the dodge this
+//! row closes; a contending row that ends the enrolment with no line in force
+//! leaves it no line, as it ends any other row.
 //!
 //! A fold past an adopted image leaves to the whole log every tail where the
 //! covered log may hold a line, as its folds may then have been more than
@@ -255,11 +256,13 @@ fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
 /// - any tail, where a covered row a line reads (an owner choice, a carried
 ///   machine answer, an enrolment of the key a covered `OwnerKeyEnroll` row
 ///   enrols) lies outside that covered enrolment's line: the covered log may
-///   have folded more than once, and a tail row can change what an earlier
-///   fold took, where the image's admission keeps only the last fold's
-///   settled rows (Astra review OP-01, 16 Nov: a tail confirm reusing the id
-///   of a covered confirm that only an earlier fold counted pruned it and
-///   the enrolment on it before any line existed). Where no covered row lies
+///   have folded more than once, and the image's admission keeps only the
+///   last fold's settled rows (Astra review OP-01, 16 Nov). The tail that
+///   review named, a confirm reusing the id of a covered confirm that only an
+///   earlier fold counted, prunes nothing since RULING
+///   COLLISION-SETTLEMENT-SHAPE = A (16 Nov 04:39), and no other tail the
+///   admission takes is known to change what a covered fold took, so this
+///   branch is a conservative read. Where no covered row lies
 ///   outside a covered enrolment's line, and the tail passes the two checks
 ///   below, no line of the log with the tail holds a row that can count (a
 ///   tail row that names no parent lies outside every line, and its
