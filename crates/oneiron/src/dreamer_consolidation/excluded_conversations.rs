@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::setting::{SettingChange, SettingValue};
+use crate::setting::{EncodedValue, SettingChange, SettingValue};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Conversations whose turns must not enter a Dreamer consolidation pass: the value of the
@@ -108,15 +108,24 @@ impl Vault {
 pub(super) fn forget_newly_excluded(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    _change: &SettingChange,
+    change: &SettingChange,
 ) -> Result<()> {
-    let in_force = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    let excluded = |value: Option<&EncodedValue>| {
+        value
+            .and_then(EncodedValue::decode::<DreamerExcludedConversations>)
+            .unwrap_or_default()
+            .conversations
+    };
+    let newly: BTreeSet<EntityId> = excluded(change.value.as_ref())
+        .difference(&excluded(change.prior.as_ref()))
+        .copied()
+        .collect();
     #[cfg(oneiron_test_support)]
     FORGOTTEN
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(in_force.conversations.clone());
-    crate::dreamer_wake::follower::exclude_in_txn(vault, txn, &in_force.conversations)
+        .push(newly.clone());
+    crate::dreamer_wake::follower::exclude_in_txn(vault, txn, &newly)
 }
 
 /// Each set the hook asked the follower to forget in this process, oldest first: the integration
