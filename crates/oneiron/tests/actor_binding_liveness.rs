@@ -15,6 +15,12 @@
 //! binding, and the refusal names both ways out (another owner first, or
 //! erasing the vault). A person no live binding names is deleted as before.
 //!
+//! Round-1 regressions of #7900: a hard-deleted embedded owner (its row
+//! purged, the `dt:` marker recorded) is no vault owner through the same
+//! public reads, and a `RebindActor` committed between the last-owner guard's
+//! read and the delete's write phase is refused by that write transaction,
+//! leaving the newly bound PERSON live and bound.
+//!
 //! Red on main: a deleted bound owner still classes VaultOwner in a room and
 //! still holds owner verbs and task verbs, a deleted agent-bound person still
 //! classes VaultAgent, and the last bound owner's PERSON is deleted. Guards
@@ -28,6 +34,7 @@
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, actor_binding_is_active};
+use oneiron::deletion::{TombstoneReason, TombstoneValueV2};
 use oneiron::disclosure::RoomParty;
 use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory,
@@ -246,6 +253,63 @@ fn the_last_bound_owners_person_is_not_deleted_and_the_refusal_names_both_ways_o
     f.memory(f.owner)
         .safe_delete(&unbound.to_hex(), SafeDeleteReason::UserDelete)
         .expect("a person no binding names is deleted as before");
+}
+
+#[test]
+fn a_hard_deleted_embedded_owner_is_no_owner() {
+    let f = fixture();
+    assert_eq!(
+        f.vault.room_parties(&[f.owner]).expect("parties"),
+        vec![RoomParty::VaultOwner],
+        "the live bound owner is the vault owner"
+    );
+    // A peer's hard delete of the embedded owner, replayed: it purges the row
+    // and records the permanent `dt:` marker.
+    let purge = TombstoneValueV2 {
+        reason: TombstoneReason::UserHardDelete,
+        deleted_at: 1_000,
+        request_id: [0xAB; 16],
+    };
+    oneiron::test_doors::tombstone_replay::replay_tombstone(&f.vault, &f.owner, &purge.encode())
+        .expect("a peer's hard delete replays");
+    assert!(
+        f.vault.get_raw(&f.owner).expect("raw read").is_none(),
+        "the replay purged the owner's row"
+    );
+    assert_eq!(
+        f.vault.room_parties(&[f.owner]).expect("parties"),
+        vec![RoomParty::Unknown],
+        "a hard-deleted embedded owner is no owner"
+    );
+}
+
+#[test]
+fn a_rebind_between_the_guard_and_the_delete_is_refused() {
+    let f = fixture();
+    // B is live and unbound; the sole human binding is on the owner.
+    let b = live_person(&f.vault);
+    let refused =
+        oneiron::test_doors::delete_guard_race::delete_entity_across(&f.vault, &b, || {
+            // Between the guard's read and the delete's write phase: the sole
+            // key rebinds to B at the next epoch, so B holds the vault's last
+            // owner binding when the write transaction runs.
+            bind_host_actor(&f.vault, &f.issuer, b, "human")
+                .expect("the host key rebinds to B between the guard and the delete");
+        })
+        .expect_err("the delete of the newly bound last owner");
+    assert!(names_both_ways_out(&refused.to_string()), "{refused:?}");
+    assert!(
+        !f.vault.is_deleted_shell(&b).expect("shell read"),
+        "B stays live"
+    );
+    assert!(
+        actor_binding_is_active(
+            &f.vault.authority_fold().expect("authority fold"),
+            &b,
+            "human"
+        ),
+        "B stays bound: the rebind committed, the delete did not"
+    );
 }
 
 #[test]
