@@ -254,18 +254,25 @@ fn reply_route(row: &MailSourceRow) -> MemoryResult<ReplyRoute> {
     }
 }
 
+/// The actor a delegated identity is bound to, when it is bound to an actor
+/// (an identity bound to the vault itself answers `None`).
+fn bound_actor(vault: &Vault, identity: EntityId) -> MemoryResult<Option<EntityId>> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    Ok(
+        crate::channel_identity::channel_identity_facts_in_txn(&vault.store, &txn, &identity)?
+            .and_then(|facts| facts.binding.actor_ref()),
+    )
+}
+
 /// The actor a delegated identity is bound to: its sends go out as that
 /// actor, whoever approved them.
 fn bound_sender(vault: &Vault, identity: EntityId) -> MemoryResult<EntityId> {
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    crate::channel_identity::channel_identity_facts_in_txn(&vault.store, &txn, &identity)?
-        .and_then(|facts| facts.binding.actor_ref())
-        .ok_or_else(|| {
-            MemoryError::bad_request_with(
-                "the mailbox's identity is bound to no sender",
-                &["reconnect the mailbox with the gmail.send scope"],
-            )
-        })
+    bound_actor(vault, identity)?.ok_or_else(|| {
+        MemoryError::bad_request_with(
+            "the mailbox's identity is bound to no sender",
+            &["reconnect the mailbox with the gmail.send scope"],
+        )
+    })
 }
 
 /// The adapter of a delegated identity granted `gmail.send`.
@@ -1157,9 +1164,9 @@ impl Memory<'_> {
             (ReplyRoute::Gmail(identity), Some(drafted), None) if identity == drafted => {
                 // A delegated identity's sends go out as the actor it is
                 // bound to; the drafter sends only as itself, so a reply
-                // through an identity bound to another actor keeps its
-                // person's press.
-                if bound_sender(vault, identity)? != actor {
+                // through an identity bound to another actor, or to the
+                // vault itself, keeps its person's press.
+                if bound_actor(vault, identity)? != Some(actor) {
                     return reply_waits_for_person(
                         vault,
                         id,
