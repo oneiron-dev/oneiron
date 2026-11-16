@@ -2,7 +2,7 @@
 
 use super::JobSpec;
 
-/// Every job kind, one line each: the engine's 19 sweeps (stage 5a) and the tests' jobs; the due
+/// Every job kind, one line each: the engine's 20 sweeps (stage 5a) and the tests' jobs; the due
 /// indexes and the host loops join in stages 5b and 5c.
 static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::SECRET_LEASE_EXPIRY_JOB,
@@ -24,6 +24,7 @@ static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::DRAFTER_CORPUS_SWEEP_JOB,
     &crate::housekeeping::jobs::MODEL_PACK_RETIREMENT_JOB,
     &crate::housekeeping::jobs::OAUTH_EXPIRY_JOB,
+    &crate::housekeeping::jobs::ESIGN_TOKEN_EXPIRY_JOB,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_COUNT,
     #[cfg(oneiron_test_support)]
