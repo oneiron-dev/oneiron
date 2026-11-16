@@ -19,6 +19,7 @@ use oneiron::checkout::lease::{
     CheckoutFactMutation, CheckoutFactSink, CheckoutId, CheckoutLeaseService, CheckoutLiveness,
     CheckoutLivenessPulse, CheckoutResult,
 };
+use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::codebase::RepoRef;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dispatch_byoa::{
@@ -36,6 +37,7 @@ use oneiron::ingest::history::{
     HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
     HistoryThreadKind,
 };
+use oneiron::llm::ModelId;
 use oneiron::memory::checkout_doors::{
     CheckoutGetInput, CheckoutRetention, CheckoutState, CheckoutTeardownInput, CheckoutTornDown,
 };
@@ -366,6 +368,44 @@ fn official_codex_registry(machine: &str) -> ProviderAdapterRegistry {
     };
     register_official_dreamer_providers(&mut registry, &OfficialSeatRegistry::standard(), [seat])
         .expect("the official Codex seat registers");
+    registry
+}
+
+/// Why a continue passes over a seat whose connector is not a CLI one.
+const NON_CLI_REASON: &str = "this seat's connector is not a CLI one, and only a host's CLI runner claims a continued session's work";
+
+/// The node's registry when its settings name a valid official Sign in
+/// with ChatGPT seat, its credential handle and model map set: the seat
+/// settings' registry, as the seat host builds it. Its adapter shapes an
+/// endpoint connector.
+fn official_sign_in_with_chatgpt_registry() -> ProviderAdapterRegistry {
+    let mut registry = ProviderAdapterRegistry::default();
+    let seat = OfficialDreamerSeat {
+        spec: OfficialSeatSpec {
+            route: OfficialSeatRoute::SignInWithChatGpt,
+            account_ref: "acct-chatgpt".to_owned(),
+            machine_ref: None,
+            login_store_ref: None,
+            credential_ref: Some(
+                SandboxCredentialHandle::new("custody://byoa/chatgpt-signin")
+                    .expect("credential handle"),
+            ),
+            unmodified_binary: false,
+            approvals: SeatPlacementApproval {
+                anthropic_agent_sdk: false,
+                openai_hosted_plan: false,
+            },
+            dry_fallback: DrySeatFallback::default(),
+            plan_window: None,
+        },
+        model_slug_map: BTreeMap::from([(
+            "fast".to_owned(),
+            ModelId::new("openai/chatgpt-fast@1").expect("model id"),
+        )]),
+        base_url: None,
+    };
+    register_official_dreamer_providers(&mut registry, &OfficialSeatRegistry::standard(), [seat])
+        .expect("the official Sign in with ChatGPT seat registers");
     registry
 }
 
@@ -706,6 +746,64 @@ fn a_continue_runs_the_seat_the_node_registry_names() {
         "a host on another machine never claims the login seat's run"
     );
     assert!(ready_on("machine-b"), "the login's own machine claims it");
+}
+
+#[test]
+fn a_seat_no_host_runner_claims_never_takes_the_work() {
+    // The node's settings name a valid official Sign in with ChatGPT seat.
+    // Its adapter shapes an endpoint connector; the hand-over rides only a
+    // CLI connector, and a host claims only CLI work, so no runner would
+    // ever read the job or work in the checkout. Neither door offers or
+    // binds the seat, and nothing is written.
+    let (_dir, vault, owner_proof) = owner_vault();
+    let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let policy = login_policy("chatgpt-signin");
+    let registry = official_sign_in_with_chatgpt_registry();
+    let before = counts(&vault);
+    let check = ContinueOutsideWorkCheckRequest {
+        repo: "demo".to_owned(),
+        runner: "chatgpt-signin".to_owned(),
+    };
+    let checked = vault
+        .continue_outside_work_check(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &check,
+        )
+        .expect("the check answers");
+    let ContinueOutsideWorkCheckView::NoSeat { skipped } = checked else {
+        panic!("the check offers no seat a host runner never claims: {checked:?}");
+    };
+    assert_eq!(skipped.len(), 1, "the endpoint seat is named: {skipped:?}");
+    assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
+    assert_eq!(skipped[0].runner, "chatgpt-signin", "the skipped runner");
+    assert_eq!(skipped[0].reason, NON_CLI_REASON, "the non-CLI reason");
+    let input = ContinueOutsideWorkRequest {
+        repo: "demo".to_owned(),
+        git_ref: CONTINUE_REF.to_owned(),
+        commit: commit_c,
+        conversation: conversation.to_hex(),
+        runner: "chatgpt-signin".to_owned(),
+        note: None,
+    };
+    let answered = vault
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
+        .expect("the door answers");
+    let ContinueOutsideWorkView::NoSeat { skipped } = answered else {
+        panic!("the door binds no seat a host runner never claims: {answered:?}");
+    };
+    assert_eq!(skipped.len(), 1, "the endpoint seat is named: {skipped:?}");
+    assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
+    assert_eq!(skipped[0].runner, "chatgpt-signin", "the skipped runner");
+    assert_eq!(skipped[0].reason, NON_CLI_REASON, "the non-CLI reason");
+    assert_eq!(counts(&vault), before, "nothing is written");
 }
 
 #[test]
