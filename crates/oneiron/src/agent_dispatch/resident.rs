@@ -52,6 +52,9 @@ const WAKE_CARRY_LIMIT: usize = 16;
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResidentWakeMode {
+    /// Wakes on a human's message alone: one whose sender is a PERSON not
+    /// of model substrate, since every agent is a PERSON too. In a room, on
+    /// a turn a PERSON spoke (an agent speaks there as its AGENT_DEF).
     HumanMessages,
     AllAddressed,
     Manual,
@@ -104,8 +107,9 @@ impl ResidentInboxDispatch {
 
 /// Whether a pending diary-read review wakes a resident under `mode`
 /// (OF-490). Manual holds it: the review waits on the agent's INBOX until the
-/// agent is dispatched. HumanMessages filters who a message is from, and a
-/// review is no message, so it wakes.
+/// agent is dispatched. HumanMessages filters who a message is from (a
+/// human, by its sender's substrate), and a review is no message, so it
+/// wakes.
 const fn diary_review_wakes(mode: ResidentWakeMode) -> bool {
     !matches!(mode, ResidentWakeMode::Manual)
 }

@@ -108,7 +108,7 @@ impl MessageClass {
 /// question's bands learn under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum SenderKind {
+pub(super) enum SenderKind {
     /// A person of this vault: a live owner, or a live member of a shared
     /// vault whose role writes. The one sender an unsure interrupt asks.
     VaultPerson,
@@ -121,6 +121,12 @@ enum SenderKind {
 }
 
 impl SenderKind {
+    /// Whether it names a human: a person of this vault or another human
+    /// PERSON. A resident's human-messages mode wakes on these alone.
+    pub(super) const fn is_human(self) -> bool {
+        matches!(self, Self::VaultPerson | Self::Person)
+    }
+
     const fn as_str(self) -> &'static str {
         match self {
             Self::VaultPerson => "vault_person",
@@ -275,12 +281,18 @@ impl AgentDispatcher<'_> {
 
     /// Who `stamp` names, and the PERSON when it names one. Every agent is a
     /// PERSON of model substrate (`context_board/people.rs`), so the
-    /// substrate, not the entity type, tells a human.
-    fn sender_kind(
+    /// substrate, not the entity type, tells a human. A PERSON whose
+    /// substrate does not read is no known human: it is `Unknown`, and the
+    /// error is logged (FIX RESIDENT-SENDER-SUBSTRATE-ERR-READS-HUMAN). Both
+    /// a busy resident's classes and a sleeping one's human-messages wake
+    /// read it.
+    pub(super) fn sender_kind(
         &self,
         stamp: &SurfaceCounterpartyStamp,
         now: u64,
     ) -> Result<(SenderKind, Option<EntityId>)> {
+        use crate::write_envelope::subject_record::PersonSubstrate;
+
         let SurfaceCounterpartyStamp::Known { counterparty_ref } = stamp else {
             return Ok((SenderKind::Unknown, None));
         };
@@ -290,13 +302,19 @@ impl AgentDispatcher<'_> {
         if self.vault.get_entity_type(&person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {
             return Ok((SenderKind::Unknown, None));
         }
-        if matches!(
-            self.vault.person_substrate(&person, now),
-            Ok(Some(
-                crate::write_envelope::subject_record::PersonSubstrate::Model
-            ))
-        ) {
-            return Ok((SenderKind::Agent, Some(person)));
+        match self.vault.person_substrate(&person, now) {
+            Ok(Some(PersonSubstrate::Model)) => return Ok((SenderKind::Agent, Some(person))),
+            // A human PERSON, or one with no substrate claim (the enum is
+            // non-exhaustive: a new substrate reads as not model).
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    person = %person.to_hex(),
+                    "a message sender's substrate did not read; the sender is unknown, not human"
+                );
+                return Ok((SenderKind::Unknown, None));
+            }
         }
         let txn = self.vault.store.env.read_txn()?;
         let of_vault = crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &person)?
