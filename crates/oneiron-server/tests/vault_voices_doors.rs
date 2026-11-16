@@ -48,7 +48,8 @@
 //!
 //! These promises hold on main, but for the recognition withdrawal and consent,
 //! whose doors main does not have: their cases are red on main, the two consent
-//! cases because the route does not exist there, and the withdrawal agent's case
+//! cases because main's server knows no such route (run against main's code
+//! they fail at the first consent call), and the withdrawal agent's case
 //! is also red on the door's first PR (#8973), which refuses every agent.
 //! The others' red proof is a seeded fault (Test rules v2, rule 5), named in the PR.
 //!
@@ -547,8 +548,8 @@ impl Served {
     }
 
     /// `subject`'s voiceprint at `vector`, enrolled on the served vault
-    /// through the engine's public calls (no door grants recognition consent
-    /// or enrolls a print): the owner logs the grant `grant_id` for both
+    /// through the engine's public calls (no door enrolls a print): the owner
+    /// logs the grant `grant_id` for both
     /// purposes, then one solo sample enrolls. Both come before `at`, the
     /// grant first.
     fn enroll_print(&self, subject: EntityId, grant_id: &str, vector: &[f32], at: u64) {
@@ -1484,6 +1485,25 @@ fn a_person_logs_consent_for_their_own_voice_and_the_owner_any_subjects() {
             "a different decision under the event id is refused: {status} {body}"
         );
 
+        // A consent dated past the vault's clock is refused: it would outlive a
+        // withdrawal logged before its date.
+        let (status, body) = served
+            .post(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "future-dated-consent",
+                    now + 3_600,
+                    Some(counterparty),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a consent dated an hour ahead is refused: {status} {body}"
+        );
+
         assert!(
             served.consent_notices().is_empty(),
             "person and owner acts tell no one"
@@ -1531,8 +1551,9 @@ fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_consent_and_tells_th
         }
 
         let grant = served.grant_agent(&[RECOGNITION_CONSENT]).await;
-        // The consent-log Grant reaches no live owner's voice and needs a subject.
-        for (index, subject) in [Some(owner), None].into_iter().enumerate() {
+        // The consent-log Grant reaches no live owner's voice, nor the agent's
+        // own, and needs a subject.
+        for (index, subject) in [Some(owner), Some(agent), None].into_iter().enumerate() {
             let input = recognition_consent(
                 &format!("out-of-reach-{index}"),
                 now,
