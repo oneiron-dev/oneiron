@@ -354,6 +354,7 @@ pub mod calendar;
 pub mod campaign_enrollment;
 pub mod campaign_split;
 pub mod can;
+pub mod claim_refinement;
 pub mod comm_widen;
 pub mod connect_proposal;
 pub mod connector;

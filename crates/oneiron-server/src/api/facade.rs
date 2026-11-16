@@ -53,6 +53,7 @@ mod campaign_split_doors;
 mod channel_doors;
 mod check_in_doors;
 mod checkout_doors;
+mod claim_refinement_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
 pub(crate) mod clock_ingress;
