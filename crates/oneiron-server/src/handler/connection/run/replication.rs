@@ -469,9 +469,20 @@ pub(super) async fn handle_connection(
                         }
                         continue;
                     }
+                    // A served body's bytes: not sent. Its End, which carries
+                    // none, still goes below, so the peer's attempt lands
+                    // nothing and is asked for again, served under the grant
+                    // as it is then.
+                    Some((false, frame))
+                        if frame.first()
+                            == Some(&oneiron::sync::transport::TAG_ASSET_BODY_DATA) =>
+                    {
+                        continue;
+                    }
                     Some((false, frame)) => {
                         if !crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
-                            // A refusal, which carries no rows.
+                            // A refusal or a served body's End, which carry
+                            // no rows.
                             frame
                         } else if let Some(refusal) = app_connection.refuse_reply(&frame) {
                             refusal
