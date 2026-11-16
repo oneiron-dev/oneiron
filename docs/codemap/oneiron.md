@@ -702,16 +702,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/bundle_types.rs` | src | s | 4 struct · 1 enum · 1 re-export | ExportAgentBundle, ExportFileTree, ExportSkillBundle, ExportSourceContent, ExportSourceFile | Core half of `batch::export::bundle_types`: its store-layer items live in… |
 | `src/batch/export/bundle_validation.rs` | src | m | 17 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
 | `src/batch/export/credential_filter.rs` | src | L | 9 fn · 11 crate-vis | — | Core half of `batch::export::credential_filter`: its store-layer items live in… |
-| `src/batch/export/document_import.rs` | src | XL | 8 fn · 6 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
+| `src/batch/export/document_import.rs` | src | XL | 10 fn · 6 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
 | `src/batch/export/document_import/owner_archive_restore.rs` | src | m | 1 fn · 17 crate-vis | — | The owner act and call-scoped source permit for a whole-vault archive restore, the claims that restore… |
 | `src/batch/export/document_import/seed_replacement.rs` | src | s | 1 crate-vis | — | Owner-edited engine seeds restored only after the import proves a fresh destination |
 | `src/batch/export/document_snapshot.rs` | src | L | 4 fn · 7 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | L | — | — | Observable whole-vault export/import contracts |
-| `src/batch/export/document_types.rs` | src | m | 10 struct · 1 enum · 10 fn · 1 re-export · 1 crate-vis | ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportRowBirth, WholeVaultDocument, WholeVaultDocumentManifest +3 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
+| `src/batch/export/document_types.rs` | src | m | 10 struct · 2 enum · 10 fn · 1 re-export · 1 crate-vis | ArchiveSpeakers, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportRowBirth, WholeVaultDocument +4 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
 | `src/batch/export/document_validation.rs` | src | m | 2 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
 | `src/batch/export/embedding_setup.rs` | src | m | 2 struct · 2 fn · 1 re-export · 11 crate-vis | EmbeddingSetupImport, PortableSlotBindings | The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor… |
 | `src/batch/export/epoch_floors.rs` | src | s | 3 crate-vis | — | The epoch floors a whole-vault archive carries (OF-013), one row per lineage (FIX 5029): a SESSION's own… |
-| `src/batch/export/evidence_import.rs` | src | s | 6 crate-vis | — | FIX 7777: the whole-vault import's MESSAGE orchestration |
+| `src/batch/export/evidence_import.rs` | src | s | 7 crate-vis | — | FIX 7777: the whole-vault import's MESSAGE orchestration |
 | `src/batch/export/export_authority.rs` | src | s | 1 fn · 1 re-export · 4 crate-vis | — | Core half of `batch::export::export_authority`: its store-layer items live in… |
 | `src/batch/export/export_diary.rs` | src | s | 1 const · 5 crate-vis | — | OF-490: a vault export is a read of agent diaries, made through the diary door's [`DiaryReadGate`] with the… |
 | `src/batch/export/export_egress.rs` | src | s | 14 fn · 1 crate-vis | — | Whole-vault manifest egress doors and the Vault export surface |
@@ -4713,7 +4713,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/wake_observation.rs` | src | s | 5 struct · 2 enum · 2 const · 2 re-export | WakeLiveCall, WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest, WakeObservationSelector, WakeObservedGeneration | Durable and live wake-observation read vocabulary |
 | `src/memory/web_fetch.rs` | src | m | 2 fn | — | Actor-bound web acquisition and import |
 | `src/memory/wellness_doors.rs` | src | s | 2 struct · 4 fn · 1 re-export | WellnessPolicyConfigureRequest, WellnessProjection | Per-person wellness projections reuse the measured state index and configured action modes |
-| `src/memory/witness/archive.rs` | src | m | 8 crate-vis | — | Archive restore of witnessed MESSAGE rows (FIX 7777) |
+| `src/memory/witness/archive.rs` | src | m | 13 crate-vis | — | Archive restore of witnessed MESSAGE rows (FIX 7777) |
 | `src/memory/witness/assertions.rs` | src | s | 2 crate-vis | — | The records a witnessed reply asserts (OF-063), judged in the writer's one snapshot: every cited and created… |
 | `src/memory/witness/base.rs` | src | m | 2 fn · 15 crate-vis | — | Base witness landing: container resolve, K7 door, batch write, text ops, session bump |
 | `src/memory/witness/codec.rs` | src | m | 15 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
@@ -7726,6 +7726,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/house_link.rs` | src | s | 2 fn | — | The house link's bind-interval read (HOUSE-BIND = A, S3) for the test that reads it on both sides of an… |
 | `src/test_doors/hydration_decode_guard.rs` | src | s | 1 fn | — | Door for `tests/hydration_decode_guard.rs` (census L6-30b; ARCH-0069 #readers-followups-open, "an isolating… |
 | `src/test_doors/identity_recheck.rs` | src | s | 3 fn | — | The nightly identity re-check, one page, run from a test, and the open identity asks after it (census item… |
+| `src/test_doors/imported_evidence.rs` | src | s | 1 fn | — | Doors for `tests/foreign_archive_speakers.rs` (fix list row 15412, review of #7544 round 1): whether… |
 | `src/test_doors/inquiry.rs` | src | s | 8 fn | — | Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's… |
 | `src/test_doors/label_writers.rs` | src | s | 4 fn | — | Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`… |
 | `src/test_doors/learning_claim_value.rs` | src | s | 5 fn | — | Doors for `tests/learning_claim_value.rs` (FIX LEARNING-CELL-POSITIONAL-DECODE): the learning claim value… |
@@ -7741,7 +7742,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 122 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 123 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/nightly.rs` | src | s | 2 struct · 1 enum · 2 fn | PlannedThing, SpentSpan, SpentSpanKind | The nightly plan's things, for integration tests (census L2-04): witnessed TURNs whose sieve spans are… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
@@ -8604,6 +8605,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/feeds.rs` | test | m | — | — | Change feed subscriptions (untangle slices 6.8a and 6.8b, primitive B), on the public crate surface only… |
 | `tests/files_search.rs` | test | m | — | — | `vault.files.sources.search` (census L2-16; ARCH-0027 #files-world: "Search goes by name first and meaning… |
 | `tests/force_cancel_pause.rs` | test | s | — | — | [FORCE-CANCEL-KEEPS-ACTIVE-PAUSE]: the hard cancel of a held row clears its pause, as the operator's Cancel… |
+| `tests/foreign_archive_speakers.rs` | test | m | — | — | Fix list row 15412, slice 3b (archive half): the import door names whose words a whole-vault archive's… |
 | `tests/free_time_policy_handoff.rs` | test | s | — | — | A holder's schedule move lands on a new home (FABLE-6918-2) |
 | `tests/gate_census_pins.rs` | test | s | — | — | OPUS-GATECENSUS row 2 (Engine ruling 12 Nov 16:2x): green pins for three write gates added or tightened… |
 | `tests/gate_ledger_page_read_cost.rs` | test | s | — | — | FIX RECEIPTS-PAGE-READ-COST-GROWS: one `vault.receipts` page of the gate ledger costs a bounded amount per… |

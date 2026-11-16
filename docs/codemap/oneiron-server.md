@@ -997,7 +997,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/hosted_args.rs` | src | s | 3 struct · 1 enum | HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs | `oneiron hosted`: the hosted vaults this user signed in to here and the one selected, which `oneiron hook`… |
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
 | `src/cli/model_workers_args.rs` | src | s | 1 struct | ModelWorkersArgs | — |
-| `src/cli/owner_args.rs` | src | L | 50 struct · 17 enum | BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs +59 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
+| `src/cli/owner_args.rs` | src | L | 50 struct · 18 enum | ArchiveSpeakers, BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs +60 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/recovery_kit_args.rs` | src | m | 12 struct · 1 enum | KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs +5 | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key… |
 | `src/cli/reminder_route_args.rs` | src | s | 3 struct · 1 enum | ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs | `oneiron reminder-route`: the owner's commitment reminder route on a stopped vault… |
 | `src/cli/seat_args.rs` | src | s | 5 struct · 1 enum · 1 fn | SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs, SiwcCredentialArgs, SiwcLoginArgs, SiwcRevokeArgs | `oneiron seat …` arguments: the official-seat sign-in surface (OF-375) |
@@ -1075,7 +1075,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/owner/secret_commands.rs` | src | m | 4 fn · 3 crate-vis | — | Secret scan, custody, and value commands for a stopped vault |
 | `src/commands/owner/secret_input.rs` | src | m | 2 crate-vis | — | A secret read from stdin (FIX 1490) |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
-| `src/commands/owner/transfer_commands.rs` | src | s | 2 fn | — | Export and import commands for a stopped vault |
+| `src/commands/owner/transfer_commands.rs` | src | m | 2 fn | — | Export and import commands for a stopped vault |
 | `src/commands/owner/vault_key.rs` | src | m | 1 fn · 15 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
 | `src/commands/owner/vault_key/fresh_restore.rs` | src | m | 5 crate-vis | — | `oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner… |
 | `src/commands/owner/vault_key/host_unlock.rs` | src | m | 8 crate-vis | — | What unlocks a backup's vault key, or a sealed vault's pages, on this host: the unlock the owner names, its… |
