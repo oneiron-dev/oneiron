@@ -110,6 +110,9 @@ pub fn burn_page_fields(
     out.add_object(Stream::new(Dictionary::new(), content.clone()));
     out.add_object(resources);
     let mut pdf = Vec::new();
-    out.save_to(&mut pdf)?;
+    // `save_to` fails with an io::Error, which has no conversion here; a
+    // Vec writer never fails, so the arm is the encoder's refusal.
+    out.save_to(&mut pdf)
+        .map_err(|_| PdfPreparationError::Encoding)?;
     Ok(BurnedPage { content, pdf })
 }
