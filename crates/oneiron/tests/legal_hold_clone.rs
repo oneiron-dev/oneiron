@@ -211,7 +211,7 @@ fn a_failed_widen_keeps_another_widens_capture() -> TestResult {
     let a = named_row(vault, "held record a")?;
     let c = named_row(vault, "widened record c")?;
     let hold = vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(a)], None)
+        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(a)], None, None)
         .map_err(at("the owner's legal hold"))?;
     let dir = hold_dir(vault, hold.hold_id).map_err(at("the hold's directory"))?;
     // Another widen's capture: written inside its writer, not yet committed.
