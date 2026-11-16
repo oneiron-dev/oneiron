@@ -2,7 +2,10 @@
 //! ships as a good default plus an owner opt-out): two owner Setting keys of `deletion`, each
 //! defaulting to the behaviour before it.
 //! - `deletion.coop_delivery.give_up_secs` (census C97): an undelivered courtesy-delete leg stops
-//!   retrying after seven days, unless the owner gives it longer.
+//!   retrying after seven days, unless the owner gives it longer. A shorter give-up leaves more
+//!   copies of the owner's data in place, so it is the looser value (REVIEW2-8630-C97-DIRECTION =
+//!   A, Engine 16 Nov 23:52): an agent holding the key's Grant line may lengthen it, and its
+//!   shorter one waits on the owner's check-in.
 //! - `deletion.brief_share.require_confirmed` (census C70): the owner's plain delete of a record
 //!   under a live brief share is refused for the confirmed door, unless the owner turns the key
 //!   off; then the delete revokes the record's live shares first and goes on. A proof-free
@@ -10,7 +13,8 @@
 //!
 //! Red on the base (the Setting primitive with neither key): each test that moves a key fails at
 //! its `set_setting`, which names no such key. Guards (green on both): the default behaves as
-//! before.
+//! before. Red at 2eae4c2da3, where a shorter give-up was the tighter one: the agent's shorter
+//! give-up applies and its longer one waits, so both agent tests fail.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
 //! deletion_setting_keys`.
@@ -20,7 +24,8 @@ use std::sync::Arc;
 
 use oneiron::access_grant::AccessGrantStatus;
 use oneiron::authority::{
-    AuthorityVaultId, FederationPactStatus, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole,
+    ActSurface, AuthorityVaultId, FederationPactStatus, HOST_ISSUER_SEED_BYTES, HostSlipIssuer,
+    MachineRole,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{CooperativeDeletionDeliveryStatus, CooperativeDeletionTry};
@@ -30,10 +35,14 @@ use oneiron::federation::{
 };
 use oneiron::note::TakeTarget;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
-use oneiron::setting::{SetSetting, SettingCaller};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
 use oneiron::share::Share;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
+use oneiron::verbs::{
+    AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
+    mint_agent_grant_as,
+};
 use oneiron::{
     EdgeActorClass, EntityId, SafeDeleteReason, TimeRange, Vault, VaultConfig, WriteActor,
 };
@@ -250,6 +259,101 @@ fn a_courtesy_delete_leg_is_unreachable_after_seven_days_by_default() {
         failed_first_try_at(&local, pact, cutoff, T0 + 8 * DAY),
         CooperativeDeletionDeliveryStatus::Unreachable,
         "an eight-day-old leg stops retrying"
+    );
+}
+
+/// An enabled agent the owner of `fixture` creates, with a live owner Grant naming
+/// `vault.settings.set` and the give-up key's own line: a holder of that one key.
+fn give_up_holder(fixture: &Fixture) -> EntityId {
+    let agent = EntityId::now();
+    create_agent_definition_as(
+        &fixture.vault,
+        &fixture.proof,
+        AgentDefinitionCreateRequest {
+            agent_def_ref: agent,
+            definition: serde_json::from_value(json!({
+                "agent_id": format!("give-up-holder-{}", agent.to_hex()),
+                "desc": "Courtesy-delete give-up key test agent",
+                "version": "1.0.0",
+                "ceiling": "auto",
+                "enabled": true,
+            }))
+            .expect("typed agent definition"),
+        },
+    )
+    .expect("the owner creates an enabled, active agent definition");
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "vault.settings.set".to_owned(),
+        set_line(GIVE_UP_KEY),
+    ]));
+    let minted = mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("the owner mints the agent a Grant");
+    assert!(minted.grant.confers, "the Grant confers");
+    agent
+}
+
+/// `agent` asks to set the give-up key's vault row to `secs`.
+fn agent_sets_give_up(fixture: &Fixture, agent: EntityId, secs: u64) -> SetSettingOutcome {
+    fixture
+        .vault
+        .set_setting(
+            SettingCaller::Agent(agent),
+            SetSetting::vault_value(GIVE_UP_KEY, json!(secs)),
+        )
+        .unwrap_or_else(|error| panic!("the agent's give-up of {secs} s answers: {error}"))
+}
+
+#[test]
+fn an_agents_shorter_courtesy_delete_give_up_waits_for_the_owner() {
+    let local = Fixture::open(0x11);
+    let peer = Fixture::open(0x22);
+    let (pact, cutoff) = ended_pact(&local, &peer);
+    let agent = give_up_holder(&local);
+    for secs in [DAY, 0] {
+        let outcome = agent_sets_give_up(&local, agent, secs);
+        assert!(
+            matches!(outcome, SetSettingOutcome::Pending { .. }),
+            "a give-up of {secs} s is shorter than seven days, so it waits for the owner: \
+             {outcome:?}"
+        );
+    }
+    assert_eq!(
+        failed_first_try_at(&local, pact, cutoff, T0 + 2 * DAY),
+        CooperativeDeletionDeliveryStatus::Sent,
+        "nothing applied: a two-day-old leg still retries under seven days"
+    );
+}
+
+#[test]
+fn an_agents_longer_courtesy_delete_give_up_applies() {
+    let local = Fixture::open(0x11);
+    let peer = Fixture::open(0x22);
+    let (pact, cutoff) = ended_pact(&local, &peer);
+    let agent = give_up_holder(&local);
+    let outcome = agent_sets_give_up(&local, agent, 30 * DAY);
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "a thirty-day give-up is longer than seven days, so the agent's line sets it: \
+         {outcome:?}"
+    );
+    assert_eq!(
+        failed_first_try_at(&local, pact, cutoff, T0 + 8 * DAY),
+        CooperativeDeletionDeliveryStatus::Sent,
+        "an eight-day-old leg under the agent's thirty-day give-up retries"
     );
 }
 
