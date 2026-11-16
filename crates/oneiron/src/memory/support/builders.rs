@@ -123,6 +123,19 @@ impl Memory<'_> {
         self
     }
 
+    /// Marks this surface as answering asks as this install's owner device
+    /// (UC-05 PR 2b): an ask word it gives with no owner proof bound carries
+    /// the one this install's owner key mints for that word
+    /// ([`crate::Vault::authenticate_owner_device`]). An embedded host sets
+    /// it only on a handle its owner opted into; where this install holds no
+    /// key the authority fold trusts as the owner's, each such word refuses
+    /// `owner_key_required`. It proves nothing else this surface does.
+    #[must_use]
+    pub fn answering_as_owner_device(mut self) -> Self {
+        self.answers_as_owner_device = true;
+        self
+    }
+
     /// Binds where the owner's request reached this install, as the host
     /// verified it on that request (FIX 4650): the hosted console, a linked
     /// machine its connection proved, or this install. An owner act this
