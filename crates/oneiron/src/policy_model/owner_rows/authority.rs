@@ -250,10 +250,16 @@ pub(crate) fn holds_live_ownership_in_txn(
 impl Vault {
     /// What this vault's live-owner census, as [`holds_live_ownership_in_txn`]
     /// reads it, says of `holder`: `Some(true)` when it names `holder` a live
-    /// owner, `Some(false)` when it names live owners and `holder` is not one,
-    /// and `None` when it names no live owner at all, as on a device that does
-    /// not hold the vault's membership rows or its owner's PERSON yet. A row
-    /// that does not decode still faults.
+    /// owner; `Some(false)` only when this vault holds its shared-vault
+    /// membership, whose census names live owners and `holder` is not one;
+    /// and `None` when it cannot tell. That is a shared census that names no
+    /// live owner, and a vault that holds no shared-vault creation record,
+    /// for a holder who is not its live embedded owner: every vault seeds that
+    /// owner's PERSON when it opens, so a device opened on a shared vault
+    /// holds it before the vault's membership rows reach it, and there the
+    /// personal census cannot tell a co-owner from a stranger
+    /// (BLIND-REVIEW-7853 round 1 P1). A row that does not decode still
+    /// faults.
     pub(crate) fn live_ownership_census_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -266,14 +272,12 @@ impl Vault {
             true,
             &mut |id| crate::consent::person_is_live_in_txn(self, txn, id),
         )?;
-        let owners: BTreeSet<EntityId> = match members {
-            None => personal_owner_in_txn(self, txn)?.into_iter().collect(),
-            Some(members) => members.owners,
-        };
-        Ok(if owners.is_empty() {
-            None
-        } else {
-            Some(owners.contains(holder))
+        Ok(match members {
+            None => personal_owner_in_txn(self, txn)?
+                .contains(holder)
+                .then_some(true),
+            Some(members) if members.owners.is_empty() => None,
+            Some(members) => Some(members.owners.contains(holder)),
         })
     }
 

@@ -134,15 +134,19 @@ fn named_own_device_grants_in_txn(
 }
 
 /// [`named_own_device_grants_in_txn`] narrowed to the slips whose holder this
-/// machine names as an owner. Where this machine's live-owner census names
-/// any live owner, it decides alone: the holder counts only while it names
-/// him (the pairing's own test), so a co-owner demoted at the home, whose
-/// grant's withdrawal has not reached this machine, no longer counts once
-/// the membership rows that demoted him are held here (BLIND-REVIEW-7853
-/// F1). Only where the census names no live owner, as on a device that does
-/// not hold the membership rows or the owner's PERSON yet, does the slip's
-/// signed mint decide: it counts when the mint names its holder as the
-/// member who approved its pairing (`minting_member`, FIX 11713). Only an
+/// machine names as an owner. Where this machine holds the shared vault's
+/// membership and its live-owner census names any live owner, that census
+/// decides alone: the holder counts only while it names him (the pairing's
+/// own test), so a co-owner demoted at the home, whose grant's withdrawal
+/// has not reached this machine, no longer counts once the membership rows
+/// that demoted him are held here (BLIND-REVIEW-7853 F1). The live embedded
+/// owner of a vault that holds no shared-vault creation record counts too.
+/// Anywhere else the slip's signed mint decides: where the census names no
+/// live owner, and for any other holder on a device that does not hold the
+/// shared vault's membership yet, whose census names only the embedded owner
+/// every vault seeds and so cannot tell a co-owner from a stranger
+/// (BLIND-REVIEW-7853 round 1 P1). The mint counts when it names its holder
+/// as the member who approved its pairing (`minting_member`, FIX 11713). Only an
 /// owner's link records its approver, revalidated as a live owner when the
 /// link is made, and a pairing names a grant only for a holder who is a live
 /// owner when it mints, so that grant is the holder's own-device grant. A
