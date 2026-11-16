@@ -16,6 +16,10 @@ use crate::conflict_decisions::{ConflictDecision, Resolution};
 use crate::extraction_decisions::{Outcome, SetOperands, SetOutcome};
 use crate::extraction_reply::{BoundExtractionCandidate, BoundExtractionReply};
 
+mod failed_set;
+
+pub use failed_set::open_marker_item;
+
 /// The bound merged-value submit verb.
 const STEPS_SUBMIT_VERB: &str = "ai.steps.submit";
 
@@ -135,6 +139,9 @@ pub enum Error {
         status: String,
         /// Describes the answer without interpreting it.
         message: String,
+        /// Preserves the step's whole result as answered, or null when the
+        /// answer carried none.
+        result: Value,
     },
     /// Rejects a kept operand outside the set's members.
     KeptOutsideSet {
@@ -191,30 +198,68 @@ pub fn member_facts(
             operands.representatives.len()
         )));
     }
-    let mut facts = Vec::with_capacity(operands.candidates.len());
-    for representative in &operands.representatives {
-        let group = outcome
-            .selection
-            .groups
-            .iter()
-            .find(|group| group.representative_index == *representative)
-            .ok_or_else(|| {
-                Error::InvalidInput(format!(
-                    "set {set} representative {representative} names no selection group"
-                ))
-            })?;
-        let confidence = reply_confidence(reply, outcome, *representative, set)?;
-        let mut hints = Vec::new();
-        for member in &group.member_indexes {
-            let candidate = reply_candidate(reply, outcome, *member, set)?;
-            hints.extend(candidate.prospective_queries.iter().cloned());
-        }
-        facts.push(MemberFacts {
-            confidence,
-            prospective_queries: normalize_hints(&hints, set, *representative)?,
-        });
+    let owner = set_owner(set);
+    operands
+        .representatives
+        .iter()
+        .map(|representative| facts_of_group(reply, outcome, *representative, &owner))
+        .collect()
+}
+
+/// Returns one ready group's representative confidence and normalized member hints.
+///
+/// A plain candidate item takes its facts here; a set member takes the same
+/// facts through [`member_facts`]. Both use one normalizer.
+///
+/// # Errors
+///
+/// Rejects a missing group or reply candidate, a confidence outside 0 to 1,
+/// and a hint over 256 bytes.
+pub fn group_facts(
+    reply: &BoundExtractionReply,
+    outcome: &Outcome,
+    representative: usize,
+) -> Result<MemberFacts, Error> {
+    facts_of_group(reply, outcome, representative, "candidate group")
+}
+
+/// Names a set in an input error.
+fn set_owner(set: usize) -> String {
+    format!("set {set}")
+}
+
+/// Returns the batch-local name of a set's item.
+fn set_local(set: usize) -> String {
+    format!("conflict-set-{set}")
+}
+
+/// Returns one group's facts, naming `owner` in every input error.
+fn facts_of_group(
+    reply: &BoundExtractionReply,
+    outcome: &Outcome,
+    representative: usize,
+    owner: &str,
+) -> Result<MemberFacts, Error> {
+    let group = outcome
+        .selection
+        .groups
+        .iter()
+        .find(|group| group.representative_index == representative)
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "{owner} representative {representative} names no selection group"
+            ))
+        })?;
+    let confidence = reply_confidence(reply, outcome, representative, owner)?;
+    let mut hints = Vec::new();
+    for member in &group.member_indexes {
+        let candidate = reply_candidate(reply, outcome, *member, owner)?;
+        hints.extend(candidate.prospective_queries.iter().cloned());
     }
-    Ok(facts)
+    Ok(MemberFacts {
+        confidence,
+        prospective_queries: normalize_hints(&hints, owner, representative)?,
+    })
 }
 
 /// Returns the merged-value request for one set, or none when it asks no step.
@@ -284,7 +329,7 @@ pub fn set_plan(
 ) -> Result<SetPlan, Error> {
     let members = members_json(operands, facts, set)?;
     let heads = heads_json(operands, set)?;
-    let local = format!("conflict-set-{set}");
+    let local = set_local(set);
     match outcome {
         SetOutcome::Skipped { .. } => {
             let item = resolution_item(
@@ -460,6 +505,7 @@ fn submit_step(client: &OneironClient, request: Value, set: usize) -> Result<Opt
             set,
             status: "missing".to_owned(),
             message: "the merged-value step answered no result".to_owned(),
+            result: Value::Null,
         });
     };
     let Some(status) = result.get("status").and_then(Value::as_str) else {
@@ -467,6 +513,7 @@ fn submit_step(client: &OneironClient, request: Value, set: usize) -> Result<Opt
             set,
             status: "missing".to_owned(),
             message: "the merged-value step answered no status".to_owned(),
+            result: result.clone(),
         });
     };
     if status != "finished" {
@@ -474,6 +521,7 @@ fn submit_step(client: &OneironClient, request: Value, set: usize) -> Result<Opt
             set,
             status: status.to_owned(),
             message: step_failure_message(result),
+            result: result.clone(),
         });
     }
     let Some(found) = result.get("json").filter(|found| !found.is_null()) else {
@@ -481,6 +529,7 @@ fn submit_step(client: &OneironClient, request: Value, set: usize) -> Result<Opt
             set,
             status: status.to_owned(),
             message: "the finished step answered no json".to_owned(),
+            result: result.clone(),
         });
     };
     let Some(value) = found.get("value") else {
@@ -488,6 +537,7 @@ fn submit_step(client: &OneironClient, request: Value, set: usize) -> Result<Opt
             set,
             status: status.to_owned(),
             message: "the finished step answered no value".to_owned(),
+            result: result.clone(),
         });
     };
     if value.is_null() {
@@ -531,11 +581,11 @@ fn reply_candidate<'a>(
     reply: &'a BoundExtractionReply,
     outcome: &Outcome,
     operand: usize,
-    set: usize,
+    owner: &str,
 ) -> Result<&'a BoundExtractionCandidate, Error> {
     let Some(index) = outcome.candidate_indexes.get(operand) else {
         return Err(Error::InvalidInput(format!(
-            "set {set} operand {operand} names no reply candidate"
+            "{owner} operand {operand} names no reply candidate"
         )));
     };
     reply
@@ -544,7 +594,7 @@ fn reply_candidate<'a>(
         .find(|candidate| candidate.index == *index)
         .ok_or_else(|| {
             Error::InvalidInput(format!(
-                "set {set} operand {operand} names no reply candidate"
+                "{owner} operand {operand} names no reply candidate"
             ))
         })
 }
@@ -554,18 +604,18 @@ fn reply_confidence(
     reply: &BoundExtractionReply,
     outcome: &Outcome,
     operand: usize,
-    set: usize,
+    owner: &str,
 ) -> Result<f64, Error> {
-    let candidate = reply_candidate(reply, outcome, operand, set)?;
-    check_confidence(candidate.confidence, set, operand)?;
+    let candidate = reply_candidate(reply, outcome, operand, owner)?;
+    check_confidence(candidate.confidence, owner, operand)?;
     Ok(candidate.confidence)
 }
 
 /// Refuses a confidence the wire would refuse.
-fn check_confidence(confidence: f64, set: usize, operand: usize) -> Result<(), Error> {
+fn check_confidence(confidence: f64, owner: &str, operand: usize) -> Result<(), Error> {
     if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
         return Err(Error::InvalidInput(format!(
-            "set {set} operand {operand} confidence {confidence} is outside 0 to 1"
+            "{owner} operand {operand} confidence {confidence} is outside 0 to 1"
         )));
     }
     Ok(())
@@ -574,7 +624,7 @@ fn check_confidence(confidence: f64, set: usize, operand: usize) -> Result<(), E
 /// Returns hints trimmed, deduplicated, capped at eight, refusing over-long hints.
 fn normalize_hints(
     hints: &[String],
-    set: usize,
+    owner: &str,
     representative: usize,
 ) -> Result<Vec<String>, Error> {
     let mut kept = Vec::<String>::new();
@@ -591,7 +641,7 @@ fn normalize_hints(
         }
         if trimmed.len() > MAX_HINT_BYTES {
             return Err(Error::InvalidInput(format!(
-                "set {set} representative {representative} hint exceeds 256 bytes"
+                "{owner} representative {representative} hint exceeds 256 bytes"
             )));
         }
         kept.push(trimmed.to_owned());
@@ -619,6 +669,7 @@ fn members_json(
             operands.candidates.len()
         )));
     }
+    let owner = set_owner(set);
     let mut members = Vec::with_capacity(operands.candidates.len());
     for (position, (candidate, facts)) in operands.candidates.iter().zip(facts.iter()).enumerate() {
         let operand = operands
@@ -626,8 +677,8 @@ fn members_json(
             .get(position)
             .copied()
             .unwrap_or(position);
-        check_confidence(facts.confidence, set, operand)?;
-        let hints = normalize_hints(&facts.prospective_queries, set, operand)?;
+        check_confidence(facts.confidence, &owner, operand)?;
+        let hints = normalize_hints(&facts.prospective_queries, &owner, operand)?;
         members.push(json!({
             "candidate": candidate.clone(),
             "confidence": facts.confidence,

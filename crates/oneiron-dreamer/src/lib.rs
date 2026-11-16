@@ -12,6 +12,7 @@
 //! `conflict_decisions` builds bound verdict packs and reduces their answers as pure policy.
 //! `conflict_resolution` plans one reply's conflict items and merged-value steps without landing claims.
 //! `extraction_decisions` decides one reply through bound reads without landing claims.
+//! `extraction` runs one admitted attempt in extraction/person and decision/landing phases.
 //!
 //! The crate's normal dependencies are `oneiron-remote`, `serde` and
 //! `serde_json` only; `scripts/ci/check_dreamer_crate_deps.sh` holds that
@@ -20,6 +21,7 @@
 pub mod conflict_decisions;
 pub mod conflict_resolution;
 pub mod conflict_settle;
+pub mod extraction;
 pub mod extraction_decisions;
 pub mod extraction_observations;
 pub mod extraction_reply;
