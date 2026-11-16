@@ -14,12 +14,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 
-/// One participant bound to a sitting, with the display name it had then.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionParticipant {
-    pub actor: EntityId,
-    pub display_name: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::session_lifecycle::speakers::SessionParticipant;
 
 /// A sitting's speaker bindings (FIX 2015).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

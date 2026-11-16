@@ -5,7 +5,8 @@ use crate::{Error, Result, Vault};
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-const DOMAIN: &[u8] = b"oneiron:healer-oversight:v1\0";
+#[doc(hidden)]
+use oneiron_records::store::healer_oversight::DOMAIN;
 
 /// Proposed/reviewed/routed timestamps for one healer case. Key: hex32 (case_ref).
 const ACTIVITY: SideTable<String, Activity, Named> = SideTable::new(&side_table::HEALER_ACTIVITY);
