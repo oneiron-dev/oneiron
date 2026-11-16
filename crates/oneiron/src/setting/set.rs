@@ -19,8 +19,9 @@ use super::{
 use crate::Vault;
 use crate::batch::secret_scan::admit_typed;
 use crate::check_in::{
-    CheckInMode, CheckInScope, NoAgentVerdict, OpenPendingCheckIn, VerifiedChain, WaitReason,
-    consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
+    CheckInMode, CheckInScope, HolderAnswer, NoAgentVerdict, OpenPendingCheckIn, PendingState,
+    VerifiedChain, WaitReason, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
+    pending_check_in_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -398,8 +399,12 @@ fn set_in_txn(
                 spend_in_txn(
                     vault,
                     txn,
-                    change,
-                    prior_bytes.as_deref(),
+                    &Spend {
+                        change,
+                        replaced: prior_bytes.as_deref(),
+                        over_owners_row: prior_row_by_owner,
+                        moved,
+                    },
                     agent,
                     &check_in,
                     now,
@@ -765,17 +770,27 @@ fn open_request_in_txn(
     })
 }
 
-/// Spends the approved check-in `id` for `agent`'s `change` over the row `replaced`, in the
-/// door's writer.
+/// The change an approved check-in spends on: the change, the stored row it replaces, whether
+/// the owner set that row, and which way the change moves it.
+struct Spend<'a, 'b> {
+    change: &'a Change<'b>,
+    replaced: Option<&'a [u8]>,
+    over_owners_row: bool,
+    moved: Direction,
+}
+
+/// Spends the approved check-in `id` for `agent`'s change, in the door's writer: the ask must be
+/// this agent's for this change over the row it replaces, and its yes must come from someone who
+/// could make the change themselves ([`approver_may_make_in_txn`]).
 fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    change: &Change<'_>,
-    replaced: Option<&[u8]>,
+    spend: &Spend<'_, '_>,
     agent: EntityId,
     id: &EntityId,
     now: u64,
 ) -> Result<()> {
+    let change = spend.change;
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
     if row.asker != agent
         || row.verb != SET_VERB
@@ -786,6 +801,55 @@ fn spend_in_txn(
             "the check-in is not this agent's ask for this setting change".into(),
         ));
     }
-    consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, replaced), now)?;
+    if row.eligible_basis().is_some() && !approver_may_make_in_txn(vault, txn, &row.state, spend)? {
+        return Err(Error::InvalidConfig(format!(
+            "the yes on this check-in came from someone who cannot make this change of `{}`: an \
+             agent's change spends the yes of the vault's owner, or of a live person who may make \
+             it on their own row, read now",
+            change.spec.name
+        )));
+    }
+    consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, spend.replaced), now)?;
     Ok(())
+}
+
+/// Whether the yes in `state` came from someone who could make `spend`'s change themselves, read
+/// live in this write. ARCH-0082 `#ladder`: a holder answers only what it could do itself without
+/// asking; DESIGN 1.2 step 3: "when a holder answers, the same door runs under the holder's
+/// proof". The ladder rechecks only a holder's grant and own check-in for the verb, and the ask
+/// keeps only the effect's digest, so the setting door's own rule is read here: a live owner of
+/// the vault now makes any change; another live person makes what their own reading admits
+/// ([`person_reading_in_txn`]), inside the owner's row as every non-owner is. Any other yes does
+/// not spend: a person who is not, or is no longer, an owner on an owner-set key, a pin or the
+/// owner's row; a yes whose answerer was erased; and any eligibility that is no one's yes.
+fn approver_may_make_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    state: &PendingState,
+    spend: &Spend<'_, '_>,
+) -> Result<bool> {
+    let PendingState::Answered {
+        answer: HolderAnswer::Approve,
+        by: Some(by),
+        ..
+    } = state
+    else {
+        return Ok(false);
+    };
+    if crate::policy_model::owners_in_txn(vault, txn)?.contains(by) {
+        return Ok(true);
+    }
+    if !crate::consent::person_is_live_in_txn(vault, txn, by)? {
+        return Ok(false);
+    }
+    Ok(
+        person_reading_in_txn(vault, txn, spend.change, *by)?.is_some_and(|(_, permitted)| {
+            let permitted = if spend.over_owners_row {
+                permitted.limited_by(Permitted::NoWidening)
+            } else {
+                permitted
+            };
+            permitted.admit(spend.moved).is_some()
+        }),
+    )
 }
