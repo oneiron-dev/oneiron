@@ -680,6 +680,14 @@ impl DecisionHost {
     }
 }
 
+fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
+    ProviderPin {
+        rung,
+        model: model.to_owned(),
+        version: version.to_owned(),
+    }
+}
+
 /// A band policy holding every learned band `vault` keeps (ARCH-0076 promise-dura-10: a
 /// learned band's mode and version stay in effect after a restart), and no threshold row.
 /// Rows that do not read leave it empty, as a vault with none, and the log says so.
@@ -693,14 +701,6 @@ fn learned_bands(vault: &Vault) -> DecisionBandPolicy {
         ),
     }
     bands
-}
-
-fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
-    ProviderPin {
-        rung,
-        model: model.to_owned(),
-        version: version.to_owned(),
-    }
 }
 
 /// What admits each house read on the ladder as the `/v1/llm/decision_read`
