@@ -331,6 +331,58 @@ impl EntityDoc {
         }
     }
 
+    /// What `read` reads of this document at each of `frontiers`, versions
+    /// it retains, in their order (FIX 275). One copy moves version to
+    /// version by checkout in causal order, so many versions cost one copy
+    /// and the diffs between them, where [`Self::fork`] at each would cost
+    /// the whole history every time. Each version is checked as a fork is:
+    /// retained above any purge floor, and still holding its birth.
+    pub(super) fn read_versions<T>(
+        &self,
+        frontiers: &[Frontiers],
+        mut read: impl FnMut(&Self) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        let floor = self.doc.shallow_since_vv().to_vv();
+        let mut order = Vec::with_capacity(frontiers.len());
+        for (index, frontier) in frontiers.iter().enumerate() {
+            let vv = self
+                .doc
+                .frontiers_to_vv(frontier)
+                .filter(|vv| vv.includes_vv(&floor))
+                .ok_or(invalid("unknown or purged frontier"))?;
+            // A version holds more operations than each of its ancestors, so
+            // this count orders every version after the ones it descends from.
+            let operations: i64 = vv.values().map(|&counter| i64::from(counter)).sum();
+            order.push((operations, index, vv));
+        }
+        order.sort_by_key(|&(operations, index, _)| (operations, index));
+        let walker = Self::from_loro(self.doc.fork())?;
+        let mut read_at: Vec<Option<T>> = frontiers.iter().map(|_| None).collect();
+        for (_, index, vv) in order {
+            let frontier = frontiers
+                .get(index)
+                .ok_or(Error::InvariantViolation("retained version index"))?;
+            walker
+                .doc
+                .checkout(frontier)
+                .map_err(|_| invalid("unknown or purged frontier"))?;
+            if walker.doc.state_vv() != vv {
+                return Err(invalid("retained version checkout mismatch"));
+            }
+            let birth = map_get_bytes(&walker.doc.get_map(META), BIRTH)
+                .ok_or(Error::CorruptedIndex("document birth metadata"))?;
+            Birth::decode(&birth)?;
+            let slot = read_at
+                .get_mut(index)
+                .ok_or(Error::InvariantViolation("retained version index"))?;
+            *slot = Some(read(&walker)?);
+        }
+        read_at
+            .into_iter()
+            .collect::<Option<Vec<T>>>()
+            .ok_or(Error::InvariantViolation("retained version left unread"))
+    }
+
     pub(super) fn shallow_snapshot(&self, frontier: &[u8]) -> Result<Vec<u8>> {
         self.doc
             .export(ExportMode::shallow_snapshot(&decode_frontier(frontier)?))
