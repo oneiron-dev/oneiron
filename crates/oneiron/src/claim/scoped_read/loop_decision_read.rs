@@ -20,6 +20,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::scan_check::ScanCount;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
@@ -102,9 +103,6 @@ const LOOP_DECISION_ACTOR_VISIBILITY: Withhold = Withhold::Field;
 /// error policy"): its one item. The rest of the read stands, a source that
 /// does not read adds nothing, and no error reaches the caller.
 const LOOP_DECISION_ERROR_POLICY: Withhold = Withhold::Item;
-
-/// The outcome a held decision is stored with.
-const PENDING_OUTCOME: &str = "pending";
 
 /// What an Admin read does with an event that names no entity and kept no
 /// read context its Scope admits (CALLS "OF-499 A3 unpositioned loop
@@ -421,7 +419,24 @@ impl ScopedRead<'_> {
         record: GateDecisionRecord,
     ) -> Option<ReadableLoopDecision> {
         let family = context::record_family(&record)?;
-        if record.outcome == PENDING_OUTCOME && !LOOP_DECISION_PENDING {
+        let pending = match record.gate_outcome() {
+            Some(GateReceiptOutcome::Pending) => true,
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::Rejected
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => false,
+        };
+        if pending && !LOOP_DECISION_PENDING {
             return None;
         }
         // A stored claim id that is no EntityId is this item's error.
