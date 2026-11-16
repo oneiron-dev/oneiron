@@ -50,8 +50,8 @@ pub const COOP_DELETION_DELIVERY_ATTEMPT_KIND: &str = "cooperative_deletion.deli
 pub const COOP_DELETION_PEER_PATH: &str = "/v1/federation/courtesy-delete";
 /// The requester's route an answer is POSTed to.
 pub const COOP_DELETION_REPLY_PEER_PATH: &str = "/v1/federation/courtesy-delete/reply";
-/// How long an undelivered leg keeps retrying before it is `unreachable`, unless the owner
-/// sets `deletion.coop_delivery.give_up_secs` (its default).
+/// How long an undelivered leg keeps retrying before it is `unreachable`, unless
+/// `deletion.coop_delivery.give_up_secs` is set (its default).
 pub const COOP_DELETION_GIVE_UP_SECS: u64 = 7 * 24 * 60 * 60;
 /// The retry wait grows with the leg's age, between these bounds.
 const MIN_BACKOFF_SECS: u64 = 60;
@@ -555,8 +555,8 @@ impl Vault {
     }
 
     /// Settles one claimed try: 2xx is `delivered`; a refusal is `unknown`;
-    /// a failure retries with a wait that grows with the leg's age, until the
-    /// owner's `deletion.coop_delivery.give_up_secs` (default
+    /// a failure retries with a wait that grows with the leg's age, until
+    /// `deletion.coop_delivery.give_up_secs` (default
     /// [`COOP_DELETION_GIVE_UP_SECS`]) makes it `unreachable`. The queue row
     /// and the ledger move in one transaction, fenced by the claim's lease.
     pub fn settle_cooperative_deletion_delivery(

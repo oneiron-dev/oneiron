@@ -1,7 +1,7 @@
 //! The setting keys `deletion` declares (DESIGN 15-setting-primitive): the crate's build script
 //! lists each row in the setting catalogue.
 
-use crate::setting::{Kind, higher_is_tighter, lower_is_tighter};
+use crate::setting::{Kind, higher_is_tighter};
 
 /// On: a delete under a live brief share goes through the confirmed door.
 const fn brief_share_delete_confirmed() -> bool {
@@ -15,14 +15,15 @@ const fn courtesy_delete_give_up_default() -> u64 {
 
 crate::setting::setting_keys! {
     /// How long, in seconds, an undelivered courtesy-delete leg keeps retrying before it is
-    /// `unreachable`. Seven days unless the owner sets it. The wait between tries stays one
-    /// minute to six hours, growing with the leg's age; 0 makes the first failed try final. A
-    /// longer time is the looser value, so only the owner raises it; a row that does not decode
-    /// reads seven days.
+    /// `unreachable`. Seven days unless set. The wait between tries stays one minute to six
+    /// hours, growing with the leg's age; 0 makes the first failed try final. A shorter time is
+    /// the looser value, since a leg that gives up sooner leaves more copies of the owner's data
+    /// in place: an agent may only lengthen it, and a shorter one, 0 included, waits on the
+    /// owner's check-in. A row that does not decode reads seven days.
     pub(crate) COOP_DELIVERY_GIVE_UP_SECS: u64 = "deletion.coop_delivery.give_up_secs" {
         kind: Kind::new(courtesy_delete_give_up_default)
             .strictest(courtesy_delete_give_up_default)
-            .tighter(lower_is_tighter::<u64>),
+            .tighter(higher_is_tighter::<u64>),
     };
     /// Whether the owner's delete of a record under a live brief share must go through the
     /// confirmed door, which shows what the delete retracts before it runs. On by default: the
