@@ -4,7 +4,8 @@
 //! the generated HTTP facade handler and the MCP dispatcher call them by
 //! the name every host door has, and a tool call, a code-mode call and an
 //! SDK call meet one admission: the vault owner's proof, as `/v1/owner`
-//! and the owner report routes take it.
+//! and the owner report routes take it. `vault.reports.route` is generated
+//! from its row (UC-01 PR 2.2).
 //!
 //! Preview and send reuse the owner feedback door's shared path
 //! (`owner::feedback::preview_view` / `send_previewed`): the preview
@@ -27,7 +28,6 @@ use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview,
     FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView,
-    ReportRouteReceipt, ReportRouteRequest,
 };
 
 use super::host_doors::support::{Listed, hex_rows};
@@ -51,22 +51,6 @@ pub(crate) async fn vault_reports_disclosure(
         "vault.reports.disclosure",
         move |server, owner| sdk::decide_report_disclosure_as_owner(server.vault(), owner, input),
         |issue| hex_rows([&issue.issue_ref]),
-    )
-    .await
-}
-
-/// `vault.reports.route`: the owner replaces one subject's maker route.
-pub(crate) async fn vault_reports_route(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ReportRouteRequest,
-) -> Listed<ReportRouteReceipt> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.reports.route",
-        move |server, owner| sdk::set_report_route_as_owner(server.vault(), owner, input),
-        |_| Vec::new(),
     )
     .await
 }

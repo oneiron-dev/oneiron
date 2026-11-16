@@ -1,39 +1,20 @@
 //! Credential-backed budget controls, beside the owner's held-run routes.
 //! No model or accounting logic lives here: the engine owns leases and
-//! holds, and the usage ledger owns settled physical-call receipts.
+//! holds, and the usage ledger owns settled physical-call receipts. The
+//! owner's lease, hold, local-budget, reservation and RSI doors are
+//! generated from their rows (UC-01 PR 2.2).
 use std::sync::Arc;
 
-use oneiron::agent_dispatch::PartialResultHold;
 use oneiron::agent_dispatch::budget_doors::{self, *};
-use oneiron::llm::rsi_doors::{self, RsiLineRequest, RsiLineView};
 use oneiron::llm::run_admission::resident_doors::{
     self, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest,
 };
-use oneiron::llm::{RsiBudgetConfig, RsiTopUp};
 use oneiron::memory::MemoryError;
 
 use super::host_doors::support::Listed;
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-
-pub(crate) async fn vault_budgets_lease_open(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: OpenSpendLeaseRequest,
-) -> Listed<SpendLeaseView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.lease.open",
-        move |server, owner| {
-            budget_doors::open_spend_lease_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
 
 /// The owner reads any lease on its proof; a person or agent on a verified
 /// slip of its own reads a lease its own run spends under or reserved
@@ -74,96 +55,6 @@ pub(crate) async fn vault_budgets_lease(
         }
         Err(refusal) => (Err(refusal), Vec::new()),
     }
-}
-
-pub(crate) async fn vault_budgets_lease_top_up(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: TopUpSpendLeaseRequest,
-) -> Listed<SpendLeaseView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.lease.top_up",
-        move |server, owner| {
-            budget_doors::top_up_spend_lease_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_hold(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: BudgetHoldRequest,
-) -> Listed<Option<PartialResultHold>> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.hold",
-        move |server, owner| {
-            budget_doors::budget_hold_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_hold_resume(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: BudgetHoldRequest,
-) -> Listed<PartialResultHold> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.hold.resume",
-        move |server, owner| {
-            budget_doors::resume_budget_hold_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_local(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: LocalRunnerBudgetRequest,
-) -> Listed<LocalRunnerBudgetView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.local",
-        move |server, owner| {
-            budget_doors::local_runner_budget_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_reservations(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RunnerBudgetReservationsRequest,
-) -> Listed<RunnerBudgetReservationsView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.reservations",
-        move |server, owner| {
-            budget_doors::runner_budget_reservations_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
 }
 
 /// The owner reads every settlement of a served run on its proof; a person or
@@ -240,95 +131,6 @@ fn ledger_settlements(
         .transpose()?
         .unwrap_or_default();
     Ok((usage.is_some(), settlements))
-}
-
-pub(crate) async fn vault_budgets_rsi_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RsiBudgetConfig,
-) -> Listed<RsiLineView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.rsi.configure",
-        move |server, owner| {
-            rsi_doors::configure_rsi_budget_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_rsi(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RsiLineRequest,
-) -> Listed<RsiLineView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.rsi",
-        move |server, owner| {
-            rsi_doors::rsi_line_as_owner(server.vault(), owner, &input).map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_rsi_top_up(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RsiTopUp,
-) -> Listed<RsiLineView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.rsi.top_up",
-        move |server, owner| {
-            rsi_doors::top_up_rsi_budget_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_rsi_hold(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RsiLineRequest,
-) -> Listed<RsiLineView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.rsi.hold",
-        move |server, owner| {
-            rsi_doors::hold_rsi_budget_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_budgets_rsi_hold_resume(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RsiLineRequest,
-) -> Listed<RsiLineView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.rsi.hold.resume",
-        move |server, owner| {
-            rsi_doors::resume_rsi_budget_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
 }
 
 /// The residents a share view names.
