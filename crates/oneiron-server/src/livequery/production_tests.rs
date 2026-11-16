@@ -1909,7 +1909,7 @@ fn owner_feed_fixture() -> (
         oneiron::registry::TypeByteFamily::Productivity,
     )
     .unwrap();
-    let actor = EntityId::from_hex(ACTOR).unwrap();
+    let actor = server.vault().ensure_embedded_owner_actor().unwrap();
     let anchor = EntityId::now();
     let body = oneiron::ClaimBody::new(
         "profile.name",
@@ -1930,7 +1930,10 @@ fn owner_feed_fixture() -> (
         )
         .unwrap();
     crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
-    let owner_recipe = format!("principal_ref={ACTOR};actor_class=human;jti=watch-owner");
+    let owner_recipe = format!(
+        "principal_ref={};actor_class=human;jti=watch-owner",
+        actor.to_hex()
+    );
     let owner = crate::test_credentials::authenticate(&server, &owner_recipe);
     assert!(owner.is_owner_grade());
     (_dir, server, actor, anchor, owner)

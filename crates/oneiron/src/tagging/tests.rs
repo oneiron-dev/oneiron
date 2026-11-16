@@ -927,7 +927,7 @@ fn a_stream_continuation_marks_its_turn_again() {
 
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
-    let writer = speaker(&vault);
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     crate::test_util::bind_test_owner(&vault, writer);
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let mut streamed = message(0, "");
