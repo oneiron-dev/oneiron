@@ -51,6 +51,16 @@ pub(super) fn state(
     STATE.get(store, txn, id)
 }
 
+/// When `id`'s content last changed ([`RevisionState::changed_at_ms`]), or
+/// `None` when it has no revision state. One keyed read.
+pub(crate) fn content_changed_at_ms_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<u64>> {
+    Ok(state(store, txn, id)?.map(|state| state.changed_at_ms))
+}
+
 /// Every move of a row's live revision passes here, so this is where the
 /// memory timeline records it (L3-39).
 pub(super) fn put_state(

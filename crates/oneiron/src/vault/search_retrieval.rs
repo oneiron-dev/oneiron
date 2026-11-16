@@ -22,6 +22,10 @@ pub(crate) struct TimedSearch {
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) started_at: u64,
     pub(crate) started: Instant,
+    /// A text-index rebuild stood in the read that scored (FIX
+    /// ANALYZER-BUMP-AUTO-REINDEX): the scores come from the documents
+    /// indexed again so far.
+    pub(crate) text_index_rebuilding: bool,
 }
 
 fn vault_search_score_breakdown(
@@ -91,15 +95,19 @@ impl Vault {
 
     /// Current text-index status. `analyzer_manifest` reflects the analyzer
     /// this vault was opened with; `schema_version` and `total_docs` reflect
-    /// what was persisted by prior writes.
+    /// what was persisted by prior writes; `rebuild` is the rebuild in
+    /// flight, if one stands.
     pub fn text_index_status(&self) -> Result<TextIndexStatus> {
         let rtxn = self.store.env.read_txn()?;
         let total_docs = crate::store::text_index::read_total_docs(&self.store, &rtxn)?;
         let schema_version = read_text_schema_version(&self.store, &rtxn)?;
+        let rebuild =
+            super::text_index_rebuild::read_text_index_rebuild_progress(&self.store, &rtxn)?;
         Ok(TextIndexStatus {
             total_docs,
             schema_version,
             analyzer_manifest: self.analyzer.manifest(),
+            rebuild,
         })
     }
 
@@ -233,13 +241,17 @@ impl Vault {
                 },
             )?;
             observe(&txn, scores.as_slice());
-            Ok::<_, Error>(scores)
+            let text_index_rebuilding =
+                super::text_index_rebuild::text_index_rebuild_stands(&self.store, &txn)?;
+            Ok::<_, Error>((scores, text_index_rebuilding))
         })();
         lane.end_recall_plan()?;
+        let (scores, text_index_rebuilding) = scores?;
         let results = TimedSearch {
-            scores: scores?,
+            scores,
             started_at,
             started,
+            text_index_rebuilding,
         };
         Ok(self
             .text_search_telemetry(results, limit, dispatch_attempt)
@@ -271,6 +283,10 @@ impl Vault {
             scores,
             started_at,
             started,
+            text_index_rebuilding: super::text_index_rebuild::text_index_rebuild_stands(
+                &self.store,
+                &txn,
+            )?,
         })
     }
 
@@ -294,6 +310,14 @@ impl Vault {
                 &crate::retrieval_quality::RetrievalDiagnostics {
                     attempted: vec![RetrievalSignal::Text],
                     succeeded: vec![RetrievalSignal::Text],
+                    // A text-index rebuild in flight (FIX
+                    // ANALYZER-BUMP-AUTO-REINDEX): the hits come from the
+                    // documents indexed again so far.
+                    degradation: if results.text_index_rebuilding {
+                        vec![crate::retrieval_quality::RetrievalDegradation::Bm25Stale]
+                    } else {
+                        Vec::new()
+                    },
                     ..Default::default()
                 },
             ),
@@ -333,11 +357,10 @@ impl Vault {
         // before the read opens. Best effort: the search serves its rows
         // either way.
         let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
-        let scores = {
+        let (scores, text_index_rebuilding) = {
             let rtxn = self.store.env.read_txn()?;
             admit(&rtxn)?;
-            self.ensure_text_index_searchable(&rtxn)?;
-            crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+            let scores = crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
                 &crate::ports::text_index(target, &self.analyzer),
                 &rtxn,
                 crate::ports::TextQuery {
@@ -351,12 +374,17 @@ impl Vault {
                     // direct-with-profile path still blends no recency.
                     recency: None,
                 },
-            )?
+            )?;
+            (
+                scores,
+                super::text_index_rebuild::text_index_rebuild_stands(&self.store, &rtxn)?,
+            )
         };
         Ok(TimedSearch {
             scores,
             started_at,
             started,
+            text_index_rebuilding,
         })
     }
 

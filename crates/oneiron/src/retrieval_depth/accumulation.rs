@@ -41,6 +41,24 @@ impl DepthAccumulator {
         }
     }
 
+    /// [`Self::complete`] for the text arm. A text-index rebuild in flight
+    /// leaves that arm partial (FIX ANALYZER-BUMP-AUTO-REINDEX), so the run
+    /// then says so; the vector and graph arms are whole. The marker is read
+    /// as the round ends, in a read of its own: the round's scoped search
+    /// keeps its read to itself.
+    pub(super) fn complete_text(&mut self, vault: &crate::Vault) -> crate::error::Result<()> {
+        self.complete(RetrievalSignal::Text);
+        let stale = crate::retrieval_quality::RetrievalDegradation::Bm25Stale;
+        if self.retrieval_diagnostics.degradation.contains(&stale) {
+            return Ok(());
+        }
+        let rtxn = vault.store.env.read_txn()?;
+        if crate::vault::text_index_rebuild::text_index_rebuild_stands(&vault.store, &rtxn)? {
+            self.retrieval_diagnostics.degradation.push(stale);
+        }
+        Ok(())
+    }
+
     pub(super) fn merge_revisioned(
         &mut self,
         hits: Vec<ScoredEntity>,

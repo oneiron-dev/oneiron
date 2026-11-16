@@ -8,11 +8,15 @@
 //! it with the manifest check skipped, cleared the text index, reopened and
 //! indexed every document again. Now the open clears the index itself and
 //! the housekeeping pass, the host's own tick, indexes every document again
-//! from the text it was indexed with.
+//! from the text it was indexed with, the most recently written first. While
+//! it runs, text reads answer from the documents indexed again so far and
+//! say so (ruling ANALYZER-REINDEX-SEARCH-DURING-REBUILD = B).
 #![cfg(oneiron_test_support)]
 
 use oneiron::edge::EdgeActorClass;
 use oneiron::housekeeping::HousekeepingBudget;
+use oneiron::note::{NoteProgramEdit, NoteProgramEditOutcome};
+use oneiron::retrieval_quality::RetrievalDegradation;
 use oneiron::test_doors::text_index_rebuild as door;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -76,15 +80,88 @@ fn assert_each_found_once(vault: &Vault, words: &[&str], notes: &[EntityId]) {
     }
 }
 
-/// While a rebuild stands, a text read refuses as an untrusted index does.
-fn assert_text_read_fails_closed(vault: &Vault) {
-    match vault.search_text(WORDS[0], 10) {
-        Ok(found) => panic!(
-            "a text read fails closed while the rebuild stands: {} hits",
-            found.len()
-        ),
-        Err(error) => assert_eq!(error.kind(), oneiron::ErrorKind::CorruptedIndex),
-    }
+/// A text read while a rebuild stands: it answers from the documents indexed
+/// again so far, and its quality names the stale text arm. The hits for
+/// `word`, by id.
+fn partial_hits(vault: &Vault, word: &str) -> Vec<EntityId> {
+    let read = vault
+        .search_text_with_telemetry(word, 10)
+        .expect("a text read answers while the rebuild stands");
+    assert_eq!(
+        read.retrieval_quality.degradation,
+        [RetrievalDegradation::Bm25Stale],
+        "a text read during the rebuild says its text arm is stale"
+    );
+    read.value.into_iter().map(|hit| hit.id).collect()
+}
+
+/// Whether a recall run over the text arm names that arm stale.
+fn recall_marks_text_stale(vault: &Vault, word: &str) -> bool {
+    vault
+        .query()
+        .search_text(word, 10)
+        .limit(10)
+        .run_with_telemetry()
+        .expect("recall")
+        .retrieval_quality
+        .degradation
+        .contains(&RetrievalDegradation::Bm25Stale)
+}
+
+/// The "rebuilding, N of M" the status and the doctor report show, in their
+/// debug form: `Some(TextIndexRebuildProgress { .. })` or `None`.
+fn shown_rebuild(vault: &Vault) -> (String, String) {
+    let status = format!("{:?}", vault.text_index_status().expect("status"));
+    let doctor = format!("{:?}", vault.doctor().expect("doctor"));
+    let field = |debug: &str, name: &str| {
+        let start = debug
+            .find(name)
+            .unwrap_or_else(|| panic!("{name} is shown: {debug}"));
+        let rest = &debug[start + name.len()..];
+        if rest.starts_with("None") {
+            return "None".to_owned();
+        }
+        rest[..rest.find(')').map_or(rest.len(), |end| end + 1)].to_owned()
+    };
+    (
+        field(&status, "rebuild: "),
+        field(&doctor, "text_index_rebuild: "),
+    )
+}
+
+fn progress(done: u64, total: u64) -> (String, String) {
+    let shown = format!("Some(TextIndexRebuildProgress {{ done: {done}, total: {total} }})");
+    (shown.clone(), shown)
+}
+
+/// Appends `words` to `note` as its owner and publishes it, so its content
+/// changed last.
+fn append_and_publish(vault: &Vault, note: EntityId, words: &str) {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let document = vault
+        .note_program_document(note)
+        .expect("read document")
+        .expect("NOTE document");
+    let edit = NoteProgramEdit::InsertAfter {
+        anchor: document
+            .anchor(document.text().chars().count())
+            .expect("end anchor"),
+        text: words.to_owned(),
+    };
+    let outcome = vault
+        .edit_note(note, &edit, WriteActor::new(owner, EdgeActorClass::Human))
+        .expect("the owner edits the NOTE");
+    assert!(
+        matches!(outcome, NoteProgramEditOutcome::Edited { .. }),
+        "the owner's edit lands in place: {outcome:?}"
+    );
+    let published = vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .expect("idle publication");
+    assert!(
+        published.failed.is_empty(),
+        "the edit publishes at idle: {published:?}"
+    );
 }
 
 /// A populated vault whose stored stamp says `restamp` built its index.
@@ -124,7 +201,19 @@ fn a_policy_flag_change_rebuilds_the_text_index_with_no_manual_step() {
         [0; 5],
         "the open cleared every old-analyzer row"
     );
-    assert_text_read_fails_closed(&vault);
+    assert!(
+        partial_hits(&vault, WORDS[0]).is_empty(),
+        "a text read answers, with no hit yet, before the pass"
+    );
+    assert!(
+        recall_marks_text_stale(&vault, WORDS[0]),
+        "recall names its text arm stale while the rebuild stands"
+    );
+    assert_eq!(
+        shown_rebuild(&vault),
+        progress(0, total),
+        "the status and the doctor show the rebuild"
+    );
 
     vault
         .housekeeping(HousekeepingBudget::unbounded())
@@ -136,6 +225,18 @@ fn a_policy_flag_change_rebuilds_the_text_index_with_no_manual_step() {
         "the pass ended the rebuild"
     );
     assert_each_found_once(&vault, &WORDS, &notes);
+    assert!(
+        vault
+            .search_text_with_telemetry(WORDS[0], 10)
+            .expect("text read")
+            .retrieval_quality
+            .degradation
+            .is_empty(),
+        "a text read after the rebuild is whole"
+    );
+    assert!(!recall_marks_text_stale(&vault, WORDS[0]));
+    let none = ("None".to_owned(), "None".to_owned());
+    assert_eq!(shown_rebuild(&vault), none, "nothing is shown once it ends");
 }
 
 /// The test [`open_in_second_process`] runs in a second process.
@@ -202,7 +303,8 @@ fn second_process_opens_the_vault() {
 }
 
 /// A rebuild another process's open starts reaches a handle this process
-/// opened before it, at that handle's next text read.
+/// opened before it, at that handle's next text read: the read names its
+/// text arm stale.
 #[test]
 fn a_rebuild_another_process_starts_holds_for_an_open_handle() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -213,22 +315,43 @@ fn a_rebuild_another_process_starts_holds_for_an_open_handle() {
 
     open_in_second_process(dir.path(), false);
 
-    assert_text_read_fails_closed(&vault);
+    assert!(
+        partial_hits(&vault, WORDS[0]).is_empty(),
+        "the open handle answers from the cleared index and says so"
+    );
+    assert!(
+        recall_marks_text_stale(&vault, WORDS[0]),
+        "recall on the open handle names its text arm stale"
+    );
 }
 
 /// A rebuild another process's pass ends no longer holds for a handle this
-/// process opened while it stood: its next text read finds every document.
+/// process opened while it stood: its next text read finds every document
+/// and is whole.
 #[test]
 fn a_rebuild_another_process_ends_releases_an_open_handle() {
     let dir = tempfile::tempdir().expect("temp dir");
     let notes = populated_then_restamped(dir.path(), without_myanmar_zawgyi);
     open_in_second_process(dir.path(), false);
     let vault = open(dir.path());
-    assert_text_read_fails_closed(&vault);
+    assert!(
+        partial_hits(&vault, WORDS[0]).is_empty(),
+        "a handle opened while the rebuild stands answers partly and says so"
+    );
 
     open_in_second_process(dir.path(), true);
 
     assert_each_found_once(&vault, &WORDS, &notes);
+    assert!(
+        vault
+            .search_text_with_telemetry(WORDS[0], 10)
+            .expect("text read")
+            .retrieval_quality
+            .degradation
+            .is_empty(),
+        "a text read after the other process's pass is whole"
+    );
+    assert!(!recall_marks_text_stale(&vault, WORDS[0]));
 }
 
 #[test]
@@ -293,7 +416,15 @@ fn a_rebuild_resumes_after_a_restart_and_keeps_the_writes_made_during_it() {
         done, done_before_restart,
         "the reopen resumes the rebuild and does not start it over"
     );
-    assert_text_read_fails_closed(&vault);
+    assert_eq!(
+        partial_hits(&vault, WORDS[4]),
+        [notes[4]],
+        "the page indexed before the restart stays searchable"
+    );
+    assert!(
+        partial_hits(&vault, WORDS[0]).is_empty(),
+        "the oldest NOTE waits for a later page"
+    );
 
     vault
         .housekeeping(HousekeepingBudget::unbounded())
@@ -309,6 +440,52 @@ fn a_rebuild_resumes_after_a_restart_and_keeps_the_writes_made_during_it() {
         1,
         "the NOTE written during the rebuild is found once"
     );
+}
+
+#[test]
+fn the_rebuild_indexes_the_most_recently_written_documents_first() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let notes = {
+        let vault = open(dir.path());
+        // The order key is the wall-clock millisecond of a document's last
+        // write: every row the open and the owner's creation wrote is older
+        // than the NOTEs, to the millisecond, and the NOTEs than the edit.
+        vault.ensure_embedded_owner_actor().expect("owner actor");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let notes = write_notes(&vault, &WORDS);
+        // The oldest NOTE, written again after the others, is now the most
+        // recently written: the order is by last write, not by birth.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        append_and_publish(&vault, notes[0], " revisited");
+        without_myanmar_zawgyi(&vault);
+        notes
+    };
+
+    let vault = open(dir.path());
+    let (reindexed, complete) =
+        door::run_text_index_rebuild_pages(&vault, 2, 1).expect("one page of the pass");
+    assert_eq!((reindexed, complete), (2, false), "one page of two");
+    assert_eq!(
+        partial_hits(&vault, WORDS[0]),
+        [notes[0]],
+        "the NOTE written last is searchable after one page"
+    );
+    assert_eq!(
+        partial_hits(&vault, WORDS[4]),
+        [notes[4]],
+        "the newest NOTE is searchable after one page"
+    );
+    for word in &WORDS[1..4] {
+        assert!(
+            partial_hits(&vault, word).is_empty(),
+            "{word:?}, written earlier, waits for a later page"
+        );
+    }
+    let (done, total) = door::text_index_rebuild_progress(&vault)
+        .expect("marker read")
+        .expect("the rebuild stands");
+    assert_eq!(done, 2);
+    assert_eq!(shown_rebuild(&vault), progress(2, total));
 }
 
 #[test]

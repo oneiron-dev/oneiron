@@ -49,8 +49,9 @@ fn emoji_doc_round_trips_through_text_search() -> Result<()> {
 /// version must never be scored against: v3 queries never meet postings
 /// written by the emoji-dropping v2 tokenizer. Since FIX
 /// ANALYZER-BUMP-AUTO-REINDEX the open clears that index instead of failing
-/// closed, text reads fail closed until the rebuild pass ends, and the pass
-/// indexes the document again under the current analyzer. The stored
+/// closed, text reads answer from the documents indexed again so far until
+/// the rebuild pass ends, and the pass indexes the document again under the
+/// current analyzer. The stored
 /// manifest is rewritten to be byte-identical to the current one except
 /// `analyzer_version: "v2"`, with a matching (self-consistent) hash, so ONLY
 /// the version bump trips the handshake.
@@ -102,11 +103,10 @@ fn populated_v2_analyzer_manifest_is_rebuilt_on_open() -> Result<()> {
         0,
         "the open cleared every v2-indexed document"
     );
-    let err = match vault.search_text("handshake", 10) {
-        Ok(_) => panic!("a text read must fail closed while the rebuild stands"),
-        Err(err) => err,
-    };
-    assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
+    assert!(
+        vault.search_text("handshake", 10)?.is_empty(),
+        "a text read answers, with no hit yet, while the rebuild stands"
+    );
 
     let run = vault.run_text_index_rebuild(256, || false)?;
     assert!(run.complete, "one run ends a small rebuild");

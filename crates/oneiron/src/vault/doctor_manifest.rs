@@ -39,6 +39,20 @@ pub struct TextIndexStatus {
     /// Analyzer manifest resolved at open time (reflects dict discovery
     /// against `VaultConfig.dict_search_paths`).
     pub analyzer_manifest: AnalyzerManifest,
+    /// The text-index rebuild an analyzer change started, while it runs:
+    /// text reads answer from its `done` documents only.
+    pub rebuild: Option<TextIndexRebuildProgress>,
+}
+
+/// A text-index rebuild in flight (FIX ANALYZER-BUMP-AUTO-REINDEX): "rebuilding,
+/// `done` of `total`". Text reads answer from the documents indexed again so
+/// far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TextIndexRebuildProgress {
+    /// Documents indexed again so far.
+    pub done: u64,
+    /// Documents with stored text when the rebuild started.
+    pub total: u64,
 }
 
 /// Read-only report of vault open-integrity metadata returned by
@@ -64,6 +78,9 @@ pub struct VaultDoctorReport {
     pub db_manifest: VaultDoctorDbManifestReport,
     /// Metadata fields whose rows were present but could not be decoded.
     pub unreadable_fields: Vec<String>,
+    /// The text-index rebuild in flight, read from
+    /// `vault_meta["text_index_rebuild:v1"]`.
+    pub text_index_rebuild: Option<TextIndexRebuildProgress>,
 }
 
 /// State of the persisted HNSW compatibility row.
@@ -721,6 +738,15 @@ impl Vault {
             "vault_meta.text_index_schema_version",
             &mut unreadable_fields,
         )?;
+        let text_index_rebuild =
+            match super::text_index_rebuild::read_text_index_rebuild_progress(&self.store, &rtxn) {
+                Ok(progress) => progress,
+                Err(Error::CorruptedIndex(_)) => {
+                    unreadable_fields.push("vault_meta.text_index_rebuild".to_owned());
+                    None
+                }
+                Err(err) => return Err(err),
+            };
         drop(rtxn);
         let db_manifest = {
             // Held for consistency with `Store::open`'s DB-open serialization;
@@ -742,6 +768,7 @@ impl Vault {
             text_index_schema_version,
             db_manifest,
             unreadable_fields,
+            text_index_rebuild,
         })
     }
 }
