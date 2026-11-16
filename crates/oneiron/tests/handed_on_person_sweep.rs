@@ -1369,6 +1369,7 @@ fn a_handed_on_owner_slip_never_pauses_a_branch_without_a_task_as_owner() {
     let branch = match outcome {
         oneiron::attempt_queue::EnqueueOutcome::Enqueued(record)
         | oneiron::attempt_queue::EnqueueOutcome::Existing(record) => record.id,
+        other => panic!("unexpected enqueue outcome {other:?}"),
     };
     let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
         &f.vault, f.owner, true,
@@ -1410,6 +1411,7 @@ fn the_owners_own_slip_still_pauses_a_branch_without_a_task_as_owner() {
     let branch = match outcome {
         oneiron::attempt_queue::EnqueueOutcome::Enqueued(record)
         | oneiron::attempt_queue::EnqueueOutcome::Existing(record) => record.id,
+        other => panic!("unexpected enqueue outcome {other:?}"),
     };
     let memory = oneiron::test_doors::handed_on_no_proof::memory_with_host_origin_for_test(
         &f.vault, f.owner, false,
