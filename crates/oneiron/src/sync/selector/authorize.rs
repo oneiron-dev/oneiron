@@ -72,17 +72,18 @@ pub(super) fn authorize_sync_selector_at(
 /// that stands behind it in one transaction. A deleted grant is no grant, even
 /// while an unapplied delete leaves its body stored, and a row the fold does
 /// not stand behind gives nothing (pass 28 R3d,
-/// [`Vault::grant_row_stands_in_txn`]). The transaction closes before the
-/// caller folds authority on its own.
+/// [`Vault::grant_row_stands_in_txn`]). The terms are the ones the fold
+/// reads: an engine-default row's scope is its meet with its agent's Steward
+/// reach (pass 28 R4). The transaction closes before the caller folds
+/// authority on its own.
 pub(crate) fn standing_federation_grant(vault: &Vault, id: &EntityId) -> Result<FederationGrant> {
     let txn = vault.store.env.read_txn()?;
     let raw = live_federation_grant_in(vault, &txn, id)?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let fold = vault.authority_view_readonly_in_txn(&txn)?;
-    if !vault.grant_row_stands_in_txn(&txn, &fold, *id, body)? {
-        return Err(selector_err(SelectorError::GrantInactive));
-    }
-    decode_federation_grant_body(body)
+    vault
+        .conferred_grant_in_txn(&txn, &fold, *id, body)?
+        .ok_or_else(|| selector_err(SelectorError::GrantInactive))
 }
 
 // The live row a FederationGrant id names, read in `txn`: the shared federation helper the

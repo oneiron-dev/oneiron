@@ -309,10 +309,12 @@ impl Vault {
                 continue;
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            // Only a Grant the fold stands behind reads (pass 28 R3), never a row alone.
+            // Only a Grant the fold stands behind reads (pass 28 R3), never a row alone,
+            // and by the scope the fold reads: an engine-default row's is its meet with its
+            // agent's Steward reach (pass 28 R4).
             if grant.scope == FederationGrantScope::vault(world_id)
                 && grant.member_ref == principal
-                && crate::federation::shared_grant_row_in_fold(
+                && let Some(row) = crate::federation::shared_grant_row_in_fold(
                     &self.store,
                     &fold,
                     txn,
@@ -320,14 +322,13 @@ impl Vault {
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                     now,
                 )?
-                .is_some()
                 && grant.confers_at(now)
                 && matches!(
                     crate::authority::federation_grant_activation(&fold, &id),
                     oneiron_authority::authority::FederationGrantActivation::Unpacted
                         | oneiron_authority::authority::FederationGrantActivation::Active
                 )
-                && grant.authority_scope.admits(
+                && row.grant().authority_scope.admits(
                     "read",
                     target_scope,
                     &oneiron_authority::federation::Scope::top(),

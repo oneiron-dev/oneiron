@@ -805,6 +805,26 @@ impl Vault {
         id: EntityId,
         body: &[u8],
     ) -> Result<bool> {
+        Ok(self.conferred_grant_in_txn(txn, fold, id, body)?.is_some())
+    }
+
+    /// The terms the live Grant row `id` of this vault's own store, whose stored body is
+    /// `body`, confers as `fold` stands behind it ([`Self::grant_row_stands_in_txn`]): the
+    /// row's own terms, but an engine-default row's authority scope met with its agent's
+    /// Steward reach (pass 28 R4, Engine RULING R4-DEFAULT-END-AFTER-WHOLE-REVOKE = C). A
+    /// door that judges by the row's authority scope reads it here, never from the stored
+    /// body (review r4c P2-1..3). `None` for a row that stands for nothing.
+    ///
+    /// # Errors
+    ///
+    /// A store or owner-census read failure.
+    pub(crate) fn conferred_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        id: EntityId,
+        body: &[u8],
+    ) -> Result<Option<FederationGrant>> {
         // The creation door does not reserve the residence's id: on a vault shared under it, a
         // device paired while the vault was personal keeps its own-device row at the shared
         // scope, and a selector over the residence reads that row as on a personal vault
@@ -822,7 +842,9 @@ impl Vault {
             shared_scope.as_ref(),
             None,
         )?;
-        Ok(self.derived_read_in_txn(txn, read)?.is_some())
+        Ok(self
+            .derived_read_in_txn(txn, read)?
+            .map(|row| row.grant().clone()))
     }
 
     /// The scope of a Grant row over this vault as a shared vault: `Some` only when this vault
