@@ -715,13 +715,28 @@ impl Vault {
         self.append_hashed_slip_op_in_txn(txn, issuer, op)
             .map(|_| ())
     }
+    /// [`Self::append_slip_op_in_txn`] with an owner key's proof beside the
+    /// host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): `proof`
+    /// cosigns the entry ([`next_entry_with_owner_proof`]). The fold must
+    /// count it, as for any slip op.
+    pub(super) fn append_slip_op_with_owner_proof_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+        proof: &dyn CheckpointRootSigner,
+    ) -> Result<()> {
+        self.prepare_hashed_slip_op_in_txn(txn, issuer, op, Some(proof))?
+            .apply(self, txn)
+            .map(|_| ())
+    }
     fn append_hashed_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
-        self.prepare_hashed_slip_op_in_txn(txn, issuer, op)?
+        self.prepare_hashed_slip_op_in_txn(txn, issuer, op, None)?
             .apply(self, txn)
     }
 
@@ -731,6 +746,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
+        proof: Option<&dyn CheckpointRootSigner>,
     ) -> Result<PreparedHashedSlipOp> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
@@ -740,7 +756,10 @@ impl Vault {
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
-        let entry = next_entry(issuer, &fold, op, now)?;
+        let entry = match proof {
+            Some(proof) => next_entry_with_owner_proof(issuer, &fold, op, now, proof)?,
+            None => next_entry(issuer, &fold, op, now)?,
+        };
         let hash = authority_entry_hash(&entry)?;
         Ok(PreparedHashedSlipOp {
             row: (
@@ -754,6 +773,31 @@ impl Vault {
             hash,
         })
     }
+}
+/// [`next_entry`] with `proof`, an owner key's proof, beside the host root's
+/// signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): the proof key's slot is in
+/// the entry before either key signs, so both sign the one transcript, in
+/// the order of [`super::world_key_support::sign_side_entry_with_owner_proof`].
+pub(super) fn next_entry_with_owner_proof(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    op: AuthorityOp,
+    now: u64,
+    proof: &dyn CheckpointRootSigner,
+) -> Result<AuthorityLogEntry> {
+    let mut entry = next_entry(issuer, fold, op, now)?;
+    let proof_key = proof.root();
+    entry.cosigns.push(AuthoritySignature {
+        suite: proof_key.suite(),
+        public_key: proof_key,
+        signature: vec![0; 64],
+    });
+    let proved = proof.sign_owner_proof(&authority_transcript(&entry)?)?;
+    if let Some(cosign) = entry.cosigns.last_mut() {
+        cosign.signature = proved;
+    }
+    issuer.resign_entry(&mut entry)?;
+    Ok(entry)
 }
 pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
