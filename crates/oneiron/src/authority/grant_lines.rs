@@ -234,11 +234,30 @@ impl GrantLines {
     }
 
     /// Records the counted act `hash` of `family` that ends `grant`.
-    fn end_in_family(&mut self, grant: EntityId, hash: AuthorityEntryHash, family: GrantFamily) {
+    pub(super) fn end_in_family(
+        &mut self,
+        grant: EntityId,
+        hash: AuthorityEntryHash,
+        family: GrantFamily,
+    ) {
         self.ends
             .entry(grant)
             .or_default()
             .insert(hash, Some(family));
+    }
+
+    /// Whether the act `hash` counted here as an end of `grant`, of `family` (`None`: a
+    /// membership withdrawal or a slip revoke). A valid act carried without effect is no end.
+    pub(super) fn counted_end(
+        &self,
+        grant: EntityId,
+        hash: &AuthorityEntryHash,
+        family: Option<GrantFamily>,
+    ) -> bool {
+        self.ends
+            .get(&grant)
+            .and_then(|ends| ends.get(hash))
+            .is_some_and(|counted| *counted == family)
     }
 
     /// Every family the acts naming `grant` hold: its givings, live or replaced, and its ends.

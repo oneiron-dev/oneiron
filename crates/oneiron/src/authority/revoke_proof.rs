@@ -34,6 +34,15 @@ enum Restriction {
     /// names, in hex as a slip's claims name it, whose every slip is
     /// withdrawn.
     GrantsWithdrawn(BTreeSet<String>),
+    /// A general grant act's end its proven branch counted (pass 28 R2): the Grant, whose
+    /// slips are withdrawn, and the family whose line it ends.
+    GrantActEnd {
+        grant: EntityId,
+        family: GrantFamily,
+    },
+    /// The owner's revoke of his agent Grant its proven branch counted (pass 28 R1): the
+    /// Grant whose owner-agent line it ends.
+    OwnerAgentRevoke(EntityId),
     /// A verified `SlipConsume` or `RemovalArchiveConsume`: every id its
     /// proven branch had burnt, the single-use ancestors a `SlipConsume`
     /// spent among them.
@@ -93,6 +102,25 @@ impl RevokeFacts {
                     for grant in grants {
                         state.slips.revoke_grant(grant.clone());
                         end_proved_grant_line(state, grant, fact.entry_hash);
+                    }
+                }
+                // An end of a family ends only a line no act of another family named, as its
+                // ordinary transition refuses one that did (Astra r1-r2d F2, F4).
+                Restriction::GrantActEnd { grant, family } => {
+                    if state.grant_lines.admits(*grant, *family) {
+                        state.slips.revoke_grant(grant.to_hex());
+                        state
+                            .grant_lines
+                            .end_in_family(*grant, fact.entry_hash, *family);
+                    }
+                }
+                Restriction::OwnerAgentRevoke(grant) => {
+                    if state.grant_lines.admits(*grant, GrantFamily::OwnerAgent) {
+                        state.grant_lines.end_in_family(
+                            *grant,
+                            fact.entry_hash,
+                            GrantFamily::OwnerAgent,
+                        );
                     }
                 }
                 Restriction::SlipBurn(burnt) => {
@@ -225,9 +253,9 @@ pub(super) fn derive_revoke_facts(
 impl RevokeFacts {
     /// Adds the slip withdrawals and burns the projection dropped. Selecting
     /// one of two colliding confirmations removes the loser and every entry
-    /// after it, a `SlipRevoke`, `SlipConsume` or membership execution
-    /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
-    /// spent slip would live again. An entry in `survivors` already applied
+    /// after it, a `SlipRevoke`, `SlipConsume`, membership execution
+    /// record's Grant withdrawals (FIX 12335) or a Grant's end (pass 28) among
+    /// them, and a revoked or spent slip, or an ended Grant, would live again. An entry in `survivors` already applied
     /// its restriction through the ordinary fold; each dropped one is proved
     /// on its own signed branch, as an actor revocation is.
     pub(super) fn add_dropped_slip_restrictions(
@@ -258,27 +286,55 @@ impl RevokeFacts {
                 AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
                     Restriction::SlipBurn(BTreeSet::new())
                 }
-                // A general grant act's end withdraws the slips minted under its row, as
-                // `grant_lines::apply_grant_act_line` does, only where it would count: an end of
-                // another family than a surviving line holds ends nothing there.
+                // A general grant act's end, and the owner's revoke of his agent Grant, end
+                // their lines as `grant_lines` does: by the family the act names.
                 AuthorityOp::GrantAct(record) => match record.ended_grant() {
-                    Some(grant)
-                        if survivors
-                            .values()
-                            .all(|state| state.grant_lines.admits(grant, record.family)) =>
-                    {
-                        Restriction::SlipGrantRevoke(grant.to_hex())
-                    }
-                    _ => continue,
+                    Some(grant) => Restriction::GrantActEnd {
+                        grant,
+                        family: record.family,
+                    },
+                    None => continue,
                 },
+                AuthorityOp::AgentGrantAct(record)
+                    if matches!(record.change, AgentGrantChange::Revoke { .. }) =>
+                {
+                    Restriction::OwnerAgentRevoke(record.grant)
+                }
                 _ => continue,
             };
             let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, false)
             else {
                 continue;
             };
+            // A Grant's end travels only as its proven branch counted it (Astra r1-r2d F2): a
+            // valid act the fold carried without effect (its carrier removed at its parents, its
+            // owner removed, a line of another family) ended nothing, so it proves no end.
+            let lines = &state.grant_lines;
             let kind = match restriction {
                 Restriction::SlipBurn(_) => Restriction::SlipBurn(state.slips.consumed),
+                Restriction::GrantsWithdrawn(grants) => {
+                    let counted: BTreeSet<String> = grants
+                        .into_iter()
+                        .filter(|grant| {
+                            EntityId::from_hex(grant)
+                                .is_ok_and(|grant| lines.counted_end(grant, hash, None))
+                        })
+                        .collect();
+                    if counted.is_empty() {
+                        continue;
+                    }
+                    Restriction::GrantsWithdrawn(counted)
+                }
+                Restriction::GrantActEnd { grant, family }
+                    if !lines.counted_end(grant, hash, Some(family)) =>
+                {
+                    continue;
+                }
+                Restriction::OwnerAgentRevoke(grant)
+                    if !lines.counted_end(grant, hash, Some(GrantFamily::OwnerAgent)) =>
+                {
+                    continue;
+                }
                 other => other,
             };
             self.by_hash.insert(
