@@ -394,7 +394,11 @@ impl Vault {
         let Some(policy) = resolution.pack_install_policy() else {
             return Ok(None);
         };
-        Ok(Some(ScreenRules::new(policy.effective(holder), self, &txn)?))
+        Ok(Some(ScreenRules::new(
+            policy.effective(holder),
+            self,
+            &txn,
+        )?))
     }
 }
 
@@ -430,10 +434,7 @@ impl std::ops::Deref for ScreenRules {
 
 /// The first rule one listed tool trips, on its name, its description and
 /// its resolved input schema; `None` when it passes.
-fn screen_listed_tool(
-    tool: &PackObservedTool,
-    rules: &ScreenRules,
-) -> Option<String> {
+fn screen_listed_tool(tool: &PackObservedTool, rules: &ScreenRules) -> Option<String> {
     let resolved = match ResolvedToolSchema::parse(&tool.input_schema) {
         Ok(schema) => schema,
         Err(reason) => return Some(reason),
@@ -447,10 +448,7 @@ fn screen_listed_tool(
 /// Every rule one listed tool trips, on its name, its description and each
 /// text of its resolved input schema: the same rules
 /// [`screen_listed_tool`] stops at the first of.
-fn listed_tool_rules(
-    tool: &PackObservedTool,
-    rules: &ScreenRules,
-) -> BTreeSet<ScreenRule> {
+fn listed_tool_rules(tool: &PackObservedTool, rules: &ScreenRules) -> BTreeSet<ScreenRule> {
     let mut tripped: BTreeSet<ScreenRule> = decoded_rules(&tool.name, rules).into_iter().collect();
     tripped.extend(decoded_rules(&tool.description, rules));
     match ResolvedToolSchema::parse(&tool.input_schema).and_then(|schema| schema.text()) {
@@ -471,10 +469,7 @@ fn listed_tool_rules(
     tripped
 }
 
-fn screen_resolved_schema(
-    schema: &ResolvedToolSchema,
-    rules: &ScreenRules,
-) -> Option<String> {
+fn screen_resolved_schema(schema: &ResolvedToolSchema, rules: &ScreenRules) -> Option<String> {
     let fields = match schema.text() {
         Ok(fields) => fields,
         Err(reason) => return Some(reason),

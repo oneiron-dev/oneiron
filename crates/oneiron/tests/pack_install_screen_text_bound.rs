@@ -79,7 +79,10 @@ fn the_default_bound_is_16384_bytes() {
     let (_dir, vault) = fixture();
     let screen = each(
         &vault,
-        &[described("docs_fits", 16_384), described("docs_long", 16_385)],
+        &[
+            described("docs_fits", 16_384),
+            described("docs_long", 16_385),
+        ],
     );
     assert!(screen.admits("docs_fits"), "{screen:?}");
     assert!(kept_out_by_the_bound(&screen, "docs_long"), "{screen:?}");
@@ -100,7 +103,10 @@ fn the_owner_raises_the_bound() {
     set_owner_key(&vault, 32_768);
     let screen = each(
         &vault,
-        &[described("docs_long", 16_385), described("docs_longer", 32_769)],
+        &[
+            described("docs_long", 16_385),
+            described("docs_longer", 32_769),
+        ],
     );
     assert!(screen.admits("docs_long"), "{screen:?}");
     assert!(kept_out_by_the_bound(&screen, "docs_longer"), "{screen:?}");
