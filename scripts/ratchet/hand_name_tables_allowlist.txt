@@ -49,3 +49,6 @@ crates/oneiron-vault-contract/  # no dependency on oneiron-contracts
 crates/oneiron-vm-outbox/  # no dependency on oneiron-contracts
 crates/oneiron-web-fetch/  # no dependency on oneiron-contracts
 crates/oneiron-xlsx-formula/  # no dependency on oneiron-contracts
+
+# Single files inside a counted crate.
+crates/oneiron/src/blob_artifact/esign/ceremony.rs  # SigningAction carries data, so it cannot derive Register; verb() spells its serde tags for the signing rate row
