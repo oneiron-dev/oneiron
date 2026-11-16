@@ -23,6 +23,14 @@ impl Host<'_> {
         }
     }
 
+    /// The server the link runs beside (SERVE-DEVICE-PEER-STALE-ROOT).
+    #[cfg(feature = "mesh")]
+    pub(super) fn server(&self) -> &Arc<SyncServer> {
+        match self {
+            Self::Served(server) | Self::Device(server) => server,
+        }
+    }
+
     #[cfg(feature = "mesh")]
     pub(super) fn windows(&self) -> Arc<oneiron::sync::WindowManager> {
         match self {

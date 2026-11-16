@@ -35,15 +35,16 @@ impl SyncServer {
             .map_err(|e| format!("root doc snapshot failed: {e}"))
     }
 
-    /// Under the macOS app's device link, merges the vault's persisted root
-    /// into this server's before a socket reads it (L7-47). The link's client
-    /// imports the home's root into its own doc and persists it to `d:root`;
-    /// this server loaded `d:root` once, at start. Without the merge a peer
-    /// would never learn a window the link learned since. Importing adds no
-    /// op of this server's. A root that cannot be read or merged leaves this
-    /// server's own, as before, with a warning.
+    /// Under a device link this process runs (serve's, managed serve's or the
+    /// macOS app's), merges the vault's persisted root into this server's
+    /// before a socket reads it (L7-47, SERVE-DEVICE-PEER-STALE-ROOT). The
+    /// link's client imports the home's root into its own doc and persists it
+    /// to `d:root`; this server loaded `d:root` once, at start. Without the
+    /// merge a peer would never learn a window the link learned since.
+    /// Importing adds no op of this server's. A root that cannot be read or
+    /// merged leaves this server's own, as before, with a warning.
     fn merge_link_root(&self) {
-        if !self.runs_device_link() {
+        if !self.device_link_opened() {
             return;
         }
         let merged = server_state::load_root_from_state(&self.vault)
