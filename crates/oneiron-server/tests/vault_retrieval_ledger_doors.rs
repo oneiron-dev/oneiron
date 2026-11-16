@@ -219,7 +219,7 @@ fn left_out_worlds(pack: &Value) -> Value {
 
 /// A run id that names no run.
 fn unknown_run() -> Value {
-    json!({"bytes": [0x5a; 16]})
+    json!({"bytes": vec![0x5a_u8; 16]})
 }
 
 impl Host {
@@ -428,7 +428,7 @@ impl Host {
             "limit": 10,
             "telemetry": {
                 "capture_trace": true,
-                "turn": {"turn_id": turn, "episode_id": [0x0e; 16], "turn_idx": 1},
+                "turn": {"turn_id": turn, "episode_id": vec![0x0e_u8; 16], "turn_idx": 1},
             },
         });
         if !scope.is_null() {
@@ -482,7 +482,11 @@ fn door_input(verb: &str, run: &Value, turn: [u8; 16], fork: &Value, real: bool)
     let (run, turn, fork) = if real {
         (run.clone(), json!(turn), fork.clone())
     } else {
-        (unknown_run(), json!([0x6b; 16]), json!([0x7c; 32]))
+        (
+            unknown_run(),
+            json!(vec![0x6b_u8; 16]),
+            json!(vec![0x7c_u8; 32]),
+        )
     };
     match verb {
         "vault.retrieval.recall" => json!({"query": WORD, "effort": "light", "limit": 10}),
@@ -507,8 +511,7 @@ fn door_input(verb: &str, run: &Value, turn: [u8; 16], fork: &Value, real: bool)
 #[test]
 fn the_run_ledger_answers_its_owner_alone() {
     run_on_engine_stack("retrieval-ledger-owner", || async {
-        let host = host();
-        let other = host();
+        let (host, other) = (host(), host());
         host.claim(&format!("the {WORD} harbour opens at dawn"), None);
         host.publish_text();
         let turn = [0x1d; 16];
