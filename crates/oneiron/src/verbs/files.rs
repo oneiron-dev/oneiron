@@ -107,7 +107,7 @@ pub fn files_source_view(vault: &Vault, source: &FolderSource) -> MemoryResult<F
 }
 
 /// One ledger row as `vault.files.sources.files` answers it.
-fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
+pub(super) fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
     let readiness = file.readiness();
     let (state, fork) = match file.state {
         FolderFileState::Landed => (FilesFileState::Landed, None),
