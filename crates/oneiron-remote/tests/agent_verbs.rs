@@ -189,7 +189,7 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
                     parts: None,
                     quote: None,
                 }],
-                occurred_at: 2,
+                occurred_at: Some(2),
                 thread_audience: None,
                 assertions: Default::default(),
             })

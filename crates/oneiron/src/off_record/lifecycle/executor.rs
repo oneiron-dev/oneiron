@@ -211,7 +211,7 @@ impl OffRecordSession<'_> {
                 order,
                 quote: None,
             }],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions,
         };
         // The run's own checks, first in each transaction the witness opens

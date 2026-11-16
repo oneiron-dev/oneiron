@@ -253,7 +253,7 @@ impl Vault {
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
             messages: vec![message],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: Default::default(),
         };
         let stamp = ImportedTurnStamp {

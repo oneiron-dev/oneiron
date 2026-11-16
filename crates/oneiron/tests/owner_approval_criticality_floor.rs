@@ -280,7 +280,7 @@ fn owner_resident_binding_lands_on_its_undeclared_predicate() {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 2,
+            occurred_at: Some(2),
             assertions: WitnessAssertions::default(),
         })
         .expect("the resident's home room");

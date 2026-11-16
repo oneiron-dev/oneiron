@@ -100,7 +100,7 @@ fn prompt_message(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: now,
+            occurred_at: Some(now),
             assertions: WitnessAssertions::default(),
         })
         .expect("FIXTURE: the owner witnesses a prompt MESSAGE");

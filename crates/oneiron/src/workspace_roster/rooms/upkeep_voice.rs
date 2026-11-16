@@ -215,7 +215,7 @@ impl Memory<'_> {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.store.clock.now_recorded_at(),
+            occurred_at: Some(vault.store.clock.now_recorded_at()),
             assertions: Default::default(),
         };
         // A concurrent voice of the same nudge that landed first is this

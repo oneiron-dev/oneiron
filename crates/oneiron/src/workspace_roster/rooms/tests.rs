@@ -23,7 +23,7 @@ fn turn(
             is_visible: true,
             order: 0,
         }],
-        occurred_at: at,
+        occurred_at: Some(at),
     }
 }
 fn permit_room_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {

@@ -109,7 +109,7 @@ fn a_provisional_entity_stays_on_its_device_until_it_is_confirmed() {
             conversation_ref: "79797979797979797979797979797979".into(),
             turn_ref: Some(turn_ref.into()),
             thread_audience: None,
-            occurred_at: now,
+            occurred_at: Some(now),
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

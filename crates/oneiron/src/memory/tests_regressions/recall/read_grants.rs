@@ -136,7 +136,7 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
                 value: "anchorforprivateedge".into(),
             }]),
             edges: None,
-            occurred_at: 1,
+            occurred_at: Some(1),
             learned_at: None,
         })
         .unwrap();
@@ -149,7 +149,7 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
             conversation_ref: EntityId::from_bytes([0x75; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![message],
-            occurred_at: crate::unix_seconds_now(),
+            occurred_at: Some(crate::unix_seconds_now()),
         })
         .unwrap();
     let hidden = EntityId::from_hex(
@@ -217,7 +217,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             conversation_ref: EntityId::from_bytes([0x7e; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![allowed],
-            occurred_at: crate::unix_seconds_now(),
+            occurred_at: Some(crate::unix_seconds_now()),
         })
         .expect("allowed witness");
     let anchor_id = EntityId::from_hex(
@@ -237,7 +237,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             conversation_ref: EntityId::from_bytes([0x7d; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![message],
-            occurred_at: crate::unix_seconds_now(),
+            occurred_at: Some(crate::unix_seconds_now()),
         })
         .expect("hidden witness");
     let target = EntityId::from_hex(
@@ -380,7 +380,7 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
             conversation_ref: EntityId::from_bytes([0x77; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![granted, withheld],
-            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+            occurred_at: Some(crate::unix_seconds_now() - 28 * 86_400),
         })
         .expect("witness a turn of two messages");
     let turn = EntityId::from_hex(

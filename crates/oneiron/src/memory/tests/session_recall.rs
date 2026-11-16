@@ -25,7 +25,7 @@ fn an_in_room_recall_returns_the_turn_only_the_room_holds() {
                     WitnessAuthor::User,
                     &format!("the room says {ROOM_WORDS}"),
                 )],
-                occurred_at: 900,
+                occurred_at: Some(900),
             },
             None,
         )
@@ -117,7 +117,7 @@ fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
                     WitnessAuthor::User,
                     &format!("the room says {ROOM_WORDS}"),
                 )],
-                occurred_at: 900,
+                occurred_at: Some(900),
             },
             None,
         )

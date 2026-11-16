@@ -19,7 +19,7 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
                 WitnessAuthor::User,
                 "I prefer a window seat when I fly.",
             )],
-            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+            occurred_at: Some(crate::unix_seconds_now() - 28 * 86_400),
         })
         .expect("witness");
 
@@ -133,7 +133,7 @@ fn recall_after_control_writes_fixture_in(
             conversation_ref: EntityId::from_bytes([0x69; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![message],
-            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+            occurred_at: Some(crate::unix_seconds_now() - 28 * 86_400),
         })
         .expect("witness message");
 
@@ -296,7 +296,7 @@ fn unnamed_control_neighbor_stays_out_of_owner_and_scoped_recall() {
                 value: "auditcontrolneighbor".to_owned(),
             }]),
             edges: None,
-            occurred_at: 1000,
+            occurred_at: Some(1000),
             learned_at: None,
         })
         .expect("indexed event");

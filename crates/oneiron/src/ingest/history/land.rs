@@ -700,7 +700,7 @@ impl Import<'_> {
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
             messages,
-            occurred_at: occurred[0],
+            occurred_at: Some(occurred[0]),
             assertions: Default::default(),
         };
         let stamp = ImportedTurnStamp {

@@ -246,7 +246,7 @@ fn issue(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: presentation.at,
+            occurred_at: Some(presentation.at),
             assertions: Default::default(),
         })?;
     }

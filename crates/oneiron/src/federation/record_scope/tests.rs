@@ -72,7 +72,7 @@ fn habit(vault: &Vault, member: EntityId) -> EntityId {
             body: serde_json::json!({"role": 4, "content": "habit"}),
             text_fields: None,
             edges: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             learned_at: None,
         })
         .unwrap();
@@ -180,7 +180,7 @@ fn generic_child_in_scope_cannot_rewrite_an_out_of_scope_habit_parent() {
                     target_ref: parent.to_hex(),
                     weight: None,
                 }]),
-                occurred_at: 11,
+                occurred_at: Some(11),
                 learned_at: None,
             })
             .is_err()

@@ -118,7 +118,7 @@ fn turn() -> WitnessTurn {
         conversation_ref: "31313131313131313131313131313131".into(),
         turn_ref: Some("32323232323232323232323232323232".into()),
         thread_audience: None,
-        occurred_at: 100,
+        occurred_at: Some(100),
         messages: vec![WitnessMessage {
             id: Some("33333333333333333333333333333333".into()),
             author: WitnessAuthor::User,
@@ -322,7 +322,7 @@ fn a_shadow_of_messages_sent_out_of_order_is_saved() {
                 conversation_ref: "34343434343434343434343434343434".into(),
                 turn_ref: Some("35353535353535353535353535353535".into()),
                 thread_audience: None,
-                occurred_at: 100,
+                occurred_at: Some(100),
                 messages: vec![
                     message("36363636363636363636363636363636", 1, "Bob replied"),
                     message("37373737373737373737373737373737", 0, "Ada called"),

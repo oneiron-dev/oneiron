@@ -177,7 +177,7 @@ fn witness_turn(vault: &Vault, owner: EntityId) {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })
         .expect("the owner's witnessed turn");

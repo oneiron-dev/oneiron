@@ -787,7 +787,7 @@ fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() ->
         .witness(&WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
-            occurred_at: 1,
+            occurred_at: Some(1),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
@@ -868,7 +868,7 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
             .witness(&WitnessTurn {
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: None,
-                occurred_at: 1,
+                occurred_at: Some(1),
                 messages: vec![WitnessMessage {
                     id: Some(message.to_hex()),
                     author: WitnessAuthor::User,

@@ -855,7 +855,7 @@ mod tests {
             .witness(&crate::memory::WitnessTurn {
                 conversation_ref: entity(0xc4).to_hex(),
                 turn_ref: None,
-                occurred_at: 1_000,
+                occurred_at: Some(1_000),
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author: crate::memory::WitnessAuthor::User,

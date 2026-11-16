@@ -513,7 +513,7 @@ fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
                 is_visible: true,
                 order: 0,
             }],
-            occurred_at: 2,
+            occurred_at: Some(2),
         })
         .expect("the local witness door still writes MESSAGE rows");
     assert!(vault.get_raw(&message)?.is_some());

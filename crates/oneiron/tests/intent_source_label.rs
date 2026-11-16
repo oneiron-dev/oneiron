@@ -98,7 +98,7 @@ fn outsider_reads_the_intent(claims_grant: bool) -> (bool, String) {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .expect("the owner's turn");

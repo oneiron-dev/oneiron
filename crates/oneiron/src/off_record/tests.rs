@@ -591,7 +591,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                     is_visible: true,
                     order: 0,
                 }],
-                occurred_at: 1000,
+                occurred_at: Some(1000),
             },
             Some("grant-scope fixture summary"),
         )
@@ -737,7 +737,7 @@ fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
                     is_visible: true,
                     order: 0,
                 }],
-                occurred_at: 1000,
+                occurred_at: Some(1000),
             },
             None,
         )
@@ -803,7 +803,7 @@ fn said_alone(
                     is_visible: true,
                     order: 0,
                 }],
-                occurred_at: at,
+                occurred_at: Some(at),
             },
             None,
         )
@@ -972,7 +972,7 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
                 is_visible: true,
                 order: 0,
             }],
-            occurred_at: 1500,
+            occurred_at: Some(1500),
         })
         .expect("witness base turn");
     actor
@@ -1541,7 +1541,7 @@ fn a_room_on_record_with_an_unsaved_message(
                     is_visible: true,
                     order: 0,
                 }],
-                occurred_at: 10,
+                occurred_at: Some(10),
             },
             None,
             None,
@@ -2052,7 +2052,7 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
                     is_visible: true,
                     order: 0,
                 }],
-                occurred_at: 1600,
+                occurred_at: Some(1600),
             },
             Some("anonymous private summary"),
         )

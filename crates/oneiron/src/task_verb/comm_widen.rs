@@ -542,7 +542,7 @@ impl Memory<'_> {
                     order: 0,
                     quote: None,
                 }],
-                occurred_at: question.at,
+                occurred_at: Some(question.at),
                 assertions: Default::default(),
             })?;
         }

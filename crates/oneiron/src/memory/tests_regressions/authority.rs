@@ -22,7 +22,7 @@ fn put_structural_gates_actor_capable_kinds() {
             body: serde_json::json!({"name": "candidate actor"}),
             text_fields: None,
             edges: None,
-            occurred_at: 660,
+            occurred_at: Some(660),
             learned_at: None,
         })
     };
@@ -67,7 +67,7 @@ fn asserted_actor_bindings_resolve_against_the_store() {
             body: serde_json::json!({"name": "hanami"}),
             text_fields: None,
             edges: None,
-            occurred_at: 670,
+            occurred_at: Some(670),
             learned_at: None,
         })
         .expect("event");
@@ -87,7 +87,7 @@ fn asserted_actor_bindings_resolve_against_the_store() {
                 conversation_ref: EntityId::from_bytes([0x78; 16]).unwrap().to_hex(),
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "x")],
-                occurred_at: 671,
+                occurred_at: Some(671),
             })
             .expect_err("ghost witness"),
     ] {
@@ -322,7 +322,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
             body: serde_json::json!({"name": "target"}),
             text_fields: None,
             edges: None,
-            occurred_at: at,
+            occurred_at: Some(at),
             learned_at: None,
         })
     };
@@ -358,7 +358,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
             conversation_ref: EntityId::from_bytes([0x66; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![ghost_message],
-            occurred_at: 707,
+            occurred_at: Some(707),
         })
         .expect_err("witness message at purged id");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -367,7 +367,7 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
             id: Some(victim.to_hex()),
             name: "revenant.m4a".to_owned(),
             media_type: "audio/mp4".to_owned(),
-            occurred_at: 708,
+            occurred_at: Some(708),
             learned_at: None,
         })
         .expect_err("blob artifact at purged id");

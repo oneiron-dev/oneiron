@@ -56,6 +56,12 @@ impl Memory<'_> {
         let source_bound = imported
             .as_ref()
             .is_some_and(|stamp| stamp.source_audience.is_some());
+        // An omitted time is the vault's recording clock, read once for this
+        // write (UC-02 B1b), never the wall clock. A supplied time reads no
+        // clock here, so its clock reads stay as they were.
+        let occurred_at = turn
+            .occurred_at
+            .unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
         let mut messages = Vec::with_capacity(turn.messages.len());
         for (position, message) in turn.messages.iter().enumerate() {
             let id = id_from_optional_hex(self.vault, message.id.as_deref())?;
@@ -69,7 +75,7 @@ impl Memory<'_> {
             let at = imported
                 .as_ref()
                 .and_then(|stamp| stamp.message_occurred.get(position).copied())
-                .unwrap_or(turn.occurred_at);
+                .unwrap_or(occurred_at);
             messages.push(PlannedMessage {
                 message,
                 id,
@@ -83,11 +89,11 @@ impl Memory<'_> {
         // imported, whatever clock its source kept.
         if imported.is_none() {
             let now = self.vault.store.clock.now_recorded_at();
-            validate_witness_occurrence(now, turn.occurred_at)?;
+            validate_witness_occurrence(now, occurred_at)?;
         }
         let learned_at = imported
             .as_ref()
-            .map_or(turn.occurred_at, |stamp| stamp.imported_at);
+            .map_or(occurred_at, |stamp| stamp.imported_at);
         let conversation_body = match &imported {
             // The landing's proof stamps the conversation it mints.
             Some(stamp) if stamp.source_audience.is_some() => {
@@ -107,8 +113,8 @@ impl Memory<'_> {
         Ok(WitnessPlan {
             turn,
             occurred: TimeRange {
-                start: turn.occurred_at,
-                end: turn.occurred_at,
+                start: occurred_at,
+                end: occurred_at,
             },
             learned_at,
             conversation_id,

@@ -35,7 +35,7 @@ impl MessageBirth {
                 order: self.order,
                 quote: self.quote.clone(),
             }],
-            occurred_at: self.occurred_at,
+            occurred_at: Some(self.occurred_at),
             assertions: self.assertions.clone(),
         })
     }

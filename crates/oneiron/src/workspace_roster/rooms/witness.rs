@@ -154,7 +154,8 @@ impl RoomRegenerationPermit {
 /// read under (FIX 2027). `messages` are the input messages' ids, in order;
 /// each quote is proven, pinned and kept against its message's id (FIX
 /// 2028). `regeneration` is a Retry's proven leave to answer a claimed turn
-/// again (FIX 3149); every other witness has none.
+/// again (FIX 3149); every other witness has none. `occurred_at` is the
+/// turn's time as the witness plan resolved it, once per write (UC-02 B1b).
 #[expect(
     clippy::too_many_arguments,
     reason = "binds the witness transaction to its resolved actor, container and message ids"
@@ -167,6 +168,7 @@ pub(crate) fn admit_witness(
     room: EntityId,
     turn_id: EntityId,
     input: &WitnessTurn,
+    occurred_at: u64,
     messages: &[EntityId],
     quote_key: Option<&crate::claim::ScopedReadActorKey>,
     regeneration: Option<&RoomRegenerationPermit>,
@@ -275,7 +277,7 @@ pub(crate) fn admit_witness(
                 message_ids: messages.iter().map(EntityId::to_hex).collect(),
                 reply_to: None,
                 thread_of: None,
-                at: input.occurred_at,
+                at: occurred_at,
                 task_ids: Vec::new(),
                 converted_project: None,
                 quotes: BTreeMap::new(),
@@ -598,7 +600,7 @@ pub(crate) fn admit_witness(
         message_ids: messages.iter().map(EntityId::to_hex).collect(),
         reply_to: reply_to.map(|id| id.to_hex()),
         thread_of: thread_of.map(|id| id.to_hex()),
-        at: input.occurred_at,
+        at: occurred_at,
         task_ids: Vec::new(),
         converted_project: None,
         quotes,

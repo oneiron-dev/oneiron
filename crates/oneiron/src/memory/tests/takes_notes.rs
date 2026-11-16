@@ -255,7 +255,7 @@ fn author_take_fails_closed_and_never_lets_a_caller_pick_the_author() {
             }),
             text_fields: None,
             edges: None,
-            occurred_at: 900,
+            occurred_at: Some(900),
             learned_at: None,
         })
         .expect_err("NOTE must not be writable through put_structural");

@@ -149,7 +149,7 @@ fn export_through(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: now,
+            occurred_at: Some(now),
             assertions: WitnessAssertions::default(),
         })
         .expect("the owner's R MESSAGE");

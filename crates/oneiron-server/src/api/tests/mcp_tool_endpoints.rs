@@ -701,7 +701,7 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 2,
+            occurred_at: Some(2),
             assertions: Default::default(),
             thread_audience: None,
         })
@@ -797,7 +797,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                     parts: None,
                     quote: None,
                 }],
-                occurred_at: at + 2,
+                occurred_at: Some(at + 2),
                 assertions: Default::default(),
                 thread_audience: None,
             })
@@ -1002,7 +1002,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 1_000,
+            occurred_at: Some(1_000),
             assertions: Default::default(),
             thread_audience: None,
         })
@@ -1225,7 +1225,7 @@ async fn mcp_room_with_turns(
                     parts: None,
                     quote: None,
                 }],
-                occurred_at: at + 2,
+                occurred_at: Some(at + 2),
                 assertions: Default::default(),
                 thread_audience: None,
             })

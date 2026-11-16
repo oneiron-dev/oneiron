@@ -190,7 +190,7 @@ fn owner_turn(content: String, occurred_at: u64) -> WitnessTurn {
             parts: None,
             quote: None,
         }],
-        occurred_at,
+        occurred_at: Some(occurred_at),
         assertions: Default::default(),
     }
 }

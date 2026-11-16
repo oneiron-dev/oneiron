@@ -37,7 +37,7 @@ fn witness(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             messages,
-            occurred_at: at,
+            occurred_at: Some(at),
         })
         .expect("witness a turn")
         .message_short_ids

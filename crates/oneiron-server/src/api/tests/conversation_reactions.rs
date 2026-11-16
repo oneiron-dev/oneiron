@@ -49,7 +49,7 @@ fn room(server: &SyncServer, body: ConversationBody) -> (EntityId, EntityId, Ent
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

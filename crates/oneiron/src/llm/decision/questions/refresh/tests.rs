@@ -425,7 +425,7 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
         .witness(&WitnessTurn {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
-            occurred_at: 1,
+            occurred_at: Some(1),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

@@ -584,7 +584,7 @@ fn the_notice_carries_the_fact_of_concern_and_nothing_from_the_turn() -> Result<
                     is_visible: true,
                     order: 0,
                 }],
-                occurred_at: 1_000,
+                occurred_at: Some(1_000),
             },
             None,
         )

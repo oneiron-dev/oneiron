@@ -21,7 +21,7 @@ fn put_structural_refuses_message_entities() {
                 "is_visible": false,
                 "order": 0,
             }),
-            occurred_at: 700,
+            occurred_at: Some(700),
             learned_at: None,
             edges: None,
             text_fields: None,
@@ -405,7 +405,7 @@ fn put_structural_carries_text_index_fields_and_edges() {
             body: serde_json::json!({"hash": "abc123", "media_type": "audio/mp4"}),
             text_fields: None,
             edges: None,
-            occurred_at: 700,
+            occurred_at: Some(700),
             learned_at: None,
         })
         .expect("asset put");
@@ -430,7 +430,7 @@ fn put_structural_carries_text_index_fields_and_edges() {
                 target_ref: asset.id_hex.clone(),
                 weight: None,
             }]),
-            occurred_at: 701,
+            occurred_at: Some(701),
             learned_at: None,
         })
         .expect("person put");
@@ -466,7 +466,7 @@ fn put_structural_carries_text_index_fields_and_edges() {
             body: serde_json::json!({}),
             text_fields: None,
             edges: None,
-            occurred_at: 702,
+            occurred_at: Some(702),
             learned_at: None,
         })
         .expect_err("CLAIM kind must go through commit");
@@ -508,7 +508,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
                 body: fresh_body,
                 text_fields: None,
                 edges: None,
-                occurred_at: at,
+                occurred_at: Some(at),
                 learned_at: None,
             })
             .unwrap_or_else(|err| panic!("fresh {kind} mint: {err}"));
@@ -527,7 +527,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
                 body: serde_json::json!({"name": "same-kind overwrite"}),
                 text_fields: None,
                 edges: None,
-                occurred_at: at + 1,
+                occurred_at: Some(at + 1),
                 learned_at: None,
             })
             .unwrap_err();
@@ -538,7 +538,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
                 body: serde_json::json!({"name": "cross-kind overwrite"}),
                 text_fields: None,
                 edges: None,
-                occurred_at: at + 2,
+                occurred_at: Some(at + 2),
                 learned_at: None,
             })
             .unwrap_err();
@@ -588,7 +588,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
             body: serde_json::json!({"hash": "neighbor"}),
             text_fields: None,
             edges: None,
-            occurred_at: 900,
+            occurred_at: Some(900),
             learned_at: None,
         })
         .expect("neighbor mint");
@@ -602,7 +602,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
                 value: "tsukimi moonviewing".to_owned(),
             }]),
             edges: None,
-            occurred_at: 901,
+            occurred_at: Some(901),
             learned_at: None,
         })
         .expect("victim mint");
@@ -637,7 +637,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
                 target_ref: neighbor.id_hex,
                 weight: None,
             }]),
-            occurred_at: 902,
+            occurred_at: Some(902),
             learned_at: None,
         })
         .expect_err("cross-kind id reuse must be refused");
@@ -715,7 +715,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             subject_ref: subject.to_hex(),
             predicate: "companion.onboarding.answer".to_owned(),
             value: serde_json::json!({"question_id": "q-9", "selected_option_id": "b"}),
-            occurred_at: 1000,
+            occurred_at: Some(1000),
             learned_at: None,
         })
         .expect("admission");
@@ -733,7 +733,7 @@ fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
             subject_ref: subject.to_hex(),
             predicate: "companion.onboarding.answer".to_owned(),
             value: serde_json::json!({"question_id": "q-1"}),
-            occurred_at: 1001,
+            occurred_at: Some(1001),
             learned_at: None,
         })
         .expect_err("unknown ingest source must fail closed");
@@ -757,7 +757,7 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
             id: None,
             name: "voice-note.m4a".to_owned(),
             media_type: "audio/mp4".to_owned(),
-            occurred_at: 1100,
+            occurred_at: Some(1100),
             learned_at: None,
         })
         .expect("artifact");
@@ -1141,7 +1141,7 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             body: serde_json::json!({"name": "Nadeshiko"}),
             text_fields: None,
             edges: None,
-            occurred_at: 800,
+            occurred_at: Some(800),
             learned_at: None,
         })
         .expect("plain person put");
@@ -1157,7 +1157,7 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
                 target_ref: other.id_hex.clone(),
                 weight: None,
             }]),
-            occurred_at: 801,
+            occurred_at: Some(801),
             learned_at: None,
         })
         .expect_err("the structural door must refuse a raw same_as link");
@@ -1226,7 +1226,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         body: serde_json::json!({"role": 4, "content": "shared task"}),
         text_fields: None,
         edges: None,
-        occurred_at: 10,
+        occurred_at: Some(10),
         learned_at: None,
     };
     let member_facade = facade_for(&vault, member);
@@ -1240,7 +1240,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
                 habit_ref: habit.id_hex.clone(),
                 id: None,
                 data: Some(serde_json::json!({"note": "done"})),
-                occurred_at: at,
+                occurred_at: Some(at),
                 learned_at: None,
             })
             .expect("successive in-scope check-ins");
@@ -1294,7 +1294,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
                 habit_ref: habit.id_hex,
                 id: Some(refused_checkin.to_hex()),
                 data: Some(serde_json::json!({"note": "forbidden"})),
-                occurred_at: 11,
+                occurred_at: Some(11),
                 learned_at: None,
             })
             .is_err()

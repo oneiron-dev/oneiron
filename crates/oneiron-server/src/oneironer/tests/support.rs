@@ -477,7 +477,7 @@ pub(super) fn say(
             conversation_ref: room.to_hex(),
             turn_ref: turn.map(|turn| turn.to_hex()),
             messages: vec![message],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: Default::default(),
             thread_audience: None,
         })
@@ -529,7 +529,7 @@ pub(super) fn witness_at(vault: &Vault, content: &str, occurred_at: u64) -> Enti
                 parts: None,
                 quote: None,
             }],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: Default::default(),
             thread_audience: None,
         })

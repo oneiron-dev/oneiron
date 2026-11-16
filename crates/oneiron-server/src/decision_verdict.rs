@@ -823,7 +823,7 @@ pub(crate) fn keep_screenshot(
         id: None,
         name,
         media_type,
-        occurred_at: now,
+        occurred_at: Some(now),
         learned_at: None,
     })?;
     writer.append_blob_version(&artifact.id_hex, bytes, Some(run), now, None)
