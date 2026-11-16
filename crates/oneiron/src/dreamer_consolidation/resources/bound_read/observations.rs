@@ -34,7 +34,7 @@ use rmpv::Value;
 
 impl BoundBranchRead {
     /// The bound candidate selection evidence facts in the caller transaction.
-    /// The verified signal sources, speaker fold, stored times and candidate-time fallback match native selection exactly.
+    /// The verified signal sources, the diversity key of each turn's speaker and sitting, stored times and candidate-time fallback match native selection exactly.
     pub(crate) fn selection_facts_in_txn(
         &self,
         read: &ScopedRead<'_>,
@@ -96,6 +96,7 @@ impl BoundBranchRead {
                 };
                 Ok(speaker.clone())
             },
+            |id| crate::compaction::turn_session_membership_in_txn(&read.vault().store, txn, id),
         )
     }
 
