@@ -36,7 +36,7 @@ use oneiron::channel_identity_selection::ChannelIdentityFace;
 use oneiron::lens::{LensAtom, LensText};
 use oneiron::memory::ClaimInput;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
-use oneiron::test_support::{bind_host_owner, test_host_issuer};
+use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
     TimeRange, Vault, VaultConfig,
@@ -78,10 +78,14 @@ impl Fixture {
     fn open() -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::default()).map_err(at("open"))?;
+        // The test host roots the vault and provisions the engine's MACHINE
+        // writers, as a host does at bootstrap; the owner binds under that
+        // root. A host key binding with no host root fails validation.
+        let issuer = provision_engine_machines(&vault);
         let owner = vault
             .ensure_embedded_owner_actor()
             .map_err(at("embedded owner"))?;
-        bind_host_owner(&vault, &test_host_issuer(), owner).map_err(at("root the owner"))?;
+        bind_host_owner(&vault, &issuer, owner).map_err(at("root the owner"))?;
         let page = EntityId::now();
         vault
             .put_entity(
