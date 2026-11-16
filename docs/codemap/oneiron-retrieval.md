@@ -40,4 +40,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/hnsw_entry_point.rs` | src | m | 2 fn | — | Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it) |
 | `src/lib.rs` | src | s | 5 mod | — | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion |
 | `src/pipeline.rs` | src | s | 1 struct | ScoredEntity | Value types the retrieval pipeline's kernels share |
+| `tests/fingerprint_keep_analyzer_manifest.rs` | test | s | 2 fn | — | K-proof (oracle) for PLAN-UC-04 stage 1.4: the analyzer manifest hash keeps its bytes |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-retrieval` made `pub` so `oneiron` can reach them across the crate split |

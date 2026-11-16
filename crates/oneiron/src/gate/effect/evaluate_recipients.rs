@@ -10,8 +10,8 @@ pub(super) fn mail_once_in_txn(
     policy: &PolicyManifestResolution,
     override_now: Option<u64>,
 ) -> Result<bool> {
-    let (hydrated, _, _) =
-        hydrate_external_effect_contact_at(store, txn, effect, policy, override_now)?;
+    let hydrated =
+        hydrate_external_effect_contact_at(store, txn, effect, policy, override_now)?.effect;
     Ok(
         crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
             store, txn, &hydrated, policy,

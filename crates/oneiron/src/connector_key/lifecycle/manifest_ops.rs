@@ -259,7 +259,6 @@ impl Vault {
                         "gate.connector_key.manifest_requalified_revert",
                         &reverted,
                         policy.read_frontier_hash()?,
-                        at,
                     )?;
                     self.sync_derived_keys_in_txn(&mut txn, &reverted, at)?;
                     txn.commit()?;
@@ -277,7 +276,6 @@ impl Vault {
                         "gate.connector_key.manifest_revert",
                         &reverted,
                         policy.read_frontier_hash()?,
-                        at,
                     )?;
                     self.sync_derived_keys_in_txn(&mut txn, &reverted, at)?;
                     txn.commit()?;
@@ -344,7 +342,6 @@ impl Vault {
             "gate.connector_key.manifest_stage",
             &staged,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut txn, &staged, at)?;
         txn.commit()?;
@@ -392,7 +389,6 @@ impl Vault {
             },
             &record,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut txn, &record, at)?;
         txn.commit()?;
@@ -471,7 +467,6 @@ impl Vault {
             "gate.connector_key.manifest_approve",
             &approved,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut txn, &approved, at)?;
         txn.commit()?;
