@@ -4,6 +4,7 @@
 //! its hand `as_str` table wrote. Green on main (the hand table) and on the adoption (the derive),
 //! so no Gate receipt changes the `actor_class` it carries (M-1 keep).
 
+use oneiron_contracts::register::Register;
 use oneiron_store::gate_decision::types::GateEnginePart;
 
 #[test]
@@ -25,4 +26,28 @@ fn every_engine_part_keeps_its_actor_class_token() {
 fn the_token_is_a_const() {
     const SANDBOX: &str = GateEnginePart::Sandbox.as_str();
     assert_eq!(SANDBOX, "sandbox");
+}
+
+/// The Register (R2b): its name, the 7 parts in declaration order, and each token read back. The
+/// variant's own name wins over the enum's snake_case rule: `booking.http_guard`, never
+/// `booking_http_guard`.
+#[test]
+fn the_register_reads_every_token_back() {
+    assert_eq!(GateEnginePart::NAME, "gate.engine_part");
+    assert_eq!(
+        GateEnginePart::ROWS,
+        &[
+            GateEnginePart::PolicyModel,
+            GateEnginePart::Sandbox,
+            GateEnginePart::BookingHttpGuard,
+            GateEnginePart::ConnectorCaller,
+            GateEnginePart::FirstParty,
+            GateEnginePart::Owner,
+            GateEnginePart::Engine,
+        ]
+    );
+    for part in GateEnginePart::ROWS.iter().copied() {
+        assert_eq!(GateEnginePart::named(part.as_str()), Some(part), "{part:?}");
+    }
+    assert_eq!(GateEnginePart::named("booking_http_guard"), None);
 }
