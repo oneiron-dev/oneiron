@@ -1,7 +1,9 @@
 //! Terminal dreamer.step claim write and step-claim codec. The memo index
 //! moved to `step_index` (FIX 4816); its names stay reachable here.
 
-use super::super::{CallPurpose, LlmRequest, LlmResponse, canonical_json_bytes};
+use super::super::{
+    CallPurpose, ContentPart, LlmMessage, LlmRequest, LlmResponse, canonical_json_bytes,
+};
 use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
@@ -70,6 +72,47 @@ fn call_audience(
 
 /// The claim scope key the record-scope codec reads as the audience.
 const STEP_SCOPE_PROJECT_KEY: &str = "scopeProjectId";
+
+/// The reply a step keeps while an
+/// [`UncapturedSteps`](crate::self_heal::blocked_reports::UncapturedSteps)
+/// guard holds its attempt: the request quoted words the step's owners would
+/// not retire on their erase (fix list row 20501, the mail claim re-check's
+/// judge), so the kept reply is the verdict alone, with no reasoning about
+/// those words (FIX CLAIM-RECHECK-REPLY-PARTS; RULING RECHECK-REPLY-ERASE =
+/// A). Only Text parts stay, each without its provider signature; reasoning,
+/// tool and media parts and the token scores go. Role, usage, finish reason
+/// and the host's reply assertions stay. Every other step keeps its whole
+/// reply (ARCH-0026 #llm-backend-seam).
+pub(super) fn verdict_only_reply(response: LlmResponse) -> LlmResponse {
+    let LlmResponse {
+        message,
+        usage,
+        finish_reason,
+        reply_assertions,
+        token_scores: _,
+    } = response;
+    let content = message
+        .content
+        .into_iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(ContentPart::Text {
+                text,
+                signature: None,
+            }),
+            _ => None,
+        })
+        .collect();
+    LlmResponse {
+        message: LlmMessage {
+            role: message.role,
+            content,
+        },
+        usage,
+        finish_reason,
+        reply_assertions,
+        token_scores: None,
+    }
+}
 
 /// Persists the terminal `dreamer.step` claim (checkpoint-in-append).
 /// `payload` MUST be the serialized JSON bytes of `response` — the fresh path
