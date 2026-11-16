@@ -11,5 +11,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 1 fn | — | Proc-macro derives of the oneiron workspace, one module per derive |
+| `src/lib.rs` | src | s | 2 fn | — | Proc-macro derives of the oneiron workspace, one module per derive |
+| `src/register.rs` | src | m | 1 crate-vis | — | `#[derive(Register)]` for `oneiron_contracts::register::Register`: a closed list of names is declared once… |
 | `src/side_key.rs` | src | m | 1 crate-vis | — | `#[derive(SideKey)]` for `oneiron_store::side_table::key::SideKey`: a stored side-table key declares its… |
