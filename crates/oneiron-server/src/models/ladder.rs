@@ -615,6 +615,13 @@ impl OfferLadder {
         self.rungs.len()
     }
 
+    /// Whether an exact call may go out on this ladder: it is one picked
+    /// model, the guard every `generate_exact` keeps. A seat's ladder never
+    /// is.
+    pub(super) fn is_exact(&self) -> bool {
+        self.picked && self.rungs.len() == 1
+    }
+
     /// Each rung's host-bound offer, in ladder order: the access a vault's
     /// model pack resolves against reads their payers (FIX 5366).
     pub(crate) fn offer_bindings(&self) -> impl Iterator<Item = &OfferBinding> {
