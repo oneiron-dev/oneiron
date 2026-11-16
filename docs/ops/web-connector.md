@@ -19,10 +19,12 @@ product (research-1120, CONN-1 A).
 
 ## The owner's switch
 
-`vault.settings.web_connector.replace` picks the provider and whose key pays:
+The switch is the catalogue setting `connectors.web`. The owner picks the provider and whose
+key pays with `vault.settings.set`:
 
 ```json
-{ "provider": "exa", "key": { "kind": "secret", "name": "exa-api" } }
+{ "key": "connectors.web", "scope": { "kind": "vault" },
+  "value": { "provider": "exa", "key": { "kind": "secret", "name": "exa-api" } } }
 ```
 
 - `provider`: `tavily`, `exa`, `brave`, `tinyfish`, `context_dev` or `octen`.
@@ -33,9 +35,12 @@ product (research-1120, CONN-1 A).
   - `hub`: an installed hub connector that serves the same `search` and `fetch` tools on its
     own key, under its own grant.
 
-`vault.settings.web_connector` reads the switch. Brave has no page reader, so its `fetch` reads
-the page through the server's own guarded reader. The connector itself keeps no copy of any
-provider's results.
+`vault.settings.get` with `{"key": "connectors.web"}` reads the switch in force. A set with a
+`null` value clears it back to Tavily on the backend key. Each change is one row of the settings
+change stream, and the switch travels with the records through a restore.
+
+Brave has no page reader, so its `fetch` reads the page through the server's own guarded reader.
+The connector itself keeps no copy of any provider's results.
 
 ## Results
 

@@ -9085,6 +9085,7 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
  "pinyin",

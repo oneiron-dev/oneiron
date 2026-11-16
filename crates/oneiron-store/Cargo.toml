@@ -27,6 +27,7 @@ oneiron-derive = { version = "0.1.0", path = "../oneiron-derive" }
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-setting-contract = { version = "0.1.0", path = "../oneiron-setting-contract" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
 # L10-08 (CROSS-ARCH-0013 rung 1): Han characters' Mandarin readings for the
