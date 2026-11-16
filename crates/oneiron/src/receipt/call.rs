@@ -205,9 +205,10 @@ impl CallAttemptWitness {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionInputs(BTreeMap<String, String>);
 
-/// The domain an action digest is taken in, so it never equals another
-/// digest of the same bytes.
-const ACTION_DIGEST_DOMAIN: &str = "oneiron.action_digest.v1";
+#[doc(hidden)]
+pub use oneiron_records::receipt::call::call_json_digest;
+#[doc(hidden)]
+use oneiron_records::receipt::call::{ACTION_DIGEST_DOMAIN, write_canonical};
 
 impl ActionInputs {
     #[must_use]
@@ -273,16 +274,6 @@ pub fn json_entity_refs(value: &serde_json::Value) -> BTreeSet<EntityId> {
 
 const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
     SideTable::new(&side_table::CALL_RECEIPT);
-
-/// BLAKE3 of `value` serialized canonically (object keys sorted at every
-/// depth), lowercase hex: the digest a receipt states for a JSON input or
-/// result, stable however the caller ordered its keys.
-#[must_use]
-pub fn call_json_digest(value: &serde_json::Value) -> String {
-    let mut hasher = blake3::Hasher::new();
-    write_canonical(&mut hasher, value);
-    hasher.finalize().to_hex().to_string()
-}
 
 /// [`call_json_digest`] of a JSON object one member of which its host holds
 /// outside memory (FIX 22074): `head` is every other member, and
@@ -408,41 +399,6 @@ pub fn call_bytes_digest(bytes: &[u8]) -> String {
 #[must_use]
 pub fn call_refusal_digest(code: &str, message: &str) -> String {
     call_json_digest(&serde_json::json!({ "code": code, "message": message }))
-}
-
-fn write_canonical(hasher: &mut blake3::Hasher, value: &serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            hasher.update(b"{");
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    hasher.update(b",");
-                }
-                write_canonical(hasher, &serde_json::Value::String(key.clone()));
-                hasher.update(b":");
-                if let Some(item) = map.get(key) {
-                    write_canonical(hasher, item);
-                }
-            }
-            hasher.update(b"}");
-        }
-        serde_json::Value::Array(items) => {
-            hasher.update(b"[");
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    hasher.update(b",");
-                }
-                write_canonical(hasher, item);
-            }
-            hasher.update(b"]");
-        }
-        scalar => {
-            // A scalar's JSON text is already canonical.
-            hasher.update(scalar.to_string().as_bytes());
-        }
-    }
 }
 
 /// `text` cut to at most [`MAX_CALL_RECEIPT_FIELD_BYTES`] at a character
