@@ -17,6 +17,7 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 
 use super::codec::{decode_connector_key_body, encode_connector_key_body};
+use super::meter::{EffectorBudgetLocation, budget_exhausted_reason};
 use super::record::{
     ConnectorKeyRecord, ConnectorKeyStatus, invalid_body, validate_connector_token,
 };
@@ -350,17 +351,54 @@ pub(super) fn reject_terminal_transition() -> Error {
     invalid_body("illegal status transition")
 }
 
-/// Flips a key to Suspended inside the caller's transaction (used by the gate
-/// on exhaust-suspend and by `Vault::suspend_connector_key`). A catalog key's
-/// Active per-grant keys are held with it, whatever suspended it.
+/// Why a key is suspended (FIX 22392): the owner's word, or the budget row
+/// an `on_exhaust: Suspend` charge stopped on.
+pub(crate) enum SuspendCause<'a> {
+    Owner(&'a str),
+    BudgetExhausted(&'a EffectorBudgetLocation),
+}
+
+/// What [`suspend_connector_key_in_txn`] did with a key's from-state.
+pub(crate) enum SuspendAdmission {
+    /// The key was Active and is Suspended now: the record as written.
+    Suspended(ConnectorKeyRecord),
+    /// The key was not Active, so nothing was written: a Revoked or already
+    /// Suspended key keeps its status, its reason and its time.
+    Refused,
+}
+
+impl SuspendAdmission {
+    /// The record a suspension wrote, or the module's one illegal-transition
+    /// error for a key that was not Active, for a caller that asked for a
+    /// suspension of an Active key.
+    pub(crate) fn into_suspended(self) -> Result<ConnectorKeyRecord> {
+        match self {
+            Self::Suspended(record) => Ok(record),
+            Self::Refused => Err(invalid_body("illegal status transition")),
+        }
+    }
+}
+
+/// The one writer of Active -> Suspended, inside the caller's transaction
+/// (the gate on exhaust-suspend, the meter and `Vault::suspend_connector_key`).
+/// It admits that transition alone: any other from-state is
+/// [`SuspendAdmission::Refused`] and writes nothing (FIX 22392). A catalog
+/// key's Active per-grant keys are held with it, whatever suspended it.
 pub(crate) fn suspend_connector_key_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     record: &ConnectorKeyRecord,
-    reason: String,
+    cause: SuspendCause<'_>,
     at: u64,
-) -> Result<ConnectorKeyRecord> {
+) -> Result<SuspendAdmission> {
+    if record.status != ConnectorKeyStatus::Active {
+        return Ok(SuspendAdmission::Refused);
+    }
+    let reason = match cause {
+        SuspendCause::Owner(reason) => reason.to_owned(),
+        SuspendCause::BudgetExhausted(location) => budget_exhausted_reason(location),
+    };
     let suspended = ConnectorKeyRecord {
         status: ConnectorKeyStatus::Suspended,
         status_changed_at: Some(at),
@@ -371,7 +409,7 @@ pub(crate) fn suspend_connector_key_in_txn(
     if suspended.catalog.is_some() {
         super::lifecycle::hold_derived_keys_in_txn(store, wtxn, &suspended, at)?;
     }
-    Ok(suspended)
+    Ok(SuspendAdmission::Suspended(suspended))
 }
 
 // --- Receipted lifecycle ops -----------------------------------------------------

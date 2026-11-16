@@ -168,6 +168,11 @@ pub(crate) fn spoke_in(
         .port_edge_peers(rtxn, turn, EdgeDirection::In, EdgeKind::PartOf)?
     {
         let message = message?;
+        // An imported MESSAGE's AuthoredBy names who its source says spoke,
+        // never the subject's own activity here (FIX 15412).
+        if crate::memory::imported_message_in_txn(&vault.store, rtxn, &message)? {
+            continue;
+        }
         if vault
             .store
             .port_edge_get(rtxn, &message, EdgeKind::AuthoredBy, subject)?

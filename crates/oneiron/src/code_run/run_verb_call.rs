@@ -207,8 +207,14 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                     }
                 }
                 // Slice 6.5b: a wait over AGENT children of the run, no
-                // reader child, request or reader cutoff.
-                crate::code_run::TaskWaitInput::Agents(args) => args.into_call(),
+                // reader child or request. Its `until` is a guest time, as
+                // the reader wait's is ([AGENT-WAIT-DEADLINE]).
+                crate::code_run::TaskWaitInput::Agents(args) => {
+                    if let Some(until) = args.until {
+                        js_time(until)?;
+                    }
+                    args.into_call()
+                }
             })
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.

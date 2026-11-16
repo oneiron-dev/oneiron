@@ -16,7 +16,7 @@ use super::act_class::{ActClass, UndoClass};
 use super::mode::CheckInMode;
 use super::pending::{
     CapturedWait, HolderAnswer, HolderKind, PENDING, PendingCheckIn, PendingState, Rung, RungEntry,
-    RungMembers, RungResolver,
+    RungMembers, RungResolver, store_pending_in_txn,
 };
 use super::policy::{CheckInScope, ClassWait, class_wait};
 use super::receipt::{CheckInOutcome, ReceiptFields, write_check_in_receipt_in_txn};
@@ -81,13 +81,6 @@ pub enum CheckInTransition {
 /// # Errors
 ///
 /// No such row; storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "2e's host ticks it; until then only the test door does"
-    )
-)]
 pub(crate) fn advance_pending_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -135,7 +128,7 @@ pub(crate) fn advance_pending_check_in_in_txn(
     } else {
         enter_next_rung(vault, txn, &mut row, chain, now)?
     };
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(Some(transition))
 }
 

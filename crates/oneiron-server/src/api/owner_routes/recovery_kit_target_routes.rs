@@ -278,9 +278,7 @@ fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
     };
     let token = format!("kit-target:{}", named.to_hex());
     let nonce = EntityId::now().to_hex();
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
+    let timestamp = oneiron_base::unix_seconds_now();
     let (machine, signature) = vault
         .machine_connection_proof(&token, timestamp, &nonce)
         .map_err(engine)?
@@ -641,9 +639,6 @@ struct ConfirmedView {
 enum RootWorkReport {
     /// Answered refused: the request is closed.
     Refused { reason: OwnerWorkRefusal },
-    /// Not run: the target has not synced every root or mark the owner saw
-    /// (FIX 5551). Nothing was written; the request stays pending.
-    AwaitingBasis,
     /// The activation's kit, issued: its pieces, to this caller only. The
     /// request stays pending until the kit's confirm.
     KitIssued(Box<IssuedView>),
@@ -679,7 +674,6 @@ impl RootWorkAnswer {
         let text = done.text();
         let report = match done {
             RootWorkDone::Refused { reason } => RootWorkReport::Refused { reason },
-            RootWorkDone::AwaitingBasis => RootWorkReport::AwaitingBasis,
             RootWorkDone::KitIssued(issued) => RootWorkReport::KitIssued(Box::new(IssuedView {
                 vault_id: hex(&issued.vault_id),
                 kit_id: kit_id(issued.manifest.kit_id),

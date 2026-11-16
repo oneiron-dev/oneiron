@@ -10,10 +10,14 @@ use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::policy_record::SCOPED_READ_EFFECTOR_CORE_READ;
-use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
+use crate::store::scan_count::ScanCount;
+use crate::store::{
+    EngineScan, RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store,
+};
 use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
+use super::claim_ids::claim_edge_scope;
 use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
@@ -378,13 +382,22 @@ impl GraphFsResolver<'_, '_> {
         let vault = self.scoped_read.vault();
         let rtxn = vault.store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
-        // The subject's claims, while they fit one scan.
+        // The subject's claims, while they fit one scan. Off this device
+        // the walk's rows count against the edge-peer row (rule 5).
+        let mut count = ScanCount::start(
+            &vault.store,
+            &rtxn,
+            EngineScan::EdgePeerRows,
+            &claim_edge_scope(subject),
+        )?;
         let mut members = Vec::new();
         let mut after = None;
         let fits = loop {
             let run = self.device_admitted_run(
+                Some(&rtxn),
                 after,
                 max_scan_rows + 1 - members.len(),
+                &mut count,
                 |from, limit| {
                     vault.sources_page_in_txn(
                         &rtxn,
@@ -405,6 +418,7 @@ impl GraphFsResolver<'_, '_> {
                 None => break true,
             }
         };
+        count.finish(vault);
         let (bytes, next, total) = if fits {
             let mut timed = Vec::with_capacity(members.len());
             for id in members {

@@ -15,13 +15,14 @@ use super::wire::{
     ArtifactUnitsRequest, ArtifactUnitsView,
 };
 use super::{
-    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationThread, CODE_ANCHOR_VERSION, Locator, TaskBrief,
+    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION,
+    Locator, PLAN_DOC_ANCHOR_VERSION, TaskBrief,
 };
-use crate::blob_artifact::{ArtifactKind, ArtifactRefRequest};
+use crate::blob_artifact::{ArtifactExport, ArtifactKind, ArtifactRefRequest};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
-use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_NOTE};
 use crate::secret_custody::SecretSight;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -211,14 +212,30 @@ impl Memory<'_> {
 
     /// The text of an exact immutable anchor, through the caller's file sight.
     fn annotation_anchor_view(&self, anchor: &Anchor) -> MemoryResult<AnnotationAnchorView> {
-        if self.vault().get_entity_type(&anchor.artifact_id)? == Some(ENTITY_TYPE_CODE_ARTIFACT) {
-            return self.code_anchor_view(anchor);
+        match self.vault().get_entity_type(&anchor.artifact_id)? {
+            Some(ENTITY_TYPE_CODE_ARTIFACT) => return self.code_anchor_view(anchor),
+            Some(ENTITY_TYPE_NOTE) => return Ok(self.plan_doc_anchor_views(anchor)?.0),
+            _ => {}
         }
         let sight = self.secret_sight()?;
         let file = self
             .vault()
             .export_blob_artifact_as_raw(&anchor.artifact_id, Some(anchor.version), sight)?
             .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
+        // An image region or overlay names no words (L4-16): its view reads
+        // no document package, so no document resource policy refuses it.
+        if matches!(
+            anchor.locator,
+            Locator::ImagePixel { .. } | Locator::ImageObject { .. }
+        ) {
+            return Ok(AnnotationAnchorView {
+                artifact_id: anchor.artifact_id,
+                version: anchor.version,
+                locator: (&anchor.locator).into(),
+                quote: None,
+                body: anchor.body.as_ref().map(Into::into),
+            });
+        }
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
@@ -336,6 +353,41 @@ impl Memory<'_> {
         Ok((anchor, pin))
     }
 
+    /// `vault.artifacts.anchors.pin` of an image locator (L4-16; ASK
+    /// IOB-ANCHOR A): a pixel region of an image version pins by geometry,
+    /// once it lies inside the canvas its header reads, after EXIF
+    /// orientation. It names no words, so its view's quote is null. An
+    /// overlay is refused: no stored image body holds one (IO-BODY A).
+    fn image_anchor_pin(
+        &self,
+        artifact: EntityId,
+        file: &ArtifactExport,
+        locator: Locator,
+    ) -> MemoryResult<(Anchor, AnnotationAnchorView)> {
+        if file.kind != ArtifactKind::Image {
+            return Err(MemoryError::bad_request(
+                "locator format does not match the artifact",
+            ));
+        }
+        let Locator::ImagePixel { x, y, w, h } = locator else {
+            return Err(MemoryError::bad_request(
+                "no stored image body holds overlays, so an overlay does not pin",
+            ));
+        };
+        let (width, height) = image_canvas(&file.bytes)
+            .ok_or_else(|| MemoryError::bad_request("the image version's size does not read"))?;
+        // The locator's constructor bounds each far edge, so neither sum
+        // overflows.
+        if x.saturating_add(w) > width || y.saturating_add(h) > height {
+            return Err(MemoryError::bad_request(
+                "the pixel region lies outside the image",
+            ));
+        }
+        let anchor = Anchor::new(artifact, file.version, locator);
+        let pin = self.annotation_anchor_view(&anchor)?;
+        Ok((anchor, pin))
+    }
+
     /// `vault.artifacts.anchors.pin`: a readable locator in a real version.
     /// The version and locator, not a matching-text search, define the pin.
     pub fn artifacts_anchors_pin(
@@ -353,14 +405,22 @@ impl Memory<'_> {
         input: &AnnotationPinRequest,
     ) -> MemoryResult<(Anchor, AnnotationAnchorView)> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
-        if self.vault().get_entity_type(&artifact)? == Some(ENTITY_TYPE_CODE_ARTIFACT) {
-            return self.code_anchor_pin(artifact, input);
+        match self.vault().get_entity_type(&artifact)? {
+            Some(ENTITY_TYPE_CODE_ARTIFACT) => return self.code_anchor_pin(artifact, input),
+            Some(ENTITY_TYPE_NOTE) => return self.plan_doc_anchor_pin(artifact, input),
+            _ => {}
         }
         let file = self
             .vault()
             .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let locator = Locator::try_from(&input.locator)?;
+        if matches!(
+            locator,
+            Locator::ImagePixel { .. } | Locator::ImageObject { .. }
+        ) {
+            return self.image_anchor_pin(artifact, &file, locator);
+        }
         let format = UnitFormat::from_media_type(&file.media_type).ok_or_else(|| {
             MemoryError::bad_request("locator format does not match the artifact")
         })?;
@@ -438,14 +498,28 @@ impl Memory<'_> {
         &self,
         thread: AnnotationThread,
     ) -> MemoryResult<AnnotationThreadView> {
-        let origin = self.annotation_origin(&thread)?;
-        let resolution = if thread.drift.is_some() {
-            AnnotationResolution::Drifted
-        } else if thread.anchor.version == origin.version && thread.anchor.locator == origin.locator
-        {
-            AnnotationResolution::Pinned
+        let on_note =
+            self.vault().get_entity_type(&thread.anchor.artifact_id)? == Some(ENTITY_TYPE_NOTE);
+        let (origin, anchor, resolution) = if on_note {
+            // A plan-doc thread's head keeps the span it was opened on;
+            // where that span stands is read now.
+            self.plan_doc_anchor_views(&thread.anchor)?
         } else {
-            AnnotationResolution::Mapped
+            let origin = self.annotation_origin(&thread)?;
+            let resolution = if thread.drift.is_some() {
+                AnnotationResolution::Drifted
+            } else if thread.anchor.version == origin.version
+                && thread.anchor.locator == origin.locator
+            {
+                AnnotationResolution::Pinned
+            } else {
+                AnnotationResolution::Mapped
+            };
+            (
+                self.annotation_anchor_view(&origin)?,
+                self.annotation_anchor_view(&thread.anchor)?,
+                resolution,
+            )
         };
         let comments = self
             .vault()
@@ -460,15 +534,128 @@ impl Memory<'_> {
             .transpose()?;
         Ok(AnnotationThreadView {
             thread_id: thread.thread_id,
-            origin: self.annotation_anchor_view(&origin)?,
-            anchor: self.annotation_anchor_view(&thread.anchor)?,
+            origin,
+            anchor,
             resolution,
             drift: thread.drift.map(Into::into),
             state: thread.state.into(),
             head_claim_id: thread.head_claim_id,
             comments,
             brief,
+            sub_session_id: thread.sub_session_id,
         })
+    }
+
+    /// `vault.artifacts.anchors.pin` on a plan-doc NOTE (plan mode's
+    /// markup): a text span of the plan-doc's text at its head, read
+    /// through the caller's NOTE read. The anchor holds the span at
+    /// [`PLAN_DOC_ANCHOR_VERSION`] and, as its body, the frontier it was
+    /// read at; any other NOTE takes no anchor.
+    fn plan_doc_anchor_pin(
+        &self,
+        plan: EntityId,
+        input: &AnnotationPinRequest,
+    ) -> MemoryResult<(Anchor, AnnotationAnchorView)> {
+        if input
+            .version
+            .is_some_and(|version| version != PLAN_DOC_ANCHOR_VERSION)
+        {
+            return Err(MemoryError::bad_request(
+                "a plan-doc's anchor version is PLAN_DOC_ANCHOR_VERSION (0)",
+            ));
+        }
+        let Locator::Text {
+            char_start,
+            char_end,
+        } = Locator::try_from(&input.locator)?
+        else {
+            return Err(MemoryError::bad_request(
+                "locator format does not match the artifact",
+            ));
+        };
+        let span = self
+            .plan_doc_head_span(plan, char_start, char_end)?
+            .ok_or_else(|| MemoryError::not_found("plan-doc not found"))?;
+        let locator = Locator::Text {
+            char_start,
+            char_end,
+        };
+        let body = BodyAnchor {
+            frontier: span.frontier,
+            locator: locator.clone(),
+        };
+        let view = AnnotationAnchorView {
+            artifact_id: plan,
+            version: PLAN_DOC_ANCHOR_VERSION,
+            locator: (&locator).into(),
+            quote: Some(span.quote),
+            body: Some((&body).into()),
+        };
+        let anchor = Anchor {
+            artifact_id: plan,
+            version: PLAN_DOC_ANCHOR_VERSION,
+            locator,
+            body: Some(body),
+        };
+        Ok((anchor, view))
+    }
+
+    /// A plan-doc anchor's view at the span it names, and the same span's
+    /// view at the head with where it stands, read through the caller's NOTE
+    /// read: pinned while the span sits at its opening offsets, mapped where
+    /// an edit before it moved it, drifted where its characters no longer
+    /// all stand with the same text. A drifted anchor stays on the span it
+    /// names. An anchor with no frontier (a brief's copy) reads no words.
+    fn plan_doc_anchor_views(
+        &self,
+        anchor: &Anchor,
+    ) -> MemoryResult<(
+        AnnotationAnchorView,
+        AnnotationAnchorView,
+        AnnotationResolution,
+    )> {
+        let view = |locator: &Locator, body: Option<&BodyAnchor>, quote: Option<String>| {
+            AnnotationAnchorView {
+                artifact_id: anchor.artifact_id,
+                version: anchor.version,
+                locator: locator.into(),
+                quote,
+                body: body.map(Into::into),
+            }
+        };
+        let (
+            Locator::Text {
+                char_start,
+                char_end,
+            },
+            Some(body),
+        ) = (&anchor.locator, &anchor.body)
+        else {
+            let named = view(&anchor.locator, anchor.body.as_ref(), None);
+            return Ok((named.clone(), named, AnnotationResolution::Pinned));
+        };
+        let read = self
+            .plan_doc_span_read(anchor.artifact_id, &body.frontier, *char_start, *char_end)?
+            .ok_or_else(|| MemoryError::not_found("plan-doc not found"))?;
+        let named = view(&anchor.locator, Some(body), read.quote);
+        let Some(head) = read.head else {
+            return Ok((named.clone(), named, AnnotationResolution::Drifted));
+        };
+        let locator = Locator::Text {
+            char_start: head.char_start,
+            char_end: head.char_end,
+        };
+        let resolution = if locator == anchor.locator {
+            AnnotationResolution::Pinned
+        } else {
+            AnnotationResolution::Mapped
+        };
+        let head_body = BodyAnchor {
+            frontier: head.frontier,
+            locator: locator.clone(),
+        };
+        let now = view(&locator, Some(&head_body), Some(head.quote));
+        Ok((named, now, resolution))
     }
 
     /// `vault.artifacts.threads.open`: caller-stamped pin and opening comment.
@@ -632,4 +819,30 @@ fn require_code_anchor_version(version: Option<u64>) -> MemoryResult<()> {
         ));
     }
     Ok(())
+}
+
+/// The canvas `bytes` decode to, width then height, after EXIF orientation:
+/// a quarter turn swaps the sides. Only the header is read; `None` when it
+/// does not read.
+fn image_canvas(bytes: &[u8]) -> Option<(u32, u32)> {
+    use image::ImageDecoder as _;
+    use image::metadata::Orientation;
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let (width, height) = decoder.dimensions();
+    let turned = matches!(
+        decoder.orientation().ok()?,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    );
+    Some(if turned {
+        (height, width)
+    } else {
+        (width, height)
+    })
 }

@@ -10,10 +10,14 @@ use crate::code_sandbox::source::PreparedSource;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
 use crate::entity_id::EntityId;
 use crate::llm::BudgetGuard;
-use crate::{Error, LlmError, ModelId, ModelLocality, ModelTierRef, Result};
+use crate::{Error, ModelId, ModelLocality, ModelTierRef, Result};
 use std::path::PathBuf;
 
-pub const ENGINE_EXECUTOR_SOFT_STEP_LIMIT: u32 = 6;
+#[doc(hidden)]
+pub use oneiron_records::engine_executor::types::{
+    ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorError, EngineExecutorResult, JsResultRef,
+    StoreReceiptInput, StoreReceiptTree,
+};
 
 pub const ENGINE_EXECUTOR_PURPOSE_NAME: &str = "engine_native_executor";
 
@@ -25,44 +29,6 @@ pub const ENGINE_EXECUTOR_FALLBACK_NAME: &str = "engine_native_js_executor_v1";
 /// Reserved guest response key carrying the budget legibility envelope
 /// (ONE-1305; guest-visible contract — the key name is pinned).
 pub const GUEST_BUDGET_RESPONSE_KEY: &str = "budget";
-
-pub type EngineExecutorResult<T> = std::result::Result<T, EngineExecutorError>;
-
-#[derive(Debug, thiserror::Error)]
-pub enum EngineExecutorError {
-    #[error(transparent)]
-    Engine(#[from] Error),
-    #[error(transparent)]
-    Llm(#[from] LlmError),
-    #[error("executor request canonicalization failed: {0}")]
-    CanonicalRequest(#[from] serde_json::Error),
-    /// The run's host door refused a call the executor makes for the run,
-    /// with the door's stable code.
-    #[error("the run's host door refused its call: {code}")]
-    HostRefused { code: String },
-}
-
-impl EngineExecutorError {
-    /// The variant, for a log line, which never carries the error's text: an
-    /// engine error's can quote what the vault holds, a model error's a reply
-    /// or a provider's error body, a canonicalization error's the request.
-    pub(crate) fn variant(&self) -> &'static str {
-        match self {
-            Self::Engine(_) => "engine",
-            Self::Llm(_) => "llm",
-            Self::CanonicalRequest(_) => "canonical_request",
-            Self::HostRefused { .. } => "host_refused",
-        }
-    }
-
-    /// An engine error's kind, for the same log line.
-    pub(crate) fn engine_kind(&self) -> Option<crate::ErrorKind> {
-        match self {
-            Self::Engine(error) => Some(error.kind()),
-            _ => None,
-        }
-    }
-}
 
 /// The durable REPL's soft yield: the steps one entry runs before it yields.
 /// A run's total steps are the `[limits] executor_run_steps` row, which asks
@@ -240,40 +206,6 @@ pub enum JsResultCall {
         facet: ResultFacet,
         input: serde_json::Value,
     },
-}
-
-/// What a fold's `store` names of its inputs: the source the fold read, the
-/// reader jobs (children and summaries) it read it by, the summary tree it
-/// staged and the recipe it folded by. The host checks each and computes the
-/// receipt; the guest never states coverage.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StoreReceiptInput {
-    pub source: String,
-    pub tasks: Vec<String>,
-    #[serde(default)]
-    pub tree: Vec<StoreReceiptTree>,
-    #[serde(default)]
-    pub recipe: Option<serde_json::Value>,
-}
-
-/// One summary of a fold's tree, by ref, and the refs it summarized.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StoreReceiptTree {
-    pub summary: String,
-    pub inputs: Vec<String>,
-}
-
-/// How a program names one of its run's results. A step's read context
-/// keeps the reference each read of another run's result was made by (FIX
-/// 6352).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum JsResultRef {
-    /// A name the run bound (`r7`).
-    Name(String),
-    /// A result's handle, as its card gives it or as model context cites it.
-    Handle(String),
 }
 
 /// A result reference, and the byte range of its body it is narrowed to:
@@ -584,6 +516,13 @@ pub enum EngineExecutorStatus {
     WindowFull {
         next_step_seq: u64,
         reason: super::compaction::WindowFullReason,
+    },
+    /// A person's pause the run took at its step boundary (the branch's
+    /// Pause signal). Not terminal: the run's row is already `Paused` and
+    /// its lease released, so its host leaves the row as it is; a resume
+    /// queues the same try, which runs on at `next_step_seq`.
+    Paused {
+        next_step_seq: u64,
     },
 }
 

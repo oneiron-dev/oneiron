@@ -1,10 +1,10 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { resolve } from "node:path";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { CliClient, PublicHttpClient, WsClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, requireAsset } from "./support/fixtures.ts";
-import { defineFile, LIMITS, ManagedProcess, ownResource, redactor, runProcess, secretHex } from "./support/run.ts";
+import { defineFile, expect, LIMITS, ManagedProcess, ownResource, redactor, runProcess, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";

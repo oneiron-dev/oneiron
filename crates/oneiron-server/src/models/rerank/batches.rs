@@ -9,13 +9,12 @@
 //! call: either way the call answers its finished batches' scores as a
 //! partial, never as a full list ([`super::outcome`], FIX 11228).
 //! Entry: `rerank_batches`.
-use std::collections::BTreeMap;
 
 use oneiron::llm::limit;
-use oneiron::{FatalLlmError, LlmResult, RetryableLlmError};
+use oneiron::{BudgetLease, FatalLlmError, LlmResult, RetryableLlmError};
 use serde_json::{Value as JsonValue, json};
 
-use super::{RERANK_PATH, RerankBackend, indexed_scores, transport};
+use super::{RerankBackend, indexed_scores};
 use crate::models::served::{SERVED_MODEL_KEY, record_served_model};
 
 /// The most documents one provider request carries: a transport's batch,
@@ -100,6 +99,7 @@ impl RerankBackend {
         wire_model: &str,
         query: &str,
         batch: &RerankBatch<'_>,
+        lease: &BudgetLease,
     ) -> LlmResult<BatchAnswer> {
         let body = json!({
             "model": wire_model,
@@ -108,11 +108,7 @@ impl RerankBackend {
             "top_n": batch.documents.len(),
             "return_documents": false,
         });
-        let mut reply = self
-            .http
-            .post_json(RERANK_PATH, &BTreeMap::new(), &body)
-            .await
-            .map_err(transport)?;
+        let mut reply = self.post(wire_model, &body, lease).await?;
         match reply.status {
             200..=299 => {}
             status if limit::is_limit_status(status, &reply.body) => {

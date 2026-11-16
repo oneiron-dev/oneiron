@@ -69,17 +69,15 @@ use oneiron_model::llm::{
 mod landing;
 mod read;
 
-/// The maintenance facet the re-check of one provider-deleted, kept message
-/// rides.
-pub const CLAIM_SOURCE_RECHECK_FACET: &str = "dreamer.claim_source_recheck";
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET;
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::claim_source_recheck::DECLARATION_KEY;
 
 /// The predicate of the Dreamer's plain finding about one re-checked claim:
 /// one the verdict leaves as it stands, or one that waits for the owner's
 /// review. A rung lands as the curator's own finding.
 pub const CLAIM_SOURCE_RECHECK_PREDICATE: &str = "dreamer.claim_source_recheck.verdict";
-
-/// The payload key the declaration rides under.
-const DECLARATION_KEY: &str = "declaration";
 
 /// Why a re-check waits when no host lends it a judge.
 const UNLENT_REASON: &str = "no host lends this pass a claim re-check";
@@ -640,6 +638,19 @@ impl Spend {
             &self.step_bindings,
         ) {
             return Ok(failed);
+        }
+        // A spent model seat refused the step: the try parks on that seat,
+        // this spend kept (SEAT-PARK-MODEL-STEP-PATH).
+        if let Some((seat, reset_at_s)) =
+            crate::dreamer_runner::dreamer_seat_refusal_of_step(&error)
+        {
+            return Ok(DreamerAttemptExecution::ParkOnSeatWithSpend {
+                reason: error.to_string(),
+                seat: *seat.as_bytes(),
+                reset_at_s,
+                completed_units: self.units,
+                step_bindings: self.step_bindings,
+            });
         }
         Ok(match error {
             DurableStepError::SpentFinalizeRefused { usage } => {

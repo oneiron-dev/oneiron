@@ -292,7 +292,7 @@ impl Vault {
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and its door still lands the receipt so the act is
         // audit-visible.
-        GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
+        super::super::codec::put_grant_row_in_txn(&self.store, wtxn, &grant_ref, &row)?;
         Ok(receipt)
     }
 

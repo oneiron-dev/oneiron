@@ -9,7 +9,8 @@ use super::codec::{
 use super::comment_parts::comment_parts;
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_THREAD_PREDICATE, Anchor,
-    AnnotationComment, AnnotationThread, CODE_ANCHOR_VERSION, TaskBrief, ThreadState,
+    AnnotationComment, AnnotationThread, CODE_ANCHOR_VERSION, Locator, PLAN_DOC_ANCHOR_VERSION,
+    TaskBrief, ThreadState,
 };
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -21,7 +22,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::{
-    ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
+    ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK,
+    artifact_family_kind_of,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
@@ -36,6 +38,25 @@ const BRIEF_ASSIGN_EDGE_WEIGHT: f32 = 1.0;
 /// a cap: the walk reads every page.
 const BRIEF_PAGE: usize = 256;
 
+/// The sub-session an approved plan's run hangs off its approving turn,
+/// recorded on the anchored review thread the owner approved from
+/// (agent-runtime-v1.md:342).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ThreadSubSession {
+    /// The plan-doc NOTE the thread is anchored on.
+    pub(crate) artifact_id: EntityId,
+    /// The review thread that records the run's sub-session.
+    pub(crate) thread_id: EntityId,
+    /// The SESSION the run hangs off the approving turn.
+    pub(crate) session: EntityId,
+    /// The writer the new head is stamped with.
+    pub(crate) actor: WriteActor,
+    /// When the approval happened.
+    pub(crate) occurred: TimeRange,
+    /// When the approval was learned.
+    pub(crate) learned_at: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Vault surface
 // ---------------------------------------------------------------------------
@@ -47,6 +68,9 @@ impl Vault {
     /// artifact entity in one transaction. The anchor version must resolve to a
     /// real version in the artifact's chain. An opening comment past one stored
     /// comment's bound lands whole as linked parts in the same transaction.
+    /// A thread on a plan-doc NOTE anchors on a text span at a frontier of
+    /// the plan's text (plan mode's markup), and its head keeps that frontier
+    /// as its body anchor.
     pub fn open_annotation_thread(
         &self,
         anchor: &Anchor,
@@ -56,6 +80,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<AnnotationThread> {
         validate_comment_text(first_comment)?;
+        // An entity's type never changes, so the writer's check below holds
+        // for the type read here.
+        let on_note = self.get_entity_type(&anchor.artifact_id)? == Some(ENTITY_TYPE_NOTE);
 
         let thread_id = self.store.clock.entity_id()?;
         let head_claim_id = self.store.clock.entity_id()?;
@@ -70,14 +97,19 @@ impl Vault {
             state: ThreadState::Open,
             locator: anchor.locator.clone(),
             drift: None,
-            body: None,
+            body: if on_note { anchor.body.clone() } else { None },
+            sub_session: None,
         };
         let head_envelope = annotation_envelope(author, "open_thread")?;
         let comment_envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
 
         self.with_write_txn_grouped(|wtxn| {
-            self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
+            if on_note {
+                self.require_plan_doc_anchor_in_txn(&*wtxn, anchor)?;
+            } else {
+                self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
+            }
             let mut batch = self.batch_in().claim_candidate(
                 &head_claim_id,
                 ClaimCandidate::new(
@@ -114,6 +146,7 @@ impl Vault {
             state: ThreadState::Open,
             drift: None,
             head_claim_id,
+            sub_session_id: None,
         })
     }
 
@@ -209,6 +242,7 @@ impl Vault {
                 locator: thread.anchor.locator.clone(),
                 drift: thread.drift,
                 body: thread.anchor.body.clone(),
+                sub_session: thread.sub_session_id,
             };
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
@@ -227,8 +261,49 @@ impl Vault {
                 state,
                 drift: thread.drift,
                 head_claim_id: new_head_id,
+                sub_session_id: thread.sub_session_id,
             })
         })
+    }
+
+    /// Records the sub-session an approved plan's run hangs off its
+    /// approving turn on the review thread's head, keeping its state
+    /// (agent-runtime-v1.md:342). A thread that already records `session`
+    /// is left alone, so an approval answered again writes nothing new.
+    ///
+    /// The new head write and the old head supersession share the caller's
+    /// transaction, as [`Self::set_annotation_thread_state`] does.
+    pub(crate) fn record_thread_sub_session_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: ThreadSubSession,
+    ) -> Result<()> {
+        let thread = self
+            .annotation_thread_in_txn(wtxn, &record.artifact_id, &record.thread_id, false)?
+            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
+        if thread.sub_session_id == Some(record.session) {
+            return Ok(());
+        }
+        let head = ThreadHead {
+            thread_id: record.thread_id,
+            origin_version: thread.origin_version,
+            anchor_version: thread.anchor.version,
+            state: thread.state,
+            locator: thread.anchor.locator.clone(),
+            drift: thread.drift,
+            body: thread.anchor.body.clone(),
+            sub_session: Some(record.session),
+        };
+        let new_head_id = self.write_thread_head_in_txn(
+            wtxn,
+            &record.artifact_id,
+            &head,
+            record.actor,
+            "record_sub_session",
+            record.occurred,
+            record.learned_at,
+        )?;
+        self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, record.learned_at)
     }
 
     /// Reads a single thread head, or `None` if no live thread with that id is
@@ -579,7 +654,43 @@ impl Vault {
         Ok(())
     }
 
-    pub(super) fn annotation_thread_in_txn(
+    /// Refuses a thread anchor on a NOTE unless the NOTE is a plan-doc and
+    /// the anchor is a text span, at [`PLAN_DOC_ANCHOR_VERSION`], whose body
+    /// names the same span at a frontier of the plan-doc's text that holds
+    /// it (plan mode's markup, `note::plan_markup`).
+    fn require_plan_doc_anchor_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        anchor: &Anchor,
+    ) -> Result<()> {
+        let (
+            Locator::Text {
+                char_start,
+                char_end,
+            },
+            Some(body),
+        ) = (&anchor.locator, &anchor.body)
+        else {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "a plan-doc anchor is a text span at a frontier",
+            )));
+        };
+        if anchor.version != PLAN_DOC_ANCHOR_VERSION || body.locator != anchor.locator {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "a plan-doc anchor's version is PLAN_DOC_ANCHOR_VERSION and its body names its span",
+            )));
+        }
+        crate::note::require_plan_doc_span_in_txn(
+            self,
+            rtxn,
+            anchor.artifact_id,
+            &body.frontier,
+            *char_start,
+            *char_end,
+        )
+    }
+
+    pub(crate) fn annotation_thread_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
@@ -744,6 +855,7 @@ pub(super) fn thread_from_head(
         state: head.state,
         drift: head.drift,
         head_claim_id,
+        sub_session_id: head.sub_session,
     }
 }
 

@@ -19,7 +19,7 @@ pub(super) use self::effect_consent::{
     external_effect_consent_context, native_mail_cold_composed_effect,
 };
 pub(crate) use self::effect_contacts::{
-    counterparty_send_override_in_txn, hydrate_external_effect_contact,
+    CounterpartyHydration, counterparty_send_override_in_txn, hydrate_external_effect_contact,
     hydrate_external_effect_contact_at,
 };
 pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
@@ -302,16 +302,18 @@ fn charge_admitted_external_effect(
             on_exhaust,
             mut charge,
         } => {
-            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                connector_key::suspend_connector_key_in_txn(
-                    store,
-                    wtxn,
-                    &target.key_id,
-                    &target.key,
-                    connector_key::budget_exhausted_reason(&location),
-                    budget_now,
-                )?;
-                charge.read.status = ConnectorKeyStatus::Suspended;
+            if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                && let connector_key::SuspendAdmission::Suspended(suspended) =
+                    connector_key::suspend_connector_key_in_txn(
+                        store,
+                        wtxn,
+                        &target.key_id,
+                        &target.key,
+                        connector_key::SuspendCause::BudgetExhausted(&location),
+                        budget_now,
+                    )?
+            {
+                charge.read.status = suspended.status;
             }
             (charge, true)
         }

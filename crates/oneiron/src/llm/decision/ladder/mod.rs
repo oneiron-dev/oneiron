@@ -9,7 +9,7 @@ use super::{
     DecisionWireLabels, HostRuleRef, ImagePin, PairedReading, ProviderPin, ReasoningCause,
 };
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::{EntityId, Result};
+use crate::{EntityId, Error, Result};
 use serde_json::Value;
 
 mod ask_consent;
@@ -79,7 +79,8 @@ pub struct DecisionLadder<'a> {
 
 /// What one provider request, `answered`, gave each pack question on the call's clock. A
 /// failure once the work time is spent, or a reply after the answer's time, is the cut; a
-/// failure with time left fails the call. A cut read still went out, so its rung stays on
+/// read its provider stopped at the token cap with time left is the cap; any other failure
+/// with time left fails the call. A cut or capped read still went out, so its rung stays on
 /// the receipt (FIX 9907).
 pub(super) fn take(
     pin: &ProviderPin,
@@ -93,6 +94,10 @@ pub(super) fn take(
         Err(_) if !pack.deadline.decision_may_start() => {
             record_attempted_provider(pin, &[], readings);
             return Ok((0..count).map(|_| Read::Cut).collect());
+        }
+        Err(Error::DecisionReadTokenCap) => {
+            record_attempted_provider(pin, &[], readings);
+            return Ok((0..count).map(|_| Read::TokenCap).collect());
         }
         Err(error) => return Err(error),
     };
@@ -127,9 +132,9 @@ pub(super) fn price_answers(reads: &[Read], readings: &mut [Readings], cost: Opt
     }
 }
 
-/// A cut read's rung on each question's receipt: the model a late reply names as served,
-/// when that name is valid, else the pin the read went out to. The late reply's answer and
-/// readings stay off the receipt; an unfinished reply is not an answer.
+/// A cut or capped read's rung on each question's receipt: the model a late reply names as
+/// served, when that name is valid, else the pin the read went out to. The late reply's
+/// answer and readings stay off the receipt; an unfinished reply is not an answer.
 fn record_attempted_provider(
     pin: &ProviderPin,
     late: &[ProviderDecision],
@@ -275,6 +280,9 @@ pub(super) enum Read {
     /// Its client gave up once the work time was spent, or its reply came after the
     /// answer's time: an unfinished reply is not an answer.
     Cut,
+    /// Its provider stopped it at the token cap with work time left: the rung answered
+    /// nothing (ARCH-0076 #receipt).
+    TokenCap,
 }
 
 fn abstained() -> ProviderDecision {

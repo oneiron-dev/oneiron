@@ -37,7 +37,7 @@ use crate::store::Store;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::workspace_roster::spend_scope::SpendState;
 use crate::workspace_roster::{
-    ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RosterActor,
+    JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RosterActor,
     join_subject_for_actor_in_txn, rooms_join_in_txn,
 };
 use crate::{EntityId, Vault, WriteActor};
@@ -84,39 +84,10 @@ pub struct OfferDraft {
     pub intent_key: String,
 }
 
-/// Where one card stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OfferState {
-    /// Waiting on the parties `needs` names. The host's admission is the one
-    /// the card asks for; a payer answers through `rooms.consent`, and
-    /// membership is read live.
-    Open { needs: Vec<ConsentNeed> },
-    /// The join was Ready and the agent's acceptance landed as `turn`, its
-    /// own turn in the room or thread.
-    Joined { turn: EntityId, receipt_ref: String },
-    /// Not now. The decline is in the agent's private diary, or `None` when
-    /// the agent's standing refused the note; it settles this card and bars no
-    /// later ask.
-    NotNow { diary_ref: Option<EntityId> },
-    /// A newer card from the same agent for the same room or thread
-    /// replaced this one.
-    Superseded { by: String },
-    /// No one answered in time: the card's thread ended, or a room-wide card
-    /// went a day without engagement or passed its fixed deadline.
-    AgedOut,
-}
-
-/// The advisory ballots on a room-wide card, as counts (FIX 2091): how
-/// many voters said join and how many not now, never who. They keep the
-/// card open and decide nothing; only the host's answer admits. A thread's
-/// card counts none, since it takes no votes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfferVoteTally {
-    pub join: u64,
-    pub not_now: u64,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::workspace_roster::rooms::offers::is_offer_id;
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::offers::{OfferState, OfferVoteTally};
 
 /// One offer card, as the room's audience sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,20 +177,8 @@ impl StoredOffer {
     }
 }
 
-/// A page of the current cards in a room, or in one of its threads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OffersRequest {
-    pub room: EntityId,
-    /// One thread's cards; `None` reads every card in the room.
-    #[serde(default)]
-    pub branch: Option<EntityId>,
-    /// The `next_after` of the previous page.
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offers::OffersRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OffersPage {
@@ -248,14 +207,6 @@ fn digest<T: Serialize>(value: &T) -> Result<String> {
     let bytes =
         serde_json::to_vec(value).map_err(|_| Error::InvariantViolation("offer draft encode"))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
-}
-
-/// An offer id: 64 lowercase hex.
-pub(super) fn is_offer_id(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Deletes every card minted in `room`, whatever its state (a superseded

@@ -43,10 +43,8 @@ impl Memory<'_> {
                 }
             }
         };
-        let all: std::collections::BTreeSet<_> = members
-            .iter()
-            .map(|(_, m)| m.member.change().to_owned())
-            .collect();
+        let all: std::collections::BTreeSet<_> =
+            members.iter().map(|(_, m)| m.member.change()).collect();
         let selected: std::collections::BTreeSet<_> = input
             .changes
             .as_ref()
@@ -65,7 +63,7 @@ impl Memory<'_> {
         // Reverse explicit membership order, so a dependent child listed
         // after its input can be compensated before that input.
         for (key, member) in members.iter().rev() {
-            let change = member.member.change().to_owned();
+            let change = member.member.change();
             if !selected.contains(&change) {
                 if let Some(receipt) = &member.compensation {
                     outcome.compensated.push(RunCompensation {
@@ -212,7 +210,7 @@ fn compensate(
             author,
             fingerprint: expected,
         }) => {
-            let id = EntityId::from_hex(row.member.change())?;
+            let id = EntityId::from_hex(&row.member.change())?;
             let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
                 return Ok(None);
             };
@@ -241,7 +239,7 @@ fn compensate(
         Some(RunInverse::Restored {
             fingerprint: expected,
         }) => {
-            let id = EntityId::from_hex(row.member.change())?;
+            let id = EntityId::from_hex(&row.member.change())?;
             let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
                 return Ok(None);
             };

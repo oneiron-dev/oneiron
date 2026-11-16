@@ -1,0 +1,11 @@
+{
+  "name": "oneiron",
+  "description": "Your Oneiron vault as Claude Code's memory: a recall when a session starts, the session's log handed to the vault, and the vault's tools over MCP.",
+  "author": {
+    "name": "Oneiron"
+  },
+  "homepage": "https://github.com/oneiron-dev/oneiron",
+  "repository": "https://github.com/oneiron-dev/oneiron",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "oneiron"]
+}

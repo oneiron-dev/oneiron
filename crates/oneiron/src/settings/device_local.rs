@@ -181,10 +181,22 @@ pub(crate) fn off_device_readable_in(
     destination: &ReadDestination,
 ) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let flagged = device_local_worlds_for(vault, &rtxn, destination)?;
+    off_device_readable_in_txn(vault, store, &rtxn, ids, destination)
+}
+
+/// [`off_device_readable_in`] judged in the caller's transaction, for a
+/// read that holds one: the thread keeps one read transaction at a time.
+pub(crate) fn off_device_readable_in_txn(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    ids: Vec<EntityId>,
+    destination: &ReadDestination,
+) -> Result<Vec<EntityId>> {
+    let flagged = device_local_worlds_for(vault, txn, destination)?;
     let mut readable = Vec::with_capacity(ids.len());
     for id in ids {
-        if !device_local_keeps_among(store, &rtxn, &flagged, &id)? {
+        if !device_local_keeps_among(store, txn, &flagged, &id)? {
             readable.push(id);
         }
     }

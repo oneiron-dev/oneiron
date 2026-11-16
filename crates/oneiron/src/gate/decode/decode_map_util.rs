@@ -1,8 +1,8 @@
-//! Generic MessagePack map accessors, signature values, and semver compare.
+//! Generic MessagePack map accessors, policy authority markers, and semver compare.
 
 use rmpv::Value;
 
-use crate::gate::ceiling::PolicySignature;
+use crate::gate::ceiling::PolicyAuthorityMarker;
 use crate::gate::constants::{
     SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SIGNATURE_SIGNATURE_KEY,
 };
@@ -87,16 +87,16 @@ pub(super) fn optional_bool(entries: &[(Value, Value)], key: &str) -> Option<boo
     }
 }
 
-pub(super) fn parse_signatures(value: &Value) -> Option<Vec<PolicySignature>> {
+pub(super) fn parse_signatures(value: &Value) -> Option<Vec<PolicyAuthorityMarker>> {
     let Value::Array(rows) = value else {
         return None;
     };
     rows.iter().map(parse_signature_value).collect()
 }
 
-pub(super) fn parse_signature_value(value: &Value) -> Option<PolicySignature> {
+pub(super) fn parse_signature_value(value: &Value) -> Option<PolicyAuthorityMarker> {
     match value {
-        Value::String(sig) => Some(PolicySignature {
+        Value::String(sig) => Some(PolicyAuthorityMarker {
             alg: "unknown".to_owned(),
             key_id: None,
             sig: sig.as_str()?.to_owned(),
@@ -112,7 +112,7 @@ pub(super) fn parse_signature_value(value: &Value) -> Option<PolicySignature> {
             if alg.is_empty() || sig.is_empty() {
                 return None;
             }
-            Some(PolicySignature { alg, key_id, sig })
+            Some(PolicyAuthorityMarker { alg, key_id, sig })
         }
         _ => None,
     }
