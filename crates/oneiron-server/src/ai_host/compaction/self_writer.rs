@@ -199,9 +199,11 @@ impl SelfCompactionBackend {
     /// active model pack's compaction model where this host serves it within
     /// the row's bound ([`Self::pack_writer`]), else the row's cheap model.
     /// One not served here, or the row's served wider than the row allows,
-    /// gives way to the house route's model, which writes as the agent: a
-    /// flight that compacted before still compacts. The agent's own model
-    /// served wider than the row is refused, as it always was.
+    /// gives way to the house route's one exact model (its seat's first
+    /// served rung where no manifest or pack binds the role), which writes
+    /// as the agent: a flight that compacted before still compacts. The
+    /// agent's own model served wider than the row is refused, as it always
+    /// was.
     fn cold_writer(&self, row: &SelfCompactionDefault) -> ColdWriter {
         let served = |model: &ModelId| {
             self.route
@@ -228,11 +230,10 @@ impl SelfCompactionBackend {
         {
             return within(row, preferred.clone(), locality);
         }
-        let house = self
+        let (house, locality) = self
             .route
-            .house_model()
-            .ok_or(SelfCompactionUnavailable::ModelNotServed)?;
-        let locality = served(&house).ok_or(SelfCompactionUnavailable::ModelNotServed)?;
+            .exact_model()
+            .map_err(|_| SelfCompactionUnavailable::ModelNotServed)?;
         within(row, house, locality)
     }
 

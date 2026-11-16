@@ -445,14 +445,14 @@ impl ServedCompactionBackend {
             .saturating_sub(self.prompt_tokens)
     }
 
-    /// The model the role's live route admits now, else its seat's.
-    pub(super) fn house_model(&self) -> Option<ModelId> {
-        let seat = self.models.seat(self.role)?;
-        Some(
-            self.models
-                .route_role(&self.vault, self.role, seat)
-                .map_or_else(|_| seat.model.clone(), |route| route.model),
-        )
+    /// The one model a pass on this route sends now as exactly that model,
+    /// and where it is served: the role's live route's model, or, where that
+    /// route walks the seat's ladder, its first rung served within it
+    /// (`ModelRuntime::exact_route_role`). A seat id is never sent as one
+    /// model: `generate_exact` refuses every seat's ladder.
+    pub(super) fn exact_model(&self) -> Result<(ModelId, ModelLocality), RoleRefusal> {
+        let seat = self.models.seat(self.role).ok_or(RoleRefusal::NoSeat)?;
+        self.models.exact_route_role(&self.vault, self.role, seat)
     }
 }
 
@@ -483,14 +483,13 @@ impl CompactionBackend for ServedCompactionBackend {
     }
 
     /// Read on the vault's live route, as a pass is admitted: what its
-    /// context holds beside the reply and the prompt, as [`Self::compact`]
-    /// counts it.
+    /// context holds beside the reply and the prompt on the model
+    /// [`Self::compact`] sends, as it counts it.
     fn input_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
         let context = self
-            .models
-            .seat(self.role)
-            .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok())
-            .and_then(|route| self.allowances.get(&route.model).copied())
+            .exact_model()
+            .ok()
+            .and_then(|(model, _)| self.allowances.get(&model).copied())
             .unwrap_or(0);
         Some(
             context
@@ -504,12 +503,12 @@ impl CompactionBackend for ServedCompactionBackend {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> Result<CompactionProduct, CompactionRefusal> {
-        // The seat resolved at bind is the exact model: admit it directly,
-        // with no role-route rewrite or fallback (FIX 4541).
-        let admit = Admit::Exact {
-            model: self.model.clone(),
-            locality: self.locality,
-        };
+        // The live route's one model is the exact model: admit it directly,
+        // with no role-route rewrite or fallback (FIX 4541). A route on the
+        // seat's own ladder sends its first served rung, never the seat id
+        // (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED).
+        let (model, locality) = self.exact_model().map_err(admission_refused)?;
+        let admit = Admit::Exact { model, locality };
         let sources = request
             .window_read_from_sources
             .then_some(request.sources.clone());
