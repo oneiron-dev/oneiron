@@ -1,7 +1,10 @@
 //! Fixture doors for the full-copy tests (L7-47): a machine the owner marks
 //! as their own, another machine's home candidacy and full-copy mark signed
-//! under that machine's own key, the fold reads the peer order runs on, and
-//! the mark a connection's first round writes.
+//! under that machine's own key, the fold reads the peer order runs on, the
+//! mark a connection's first round writes, and an election raced into a
+//! residence switch.
+
+use std::cell::Cell;
 
 use ed25519_dalek::{Signer, SigningKey};
 
@@ -12,6 +15,7 @@ use crate::authority::{
     invalid_authority, machine_profile_proof_transcript,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -174,4 +178,35 @@ pub fn rank_sync_peers(
     down_home: EntityId,
 ) -> Result<Vec<EntityId>> {
     crate::sync::peer_route::rank_sync_peers(vault, granted, local, down_home)
+}
+
+thread_local! {
+    /// The election the next residence switch on this thread commits at its
+    /// race point, and the clock it elects at; taken once.
+    static ELECTION_AT_RESIDENCE_SWITCH: Cell<Option<(DreamerHomeNodeCandidate, u64)>> =
+        const { Cell::new(None) };
+}
+
+/// Arms the next residence switch on this thread to elect `candidate` home
+/// at `now` after it planned and before it records the owner's choice: the
+/// point a switch to sync opened reaches once the home granted its held
+/// windows again, seconds of network after it read the home (FIX
+/// RESIDENCE-SWITCH-STALE-HOME). Fires once.
+pub fn elect_home_at_next_residence_switch(candidate: DreamerHomeNodeCandidate, now: u64) {
+    ELECTION_AT_RESIDENCE_SWITCH.with(|slot| slot.set(Some((candidate, now))));
+}
+
+/// The race point in `SyncConnection::switch_residence_mode`, between the
+/// switch's planning read of the home and its recording transaction: runs
+/// the election [`elect_home_at_next_residence_switch`] armed, if any.
+///
+/// # Errors
+///
+/// An election the store refuses; storage errors.
+pub(crate) fn at_residence_switch_record(vault: &Vault) -> Result<()> {
+    let Some((candidate, now)) = ELECTION_AT_RESIDENCE_SWITCH.with(Cell::take) else {
+        return Ok(());
+    };
+    DreamerRunnerStore::new(vault).elect_home_node(&[candidate], now)?;
+    Ok(())
 }

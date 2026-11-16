@@ -554,6 +554,8 @@ impl SyncConnection {
         if switching && effective == SyncResidenceMode::Opened {
             vault.load_install_signing_if_minted().map_err(storage)?;
         }
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::full_copy_mark::at_residence_switch_record(vault).map_err(storage)?;
         vault
             .with_write_txn_grouped(|txn| {
                 if switching && effective == SyncResidenceMode::Opened {
