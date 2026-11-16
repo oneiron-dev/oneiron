@@ -61,13 +61,16 @@ pub(crate) fn content_changed_at_ms_in_txn(
     Ok(state(store, txn, id)?.map(|state| state.changed_at_ms))
 }
 
+/// Every move of a row's live revision passes here, so this is where the
+/// memory timeline records it (L3-39).
 pub(super) fn put_state(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     value: &RevisionState,
 ) -> Result<()> {
-    STATE.put(store, txn, id, value)
+    STATE.put(store, txn, id, value)?;
+    super::timeline::record_live_revision_in_txn(store, txn, id, value.live)
 }
 
 /// All top-level string leaves are independent text containers. The raw
@@ -830,7 +833,7 @@ pub(crate) fn remove_entity_revisions(
         IDENTITY.delete(store, txn, revision)?;
     }
     FRONTIER.delete_from(store, txn, id.as_bytes())?;
-    Ok(())
+    super::timeline::remove_timeline_in_txn(store, txn, id)
 }
 
 impl Vault {

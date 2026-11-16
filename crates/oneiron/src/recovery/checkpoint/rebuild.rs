@@ -241,6 +241,8 @@ pub(super) fn rebuild(
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
+        // Restored ledgers bypassed the append that maintains the membership index.
+        crate::conversation::rebuild_membership_index_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
@@ -254,6 +256,8 @@ pub(super) fn rebuild(
 
 /// Backfills that own their transactions run after the base index transaction.
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
+    // Restored PERSON rows bypassed the body staging that keeps their party keys.
+    crate::store::person_party_keys::backfill_person_party_key_index(vault, true)?;
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
     // Restored authority-log rows bypassed the Grant member index's writer.
     crate::federation::backfill_agent_grant_member_index(vault, true)?;
