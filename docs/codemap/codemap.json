@@ -5121,7 +5121,7 @@
      "path": "src/authority/machine_profile/mod.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 15,
       "re-export": 1,
       "struct": 2
@@ -6757,7 +6757,7 @@
      "path": "src/authority/vault_api.rs",
      "purpose": "`impl Vault` — the AUTHORITY_LOG read/write door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 11
      }
@@ -7771,13 +7771,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArchiveProvenance"
+     ],
+     "path": "src/batch/export/archive_provenance.rs",
+     "purpose": "The archive's provenance signature (L2-23, canon ARCH-0027 #manifest-provenance-built): the exporting…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_read.rs",
      "purpose": "Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -7997,7 +8012,7 @@
      "path": "src/batch/export/export_authority.rs",
      "purpose": "Core half of `batch::export::export_authority`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "re-export": 1
      }
@@ -8021,7 +8036,7 @@
      "purpose": "Whole-vault manifest egress doors and the Vault export surface",
      "surface": {
       "crate-vis": 1,
-      "fn": 13
+      "fn": 14
      }
     },
     {
@@ -8138,8 +8153,8 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 13
+      "crate-vis": 17,
+      "re-export": 14
      }
     },
     {
@@ -12636,8 +12651,7 @@
       "CheckInResolution",
       "DueOutcomeCheckIn",
       "MachineOutcomeEvidence",
-      "MeetingClassSignals",
-      "OutcomeCheckInWake"
+      "MeetingClassSignals"
      ],
      "path": "src/calendar/outcome.rs",
      "purpose": "CAL-07 event outcome: evidence ladder, outcome head, post-end check-in",
@@ -12647,7 +12661,7 @@
       "enum": 3,
       "fn": 15,
       "re-export": 2,
-      "struct": 5
+      "struct": 4
      }
     },
     {
@@ -12737,7 +12751,7 @@
      "path": "src/calendar/prep/wake.rs",
      "purpose": "Prep eligibility checks and exact-wake planning",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 1,
       "fn": 4,
       "re-export": 1,
@@ -89289,6 +89303,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/archive_provenance.rs",
+     "purpose": "Doors for `tests/signed_archive_provenance.rs`: the archive verdict on this vault's own read-only fold…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/authority_stored_damage.rs",
      "purpose": "L9-50 (ARCH-0006a #list-read-built): damage one stored authority row in place, past every write door, so a…",
      "surface": {
@@ -90071,7 +90095,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 119,
+      "mod": 120,
       "re-export": 1
      }
     },
@@ -97992,13 +98016,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/vault_doors.rs",
      "purpose": "The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -98543,11 +98567,27 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/calendar_contract_wake.rs",
+     "purpose": "CAL-06 and CAL-07 plan their host wakes as the supervisor contract's own `WakeEntry` (ARCH-0060 [CAL-06]…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/calendar_google_owed_full_listing.rs",
      "purpose": "A connector pull that leaves a change owed makes the next pull list the calendar whole, on every transport…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/calendar_outcome_stock_vault.rs",
+     "purpose": "CAL-07 outcome writes land live on a stock vault (ARCH-0060 [CAL-07])",
      "surface": {}
     },
     {
@@ -101917,6 +101957,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/signed_archive_provenance.rs",
+     "purpose": "L2-23: an archive's contents manifest is signed by the exporting install's machine key, and the vault it is…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102683,7 +102731,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 193,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104090,7 +104138,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 122,
+     "files": 123,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104267,8 +104315,8 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7605,
-   "test_files": 1347
+   "source_files": 7607,
+   "test_files": 1350
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124397,7 +124445,7 @@
      "purpose": "—",
      "surface": {
       "mod": 5,
-      "re-export": 39
+      "re-export": 38
      }
     },
     {
@@ -124421,20 +124469,17 @@
      "purpose": "—",
      "surface": {
       "mod": 2,
-      "re-export": 7
+      "re-export": 6
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PrepWake"
-     ],
+     "notable": [],
      "path": "src/calendar/prep/wake.rs",
      "purpose": "Moved from `crates/oneiron/src/calendar/prep/wake.rs` (lib split R2: record types below the lib)",
      "surface": {
-      "const": 1,
-      "struct": 1
+      "const": 1
      }
     },
     {
