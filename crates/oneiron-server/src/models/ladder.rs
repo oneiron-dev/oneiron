@@ -720,7 +720,7 @@ impl OfferLadder {
             && self
                 .rungs
                 .iter()
-                .all(|rung| rung.offer.backend.supports(&rung.model, capability.clone()))
+                .all(|rung| rung.offer.backend.supports(&rung.model, *capability))
     }
 
     fn admits(&self, request: &LlmRequest) -> LlmResult<()> {
