@@ -16,6 +16,9 @@ use crate::store::housekeeping_schedule::{Deadline, HousekeepingBudget};
 /// the next pass.
 const RUNS_PER_PASS: usize = 1_000;
 
+/// What a run's first write decides: the job and its arming to run, or why nothing runs.
+type Start = std::result::Result<(&'static JobSpec, Armed), JobOutcome>;
+
 /// What one pass of [`Vault::run_due`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScheduleRunReport {
@@ -226,7 +229,6 @@ impl Vault {
     /// The checks before a run, and its start marker, in the run's first write: an interrupted
     /// run counts as a failure; a lapsed occurrence is dropped; an agent's arming is judged
     /// again. `Err` names why nothing runs.
-    #[allow(clippy::type_complexity)]
     fn start_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -235,7 +237,7 @@ impl Vault {
         row: ScheduleRow,
         due_at: u64,
         now: u64,
-    ) -> Result<std::result::Result<(&'static JobSpec, Armed), JobOutcome>> {
+    ) -> Result<Start> {
         if let Some(started) = row.started_at {
             let failures = row.failures.saturating_add(1);
             let retry = retry_after(
