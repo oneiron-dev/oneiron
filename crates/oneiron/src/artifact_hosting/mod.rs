@@ -47,7 +47,7 @@ mod serving;
 mod serving_blob;
 mod vocabulary;
 use self::pointer_rows::{
-    decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,
+    decode_artifact_pointer_row, put_artifact_pointer_in_txn, snapshot_file_entry,
     validate_artifact_path,
 };
 pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
@@ -407,18 +407,9 @@ pub fn parse_codebase_fork_hash_hex(value: &str) -> Result<CodebaseForkHash> {
             "forkHash must be 64 lowercase or uppercase hex characters",
         )));
     }
-    let mut out = [0_u8; CODEBASE_FORK_HASH_LEN];
-    let bytes = value.as_bytes();
-    for (index, pair) in bytes.chunks_exact(2).enumerate() {
-        let high = hex_nibble(pair[0]).ok_or(Error::Code(
-            CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
-        ))?;
-        let low = hex_nibble(pair[1]).ok_or(Error::Code(
-            CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
-        ))?;
-        out[index] = (high << 4) | low;
-    }
-    Ok(out)
+    oneiron_hex::decode_any_case::<CODEBASE_FORK_HASH_LEN>(value).ok_or(Error::Code(
+        CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
+    ))
 }
 
 #[doc(hidden)]
