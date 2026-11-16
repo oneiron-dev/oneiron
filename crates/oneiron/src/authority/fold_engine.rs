@@ -511,6 +511,11 @@ pub(super) fn fold_authority_log_once(
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
     revoke_facts.forget_held_off_the_line(owner_key_lines.as_ref(), &states);
+    revoke_facts.forget_revokes_above_refused_enrolments(
+        owner_key_lines.as_ref(),
+        &by_hash,
+        &entry_ancestors,
+    );
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = ValidEntries::new();
     for (hash, state) in &states {

@@ -65,7 +65,8 @@ use serde::Serialize;
 /// CARRIER-OWNER-PROOF).
 /// 42: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
 /// waits for the owner's proof, and an enrolment of the owner's key outside the line of the
-/// enrolment that made it the owner's is refused (row CARRIER-PROOF-OLD-PARENTS).
+/// enrolment that made it the owner's is refused, and a device revocation proved through such
+/// an enrolment of its key ends nothing (row CARRIER-PROOF-OLD-PARENTS).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 42;
 
 /// The domain every encoded image starts with.

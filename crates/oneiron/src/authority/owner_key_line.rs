@@ -213,6 +213,22 @@ impl OwnerKeyLines {
     pub(super) fn refuses(&self, hash: &AuthorityEntryHash) -> bool {
         self.refused_enrolments.contains(hash)
     }
+
+    /// Whether `branch` holds an enrolment of `key` that a line refuses.
+    pub(super) fn refuses_an_enrolment_of(
+        &self,
+        key: &AuthorityKey,
+        branch: &BTreeSet<AuthorityEntryHash>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ) -> bool {
+        self.refused_enrolments.iter().any(|hash| {
+            branch.contains(hash)
+                && entries
+                    .get(hash)
+                    .and_then(|entry| enrolled_key(&entry.op))
+                    .is_some_and(|enrolled| enrolled == key)
+        })
+    }
 }
 
 /// Whether the op is one the two proof gates judge: the seven owner choice

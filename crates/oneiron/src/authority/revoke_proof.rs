@@ -425,6 +425,33 @@ impl RevokeFacts {
         });
     }
 
+    /// Forgets every device revocation whose proven branch holds an
+    /// enrolment of the revoked key that a line refuses (row
+    /// CARRIER-PROOF-OLD-PARENTS; REVIEW2 #8502, 16 Nov). The custodial
+    /// root's agent enrolment of the owner's key on parents before the
+    /// owner's enrolment is an invalid entry, and a revoke of that key above
+    /// it waits with it. The revoke's own branch, proved with no line, holds
+    /// the key as that agent enrolment's, which the root alone may end, so
+    /// the fact would end the owner's key on every branch.
+    pub(super) fn forget_revokes_above_refused_enrolments(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|hash, fact| {
+            let Restriction::DeviceRevoke(key) = &fact.kind else {
+                return true;
+            };
+            !ancestors
+                .get(hash)
+                .is_some_and(|branch| lines.refuses_an_enrolment_of(key, branch, entries))
+        });
+    }
+
     /// Forgets every restriction proved through a handoff that did not take
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the
