@@ -93,6 +93,17 @@ fn side(seed: u8) -> Side {
 
 /// A live PERSON of `vault` and their person proof.
 fn person(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
+    person_with_body(vault, b"a person of the company")
+}
+
+/// A live PERSON of `vault` whose row names them `name`, and their proof.
+fn named_person(vault: &Vault, name: &str) -> (EntityId, AuthenticatedOwner) {
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("display_name", name)]))
+        .expect("a PERSON body");
+    person_with_body(vault, &body)
+}
+
+fn person_with_body(vault: &Vault, body: &[u8]) -> (EntityId, AuthenticatedOwner) {
     let id = EntityId::now();
     vault
         .put_entity(
@@ -100,7 +111,7 @@ fn person(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
             oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 1, end: 1 },
             1,
-            b"a person of the company",
+            body,
         )
         .expect("person");
     let proof = vault
@@ -120,6 +131,11 @@ struct Joining {
 }
 
 fn joining() -> Joining {
+    joining_seated(person)
+}
+
+/// [`joining`], with the seat's PERSON made by `seated`.
+fn joining_seated(seated: impl FnOnce(&Vault) -> (EntityId, AuthenticatedOwner)) -> Joining {
     let member = side(0x11);
     let company = side(0x22);
     company
@@ -132,7 +148,7 @@ fn joining() -> Joining {
             company.vault.now_recorded_at(),
         )
         .expect("the company's shared vault");
-    let (seat, seat_proof) = person(&company.vault);
+    let (seat, seat_proof) = seated(&company.vault);
     let invited = company
         .vault
         .add_shared_member(
@@ -457,6 +473,99 @@ fn a_seat_without_an_offer_takes_its_edge_later() {
             .status,
         FederationPactStatus::Active
     );
+}
+
+#[test]
+fn a_seat_with_an_edge_takes_no_second_one() {
+    let fx = joining();
+    let first = fx.prepare();
+    let (_, counter) = fx
+        .accept(&first.offer)
+        .expect("the member joins with an edge");
+
+    // A fresh offer (a new pact) on the same seat is a second edge.
+    let second = fx.prepare();
+    assert_ne!(second.offer.connect.pact_id, first.offer.connect.pact_id);
+    let refusal = fx
+        .company
+        .vault
+        .attach_inquiry_edge_to_seat(&fx.seat_proof, &fx.company.issuer, SHARED, &second.offer)
+        .expect_err("a seat that carries an edge takes no second one");
+    assert!(
+        refusal
+            .to_string()
+            .contains("already carries an inquiry edge"),
+        "{refusal}"
+    );
+    assert!(
+        fx.company_pact(&second.offer.connect.pact_id).is_none(),
+        "the refused offer logs no pact"
+    );
+    let pacts = fx
+        .company
+        .vault
+        .authority_fold()
+        .expect("the company's authority fold")
+        .federation_pacts
+        .values()
+        .filter(|pact| pact.peer_vault_id == fx.member.vault_id)
+        .count();
+    assert_eq!(pacts, 1, "the seat keeps its one edge");
+
+    // The seat's own edge still answers its exact repeat.
+    let repeat = fx
+        .company
+        .vault
+        .attach_inquiry_edge_to_seat(&fx.seat_proof, &fx.company.issuer, SHARED, &first.offer)
+        .expect("the seat's own edge answers its repeat");
+    assert_eq!(repeat, counter, "the repeat answers the same counter");
+}
+
+#[test]
+fn the_edge_world_is_named_for_the_seats_person_not_the_offer() {
+    let fx = joining_seated(|vault| named_person(vault, "Bea Seat"));
+    let prepared = fx.prepare();
+    assert_eq!(
+        prepared.offer.member_name, MEMBER,
+        "the offer names someone else"
+    );
+    fx.accept(&prepared.offer)
+        .expect("the member joins with an edge");
+
+    let grant_ref = fx
+        .company_pact(&prepared.offer.connect.pact_id)
+        .expect("the company's pact")
+        .grant_ref;
+    let body = fx
+        .company
+        .vault
+        .get(&grant_ref)
+        .expect("the company's grant row")
+        .expect("the company's grant is live");
+    let grant = decode_federation_grant_body(&body).expect("a grant");
+    let ScopeAxis::Some(worlds) = &grant.authority_scope.worlds else {
+        panic!("the edge's grant names its WORLD");
+    };
+    assert_eq!(
+        worlds.len(),
+        1,
+        "the edge's grant names one WORLD: {worlds:?}"
+    );
+    let world = worlds.iter().next().expect("the edge's WORLD");
+    let world_body = fx
+        .company
+        .vault
+        .get(&world.0)
+        .expect("the WORLD row")
+        .expect("the WORLD is live");
+    let fields: std::collections::BTreeMap<String, rmpv::Value> =
+        rmp_serde::from_slice(&world_body).expect("a WORLD body");
+    let name = fields
+        .get("name")
+        .and_then(rmpv::Value::as_str)
+        .expect("the WORLD's name");
+    assert!(name.starts_with("Inquiry edge: Bea Seat ("), "{name}");
+    assert!(!name.contains(MEMBER), "{name}");
 }
 
 #[test]
