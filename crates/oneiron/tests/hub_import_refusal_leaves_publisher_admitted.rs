@@ -24,7 +24,10 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn at(now: u64) -> TimeRange {
-    TimeRange { start: now, end: now }
+    TimeRange {
+        start: now,
+        end: now,
+    }
 }
 
 /// The ref of the one Grant that admits `identity` to offer from `hub`, as
@@ -91,10 +94,7 @@ fn refused_import_withdraws_publisher_it_just_admitted() -> TestResult {
         HubPin::Tag("v1".to_owned()),
         identity,
     );
-    assert!(
-        refused.is_err(),
-        "a tag pin on a local folder hub refuses"
-    );
+    assert!(refused.is_err(), "a tag pin on a local folder hub refuses");
     let grant = fixture.vault.consent_grant(&grant_ref)?;
     assert!(
         grant.as_ref().is_none_or(|row| !row.is_active()),
@@ -125,10 +125,7 @@ fn refused_import_keeps_publisher_that_already_stood() -> TestResult {
         HubPin::Tag("v1".to_owned()),
         identity,
     );
-    assert!(
-        refused.is_err(),
-        "a tag pin on a local folder hub refuses"
-    );
+    assert!(refused.is_err(), "a tag pin on a local folder hub refuses");
     assert!(
         fixture
             .vault
