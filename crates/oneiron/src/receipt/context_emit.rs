@@ -79,7 +79,7 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
         let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let holder = vault.audit_read_live_in_txn(&txn, self.actor())?;
+        let holder = self.audit_read_holder_in_txn(&txn, "vault.receipts.context")?;
         drop(txn);
         for record in super::direct_dispatch::receipts(vault)? {
             if record.receipt_id != receipt_ref || record.outcome != "replied" {
@@ -178,7 +178,7 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
         let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let holder = vault.audit_read_live_in_txn(&txn, self.actor())?;
+        let holder = self.audit_read_holder_in_txn(&txn, "vault.receipts.craft_reply_manifest")?;
         drop(txn);
         for record in super::direct_dispatch::receipts(vault)? {
             if record.receipt_id != receipt_ref || record.outcome != CRAFT_EXPOSED {

@@ -286,9 +286,7 @@ impl Memory<'_> {
         match reader {
             AuditReader::Owner(owner) => self.critical_confirm_owner_in_txn(owner, txn),
             AuditReader::Holder(holder) => {
-                if holder.actor() == self.actor
-                    && self.vault.audit_read_live_in_txn(txn, holder.actor())?
-                {
+                if holder.actor() == self.actor && holder.admits_in_txn(self.vault, txn)? {
                     Ok(holder.actor())
                 } else {
                     Err(MemoryError::new(

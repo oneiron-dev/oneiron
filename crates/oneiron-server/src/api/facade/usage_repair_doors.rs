@@ -18,7 +18,7 @@ use oneiron::memory::usage_repair::{
     UndecodableUsageList, UsageRepairListRequest, UsageRepairReceipt, UsageRepairReceiptList,
     UsageRepairReceiptsRequest, UsageRepairRemoveRequest, UsageRepairVerb,
 };
-use oneiron::memory::{Memory, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 use super::FacadeApiError;
 use super::host_doors::support::{Listed, credential_listing, owner_proof};
@@ -47,13 +47,10 @@ async fn repair<T: Send + 'static>(
         Ok(caller) => caller,
         Err(error) => return (Err(error), Vec::new()),
     };
-    let owner = if auth.is_owner_grade() {
-        match owner_proof(auth, server, verb.name()) {
-            Ok(owner) => Some(owner),
-            Err(error) => return (Err(error), Vec::new()),
-        }
-    } else {
-        None
+    let owner = match repair_proof(server, auth, verb) {
+        Ok(RepairProof::Owner(owner)) => Some(owner),
+        Ok(RepairProof::Caller | RepairProof::Holder(_)) => None,
+        Err(error) => return (Err(error), Vec::new()),
     };
     let scope = UsageScope::of(server);
     credential_listing(
@@ -79,14 +76,48 @@ pub(super) fn repair_admits(
 ) -> MemoryResult<()> {
     let (actor, class) =
         super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-    let owner = if auth.is_owner_grade() {
-        Some(owner_proof(auth, server, verb.name())?)
-    } else {
-        None
-    };
-    crate::api::credential_memory(&server.vault, Some(auth), actor, class)
-        .at(auth.locality())
-        .usage_repair_admits(owner.as_ref(), verb)
+    let memory =
+        crate::api::credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
+    match repair_proof(server, auth, verb)? {
+        RepairProof::Owner(owner) => memory.usage_repair_admits(Some(&owner), verb),
+        RepairProof::Caller => memory.usage_repair_admits(None, verb),
+        RepairProof::Holder(refused) => memory.usage_repair_admits(None, verb).map_err(|_| refused),
+    }
+}
+
+/// The proof a usage repair acts on, before its writer judges the caller.
+enum RepairProof {
+    /// The caller's own owner proof, on an owner-grade credential.
+    Owner(AuthenticatedOwner),
+    /// No owner proof: a credential that is not owner-grade.
+    Caller,
+    /// For the receipts, an owner-grade credential that proves no owner (a
+    /// holder's own top-scope, unattenuated slip): the writer judges its
+    /// actor's live audit_read power, as the audit doors' reader falls back
+    /// (Sol review 8483 P1). It carries the owner refusal, which the caller
+    /// gets when that actor holds no power.
+    Holder(MemoryError),
+}
+
+/// [`RepairProof`] for `verb` on `auth`. List and Remove keep the owner
+/// refusal on an owner-grade credential that proves no owner.
+fn repair_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: UsageRepairVerb,
+) -> MemoryResult<RepairProof> {
+    if !auth.is_owner_grade() {
+        return Ok(RepairProof::Caller);
+    }
+    match owner_proof(auth, server, verb.name()) {
+        Ok(owner) => Ok(RepairProof::Owner(owner)),
+        Err(refused)
+            if verb == UsageRepairVerb::Receipts && refused.code == MEMORY_CODE_FORBIDDEN =>
+        {
+            Ok(RepairProof::Holder(refused))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// `vault.usage.events.undecodable`: every stored usage event of the

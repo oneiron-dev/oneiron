@@ -149,7 +149,7 @@ impl Memory<'_> {
                     return Err(refused(verb, "the caller's credential is no longer live"));
                 }
                 if verb == UsageRepairVerb::Receipts
-                    && self.vault().audit_read_live_in_txn(txn, self.actor())?
+                    && self.audit_read_holder_in_txn(txn, verb.name())?
                 {
                     UsageRepairAuthority::AuditRead(self.actor().to_hex())
                 } else {

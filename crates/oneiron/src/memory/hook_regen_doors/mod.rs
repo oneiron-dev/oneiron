@@ -95,9 +95,7 @@ impl Memory<'_> {
                     .env
                     .read_txn()
                     .map_err(crate::Error::from)?;
-                if holder.actor() == self.actor
-                    && self.vault.audit_read_live_in_txn(&txn, holder.actor())?
-                {
+                if holder.actor() == self.actor && holder.admits_in_txn(self.vault, &txn)? {
                     Ok(())
                 } else {
                     Err(MemoryError::new(

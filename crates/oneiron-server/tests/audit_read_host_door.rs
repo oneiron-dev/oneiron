@@ -462,6 +462,64 @@ fn an_audit_read_holder_reads_the_authority_audit_on_an_owner_grade_slip() {
     });
 }
 
+/// Sol review 8483 P1: `vault.usage.repair.receipts` on a holder's own
+/// top-scope, unattenuated slip, which is owner grade yet proves no owner,
+/// falls back to the holder's power as the audit doors do: the holder reads
+/// the receipts while granted, and is refused before the grant and after
+/// the revoke.
+#[test]
+fn an_audit_read_holder_reads_the_usage_repair_receipts_on_an_owner_grade_slip() {
+    run_on_engine_stack("audit-read-owner-grade-usage-repair", || async {
+        let (fixture, auditor, _) = setup().await;
+        let mut claims = fixture
+            .vault
+            .ensure_host_root_slip(&fixture.issuer)
+            .expect("owner root slip")
+            .claims;
+        claims.slip_id = [0x42; 32];
+        claims.parent_id = None;
+        claims.holder_ref = auditor.principal.to_hex();
+        claims.actor_class = auditor.slip.claims.actor_class.clone();
+        claims.records = BTreeSet::new();
+        let slip = fixture
+            .vault
+            .mint_capability_slip(&fixture.issuer, claims)
+            .expect("the holder's top-scope slip");
+        let token = slip.to_token().expect("the holder's slip token");
+        let receipts = || {
+            post(
+                &fixture,
+                "vault.usage.repair.receipts",
+                &token,
+                issuer_bound(&fixture, &slip),
+                json!({}),
+            )
+        };
+
+        let (status, body) = receipts().await;
+        assert_forbidden(
+            status,
+            &body,
+            "the receipts on the owner-grade holder slip before any grant",
+        );
+        owner_changes(&fixture, "vault.audit_read.grant", &auditor).await;
+        let (status, body) = receipts().await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the holder reads the receipts on its owner-grade slip: {body}"
+        );
+        assert!(body["receipts"].is_array(), "{body}");
+        owner_changes(&fixture, "vault.audit_read.revoke", &auditor).await;
+        let (status, body) = receipts().await;
+        assert_forbidden(
+            status,
+            &body,
+            "the receipts on the owner-grade holder slip after the revoke",
+        );
+    });
+}
+
 /// `vault.authority.audit` on `slip` (`token`), a slip bound to the host
 /// issuer's own key.
 async fn as_issuer_bound(
