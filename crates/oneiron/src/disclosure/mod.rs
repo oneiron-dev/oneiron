@@ -60,6 +60,7 @@ pub use self::tier_classification::{
 };
 pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_discretion_notice};
 
+pub(crate) use self::home::scope_home_band;
 pub(crate) use self::tier_classification::{disclosure_tier, validate_disclosure_claim_structure};
 pub(crate) use self::vault_agent::is_vault_agent_in;
 use self::vault_context::disclosure_tier_a_marked_in;
