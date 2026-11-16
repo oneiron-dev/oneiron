@@ -226,9 +226,10 @@ fn asker_grant_in_txn(
 }
 
 /// The live FederationGrant row `id`, decoded; `None` for any other row. A
-/// Grant over a shared vault reads only while the fold stands behind it
+/// Grant over this shared vault reads only while the fold stands behind it
 /// (pass 28 R3), never as a row alone; a guest's or a Connect Grant is read
-/// from its row until pass 28 R3's guests and slips step.
+/// from its row until pass 28 R3's guests and slips step, and a personal
+/// vault's own-device residence rows until R4.
 pub(super) fn grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -244,7 +245,7 @@ pub(super) fn grant_in_txn(
     let Ok(grant) = decode_federation_grant_body(&body) else {
         return Ok(None);
     };
-    if !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+    if vault.shared_vault_scope_in_txn(txn)?.as_ref() != Some(&grant.scope) {
         return Ok(Some(grant));
     }
     let fold = vault.authority_view_readonly_in_txn(txn)?;

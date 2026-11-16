@@ -475,6 +475,7 @@ fn host_action_refusal_in_txn(
 fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Result<Vec<PlainGrant>> {
     let now = vault.store.clock.now_recorded_at();
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let shared_scope = vault.shared_vault_scope_in_txn(txn)?;
     let mut grants = Vec::new();
     for kind in [ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ACCESS_GRANT] {
         for entry in
@@ -490,17 +491,16 @@ fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Resul
                 continue;
             }
             let names = if kind == ENTITY_TYPE_FEDERATION_GRANT {
-                // A Grant over a shared vault confers only while the fold stands behind it
-                // (pass 28 R3), never as a row alone.
+                // A Grant over this shared vault confers only while the fold stands behind it
+                // (pass 28 R3), never as a row alone; a personal vault's own-device residence
+                // rows are read from themselves until R4.
                 crate::federation::decode_federation_grant_body(&body).is_ok_and(|grant| {
                     grant.member_ref == actor
                         && grant.confers_at(now)
                         && crate::federation::pact_admits_grant(&fold, &id, &grant)
-                        && (!matches!(
-                            grant.scope,
-                            crate::federation::FederationGrantScope::Vault { .. }
-                        ) || crate::federation::shared_grant_row_in_fold(&fold, id, &body, now)
-                            .is_some())
+                        && (shared_scope.as_ref() != Some(&grant.scope)
+                            || crate::federation::shared_grant_row_in_fold(&fold, id, &body, now)
+                                .is_some())
                 })
             } else {
                 crate::access_grant::decode_access_grant_body(&body).is_ok_and(|grant| {
