@@ -76,6 +76,7 @@ pub(crate) static TASK_TICK_JOB: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: releases_here,
+    drive: crate::schedule::Drive::Runner,
     run: run_task_tick,
 };
 

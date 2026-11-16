@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ArmBy, EngineZones, JobSpec, Trigger, When, job_named, jobs, retry_after};
+use super::{ArmBy, Drive, EngineZones, JobSpec, Trigger, When, job_named, jobs, retry_after};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -166,6 +166,10 @@ pub struct ScheduleView {
     /// The agent that armed it, 32 hex; none for the owner and the engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub armed_by: Option<String>,
+    /// Who runs it: the schedule's runner, or its host, which takes its due rows itself and
+    /// records no run on them, so a host row's last finish stays 0.
+    #[serde(default)]
+    pub drive: Drive,
 }
 
 impl ScheduleView {
@@ -179,6 +183,7 @@ impl ScheduleView {
             failures: row.failures,
             running: row.started_at.is_some(),
             armed_by: row.armed_by.map(|armed| armed.actor.to_hex()),
+            drive: job_named(job).map_or(Drive::Runner, |spec| spec.drive),
         }
     }
 }
@@ -328,12 +333,12 @@ impl Vault {
     }
 
     /// "Run now": `job` about `subject` is due from now, whatever its trigger says, until a run
-    /// starts.
+    /// starts. A job its host drives ([`Drive::Host`]) is refused: no run of it starts here.
     ///
     /// # Errors
     ///
-    /// `InvalidConfig` for an unknown or unarmed job, or a caller without the power; storage
-    /// errors.
+    /// `InvalidConfig` for an unknown or unarmed job, a job its host drives, or a caller without
+    /// the power; storage errors.
     pub(crate) fn request_schedule_run(
         &self,
         caller: ScheduleCaller<'_>,
@@ -341,6 +346,11 @@ impl Vault {
         subject: Option<EntityId>,
     ) -> Result<ScheduleView> {
         let spec = job_spec(job)?;
+        if spec.drive == Drive::Host {
+            return Err(refused(
+                "its host takes this job's due rows; no run of it is asked for here",
+            ));
+        }
         self.with_write_txn_grouped(|txn| {
             let key = row_key(spec.code, subject);
             let prior = ROWS
@@ -576,7 +586,8 @@ pub(crate) fn rearm_on_change(
 /// "Run now" from the engine: every armed job of a kind `which` takes is due from now until a
 /// run starts, and that run answers the request. The host's pass asks for its handle's
 /// `at_open` jobs, and the owner's "run housekeeping now" for every cadence job; the caller has
-/// proved its own power. Answers how many it asked for.
+/// proved its own power. A job its host drives is never asked: no run of it starts. Answers how
+/// many it asked for.
 ///
 /// # Errors
 ///
@@ -589,7 +600,7 @@ pub(crate) fn request_runs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result
             let (key, row) = row?;
             let taken = parse_row_key(&key)
                 .and_then(|(job, _)| job_named(&job))
-                .is_some_and(which);
+                .is_some_and(|spec| spec.drive == Drive::Runner && which(spec));
             if taken {
                 asked.push((key, row));
             }

@@ -30,7 +30,9 @@
 //! while a housekeeping pass holds the runner. Stage 5b-3 adds a job only some nodes run
 //! ([`JobSpec::runs_here`]): the watcher ticks and the timer turn programs, which only the node
 //! that releases the vault's ticks runs. Stage 5c-2 adds a row armed due by a time at the latest
-//! ([`arm_at_latest_in_txn`]): one row for a line of work, due at its earliest item.
+//! ([`arm_at_latest_in_txn`]): one row for a line of work, due at its earliest item; and a job its
+//! host drives ([`Drive::Host`]): the remote task polls, whose network calls never run under the
+//! runner, and whose due rows the host reads ([`due_at_in_txn`]).
 
 mod arm;
 mod jobs;
@@ -60,6 +62,7 @@ use crate::llm::model_pack::AccessSnapshot;
 use crate::setting::Setting;
 use crate::store::housekeeping_report::SweepWork;
 use crate::store::housekeeping_schedule::Deadline;
+use serde::{Deserialize, Serialize};
 
 /// Who may arm a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,7 +177,10 @@ pub struct JobSpec {
     /// home runs, runs each when it is due, and once, late, at its first pass after an election
     /// that names it. A read that fails runs none of its rows in that pass.
     pub runs_here: fn(&crate::Vault, &heed::RoTxn<'_>) -> Result<bool>,
-    /// One run. It keeps within the pass's deadline and answers how far it got.
+    /// Who runs its due rows: the runner, or its host ([`Drive::Host`]).
+    pub drive: Drive,
+    /// One run. It keeps within the pass's deadline and answers how far it got. A job its host
+    /// drives has none: [`host_takes_its_rows`].
     pub run: fn(&crate::Vault, &Armed, &JobPass<'_>) -> Result<JobResult>,
 }
 
@@ -188,6 +194,38 @@ impl JobSpec {
                 .map_or(RETRY_CAP_SECS, |cadence| cadence.min(RETRY_CAP_SECS))
         })
     }
+}
+
+/// Who runs a job's due rows.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Drive {
+    /// The schedule's runner, in a housekeeping pass or a host loop's door.
+    #[default]
+    Runner,
+    /// Its host, on its own loop: the host takes the job's due rows itself, and the runner never
+    /// runs one, so no work of it runs under the runner. Its rows wake a stopped vault as any
+    /// other's do; nothing records a run on them, so a row's last finish stays 0, and no "run
+    /// now" is asked of one. The runner's fields (late, retry, once a pass) do not apply.
+    Host,
+}
+
+/// [`JobSpec::run`] of a job its host drives ([`Drive::Host`]): the runner never starts a run of
+/// one, so this only refuses.
+///
+/// # Errors
+///
+/// Always `InvariantViolation`.
+pub(crate) fn host_takes_its_rows(
+    _vault: &crate::Vault,
+    _armed: &Armed,
+    _pass: &JobPass<'_>,
+) -> Result<JobResult> {
+    Err(crate::error::Error::InvariantViolation(
+        "the runner never runs a job its host drives",
+    ))
 }
 
 /// [`JobSpec::runs_here`] for a job every node runs: it reads nothing.

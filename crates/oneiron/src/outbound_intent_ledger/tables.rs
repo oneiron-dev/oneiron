@@ -57,9 +57,9 @@ crate::side_table::side_tables! {
         // ConnectorResume key, which no image carries (FIX 16029): the image keeps the sealed bytes
         // under the vault-wide seal, and a restore reads the live row, never the image's.
         [restore: live] [family: unclassified] [tier: canonical];
-    /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
-    /// status word; the session and credential choice stay in the settlement's handle. Key:
-    /// hash32 (intent id).
+    /// A Deferred send's remote task poll (FIX 11023): its poll count and last status word; its
+    /// next poll time is its schedule row (stage 5c-2), and the session and credential choice stay
+    /// in the settlement's handle. Key: hash32 (intent id).
     OUTBOUND_REMOTE_TASK_POLL: VaultMeta b"outbound:remote_task_poll:v1:" Named
         [restore: live] [family: structure] [tier: canonical];
     /// An MCP session a remote task's polls kept open, owed its end once its handle went before

@@ -109,6 +109,7 @@ pub(crate) static PACED_VERB_LINE_JOB: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: turns_run_here,
+    drive: crate::schedule::Drive::Runner,
     run: run_paced_verb_line,
 };
 

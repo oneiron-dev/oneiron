@@ -81,6 +81,7 @@ pub(crate) static CHILD_WAIT_UNTIL_JOB: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_child_wait_until,
 };
 

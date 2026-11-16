@@ -181,6 +181,7 @@ pub static TEST_COUNT: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_count,
 };
 
@@ -196,6 +197,7 @@ pub static TEST_FAIL: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_fail,
 };
 
@@ -211,6 +213,7 @@ pub static TEST_PAGED: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_paged,
 };
 
@@ -226,6 +229,7 @@ pub static TEST_ENGINE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_count,
 };
 
@@ -241,6 +245,7 @@ pub static TEST_LAPSE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_count,
 };
 
@@ -256,6 +261,7 @@ pub static TEST_CADENCE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_cadence,
 };
 
@@ -271,6 +277,7 @@ pub static TEST_ITEMS: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_items,
 };
 
@@ -286,6 +293,7 @@ pub static TEST_OPEN: JobSpec = JobSpec {
     at_open: true,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_seen,
 };
 
@@ -301,6 +309,7 @@ pub static TEST_ANSWER: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_answer,
 };
 
@@ -316,6 +325,7 @@ pub static TEST_ONCE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_bounded,
 };
 
@@ -332,6 +342,7 @@ pub static TEST_DUE_BY: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_cadence,
 };
 
@@ -372,6 +383,7 @@ pub static TEST_REARM: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_rearm,
 };
 
@@ -615,4 +627,114 @@ pub fn paced_verb_call_waits(vault: &Vault, key: [u8; 16]) -> Result<bool> {
 /// As the disarming.
 pub fn disarm_as_engine(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<bool> {
     vault.disarm_schedule(None, job, subject)
+}
+
+/// The remote task poll job's code (stage 5c-2).
+pub const REMOTE_TASK_POLL: &str = "outbound_intent_ledger.remote_task_poll";
+
+/// Defers one Pending `email`/`send` row as a remote task its provider took, its handle keeping
+/// how to poll it (a route credential, no session), through the ledger's own deferral write,
+/// which schedules its first poll; `attempt` tells one test's rows apart, and `poll_after_secs`
+/// is the provider's hint. Answers its intent id.
+///
+/// # Panics
+///
+/// When the row cannot be written or deferred.
+#[must_use]
+pub fn defer_pollable_remote_task(
+    vault: &Vault,
+    attempt: u8,
+    poll_after_secs: Option<u64>,
+) -> [u8; 32] {
+    use crate::outbound_intent_ledger::{
+        BudgetChargeMarker, BudgetClass, IntentLedgerRecord, OutboundCallRequest,
+        RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll, defer_record, force_sync,
+        insert_pending_in_txn,
+    };
+    let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let request = OutboundCallRequest::new(
+        crate::attempt_queue::AttemptId::from_bytes(&[attempt; 16]).expect("attempt id"),
+        1,
+        "email",
+        "send",
+        vec![attempt; 8],
+        now_ms,
+    );
+    let marker = BudgetChargeMarker {
+        key_ref: None,
+        budget_class: BudgetClass::Operation,
+        matched_rows: Vec::new(),
+        sends_debit: 0,
+        accounted_at_ms: now_ms,
+    };
+    let record = IntentLedgerRecord::pending(request, false, marker).expect("pending row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    insert_pending_in_txn(vault, &mut wtxn, &record).expect("insert the pending row");
+    wtxn.commit().expect("commit the pending row");
+    force_sync(vault).expect("sync the pending row");
+    let handle = RemoteTaskHandle {
+        id: format!("task-{attempt}"),
+        poll_after_secs,
+        poll: Some(RemoteTaskPoll {
+            session: None,
+            protocol: "2025-11-25".to_owned(),
+            credential: RemoteTaskCredential::Route,
+            form_elicitation: false,
+        }),
+    };
+    defer_record(vault, record.id, handle, now_ms).expect("defer the row");
+    record.id
+}
+
+/// The intent ids of the Deferred sends whose tasks are due a poll now, as the served host reads
+/// them, at most 32.
+///
+/// # Panics
+///
+/// When the due list cannot be read.
+#[must_use]
+pub fn remote_tasks_due_now(vault: &Vault) -> Vec<[u8; 32]> {
+    vault
+        .remote_tasks_due(32)
+        .expect("the due remote tasks")
+        .into_iter()
+        .map(|task| task.intent)
+        .collect()
+}
+
+/// A poll that found `intent`'s task still running, as the served host records it now.
+///
+/// # Panics
+///
+/// When it cannot be recorded.
+pub fn remote_task_polled_now(vault: &Vault, intent: &[u8; 32], poll_after_ms: Option<u64>) {
+    vault
+        .remote_task_polled(intent, poll_after_ms, "working")
+        .expect("record the poll");
+}
+
+/// Makes the polls of `intents` due now, as the host does for a task whose parked question the
+/// owner answered.
+///
+/// # Panics
+///
+/// When it cannot be written.
+pub fn remote_task_polls_due_now(vault: &Vault, intents: &[[u8; 32]]) {
+    vault
+        .remote_task_polls_due_at(intents)
+        .expect("make the polls due");
+}
+
+/// Settles `intent` by a poll that found its task ended unconfirmed.
+///
+/// # Panics
+///
+/// When it cannot be settled.
+pub fn settle_remote_task_unconfirmed(vault: &Vault, intent: &[u8; 32]) {
+    vault
+        .settle_polled_remote_task(
+            intent,
+            crate::outbound_intent_ledger::RemoteTaskEnd::Unconfirmed,
+        )
+        .expect("settle the task");
 }

@@ -9,7 +9,8 @@ use super::arm::{
     store_row_in_txn,
 };
 use super::{
-    ArmBy, Armed, EngineZones, JobPass, JobResult, JobSpec, Late, Ran, job_named, retry_after,
+    ArmBy, Armed, Drive, EngineZones, JobPass, JobResult, JobSpec, Late, Ran, job_named,
+    retry_after,
 };
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -126,8 +127,9 @@ fn runs_here_in_txn(
 
 /// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
 /// once-a-pass jobs this pass has started, is a row of one of the jobs `only` names when it names
-/// any, and is a row of a job this node runs (`here`, what the pass read of each job's
-/// [`JobSpec::runs_here`]): its due time and its row's key.
+/// any, is not a row of a job its host drives ([`Drive::Host`]), and is a row of a job this node
+/// runs (`here`, what the pass read of each job's [`JobSpec::runs_here`]): its due time and its
+/// row's key.
 fn first_due_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -149,6 +151,12 @@ fn first_due_in_txn(
             continue;
         }
         if only.is_some_and(|jobs| !row_of_any(row_key, jobs)) {
+            continue;
+        }
+        if row_code(row_key)
+            .and_then(job_named)
+            .is_some_and(|spec| spec.drive == Drive::Host)
+        {
             continue;
         }
         if runs_here_in_txn(vault, txn, row_key, here) {
@@ -278,7 +286,8 @@ impl Vault {
 
     /// Runs `job` about `subject` alone, now, whatever its due time: a support holder's repair
     /// of one sweep. The run answers a "run now". A start marker an interrupted run left counts
-    /// as its failure, and the job then runs. `None` when the job is not armed.
+    /// as its failure, and the job then runs. `None` when the job is not armed, or its host
+    /// drives it ([`Drive::Host`]).
     ///
     /// # Errors
     ///
@@ -289,6 +298,9 @@ impl Vault {
         subject: Option<EntityId>,
         pass: &JobPass<'_>,
     ) -> Result<Option<JobRun>> {
+        if job_named(job).is_some_and(|spec| spec.drive == Drive::Host) {
+            return Ok(None);
+        }
         let _pass = self
             .housekeeping
             .lock()
@@ -325,7 +337,7 @@ impl Vault {
     }
 
     /// When a stopped vault must run next for a job that wakes its host and that this node runs
-    /// ([`JobSpec::runs_here`]), or `None`.
+    /// ([`JobSpec::runs_here`]), or `None`. A row of a job its host drives counts as any other.
     ///
     /// # Errors
     ///

@@ -22,8 +22,12 @@
 //! whose handle goes before it ended (an erase takes the request, or the
 //! row settles another way) is owed its end: the host ends it on its next
 //! pass. The poll table keeps only
-//! the next poll time, the count and the last status: the session and the
-//! credential choice stay in the handle, which an erase forgets.
+//! the count and the last status: the session and the credential choice
+//! stay in the handle, which an erase forgets. A row's next poll is its row
+//! of [`REMOTE_TASK_POLL_JOB`] (DESIGN 15-setting-primitive, stage 5c-2),
+//! due at that second on the recording clock: the served host takes the due
+//! rows itself ([`Drive::Host`]), so no poll runs under the schedule's
+//! runner, and the row wakes a stopped vault for its poll.
 
 use std::fmt;
 
@@ -31,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use super::settlement::{RemoteTaskHandle, RemoteTaskObservation, intent_settlement_in_txn};
 use super::types::{FrozenOutboundCall, IntentLedgerError, IntentLedgerResult, IntentState};
+use crate::schedule::{ArmBy, Drive, JobSpec, Late, RETRY_FIRST_SECS, Trigger, When};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -46,6 +51,95 @@ const SESSION_ENDS: SideTable<[u8; 32], RemoteTaskSessionEnd, Named> =
 
 /// The shortest wait between two polls of one task: the host's own pass.
 pub const MIN_REMOTE_TASK_POLL_MS: u64 = 30_000;
+/// [`MIN_REMOTE_TASK_POLL_MS`] in the schedule's seconds.
+const MIN_REMOTE_TASK_POLL_SECS: u64 = MIN_REMOTE_TASK_POLL_MS / 1_000;
+
+/// A pollable Deferred row's next poll: one one-time row about the intent
+/// id's first 16 bytes, armed at the second its poll is due on the recording
+/// clock. Intents that share those bytes share the row, and each is polled
+/// once it is due. The served host takes the due rows itself ([`Drive::Host`],
+/// [`Vault::remote_tasks_due`]), so its network calls never run under the
+/// schedule's runner. Each poll re-arms the row; the writers that drop the
+/// poll row disarm it. It wakes a stopped vault.
+pub(crate) static REMOTE_TASK_POLL_JOB: JobSpec = JobSpec {
+    code: "outbound_intent_ledger.remote_task_poll",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: true,
+    at_open: false,
+    once_per_pass: true,
+    runs_here: crate::schedule::any_node,
+    drive: Drive::Host,
+    run: crate::schedule::host_takes_its_rows,
+};
+
+/// The schedule subject of row `intent`'s poll: the id's first 16 bytes.
+fn poll_subject(intent: &[u8; 32]) -> crate::Result<EntityId> {
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&intent[..16]);
+    EntityId::from_bytes(bytes)
+}
+
+/// Arms row `intent`'s next poll at `at`, a second on the recording clock,
+/// inside `wtxn`.
+fn arm_poll_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    intent: &[u8; 32],
+    at: u64,
+) -> crate::Result<()> {
+    crate::schedule::arm_in_txn(
+        &vault.store,
+        wtxn,
+        &REMOTE_TASK_POLL_JOB,
+        Some(poll_subject(intent)?),
+        Trigger::At { at },
+    )
+}
+
+/// Disarms row `intent`'s poll inside the `wtxn` that dropped its poll row,
+/// unless another poll row shares its subject.
+fn disarm_poll_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    intent: &[u8; 32],
+) -> crate::Result<()> {
+    let shared = POLLS
+        .iter_from(&vault.store, wtxn, &intent[..16])?
+        .next()
+        .is_some();
+    if shared {
+        return Ok(());
+    }
+    crate::schedule::disarm_in_txn(
+        &vault.store,
+        wtxn,
+        REMOTE_TASK_POLL_JOB.code,
+        Some(poll_subject(intent)?),
+    )
+    .map(drop)
+}
+
+/// Whether row `intent`'s poll is due at `now`, a second on the recording
+/// clock: its row's due time has come, or it has no row (a poll row an
+/// earlier build kept), which its poll's write then arms.
+fn poll_due_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &[u8; 32],
+    now: u64,
+) -> crate::Result<bool> {
+    Ok(crate::schedule::due_at_in_txn(
+        &vault.store,
+        txn,
+        REMOTE_TASK_POLL_JOB.code,
+        Some(poll_subject(intent)?),
+    )?
+    .is_none_or(|due| due <= now))
+}
 /// The longest wait a running task backs off to.
 const MAX_REMOTE_TASK_POLL_MS: u64 = 15 * 60 * 1_000;
 /// The longest status text kept.
@@ -184,10 +278,11 @@ pub enum RemoteTaskEnd {
     Unconfirmed,
 }
 
-/// One pollable row's place.
+/// One pollable row's place: its next poll is its schedule row
+/// ([`REMOTE_TASK_POLL_JOB`]); a row an earlier build kept with a
+/// `next_poll_ms` reads as before, that field left unread.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct RemoteTaskPollState {
-    next_poll_ms: u64,
     polls: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_status: Option<String>,
@@ -218,19 +313,19 @@ impl fmt::Debug for DueRemoteTask {
     }
 }
 
-/// When the first poll of a task the provider hinted `poll_after_secs` for
-/// is due.
-fn first_poll_ms(handle: &RemoteTaskHandle, now_ms: u64) -> u64 {
-    let after = handle
+/// How long after its deferral the first poll of a task the provider
+/// hinted `poll_after_secs` for is due, in seconds.
+fn first_poll_after_secs(handle: &RemoteTaskHandle) -> u64 {
+    handle
         .poll_after_secs
-        .map_or(MIN_REMOTE_TASK_POLL_MS, |secs| {
-            secs.saturating_mul(1_000).max(MIN_REMOTE_TASK_POLL_MS)
-        });
-    now_ms.saturating_add(after)
+        .map_or(MIN_REMOTE_TASK_POLL_SECS, |secs| {
+            secs.max(MIN_REMOTE_TASK_POLL_SECS)
+        })
 }
 
 /// In the writer that defers row `id` with `handle`: schedules its first
-/// poll, when the handle keeps how to poll it.
+/// poll, when the handle keeps how to poll it: its poll row, and its
+/// schedule row due then on the recording clock.
 ///
 /// # Errors
 /// Storage faults.
@@ -239,7 +334,6 @@ pub(crate) fn schedule_first_poll_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &[u8; 32],
     handle: &RemoteTaskHandle,
-    now_ms: u64,
 ) -> crate::Result<()> {
     if handle.poll.is_none() {
         return Ok(());
@@ -249,33 +343,37 @@ pub(crate) fn schedule_first_poll_in_txn(
         wtxn,
         id,
         &RemoteTaskPollState {
-            next_poll_ms: first_poll_ms(handle, now_ms),
             polls: 0,
             last_status: None,
         },
+    )?;
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    arm_poll_in_txn(
+        vault,
+        wtxn,
+        id,
+        now.saturating_add(first_poll_after_secs(handle)),
     )
 }
 
 impl Vault {
-    /// The Deferred sends whose tasks are due a poll at `now_ms`, at most
-    /// `limit`, each with its frozen call opened. A poll row whose ledger
-    /// row is gone, settled, or keeps no poll any more is dropped, in the
-    /// writer that forgets its task's parked question and stages the
-    /// retirement of its task-input subject whether or not a question
-    /// committed (FIX 16029); a row whose question cannot be forgotten now
-    /// stays for the next pass, so the intent is found again. The key
-    /// retirements are carried out after the commit.
+    /// The Deferred sends whose tasks are due a poll now, by their schedule
+    /// rows on the recording clock, at most `limit`, each with its frozen call
+    /// opened: the served host's due list of [`REMOTE_TASK_POLL_JOB`]. A poll
+    /// row whose ledger row is gone, settled, or keeps no poll any more is
+    /// dropped with its schedule row, in the writer that forgets its task's
+    /// parked question and stages the retirement of its task-input subject
+    /// whether or not a question committed (FIX 16029); a row whose question
+    /// cannot be forgotten now stays for the next pass, so the intent is
+    /// found again. The key retirements are carried out after the commit.
     ///
     /// # Errors
     /// Storage, row-codec and custody faults.
-    pub fn remote_tasks_due(
-        &self,
-        now_ms: u64,
-        limit: usize,
-    ) -> IntentLedgerResult<Vec<DueRemoteTask>> {
+    pub fn remote_tasks_due(&self, limit: usize) -> IntentLedgerResult<Vec<DueRemoteTask>> {
         let mut due = Vec::new();
         let mut stale = Vec::new();
         {
+            let now = self.now_recorded_at();
             let txn = self
                 .store
                 .env
@@ -291,7 +389,7 @@ impl Vault {
                     stale.push(id);
                     continue;
                 }
-                if state.next_poll_ms > now_ms || due.len() >= limit {
+                if due.len() >= limit || !poll_due_in_txn(self, &txn, &id, now)? {
                     continue;
                 }
                 let Some(handle) = intent_settlement_in_txn(self, &txn, &id)?.remote_task else {
@@ -336,6 +434,7 @@ impl Vault {
                         // polls had open: it is owed its end (FIX 16028).
                         keep_session_end_in_txn(self, txn, id)?;
                         POLLS.delete(&self.store, txn, id)?;
+                        disarm_poll_in_txn(self, txn, id)?;
                     }
                     Ok(withdrawn)
                 })?;
@@ -382,7 +481,8 @@ impl Vault {
     /// Records a poll that found row `intent`'s task still running, as
     /// `status`: its next poll waits the longer of the provider's hint
     /// (`poll_after_ms`) and a backoff that starts at the host's pass and
-    /// doubles with each poll up to fifteen minutes.
+    /// doubles with each poll up to fifteen minutes, counted from now on the
+    /// recording clock in whole seconds, and its schedule row is armed then.
     ///
     /// # Errors
     /// Storage faults.
@@ -391,7 +491,6 @@ impl Vault {
         intent: &[u8; 32],
         poll_after_ms: Option<u64>,
         status: &str,
-        now_ms: u64,
     ) -> IntentLedgerResult<()> {
         let mut status = status.to_owned();
         if status.len() > MAX_STATUS_BYTES || !status.bytes().all(|byte| byte.is_ascii_graphic()) {
@@ -406,38 +505,40 @@ impl Vault {
                 .saturating_mul(1_u64 << state.polls.min(5))
                 .min(MAX_REMOTE_TASK_POLL_MS);
             let after = backoff.max(poll_after_ms.unwrap_or(0));
-            state.next_poll_ms = now_ms.saturating_add(after);
             state.last_status = Some(status);
-            POLLS.put(&self.store, txn, intent, &state)
+            POLLS.put(&self.store, txn, intent, &state)?;
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            arm_poll_in_txn(self, txn, intent, now.saturating_add(after.div_ceil(1_000)))
         })?;
         Ok(())
     }
 
-    /// Makes the polls of `intents` due at `now_ms` (FIX 16029): each is a
-    /// task whose parked question the owner answered, which the host's next
-    /// pass drives to `tasks/result` however recently it last read the task.
-    /// The backoff of every other poll stays as it is; an intent with no
-    /// poll row, or one already due, changes nothing.
+    /// Makes the polls of `intents` due now (FIX 16029): each is a task
+    /// whose parked question the owner answered, which the host's next pass
+    /// drives to `tasks/result` however recently it last read the task. Its
+    /// schedule row is pulled to now. The backoff of every other poll stays
+    /// as it is; an intent with no poll row, or one already due, changes
+    /// nothing.
     ///
     /// # Errors
     /// Storage faults.
-    pub fn remote_task_polls_due_at(
-        &self,
-        intents: &[[u8; 32]],
-        now_ms: u64,
-    ) -> IntentLedgerResult<()> {
+    pub fn remote_task_polls_due_at(&self, intents: &[[u8; 32]]) -> IntentLedgerResult<()> {
         if intents.is_empty() {
             return Ok(());
         }
         self.with_write_txn_grouped(|txn| {
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             for intent in intents {
-                let Some(mut state) = POLLS.get(&self.store, txn, intent)? else {
+                if POLLS.get(&self.store, txn, intent)?.is_none() {
                     continue;
-                };
-                if state.next_poll_ms > now_ms {
-                    state.next_poll_ms = now_ms;
-                    POLLS.put(&self.store, txn, intent, &state)?;
                 }
+                crate::schedule::arm_at_latest_in_txn(
+                    &self.store,
+                    txn,
+                    &REMOTE_TASK_POLL_JOB,
+                    Some(poll_subject(intent)?),
+                    now,
+                )?;
             }
             Ok(())
         })?;
@@ -499,7 +600,7 @@ impl Vault {
     /// a completed task is the send's Done
     /// ([`Vault::settle_remote_outbound_task`]); any other end stops the send
     /// with its delivery uncertain and its reserved budget kept. Its poll row
-    /// goes, in the writer that forgets its parked question and its owner
+    /// and its schedule row go, in the writer that forgets its parked question and its owner
     /// Ask and stages the retirement of its task-input subject whether or
     /// not a question ever committed (FIX 16029); the Ask's waiters wake and
     /// the key retirement is carried out after that commit. A stop before
@@ -530,6 +631,7 @@ impl Vault {
         let withdrawn =
             self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<Option<u64>> {
                 POLLS.delete(&self.store, txn, intent)?;
+                disarm_poll_in_txn(self, txn, intent)?;
                 self.forget_input_in_txn(txn, intent)
             })?;
         if let Some(seq) = withdrawn {

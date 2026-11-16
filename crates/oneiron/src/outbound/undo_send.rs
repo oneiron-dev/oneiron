@@ -79,6 +79,7 @@ pub(crate) static UNDO_SEND_RELEASE_JOB: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_undo_send_release,
 };
 

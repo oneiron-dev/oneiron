@@ -57,6 +57,7 @@ macro_rules! deadline_jobs {
             at_open: false,
             once_per_pass: true,
             runs_here: crate::schedule::any_node,
+            drive: crate::schedule::Drive::Runner,
             run: run_deadline_job,
         };
     )*};
@@ -108,6 +109,7 @@ macro_rules! sweep_jobs {
             at_open: $at_open,
             once_per_pass: true,
             runs_here: crate::schedule::any_node,
+            drive: crate::schedule::Drive::Runner,
             run: run_sweep_job,
         };
     )*};
