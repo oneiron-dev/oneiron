@@ -58,6 +58,9 @@ pub struct RecallExecution<'a> {
     /// space's list beside the text index's.
     pub media: &'a [RecallMediaSeed<'a>],
     pub phonetic_codes: &'a [&'a str],
+    /// Names as heard or typed, whose phonetic codes the engine computes
+    /// ([`ContextPackBuilder::search_phonetic_mentions`](crate::context_pack::ContextPackBuilder::search_phonetic_mentions)).
+    pub phonetic_mentions: &'a [&'a str],
     /// Unix seconds the query's time words resolve against (`yesterday`
     /// is the day before it), and the clock recency ages from. `None` is now.
     pub as_of: Option<u64>,

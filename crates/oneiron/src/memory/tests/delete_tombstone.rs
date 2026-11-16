@@ -52,7 +52,7 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
         .into_iter()
         .find(|decision| decision.decision_id.to_hex() == request_id)
         .expect("deletion decision keyed by redaction request id");
-    assert_eq!(decision.outcome, "allow");
+    assert_eq!(decision.outcome, "approved");
     assert_eq!(decision.content_kind, "deletion");
     assert_eq!(decision.actor_class, "human");
     assert_eq!(decision.actor_ref.as_deref(), Some(actor_hex.as_str()));
