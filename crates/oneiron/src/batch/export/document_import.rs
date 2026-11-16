@@ -193,8 +193,7 @@ impl Vault {
         if actor.is_none() && owner.is_none() && archive.expressions {
             return Err(actor_required());
         }
-        let authority =
-            self.classify_vault_import_manifest(&archive.manifest.storage.to_json_pretty()?, None)?;
+        let authority = super::classify_vault_archive_manifest(self, &archive.manifest, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
         // Only the owner's restore brings back a MACHINE-signed claim, as the
