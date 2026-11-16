@@ -15,6 +15,12 @@
 //! request's bound: writing a request and reading its answer share one
 //! bound, and every wait ends within [`STOP_CHECK`] once the server stops.
 //!
+//! Each child leads a process group of its own. Stopping the child kills
+//! the group, whether the child itself has exited or not, so a process it
+//! started that kept its output open goes with it and the readers of that
+//! output end. A process that left the group (a session of its own) is not
+//! reached.
+//!
 //! The child starts with only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and
 //! `USER` of this process's environment (the MCP SDKs' default for a stdio
 //! server), its own `TMPDIR`, and the section's `env`. Nothing is presented
@@ -128,7 +134,7 @@ pub struct StdioStart<'a> {
 
 /// One running stdio connector child, its MCP session initialized.
 /// Dropping it closes its input, waits [`STOP_GRACE`] for it to exit, then
-/// kills and reaps it.
+/// kills its process group and reaps it.
 pub struct StdioChild {
     process: Child,
     /// Lines for the writer thread, which owns the child's input and closes
@@ -178,6 +184,9 @@ fn prepare_child(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // The child leads a process group of its own, which its stop kills.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(command, 0);
 }
 
 impl StdioChild {
@@ -476,9 +485,36 @@ impl StdioChild {
         zeroize_json(message);
     }
 
-    /// Whether the process is still running.
+    /// Whether the process is still running. It looks without reaping, so
+    /// the child's pid, and with it its process group's id, cannot be
+    /// reused before its drop has killed the group.
     fn running(&mut self) -> bool {
-        matches!(self.process.try_wait(), Ok(None))
+        #[cfg(unix)]
+        {
+            use rustix::process::{WaitId, WaitIdOptions, waitid};
+            let Some(group) = self.group() else {
+                return false;
+            };
+            let exited = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+            loop {
+                match waitid(WaitId::Pid(group), exited) {
+                    Err(rustix::io::Errno::INTR) => {}
+                    found => return matches!(found, Ok(None)),
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            matches!(self.process.try_wait(), Ok(None))
+        }
+    }
+
+    /// The child's pid, which is its process group's id.
+    #[cfg(unix)]
+    fn group(&self) -> Option<rustix::process::Pid> {
+        i32::try_from(self.process.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
     }
 }
 
@@ -494,6 +530,14 @@ impl Drop for StdioChild {
                 break;
             }
             thread::sleep(STOP_POLL);
+        }
+        // The whole group goes, whether the child has exited or not: a
+        // process it started that kept its output open would run on, and
+        // its readers here would wait for ever. The child is not reaped
+        // before this, so the group's id is still its own.
+        #[cfg(unix)]
+        if let Some(group) = self.group() {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
         }
         if self.running() {
             drop(self.process.kill());
