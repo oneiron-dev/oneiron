@@ -17,12 +17,7 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 use crate::voice_host::{ChatBrain, ChatBrainBindings, VoiceBrainOut};
 
-/// The seeded agent a call answers with, as the call's boot reads it.
-const DEFAULT_AGENT: &str = "sys.default";
-/// The cascade session the door's generation tokens name.
-const CASCADE_SESSION: u128 = 0x0e11_ca11;
-/// How long a turn may take to stop and settle.
-const TURN_PATIENCE: Duration = Duration::from_secs(60);
+use super::{CASCADE_SESSION, DEFAULT_AGENT, TURN_PATIENCE};
 
 /// A call heard in a room, held open by its brain.
 pub struct RoomTurnCall {
