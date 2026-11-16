@@ -31,6 +31,7 @@ mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
+mod attempt_retry;
 pub mod browser_planner;
 pub(crate) mod browser_program_admission;
 mod coach_browser_programs;
