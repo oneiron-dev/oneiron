@@ -172,8 +172,9 @@ impl SyncServer {
     /// `d:root` put rolls back the whole txn — never a new `d:root` over a
     /// stale/missing `ls:` mirror (which would let a revoked lease appear
     /// active at a replay door reading `ls:`). The `ls:` mirror derives from
-    /// the in-memory (already-committed) `root_doc`, not by re-reading the
-    /// staged `d:root`.
+    /// the root that txn writes: the in-memory (already-committed) `root_doc`,
+    /// joined with any op the stored root holds that it lacks (a device link's
+    /// client persisted it since this server's last merge).
     pub(super) fn commit_lease_changes(
         &self,
         changed: bool,
@@ -185,9 +186,7 @@ impl SyncServer {
         }
         self.root_doc.commit();
         if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {
-            server_state::persist_root_snapshot_in_txn(&self.vault, wtxn, &self.root_doc)?;
-            lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
-            Ok(())
+            server_state::persist_root_with_lease_mirror_in_txn(&self.vault, wtxn, &self.root_doc)
         }) {
             if let Err(revert_err) = self.root_doc.revert_to(frontiers_before) {
                 return Err(oneiron::Error::sync_engine_rollback(

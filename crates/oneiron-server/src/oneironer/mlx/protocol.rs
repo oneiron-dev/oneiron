@@ -351,6 +351,7 @@ impl Handshake {
                 spans: true,
                 links: false,
                 mood: false,
+                relations: false,
             },
             stack_sha16: Some(self.model.stack_sha16.clone()),
         }
