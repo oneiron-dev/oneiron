@@ -289,13 +289,24 @@ fn call_of(message: &TranscriptMessage) -> TestResult<&str> {
         .ok_or_else(|| "a kept row names its call".into())
 }
 
-/// The speaker field of `message`: its label and its PERSON, when it names one.
-fn speaker_of(message: &TranscriptMessage) -> TestResult<(&str, Option<&str>)> {
-    let speaker = message
-        .speaker
-        .as_ref()
+/// The speaker field of `message` as the transcript serves it: its label and its PERSON, when
+/// it names one. Read from the served JSON, so the red build (no speaker field yet) compiles
+/// and fails here.
+fn speaker_of(message: &TranscriptMessage) -> TestResult<(String, Option<String>)> {
+    let served = serde_json::to_value(message)?;
+    let speaker = served
+        .get("speaker")
         .ok_or("a kept turn of a keyed speaker names its speaker")?;
-    Ok((speaker.label.as_str(), speaker.person.as_deref()))
+    let label = speaker
+        .get("label")
+        .and_then(Value::as_str)
+        .ok_or("a served speaker names its label")?
+        .to_owned();
+    let person = speaker
+        .get("person")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Ok((label, person))
 }
 
 #[test]
@@ -327,6 +338,7 @@ fn a_bound_speaker_shows_the_persons_name_on_every_turn_of_the_call() -> TestRes
         for word in words {
             assert_eq!(word.role, "counterparty");
             let (label, person) = speaker_of(word)?;
+            let (label, person) = (label.as_str(), person.as_deref());
             assert_eq!(label, "Pam", "the turn shows the bound PERSON's name");
             assert_eq!(
                 person,
@@ -364,8 +376,10 @@ fn another_key_of_the_same_call_keeps_its_stored_label() -> TestResult {
         let page = fixture.transcript(room)?;
         let words = counterparty(&page);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!((label, person), ("Pam", Some(pam.to_hex()).as_deref()));
         let (label, person) = speaker_of(words[1])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Another speaker 2", None),
@@ -411,6 +425,7 @@ fn unbind_returns_the_stored_label_and_leaves_metadata_as_kept() -> TestResult {
         let words = counterparty(&page);
         assert_eq!(words.len(), 1);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Another speaker", None),
@@ -440,6 +455,7 @@ fn a_rebind_names_the_latest_person() -> TestResult {
         let page = fixture.transcript(room)?;
         let words = counterparty(&page);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Quinn", Some(quinn.to_hex()).as_deref()),
@@ -554,12 +570,14 @@ fn a_bind_names_only_its_own_call() -> TestResult {
         let page = fixture.transcript(room)?;
         let words = counterparty(&page);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Pam", Some(pam.to_hex()).as_deref()),
             "the bound call shows the name"
         );
         let (label, person) = speaker_of(words[1])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Another speaker", None),
@@ -653,6 +671,7 @@ fn a_merged_person_follows_its_head_and_an_erased_one_falls_back() -> TestResult
         let page = fixture.transcript(room)?;
         let words = counterparty(&page);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Quinn", Some(quinn.to_hex()).as_deref()),
@@ -667,6 +686,7 @@ fn a_merged_person_follows_its_head_and_an_erased_one_falls_back() -> TestResult
         let page = fixture.transcript(room)?;
         let words = counterparty(&page);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Another speaker", None),
@@ -706,6 +726,7 @@ fn a_phone_callers_speaker_binds() -> TestResult {
         let page = fixture.transcript(thread)?;
         let words = counterparty(&page);
         let (label, person) = speaker_of(words[0])?;
+        let (label, person) = (label.as_str(), person.as_deref());
         assert_eq!(
             (label, person),
             ("Pam", Some(pam.to_hex()).as_deref()),
