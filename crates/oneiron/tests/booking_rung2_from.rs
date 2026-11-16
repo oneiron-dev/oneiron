@@ -17,7 +17,9 @@
 
 use std::collections::BTreeMap;
 
-use oneiron::booking::agent_front::{ConstraintFrontConfig, constraint_no_fit};
+use oneiron::booking::agent_front::{
+    ConstraintFrontConfig, DEFAULT_MAX_OFFERED_SLOTS, constraint_no_fit,
+};
 use oneiron::booking::rung2::{
     BOOKING_RUNG2_SEND_REF_PREFIX, Rung2Offer, Rung2Sender, Rung2Unavailable, rung2_send_ref,
 };
@@ -274,6 +276,7 @@ fn event_type_config() -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -285,6 +288,7 @@ fn front(agent_ref: Option<EntityId>) -> ConstraintFrontConfig {
         slots_line: "These times work.".to_owned(),
         no_fit_line: NO_FIT_LINE.to_owned(),
         off_topic_line: "I can only help with scheduling.".to_owned(),
+        max_offered_slots: DEFAULT_MAX_OFFERED_SLOTS,
         max_turns: 4,
         max_model_calls: 4,
         agent_ref,
