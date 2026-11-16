@@ -866,39 +866,36 @@ pub(crate) fn remove_captures_best_effort(
     }
 }
 
-/// Removes the hold's `.clone` files the committed row does not name,
+/// Removes the named captures' files that the committed row does not name,
 /// ignoring every failure: a widen whose commit failed after its files were
-/// written. The hold's key stays.
-pub(crate) fn remove_unreferenced_captures_best_effort(vault: &Vault, hold: &EntityId) {
-    let Ok(store) = configured(vault) else {
+/// written. Only `captures`, the failed call's own: a concurrent widen of
+/// the same hold writes into the same directory, and its files are not
+/// this call's to judge. The hold's key stays.
+pub(crate) fn remove_unreferenced_captures_best_effort(
+    vault: &Vault,
+    hold: &EntityId,
+    captures: &[HoldCloneCapture],
+) {
+    if captures.is_empty() {
         return;
-    };
-    let dir = store.hold_dir(vault, hold);
+    }
     let Ok(txn) = vault.store.env.read_txn() else {
         return;
     };
-    let Ok(Some(row)) = crate::store::legal_hold::hold_in_txn(&vault.store, &txn, hold) else {
+    let Ok(row) = crate::store::legal_hold::hold_in_txn(&vault.store, &txn, hold) else {
         return;
     };
-    let kept: Vec<[u8; 16]> = row
-        .clone_captures
+    let unreferenced: Vec<HoldCloneCapture> = captures
         .iter()
-        .map(|capture| *capture.capture.as_bytes())
+        .filter(|capture| {
+            row.as_ref().is_none_or(|row| {
+                !row.clone_captures
+                    .iter()
+                    .any(|kept| kept.capture == capture.capture)
+            })
+        })
+        .copied()
         .collect();
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let stale = path.extension().is_some_and(|ext| ext == "clone")
-            && path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| {
-                    EntityId::from_hex(stem).is_ok_and(|id| !kept.contains(id.as_bytes()))
-                });
-        if stale {
-            let _ = fs::remove_file(&path);
-        }
-    }
+    drop(txn);
+    remove_captures_best_effort(vault, hold, &unreferenced);
 }
