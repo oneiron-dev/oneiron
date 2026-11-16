@@ -199,9 +199,11 @@ impl Vault {
     /// agent's and the engine's changes write the row on this install alone (RULING
     /// SETTING-7A-2-DECIDERS = A).
     ///
-    /// An equal value writes nothing over a row the owner, a person or an agent set. Over the
-    /// engine's row it writes, so the row becomes the caller's (DESIGN 1.6, the no-op test is on
-    /// the slot's own row); the engine's own equal value writes nothing.
+    /// An equal value writes nothing, but where the row changes hands: over the engine's row any
+    /// other caller's equal value writes (DESIGN 1.6, the no-op test is on the slot's own row),
+    /// and over any row the owner did not set the owner's does (FIX
+    /// SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW), so a non-owner's later move meets the owner's
+    /// row. Either way the row becomes the caller's. The engine's own equal value writes nothing.
     ///
     /// # Errors
     ///
@@ -397,16 +399,22 @@ fn set_in_txn(
     let readable = !matches!(prior, Some(None));
     let prior_row = prior.flatten();
     let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
-    // The no-op test is on the slot's own row (DESIGN 1.6, pass 15e F6): over the engine's row
-    // an equal value of another caller writes, and the row becomes that caller's.
-    let over_engine_row = prior_row
-        .as_ref()
-        .is_some_and(|row| matches!(row.setter, Setter::Engine { .. }))
-        && !matches!(caller, SettingCaller::Engine(_));
+    // The no-op test is on the slot's own row (DESIGN 1.6, pass 15e F6): an equal value writes
+    // where the row changes hands, and the row becomes the caller's. Over the engine's row any
+    // other caller's does; over a row the owner did not set (a holder's, a subject's, a standing
+    // approval's, an approved check-in's) the owner's does, so a later move of a non-owner meets
+    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
+    let setter_changes = prior_row.as_ref().is_some_and(|row| match caller {
+        SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
+        SettingCaller::Agent(_) | SettingCaller::Person(_) => {
+            matches!(row.setter, Setter::Engine { .. })
+        }
+        SettingCaller::Engine(_) => false,
+    });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
     let unchanged = readable
-        && !over_engine_row
+        && !setter_changes
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
