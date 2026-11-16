@@ -545,7 +545,7 @@ mod tests;
 pub(crate) struct MeshLlm(pub(crate) Arc<SyncServer>);
 
 #[cfg(feature = "mesh")]
-impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
+impl oneiron_llm::oneiron_rpc::LlmMeshHandler for MeshLlm {
     fn serves(&self, model: &oneiron::ModelId) -> bool {
         self.0.llm.is_some() && self.0.ai.model_locality(model).is_some()
     }
@@ -592,7 +592,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
             .ai
             .chat_catalog()
             .into_iter()
-            .filter(|entry| oneiron_llm_own_server::advertises(entry.locality))
+            .filter(|entry| oneiron_llm::oneiron_rpc::advertises(entry.locality))
             .collect()
     }
 }
