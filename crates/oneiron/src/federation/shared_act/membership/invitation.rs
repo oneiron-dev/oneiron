@@ -40,7 +40,8 @@ pub struct SharedInvitation {
     pub id: String,
     #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
-    /// The PERSON whose `add_member` power issued it, hex.
+    /// The PERSON whose `add_member` power issued it, hex; the erased marker
+    /// (`receipt::ERASED_CALL_IDENTITY`) once a hard erase took them out.
     pub inviter: String,
     /// The PERSON it admits, hex.
     pub invitee: String,
@@ -258,6 +259,8 @@ impl Vault {
     /// Whether `member` holds an open invitation to `vault_id`: pending and
     /// not expired at `now`. The `add_member` effect refuses while one
     /// stands, and so does a Steward's ask to add them (review of #6917).
+    /// One whose inviter a hard erase scrubbed can no longer be accepted, so
+    /// it does not stand: a live `add_member` holder may invite them again.
     pub(in crate::federation::shared_act) fn open_invitation_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -271,6 +274,7 @@ impl Vault {
             .any(|open| {
                 open.state == SharedInvitationState::Pending
                     && !oneiron_store::expiry::is_expired(now, open.expires_at)
+                    && open.inviter != ERASED_CALL_IDENTITY
             }))
     }
 

@@ -1,7 +1,8 @@
 //! The shared-vault invitation rows, for the invitation actor-erase test:
 //! the invitation and invitation-key rows that hold a person's id, and the
-//! key row an invitee's own credential binds, which the test writes as
-//! `Vault::mint_invitation_slip` does.
+//! key row an invitee binds, which the test writes in the form an owner's
+//! invitation pairing code leaves (`Vault::redeem_invitation_link_in_txn`: a
+//! key with no source slip).
 
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
@@ -34,9 +35,8 @@ pub fn rows_naming(vault: &Vault, person: EntityId) -> Result<Vec<String>> {
     Ok(found)
 }
 
-/// Binds `invitee`'s invitation `invitation_id` to `holder_key`: the row
-/// `Vault::mint_invitation_slip` writes for a key the invitee's own
-/// credential proved, here with no source slip.
+/// Binds `invitee`'s invitation `invitation_id` to `holder_key`, with no
+/// source slip, as a redeemed invitation pairing code binds it.
 ///
 /// # Errors
 /// A malformed invitation id, or the write's.
