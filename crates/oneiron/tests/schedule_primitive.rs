@@ -7,7 +7,9 @@
 //!   and never an engine job, which only the engine arms;
 //! - "run now" makes a job due at once; the housekeeping pass runs due jobs, and a stopped
 //!   vault's wake time reads the first due job that wakes its host;
-//! - a wall-clock job is due at its next occurrence in its zone; an unknown zone is refused.
+//! - a wall-clock job is due at its next occurrence in its zone; an unknown zone is refused;
+//! - an interval keeps its grid through a run now, a retry and a paged run; a run's result lands
+//!   only on the row it started on; a restore rebuilds the due index (review round 1 of #8026).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test schedule_primitive`.
 #![cfg(oneiron_test_support)]
@@ -24,7 +26,8 @@ use oneiron::memory::Memory;
 use oneiron::schedule::{JobOutcome, Trigger};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::schedule::{arm_as_engine, runs};
+use oneiron::test_doors::schedule::{TEST_REARM_AFTER_SECS, arm_as_engine, runs};
+use oneiron::test_doors::steward::open_owner_carrier_vault;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -425,4 +428,153 @@ fn a_wall_clock_job_is_due_at_its_next_occurrence_in_its_zone() {
             json!({ "kind": "civil", "hour": 9, "minute": 0, "zone": "Mars/Olympus" }),
         ),
     );
+}
+
+/// A run now, a retry and a paged run each serve an occurrence and never move the interval's
+/// grid: the next occurrence is counted from the one served (review round 1 of #8026, P1 on
+/// `run.rs:310`). Red before the fix: each counted from the run's own due time, so a run now at
+/// half past skipped the next hour's run, and a retry or a late paged run shifted every later one.
+#[test]
+fn an_interval_keeps_its_grid_through_a_run_now_a_retry_and_a_paged_run() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let hourly = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.count",
+            hourly,
+            json!({ "kind": "every", "secs": HOUR, "first_at": T0 }),
+        ),
+    );
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    fx.at(T0 + HOUR / 2);
+    let asked = call(
+        &me,
+        RUN,
+        json!({ "job": "test.count", "subject": hourly.to_hex() }),
+    );
+    assert_eq!(asked["due_at"], json!(T0 + HOUR / 2), "{asked}");
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(runs("test.count", Some(hourly)), 2);
+    assert_eq!(
+        fx.view("test.count", hourly).expect("armed")["due_at"],
+        json!(T0 + HOUR),
+        "a run now leaves the next occurrence where it was"
+    );
+
+    let flaky = EntityId::now();
+    call(&me, ARM, arm("test.fail_once", flaky, every(HOUR)));
+    assert!(matches!(fx.run_due()[..], [JobOutcome::Failed { .. }]));
+    assert_eq!(
+        fx.view("test.fail_once", flaky).expect("armed")["due_at"],
+        json!(T0 + HOUR / 2 + 60),
+        "the retry is due a minute on"
+    );
+    fx.at(T0 + HOUR / 2 + 60);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    let retried = fx.view("test.fail_once", flaky).expect("armed");
+    assert_eq!(
+        retried["due_at"],
+        json!(T0 + HOUR / 2 + HOUR),
+        "a retry serves its occurrence and leaves the grid where it was"
+    );
+    assert_eq!(retried["failures"], json!(0));
+
+    let paged = EntityId::now();
+    call(
+        &me,
+        ARM,
+        arm(
+            "test.paged",
+            paged,
+            json!({ "kind": "every", "secs": HOUR, "first_at": T0 }),
+        ),
+    );
+    assert_eq!(
+        fx.run_due(),
+        vec![JobOutcome::More, JobOutcome::More, JobOutcome::Done]
+    );
+    assert_eq!(
+        fx.view("test.paged", paged).expect("armed")["due_at"],
+        json!(T0 + HOUR),
+        "a late paged run serves the occurrence it started on"
+    );
+}
+
+/// A row armed again while its run runs keeps the new arming, and runs then: the run's result
+/// write lands only on the row the run started on (review round 1 of #8026, P1 on `run.rs:192`).
+/// Here the test job's first run arms its own row an hour on, in its own write, and answers done,
+/// which ends the deadline it started on. Red before the fix: that answer took the new arming too,
+/// and the row went.
+#[test]
+fn a_row_armed_again_while_its_run_runs_keeps_its_new_arming() {
+    const JOB: &str = "test.rearm";
+    let fx = Fixture::rooted();
+    let subject = EntityId::now();
+    arm_as_engine(&fx.vault, JOB, Some(subject), Trigger::At { at: T0 + 10 }).expect("armed");
+
+    fx.at(T0 + 10);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(runs(JOB, Some(subject)), 1, "the row ran at its due time");
+    assert_eq!(
+        fx.view(JOB, subject)
+            .expect("the arming its run made stands")["due_at"],
+        json!(T0 + 10 + TEST_REARM_AFTER_SECS)
+    );
+
+    fx.at(T0 + 10 + TEST_REARM_AFTER_SECS);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done]);
+    assert_eq!(
+        runs(JOB, Some(subject)),
+        2,
+        "the new arming ran at its time"
+    );
+    assert!(
+        fx.view(JOB, subject).is_none(),
+        "the second run ended the row it started on"
+    );
+}
+
+/// A restore lands the armed rows and rebuilds their due index from them, so an armed job still
+/// runs on the restored vault (review round 1 of #8026, P1 on `tables.rs:15`). Red before the fix:
+/// the copy held the row, but its due index, which no image carries, was empty, and the runner
+/// never found the job.
+#[test]
+fn a_restore_rebuilds_the_due_index_so_an_armed_job_still_runs() {
+    let directory = oneiron::test_support::restore_tempdir();
+    let live = open_owner_carrier_vault(&directory.path().join("vault")).expect("owner vault");
+    live.ensure_vault_key().expect("mint the vault data key");
+    let key = live.checkpoint_key().expect("derive the checkpoint key");
+    let subject = EntityId::now();
+    arm_as_engine(&live, "test.count", Some(subject), Trigger::At { at: 1 })
+        .expect("the engine arms a passed deadline");
+    let image = directory.path().join("image");
+    live.snapshot_checkpoint(&image, 100)
+        .expect("snapshot with the job armed");
+    assert_eq!(runs("test.count", Some(subject)), 0, "nothing ran it yet");
+
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &key,
+        &directory.path().join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .expect("restore the checkpoint over the live vault");
+    let outcomes: Vec<JobOutcome> = copy
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("the runner on the copy")
+        .runs
+        .into_iter()
+        .map(|run| run.outcome)
+        .collect();
+    assert_eq!(
+        outcomes,
+        vec![JobOutcome::Done],
+        "the copy's runner finds the armed job"
+    );
+    assert_eq!(runs("test.count", Some(subject)), 1);
 }
