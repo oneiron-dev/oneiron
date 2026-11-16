@@ -506,3 +506,30 @@ fn reads_equality_and_serde_need_no_clone_of_the_value() {
         assert_eq!(format!("{decoded:?}"), format!("{holder:?}"));
     }
 }
+
+#[test]
+fn modify_stores_only_a_changed_value() {
+    for count in [3, 100] {
+        let (mut map, mut reference) = map_of(count);
+        let shared = map.clone();
+        assert!(map.modify(&1, |value| *value = reference[&1]));
+        assert!(
+            map.ptr_eq(&shared),
+            "an unchanged value copies nothing ({count})"
+        );
+        map.modify_or_default(1, |value| *value = reference[&1]);
+        assert!(
+            map.ptr_eq(&shared),
+            "an unchanged value copies nothing ({count})"
+        );
+        assert!(!map.modify(&KEY_SPACE, |value| *value = 9));
+        assert!(map.ptr_eq(&shared), "a missing key runs nothing ({count})");
+        assert!(map.modify(&1, |value| *value = value.wrapping_add(1)));
+        reference.insert(1, reference[&1].wrapping_add(1));
+        assert!(!map.ptr_eq(&shared));
+        map.modify_or_default(KEY_SPACE, |_| {});
+        reference.insert(KEY_SPACE, 0);
+        assert_map_matches(&map, &reference);
+        assert_eq!(shared.get(&KEY_SPACE), None, "the clone sees no write");
+    }
+}

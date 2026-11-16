@@ -23,7 +23,9 @@
 //! A map holds each value behind an `Arc`, so a copied node copies pointers,
 //! not values; `get_mut` and the entry API copy a shared value on write.
 //! `insert` skips a write whose stored value is already equal, so re-inserting
-//! an unchanged entry copies nothing.
+//! an unchanged entry copies nothing; `PersistentMap::modify` and
+//! `PersistentMap::modify_or_default` change a copy of a value and store it
+//! the same way, for merges that leave most values as they were.
 
 mod map;
 mod set;

@@ -253,12 +253,51 @@ impl<K: Ord + Clone, V: Clone> PersistentMap<K, V> {
         removed.map(|(key, value)| (key, Arc::unwrap_or_clone(value)))
     }
 
+    /// As `BTreeMap::entry`. An occupied entry that hands out `&mut V`
+    /// copies the key's path even when the caller leaves the value as it
+    /// was; [`Self::modify`] and [`Self::modify_or_default`] copy nothing
+    /// then.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         if self.contains_key(&key) {
             Entry::Occupied(OccupiedEntry { map: self, key })
         } else {
             Entry::Vacant(VacantEntry { map: self, key })
         }
+    }
+
+    /// As `if let Some(value) = map.get_mut(key) { change(value) }`, except
+    /// that `change` runs on a copy of the value, which is stored only when
+    /// it differs from the stored one: a change that leaves the value equal
+    /// copies nothing. False, with nothing run, when the map lacks `key`.
+    pub fn modify<Q, F>(&mut self, key: &Q, change: F) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+        F: FnOnce(&mut V),
+        V: PartialEq,
+    {
+        let Some((stored_key, stored)) = self.get_key_value(key) else {
+            return false;
+        };
+        let stored_key = stored_key.clone();
+        let mut value = stored.clone();
+        change(&mut value);
+        self.insert(stored_key, value);
+        true
+    }
+
+    /// As `change(map.entry(key).or_default())`, except that `change` runs
+    /// on a copy of the value (or of `V::default()` when the map lacks
+    /// `key`), which is stored only when it differs from the stored one. A
+    /// missing key is always stored, as `or_default` stores it.
+    pub fn modify_or_default<F>(&mut self, key: K, change: F)
+    where
+        F: FnOnce(&mut V),
+        V: Default + PartialEq,
+    {
+        let mut value = self.get(&key).cloned().unwrap_or_default();
+        change(&mut value);
+        self.insert(key, value);
     }
 
     /// Keeps the entries `keep` accepts. Unlike `BTreeMap::retain`, `keep`
