@@ -15,7 +15,6 @@ use std::time::Duration;
 use oneiron::booking::SessionKey;
 use tokio::time::Instant;
 
-use super::admission::retry_after;
 use crate::api::booking_anti_abuse::{BookingHttpDisposition, SESSION_HOLD_RETRY_SECS};
 use crate::error::ApiError;
 use crate::server::{LinePlace, SyncServer};
@@ -76,7 +75,7 @@ impl<'a> Turn<'a> {
                 self.server
                     .booking_turn_lines
                     .try_join(window)
-                    .ok_or_else(|| retry_after(SESSION_HOLD_RETRY_SECS))?,
+                    .ok_or_else(line_busy)?,
             );
             return Ok(());
         }
@@ -130,6 +129,23 @@ impl<'a> Turn<'a> {
         }
         Ok(None)
     }
+}
+
+/// A busy line's answer to an anonymous hold: the typed answer admission
+/// gives an anonymous request past a window (`admission_short_circuit`,
+/// `booking_retry_after_<n>s`, ARCH-0062 #rate-wait-built), byte for byte,
+/// with the session hold cap's own hint. Nothing was spent.
+fn line_busy() -> ApiError {
+    let seconds = SESSION_HOLD_RETRY_SECS;
+    ApiError::new(
+        format!("booking admission is rate limited; retry after {seconds} seconds"),
+        crate::error::ApiErrorDetails::InvalidState {
+            state: Some(format!("booking_retry_after_{seconds}s")),
+        },
+        [format!(
+            "Wait {seconds} seconds before retrying this booking request."
+        )],
+    )
 }
 
 /// The deadline came before the window opened for this request. Nothing was
