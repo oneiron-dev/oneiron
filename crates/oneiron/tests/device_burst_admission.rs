@@ -7,8 +7,8 @@
 //! (its Write credential's slip expired or revoked since) ends
 //! `StaleAuthority` and is never handed back. So does one whose slip still
 //! stands but whose write authority changed since it was held: its grant
-//! narrowed in place, or a world kept off its device
-//! (BURST-REPLAY-SKIPS-ROW-ADMISSION).
+//! narrowed in place, another grant it may write under expired, or a world
+//! kept off its device (BURST-REPLAY-SKIPS-ROW-ADMISSION).
 //!
 //! The last test reads a receipt stored before own devices had receipts
 //! through the ledger's door (the lead's M-1 STORED-CHANGE-RULE, Engine
@@ -434,6 +434,52 @@ fn a_held_burst_ends_stale_once_its_grant_narrows_in_place() -> TestResult {
     assert!(
         due.is_empty(),
         "a burst held under a grant narrowed since is not handed back: {due:?}"
+    );
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::StaleAuthority
+    );
+    Ok(())
+}
+
+#[test]
+fn a_held_burst_ends_stale_once_another_residence_grant_of_its_holder_expires() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let owner = home.vault.ensure_embedded_owner_actor()?;
+    // The own-device grant the device's slip names. It never expires.
+    let named_id = EntityId::now();
+    let named = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+    );
+    put_selector_test_federation_grant(&home.vault, &named_id, &named, NOW)?;
+    // A second grant of the slip's holder under the residence scope, which
+    // the device's selector may name instead of the slip's: a Delegate
+    // grant that ends at NOW + 1.
+    let delegate_id = EntityId::now();
+    let mut delegate = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Delegate,
+        FederationGrantPreset::Delegate,
+    );
+    delegate.expires_at = Some(NOW + 1);
+    put_selector_test_federation_grant(&home.vault, &delegate_id, &delegate, NOW)?;
+    let slip = [0x45; 32];
+    home.mint_slip_under(slip, 3_600, Some(named_id))?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    let batch_ref = home.hold_burst(&device)?;
+
+    // Two seconds on, the device's rate is back at its baseline and the
+    // Delegate grant has ended. No row changed and the slip still stands,
+    // but a write held under that grant no longer does.
+    home.clock.set(NOW + 2);
+    let due = ready_device_work(&home.vault)?;
+    assert!(
+        due.is_empty(),
+        "a burst held under a grant that has expired since is not handed back: {due:?}"
     );
     assert_eq!(
         home.receipt_of(&device, &batch_ref)?.state,
