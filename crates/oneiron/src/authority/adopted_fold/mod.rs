@@ -612,8 +612,8 @@ fn serial_fold_past(
             .count()
             == 1
     } else if settle::serial_machine_op(&entry.op) {
-        !matches!(entry.signer_key(), AuthorityKey::Ed25519(key)
-            if image.aggregate.merged.root_anchors.contains_key(key))
+        // RED PIN: the anchor-signer refusal removed, to show the anchor mark test pins it.
+        true
     } else {
         settle::folds_rejected_op(image, entry)
             && !tail
