@@ -105,9 +105,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
         sources.craft(&craft.entries);
     }
     let system_end = messages.len();
-    // FIX 4465 D: a self agent on its live fork reads its log from the
-    // retained ledger, as the caller reads it where it sits; every other
-    // turn takes the caller's lines as before.
+    // FIX 4465 D: a self agent reads its log from the retained ledger on
+    // every self row (L10-33), as the caller reads it where it sits; every
+    // other turn takes the caller's lines as before.
     let self_reader = || match auth.principal_ref() {
         Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
         None => vault.memory(actor, class),

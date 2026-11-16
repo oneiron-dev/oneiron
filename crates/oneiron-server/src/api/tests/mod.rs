@@ -2,6 +2,7 @@ use super::*;
 
 mod agent_definition_doors;
 mod ai_chat;
+mod ai_chat_self_compaction;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -33,6 +34,7 @@ mod companion;
 mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
+mod context_pack_phonetic_vector;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
