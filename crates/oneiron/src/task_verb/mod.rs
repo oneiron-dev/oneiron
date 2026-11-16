@@ -7,6 +7,7 @@ mod ask_band;
 mod ask_effect;
 mod ask_facade;
 mod ask_forward;
+mod ask_guard;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
@@ -409,6 +410,8 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_record::ask_group_route;
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use fanout_launch::launch_override_actors_in_txn;

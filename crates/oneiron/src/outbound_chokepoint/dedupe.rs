@@ -7,10 +7,14 @@ use crate::outbound_intent_ledger::{
 };
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
+use super::setting_keys::DEDUPE_COOLDOWN;
 use super::types::PreparedEffect;
 
-// Initial safety floor. Tuning belongs to OF-327; this is not a provider rate limit.
-const DEDUPE_COOLDOWN_S: u64 = 86_400;
+// The semantic cooldown is the owner's `outbound.dedupe.cooldown_secs` (24
+// hours by default, one hour at the least: it tunes the window, never turns
+// the dedupe off; RESTRICTION-WAVE-6-CANON-ROWS C64 = A). One vault value, so
+// it applies uniformly whatever fires the send (ARCH-0046). This is not a
+// provider rate limit.
 const PREFIX: &[u8] = b"outbound:dedupe:v1:";
 const RESERVATION: SideTable<[u8; 32], Reservation, Raw> =
     SideTable::new(&side_table::OUTBOUND_DEDUPE_RESERVATION);
@@ -137,10 +141,11 @@ pub(super) fn blocked(
     // An uncertain/in-flight attempt cannot be released by elapsed time.
     // A definite no-wire result can be replaced after the provisional window,
     // but its old replay is fenced under that same writer lock (below).
-    Ok(
-        (record.state == IntentState::Pending && record.recorded_outcome.is_none())
-            || now_s < stamped_at.saturating_add(DEDUPE_COOLDOWN_S),
-    )
+    if record.state == IntentState::Pending && record.recorded_outcome.is_none() {
+        return Ok(true);
+    }
+    let cooldown = DEDUPE_COOLDOWN.read_in_txn(vault, txn, &[], None)?.value.0;
+    Ok(now_s < stamped_at.saturating_add(cooldown))
 }
 
 pub(super) fn dedupe_key(prepared: &PreparedEffect) -> Result<Option<Vec<u8>>, IntentLedgerError> {
@@ -273,4 +278,63 @@ pub(crate) fn touch_inflight(vault: &Vault, id: &IntentId) -> Result<(), IntentL
     )?;
     txn.commit().map_err(crate::error::Error::from)?;
     crate::outbound_intent_ledger::force_sync(vault)
+}
+
+/// Test seam (`--cfg oneiron_test_support`): whether a new send is suppressed
+/// whose dedupe key an earlier send reserved `reserved_secs_ago` seconds
+/// before the vault's clock reads now. The earlier send is one settled
+/// ledger row holding that key's reservation, as admission keeps one; the
+/// write is never committed.
+#[cfg(oneiron_test_support)]
+pub(crate) fn resend_blocked_after(
+    vault: &Vault,
+    reserved_secs_ago: u64,
+) -> Result<bool, IntentLedgerError> {
+    use crate::outbound_intent_ledger::{
+        BudgetChargeMarker, IntentEscalationReason, IntentLedgerRecord, LedgerPayloadContext,
+        OutboundCallRequest, RecordedOutboundOutcome, insert_suppressed_in_txn,
+        stored_admission_in_txn,
+    };
+
+    let mut key = PREFIX.to_vec();
+    key.extend_from_slice(&[0x64; 32]);
+    let now_s = vault.store.clock.now_recorded_at();
+    let now_ms = now_s.saturating_mul(1000);
+    let request = OutboundCallRequest::new(
+        crate::attempt_queue::AttemptId::now(),
+        0,
+        "mail",
+        "send",
+        b"{}".to_vec(),
+        now_ms,
+    );
+    let mut earlier = IntentLedgerRecord::pending(
+        request,
+        false,
+        BudgetChargeMarker {
+            key_ref: None,
+            budget_class: crate::connector_key::budget_class::BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: now_ms,
+        },
+    )?;
+    earlier.state = IntentState::Abandoned;
+    earlier.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+        IntentEscalationReason::DedupeSuppressed,
+    ));
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let stored =
+        stored_admission_in_txn(vault, &mut wtxn, &earlier, &LedgerPayloadContext::default())?;
+    insert_suppressed_in_txn(vault, &mut wtxn, &stored)?;
+    reserve(
+        vault,
+        &mut wtxn,
+        &key,
+        &stored.id,
+        now_s.saturating_sub(reserved_secs_ago),
+    )?;
+    let suppressed = blocked(vault, &wtxn, &key, now_s)?;
+    wtxn.abort();
+    Ok(suppressed)
 }

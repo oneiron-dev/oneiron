@@ -336,7 +336,9 @@ impl Vault {
     ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
         // A custody record a host presented for an earlier send is never
         // this pass's; the record and grant this call names are its own.
+        // Nor is the session manifest of a runner an earlier send went to.
         drop(host.take_sent_custody());
+        drop(host.take_session_manifest());
         // A pass ends a call's budget wait; this pass's step names any new
         // one (FIX 8686).
         let was_paced = pending.paced_until.take().is_some();
@@ -463,6 +465,7 @@ impl Vault {
                     result,
                     result_absence,
                     budget_steering,
+                    session_manifest: host.take_session_manifest(),
                 };
                 settle(
                     call_ref,
