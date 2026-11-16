@@ -12,6 +12,10 @@ crate::side_table::side_tables! {
     /// Owner-installed ICS feed configuration and last public completion. Key: system name.
     CALENDAR_ICS_FEED_CONFIG: VaultMeta b"calendar.ics-feed-config.v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// CAL-02 import consent of one installed ICS feed: its first poll's open review, or the
+    /// owner's decision on it. Key: system name.
+    CALENDAR_ICS_FEED_CONSENT: VaultMeta b"calendar.ics-feed-consent.v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Per-feed poll cursor. Key: bytes32.
     CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_ics_feed_cursor_accepts_masked]
         [restore: content] [family: unclassified] [tier: canonical];
