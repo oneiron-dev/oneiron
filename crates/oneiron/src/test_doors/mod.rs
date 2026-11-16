@@ -15,6 +15,7 @@ pub mod authority_world_undo;
 pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod booking_side_table_rows;
+pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
 pub mod callable_skill;
 pub mod campaign_member_index;
