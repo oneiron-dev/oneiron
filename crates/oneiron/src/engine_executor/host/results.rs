@@ -700,9 +700,19 @@ impl RecordingJsHost<'_, '_> {
             ));
         };
         // A scoped child reads the chunk only before its live cutoff,
-        // checked again before the chunk is released (FIX 8233).
+        // checked again before the chunk is released (FIX 8233). The read
+        // carries the cutoff too, so building a redacted view (a read of
+        // the whole body) stops at it, and answers this read's refusal.
+        let read = read.with_live_cutoff(self.live_cutoff());
         self.check_live_cutoff("stored result")?;
-        let Some(bytes) = read.read_shown(storage, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)? else {
+        let shown = match read.read_shown(storage, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES) {
+            Ok(shown) => shown,
+            Err(error) => {
+                self.check_live_cutoff("stored result")?;
+                return Err(error);
+            }
+        };
+        let Some(bytes) = shown else {
             return Err(Error::InvalidConfig(
                 "stored result read refused: tainted".into(),
             ));
