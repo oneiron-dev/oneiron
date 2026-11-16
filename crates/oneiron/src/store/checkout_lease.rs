@@ -50,15 +50,7 @@ impl SideKey for CheckoutId {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        if text.len() != 32 {
-            return None;
-        }
-        let mut out = [0_u8; 16];
-        for (index, byte) in out.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
-        }
-        Self::from_bytes(out).ok()
+        Self::from_bytes(oneiron_hex::decode::<16>(std::str::from_utf8(bytes).ok()?)?).ok()
     }
 }
 impl FixedSideKey for CheckoutId {

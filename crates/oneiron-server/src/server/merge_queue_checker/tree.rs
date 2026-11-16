@@ -144,9 +144,5 @@ fn observed_mode(mode: u32) -> u32 {
 
 /// Lowercase hex of `bytes`.
 pub(super) fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut text, byte| {
-        let _ = write!(text, "{byte:02x}");
-        text
-    })
+    oneiron_hex::encode(bytes)
 }
