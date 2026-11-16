@@ -3,6 +3,9 @@
 //! Phonetic Distance (cut 0.2, keep within 1.2× the nearest, at most 10),
 //! and a sound match only adds to an exact code's score. Every door here is
 //! on main, so at the base the file builds and its reds are run-time reds.
+//! The made_by case stamps births through a test door: run the file with
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test phonetic_g2p_npd`.
 
 use oneiron::batch::generate_phonetic_codes;
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
@@ -30,7 +33,7 @@ impl Fixture {
                 entity_type,
                 TimeRange { start: 1, end: 1 },
                 1,
-                &rmp_serde::to_vec_named(&serde_json::json!({ "name": name })).expect("body"),
+                &name_body(name),
             )
             .expect("put the entity");
         id
@@ -61,6 +64,11 @@ impl Fixture {
             .map(|row| row.id)
             .collect()
     }
+}
+
+/// An entity body named `name`.
+fn name_body(name: &str) -> Vec<u8> {
+    rmp_serde::to_vec_named(&serde_json::json!({ "name": name })).expect("body")
 }
 
 /// Only the sound keys among the codes of `name`.
@@ -168,4 +176,52 @@ fn a_sound_the_call_cannot_see_sets_no_cut() {
         "the exact sound cuts a near one it can see"
     );
     assert_eq!(fixture.phonetic_of_types(&query, people), [sato]);
+}
+
+/// Review #8107 round 2: the call's made_by predicate decides inside the cut
+/// too. A concluded PERSON holding the query's exact sound is outside a
+/// stated-only call, so it sets no nearest distance, and the stated person
+/// one sound off is still found. Before, the concluded exact sound cut the
+/// stated person, then the post-blend made_by filter dropped it: no hit.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_sound_the_made_by_predicate_drops_sets_no_cut() {
+    use oneiron::test_doors::sound_match_birth::put_born;
+    use oneiron::write_envelope::provenance::made_by::{MadeByClass, MadeByPredicate};
+
+    let fixture = fixture();
+    let born = |name: &str, class: MadeByClass, inputs: &[EntityId]| {
+        put_born(
+            &fixture.vault,
+            ENTITY_TYPE_PERSON,
+            &name_body(name),
+            class,
+            inputs,
+        )
+        .expect("put the born person")
+    };
+    let stated = |codes: &[String]| -> Vec<EntityId> {
+        let codes: Vec<&str> = codes.iter().map(String::as_str).collect();
+        fixture
+            .vault
+            .query()
+            .search_phonetic(&codes)
+            .made_by(MadeByPredicate::Stated)
+            .limit(20)
+            .run()
+            .expect("phonetic query")
+            .into_iter()
+            .map(|row| row.id)
+            .collect()
+    };
+    let sato = born("さとう", MadeByClass::Stated, &[]);
+    let query = sound_keys("Sadou");
+    assert_eq!(stated(&query), [sato]);
+    let sadou = born("Sadou", MadeByClass::Concluded, &[sato]);
+    assert_eq!(
+        fixture.phonetic(&query),
+        [sadou],
+        "the exact sound cuts a near one the call keeps"
+    );
+    assert_eq!(stated(&query), [sato]);
 }

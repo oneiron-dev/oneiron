@@ -179,6 +179,28 @@ pub(super) fn import_claim_gate_decisions_for_scores(
     }
 }
 
+/// Whether the call's `made_by` predicate admits `id` (Rule A, OF-466): a
+/// row's stamped birth names its class; a row with none falls back to its
+/// claim's source, which `claim_class` reads only then. Unknown never
+/// matches. The post-blend filter and the sound match's cut both ask here,
+/// so a row the call drops sets no cut it then leaves (review #8107).
+pub(super) fn made_by_admits(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    predicate: crate::provenance::made_by::MadeByPredicate,
+    claim_class: impl FnOnce() -> Result<Option<crate::provenance::made_by::MadeByClass>>,
+) -> Result<bool> {
+    if predicate == crate::provenance::made_by::MadeByPredicate::All {
+        return Ok(true);
+    }
+    let class = match crate::provenance::birth::row_birth_in_txn(store, rtxn, id)? {
+        Some(birth) => Some(birth.made_by.process.class),
+        None => claim_class()?,
+    };
+    Ok(predicate.matches(class))
+}
+
 /// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
 /// post-fusion claim filter for the `strict` / `prefer` facet modes.
 ///
