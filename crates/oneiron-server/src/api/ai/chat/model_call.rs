@@ -161,11 +161,15 @@ impl Capture {
         Arc::clone(&self.terminal_rung)
     }
 
+    /// `reply` is the saved MESSAGE the answer lands in, when the reply is
+    /// recorded: the kept call is linked to it (TURN-MODEL-LINK). A session
+    /// stream's reply names none.
     pub(super) fn record(
         &mut self,
         vault: &Vault,
         credential: &TurnCredential,
         container: Option<EntityId>,
+        reply: Option<EntityId>,
         event: &LlmStreamEvent,
     ) {
         let LlmStreamEvent::Done {
@@ -234,7 +238,7 @@ impl Capture {
         // must keep its original resident-share admission and charging.
         let evidence = call.run.initiated_by(Some(self.caller));
         crate::server::blocking(|| {
-            crate::api::record_raw_response(
+            crate::api::llm::record_reply_response(
                 vault,
                 &call.ladder,
                 &evidence,
@@ -242,6 +246,7 @@ impl Capture {
                 &response,
                 binding.as_ref(),
                 false,
+                reply,
             );
         });
     }

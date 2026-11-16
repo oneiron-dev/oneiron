@@ -54,6 +54,12 @@ crate::side_table::side_tables! {
     CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::code_run::erase_model_call_actor_in_txn;
+    /// The saved reply MESSAGE one model call answered into (TURN-MODEL-LINK; ARCH-0026
+    /// #model-call-record: the record references the rows its call produced), written in the
+    /// call record's own transaction and dropped with the MESSAGE's erase. Ids only. Key:
+    /// id16(reply MESSAGE) + id16(attempt) + be64(lease generation) + be64(call index).
+    CODE_RUN_MODEL_CALL_REPLY: VaultMeta b"code_run:model_call_reply:v1:" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
     /// last entry committed, the applied and injected positions, its page count and the wait it
