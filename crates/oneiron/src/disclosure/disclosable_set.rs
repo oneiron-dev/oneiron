@@ -106,12 +106,36 @@ fn admits(clearance: &Scope, record: &Scope) -> bool {
 /// P7 for the stored revision `raw` of `id` under a [`disclosable_set`]
 /// Scope: [`DisclosableSet::admits`] over the revision's own stamp. A
 /// revision with no stamp is never public. A revision's words may be other
-/// records', so it is disclosed only with each of them: a TURN's text and
-/// vector are its messages' (`embed::turn_text_in_txn`), so each live
-/// message `PartOf` it, and a scope summary, a TURN copying one, or a merge
-/// header naming one carries the words of every record and MESSAGE the
-/// summary came from. Sources that no longer resolve disclose nothing, nor
-/// does a closure that cycles.
+/// records', so it is disclosed only with each of them, as
+/// [`word_closure_admitted`] walks them, each judged on its own stamp.
+pub(crate) fn discloses_raw(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &Scope,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    word_closure_admitted(
+        vault,
+        txn,
+        id,
+        raw,
+        CarriedSummary::Skip,
+        |record, record_raw| room_row_discloses(vault, txn, scope, record, record_raw),
+    )
+}
+
+/// Whether the stored revision `raw` of `id` and every record its words
+/// came from pass `admit`, which judges one record on its own row. A
+/// TURN's text and vector are its messages' (`embed::turn_text_in_txn`), so
+/// each live message `PartOf` it is judged too, and a scope summary, a TURN
+/// copying one, or a merge header naming one carries the words of every
+/// record and MESSAGE the summary came from (`scope_summary::word_sources_in`
+/// names each kind). Sources that no longer resolve pass nothing, nor does
+/// a closure that cycles. The room rule ([`discloses_raw`]) and the general
+/// clamp (`DisclosureContext::admits_in`) walk the same closure, each
+/// under its own row test; `carried` says whether the walk also enters the
+/// summary a reply or a merge header carries ([`CarriedSummary`]).
 ///
 /// Every record of the closure is judged, however many (rule 5; FIX 9787):
 /// past its threshold row the walk asks whether everything is okay, counted
@@ -120,12 +144,13 @@ fn admits(clearance: &Scope, record: &Scope) -> bool {
 /// the host's wait for that memory running out: either is an error the read
 /// surfaces (a memory-floor refusal, or a timed-out read a caller may run
 /// again), never a withheld record and never a partly judged one.
-pub(crate) fn discloses_raw(
+pub(crate) fn word_closure_admitted(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    scope: &Scope,
     id: EntityId,
     raw: &[u8],
+    carried: CarriedSummary,
+    admit: impl FnMut(EntityId, &[u8]) -> Result<bool>,
 ) -> Result<bool> {
     let mut count = ScanCount::start(
         &vault.store,
@@ -136,15 +161,60 @@ pub(crate) fn discloses_raw(
     let mut closure = WordClosure {
         vault,
         txn,
-        scope,
+        admit,
+        carried,
         path: BTreeSet::new(),
         judged: BTreeSet::new(),
         memory: WalkMemory::default(),
     };
-    let disclosed = closure.discloses(id, raw);
+    let admitted = closure.discloses(id, raw);
     count.rows(closure.judged.len());
     count.defer(&vault.store);
-    disclosed
+    admitted
+}
+
+/// The room rule for one record's own row under `scope`: its stamp, read at
+/// one world the clearance holds for a NOTE (FIX-LIST 9433), and its retained
+/// courtesy copies.
+fn room_row_discloses(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &Scope,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let store = &vault.store;
+    let held = [&scope.worlds];
+    if !crate::federation::record_scope::note_world::blob_scope_held_at(store, txn, id, raw, &held)?
+        .is_some_and(|record| admits(scope, &record))
+    {
+        return Ok(false);
+    }
+    match EntityMetadataHeader::parse(raw) {
+        Some(header) => super::retained_copy_admits(
+            store,
+            txn,
+            &id,
+            header.entity_type,
+            None,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        ),
+        None => Ok(true),
+    }
+}
+
+/// Whether a [`word_closure_admitted`] walk enters the summary whose words
+/// a reply TURN or a `merge.summary` header carries
+/// (`scope_summary::carried_summary`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CarriedSummary {
+    /// Only the records `scope_summary::word_sources_in` names: the room
+    /// rule (FIX-LIST COPY-SUMMARY-ROW-UNJUDGED).
+    Skip,
+    /// The carried summary as one more word source: its own row is judged,
+    /// and every record its words came from, its registered dependencies
+    /// included, is walked with the rest (Sol review rounds 1-2 of #7692).
+    Follow,
 }
 
 /// One record a revision's words may have come from, and how its row reads.
@@ -215,10 +285,13 @@ impl WalkMemory {
 }
 
 /// One P7 decision's walk over the records whose words a revision carries.
-struct WordClosure<'a> {
+struct WordClosure<'a, A> {
     vault: &'a Vault,
     txn: &'a heed::RoTxn<'a>,
-    scope: &'a Scope,
+    /// The row test each record of the closure must pass on its own.
+    admit: A,
+    /// Whether a reply's or a merge header's summary is walked too.
+    carried: CarriedSummary,
     /// The records on the way to the current one: meeting one again is a
     /// cycle.
     path: BTreeSet<EntityId>,
@@ -229,7 +302,7 @@ struct WordClosure<'a> {
     memory: WalkMemory,
 }
 
-impl WordClosure<'_> {
+impl<A: FnMut(EntityId, &[u8]) -> Result<bool>> WordClosure<'_, A> {
     /// Walks the closure depth first on a heap stack, never the call stack,
     /// reading one source row at a time: however deep or wide the closure,
     /// the walk judges all of it and never overflows.
@@ -272,36 +345,17 @@ impl WordClosure<'_> {
         Ok(true)
     }
 
-    /// Judges `id`'s own stamp and gathers each record its words may have
+    /// Judges `id`'s own row and gathers each record its words may have
     /// come from, putting `id` on the path. `None` when `id` is not
-    /// disclosed: its stamp, or a summary that no longer resolves. The
+    /// admitted: its row test, or a summary that no longer resolves. The
     /// memory the walk takes for `id` is reserved before it is held.
     fn enter(&mut self, id: EntityId, raw: &[u8]) -> Result<Option<Frame>> {
         self.memory.grow(bytes_of::<EntityId>(1))?;
         self.judged.insert(id);
+        if !(self.admit)(id, raw)? {
+            return Ok(None);
+        }
         let store = &self.vault.store;
-        // A NOTE sits at one world it is in that the clearance holds
-        // (FIX-LIST 9433).
-        let held = [&self.scope.worlds];
-        if !crate::federation::record_scope::note_world::blob_scope_held_at(
-            store, self.txn, id, raw, &held,
-        )?
-        .is_some_and(|record| admits(self.scope, &record))
-        {
-            return Ok(None);
-        }
-        if let Some(header) = EntityMetadataHeader::parse(raw)
-            && !super::retained_copy_admits(
-                store,
-                self.txn,
-                &id,
-                header.entity_type,
-                None,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )?
-        {
-            return Ok(None);
-        }
         // The frame and its place on the path, then its sources.
         let place = bytes_of::<Frame>(1).saturating_add(bytes_of::<EntityId>(1));
         let mut bytes = place;
@@ -316,6 +370,21 @@ impl WordClosure<'_> {
                 }
                 WordSources::Unresolved => return Ok(None),
             };
+        // A reply or a merge header carries a summary's words: the summary
+        // is walked as one more word source. An association that does not
+        // decode names no summary a reader may hold.
+        if self.carried == CarriedSummary::Follow {
+            let Ok(carried) = crate::scope_summary::carried_summary(raw) else {
+                return Ok(None);
+            };
+            if let Some(summary) = carried {
+                let more = bytes_of::<WordSource>(1);
+                self.memory.grow(more)?;
+                bytes = bytes.saturating_add(more);
+                sources.reserve_exact(1);
+                sources.push(WordSource::Word(summary));
+            }
+        }
         if EntityMetadataHeader::parse(raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
         {

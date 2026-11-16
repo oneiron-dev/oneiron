@@ -16,6 +16,7 @@
 use oneiron_authority::authority::{
     ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, policy_setting_target,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::change::record_signed_entry_in_txn;
 use super::{EncodedValue, SettingChange, SettingSpec};
@@ -84,12 +85,13 @@ fn sign_in_savepoint(
     Ok(Some(signed))
 }
 
-/// BLAKE3 over `value` as `spec`'s JSON; over JSON null for no row.
+/// The content hash (plain BLAKE3, as the older setting doors keep it) of `value` as `spec`'s
+/// JSON; of JSON null for no row.
 fn json_digest(spec: &SettingSpec, value: Option<&EncodedValue>) -> Result<[u8; 32]> {
     let json = value
         .and_then(|value| spec.kind.to_json(value))
         .unwrap_or(serde_json::Value::Null);
     let bytes =
         serde_json::to_vec(&json).map_err(|_| Error::InvariantViolation("setting act encoding"))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(ContentHash::of(&bytes).into_bytes())
 }

@@ -115,7 +115,7 @@ async fn pick(
             &proposal,
             &request.question_digest,
             request.choice,
-            unix_seconds(),
+            oneiron_base::unix_seconds_now(),
         )
     })
     .await
@@ -126,12 +126,6 @@ async fn pick(
         accepted: verdict.accepted,
         goal_revision: verdict.goal_revision,
     }))
-}
-
-fn unix_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 fn engine(error: oneiron::Error) -> FacadeApiError {
