@@ -94,12 +94,13 @@ pub(in crate::anchored_annotation) fn text_units(
     Some(units)
 }
 
-/// Every place in the file that holds exactly `words`, in file order.
-pub(super) fn find_in_text(bytes: &[u8], words: &str) -> Vec<Locator> {
+/// Every place in the file that holds exactly `words`, in file order, at
+/// most `max_offers` of them.
+pub(super) fn find_in_text(bytes: &[u8], words: &str, max_offers: usize) -> Vec<Locator> {
     let Some(text) = decoded(bytes) else {
         return Vec::new();
     };
-    char_occurrences(text, words)
+    char_occurrences(text, words, max_offers)
         .into_iter()
         .filter_map(|(start, end)| Locator::text(start, end).ok())
         .collect()

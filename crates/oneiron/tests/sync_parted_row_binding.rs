@@ -8,8 +8,9 @@
 //! content of the discarded row the parts join to, and erased it when the
 //! key's holder went. It now defers the window. The checkpoint capture
 //! named the key's holder on the whole window; it now names none. A correct
-//! parted row places as before. A turn program row is placed by its body,
-//! whatever its key (the D5 guard).
+//! parted row places as before. A turn program row filed under its own key
+//! is placed by its body; filed under another key, it is placed under no one
+//! (D5, UC-10 PR 6).
 //!
 //! The erase-reach review (Astra, 15 Nov 19:16) added three: a manifest
 //! keeps no part of another map, a capture that reads only part of the
@@ -177,15 +178,21 @@ fn correct_parted_rows_place_as_before() {
     }
 }
 
-/// D5: a turn program arming row filed under another registration's key is
-/// placed under the actor its body names, never one its key chose.
+/// D5 (FIX SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED): a turn program arming
+/// row filed under its own registration's key is placed under the actor its
+/// body names; filed under another registration's key, which admit refuses
+/// and no writer files, it is placed under no one.
 #[test]
-fn turn_program_arming_places_by_its_body() {
+fn turn_program_arming_places_only_under_its_own_key() {
     let (keyed, registration) = two_rows();
     let actor = EntityId::now();
     assert_eq!(
-        turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
+        turn_program_arming_holder(registration, registration, actor).expect("the row writes"),
         Some(actor)
+    );
+    assert_eq!(
+        turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
+        None
     );
 }
 

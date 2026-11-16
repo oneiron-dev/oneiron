@@ -203,6 +203,8 @@ pub(super) fn enter_next_rung(
     now: u64,
 ) -> Result<CheckInTransition> {
     let mut next = match row.current_rung() {
+        // A closed room's ask asks its owners alone (ARCH-0082 #closed-room).
+        None if row.room.is_some() => Some(Rung::RoomOwner),
         None => Some(Rung::Grantor),
         Some(entry) => entry.rung.next(),
     };
