@@ -1,17 +1,7 @@
 //! UTC times for backup file names and reports, with no date library:
 //! `20261008T123456.789Z` in file names, RFC 3339 in reports.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 const MS_PER_DAY: u64 = 86_400_000;
-
-pub(crate) fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
-}
 
 struct Parts {
     year: u64,

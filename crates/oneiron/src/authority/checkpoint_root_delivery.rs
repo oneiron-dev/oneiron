@@ -32,19 +32,8 @@ use crate::side_table::{self, Named, SideTable};
 const DELIVERIES: SideTable<([u8; 17], Vec<u8>), KeptDelivery, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ROOT_DELIVERY);
 
-/// Where a root's attestation of a home's head stands, as this install knows
-/// it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RootAttestationDeliveryState {
-    /// Signed here; the home's intake has not taken it.
-    SignedNotUploaded,
-    /// The home's intake took it; the home has not reported the root
-    /// accepted for that head yet.
-    Delivered,
-    /// The home's head no longer awaits the root.
-    Accepted,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::checkpoint_root_delivery::RootAttestationDeliveryState;
 
 /// One root's attestation of one home's head
 /// ([`Vault::checkpoint_root_deliveries`]).

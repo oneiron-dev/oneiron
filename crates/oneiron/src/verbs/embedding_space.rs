@@ -16,13 +16,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::embed::{
     EmbeddingSpace, InputKind, PendingEmbedderBinding, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome,
     SpaceProbe, SpaceRef,
 };
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
+use crate::{EntityId, Vault};
 
 /// Every declared space, where each kind slot reads, and every move: what
 /// `GET /v1/owner/embedding-spaces` and each space change answer.
@@ -324,15 +324,39 @@ pub fn put_embedding_space_probe_as(
     })
 }
 
-/// `vault.embedding_spaces.probes.delete`.
+/// `vault.embedding_spaces.probes.delete`: the Owner's delete on their own
+/// proof, applying with `check_in_ref` another asker's approved check-in for
+/// deleting this probe (2k5; P25-SHAPE Q1 = A). The answer records the
+/// decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed id or `check_in_ref`; the Owner's proof no
+/// longer holds; a check-in that is not an approved ask for this delete;
+/// storage errors.
 pub fn delete_embedding_space_probe_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: EmbeddingSpaceProbeDeleteRequest,
 ) -> MemoryResult<EmbeddingSpaceProbeDeleted> {
     let id = probe_id(&input.id)?;
+    let applied = input
+        .check_in_ref
+        .as_deref()
+        .map(|hex| {
+            EntityId::from_hex(hex)
+                .map(|check_in| crate::check_in::AppliedCheckIn {
+                    id: check_in,
+                    verb: "vault.embedding_spaces.probes.delete",
+                    effect_digest: crate::check_in::embedding_space_probe_delete_effect_digest(&id),
+                })
+                .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+        })
+        .transpose()?;
+    let (ok, decision) = vault.delete_space_probe(owner, &id, applied.as_ref())?;
     Ok(EmbeddingSpaceProbeDeleted {
-        ok: vault.delete_space_probe(owner, &id)?,
+        ok,
+        check_in: Some(decision),
     })
 }
 

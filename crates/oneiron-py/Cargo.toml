@@ -22,6 +22,7 @@ doctest = false
 
 [dependencies]
 oneiron = { path = "../oneiron" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-remote = { path = "../oneiron-remote" }
 # The engine-backed served client (OF-237), behind `engine`.
 oneiron-server = { path = "../oneiron-server", optional = true }
