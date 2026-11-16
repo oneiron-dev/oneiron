@@ -411,7 +411,7 @@ impl Asker {
 /// Whether `signature` over `transcript` is `machine`'s: the install key of
 /// a live profile of it verifies it, and the one carrier rule admits that
 /// key (any role, no chain removed, never a roster key).
-fn machine_signed(
+pub(super) fn machine_signed(
     fold: &AuthorityFold,
     machine: EntityId,
     transcript: &[u8],

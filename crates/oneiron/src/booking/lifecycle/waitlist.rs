@@ -633,6 +633,7 @@ fn offer_pass_in_writer(
                 token_hash: entry.claim_hold_hash,
                 expires_at: offered_until,
                 checkout_lease_hash: None,
+                cap_override: None,
             },
         )
         .map_err(|error| engine_failure("meta write", error))?;

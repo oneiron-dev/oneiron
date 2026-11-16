@@ -38,8 +38,8 @@ pub use self::parse::parse_constraint_with_backend;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::constraint::{
-    BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey, LocalMinuteWindow,
-    RankedSlot,
+    BookingCapKind, BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey,
+    FullDay, LocalMinuteWindow, RankedSlot,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::booking::constraint::{MINUTES_PER_DAY, is_strictly_ascending};
@@ -287,6 +287,21 @@ pub trait SlotOracle: Send + Sync {
     /// cutoff. An oracle that keeps no notice answers zero.
     fn minimum_notice_secs(&self, _event_type: &EventTypeKey) -> Result<u64, BookingError> {
         Ok(0)
+    }
+
+    /// [`Self::solve`] with the event type's meeting caps lifted: the owner's
+    /// own hold past a full day, which a confirm records with its reason
+    /// (RULING BK-CAP-OVERRIDE-WHO = B). An oracle that cannot lift the caps
+    /// refuses, so no booking passes a cap it was never solved past.
+    ///
+    /// # Errors
+    ///
+    /// [`BookingError::SlotOracle`] here; as [`Self::solve`] where lifted.
+    fn solve_past_caps(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
+        let _ = req;
+        Err(BookingError::SlotOracle(
+            "this slot oracle cannot solve past a meeting cap".to_owned(),
+        ))
     }
 
     /// Re-solves for the existing booking `moving`, kept on `hosts`.
