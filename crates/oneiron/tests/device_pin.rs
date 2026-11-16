@@ -2235,6 +2235,7 @@ fn the_key_under_the_pin_signs_an_owner_proof_only_inside_a_window_and_over_a_tr
 #[test]
 fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_revoked() {
     let transcript = owner_act_transcript();
+    let ask_word = [ASK_WORD_PROOF_DOMAIN, b" device pin test".as_slice()].concat();
 
     let device = PinDevice::hardware_counted();
     let key = device.enrol();
@@ -2262,6 +2263,10 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
                 .is_err(),
             "a checkpoint statement is never signed as a proof"
         );
+        let proof = signer
+            .sign_ask_word_proof(&device.vault, &fold, &ask_word)
+            .expect("guard: with no PIN the key proves an ask word from its slot");
+        assert!(verifies_over(key, &ask_word, &proof));
     }
     device
         .vault
@@ -2277,6 +2282,11 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
             pin_refusal(signer.sign_owner_proof(&device.vault, &fold, &transcript)),
             DevicePinRefusal::Required,
             "and it signs no proof, inside the window too"
+        );
+        assert_eq!(
+            pin_refusal(signer.sign_ask_word_proof(&device.vault, &fold, &ask_word)),
+            DevicePinRefusal::Required,
+            "nor an ask word's proof"
         );
     }
 
@@ -2301,6 +2311,12 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
             .sign_owner_proof(&unbound.vault, &fold, &transcript)
             .is_err(),
         "and a signer taken before the key was revoked signs no proof after"
+    );
+    assert!(
+        taken
+            .sign_ask_word_proof(&unbound.vault, &fold, &ask_word)
+            .is_err(),
+        "nor an ask word's proof"
     );
 }
 
