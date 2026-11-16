@@ -209,3 +209,22 @@ impl Vault {
         })
     }
 }
+
+/// The integration tests' door (FIX 4889).
+#[cfg(oneiron_test_support)]
+impl AgentDispatcher<'_> {
+    /// What the machines that ran the agent run whose original try is
+    /// `attempt` committed of its launch, as its run TASK reads here: every
+    /// share less what the custody machine folded, what a fresh take reserves
+    /// the launch less. `None` for a run with no run TASK, or one launched
+    /// unmetered.
+    pub(crate) fn agent_run_committed_units(&self, attempt: AttemptId) -> Result<Option<u64>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let task_ref = super::run_task::agent_run_task_id(attempt)?;
+        let body = super::run_task::agent_run_task_body_in(self.vault, &txn, task_ref)?;
+        Ok(body
+            .as_ref()
+            .and_then(|body| body.spend.as_ref())
+            .map(AgentRunSpendCarry::committed_units))
+    }
+}
