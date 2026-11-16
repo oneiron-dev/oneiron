@@ -20,6 +20,15 @@
 //! `a_hosts_pin_request_leaves_a_never_pinned_device_unpinned_and_awaiting`
 //! (the device's pickup pins it to the host's root). Guard, which passes on
 //! main too: `the_owner_confirms_the_awaited_root_at_the_devices_pin_door`.
+//!
+//! FIX [CARRIED-PIN-ASKER-UNSERVED] (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A):
+//! the device lists each pending request with the machine that carried it,
+//! read from the device's own records by the key that signed the request, so
+//! its prompt never names an asker on the request's own words. Red on the
+//! commit before the rule (the reading by machine id):
+//! `a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_for_it`.
+//! Guard, which passes there too:
+//! `a_hosts_pin_request_lists_the_host_as_its_carrier_and_never_as_the_owners_machine`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test carried_pin_awaits_owner`.
 #![cfg(oneiron_test_support)]
@@ -28,8 +37,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AwaitedRoot, HostSlipIssuer, MachineOwnership, MachineRole, OwnerRootView,
-    RecoveryRootId, RootChange,
+    ActSurface, AuthorityKey, AwaitedRoot, CarrierReading, HostSlipIssuer, MachineOwnership,
+    MachineRole, OwnerRootView, RecoveryRootId, RootChange,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -122,6 +131,8 @@ struct Device {
     _dir: tempfile::TempDir,
     vault: Vault,
     machine: EntityId,
+    /// The device's install key, as its enrolment named it.
+    machine_key: [u8; 32],
     held: BTreeSet<Vec<u8>>,
 }
 
@@ -151,6 +162,7 @@ fn device(host: &Host) -> Device {
         _dir: dir,
         vault,
         machine: request.machine,
+        machine_key: request.machine_key,
         held: BTreeSet::new(),
     };
     device.take(host);
@@ -281,5 +293,89 @@ fn the_owner_confirms_the_awaited_root_at_the_devices_pin_door() {
             .awaiting
             .is_none_or(|AwaitedRoot { root: awaited, .. }| awaited == root),
         "no other root waits: {roots:?}"
+    );
+}
+
+/// A machine key no chain of the vault names: a stranger's.
+const STRANGER_MACHINE_KEY: [u8; 32] = [0x5A; 32];
+
+/// The device lists the host's pin request with the machine that carried it
+/// as the device's own records read the key that signed it: the vault's host,
+/// a hosted node, never one of the owner's machines. The awaited root names
+/// that request, so a surface ties the root to who asked for it.
+#[test]
+fn a_hosts_pin_request_lists_the_host_as_its_carrier_and_never_as_the_owners_machine() {
+    let host = host();
+    let mut device = device(&host);
+    let root = host.mint_own_root();
+    host.request_pin(device.machine, root);
+    device.sync_and_pick_up(&host);
+
+    let listed = device
+        .vault
+        .pending_root_request_listing(&device.owner())
+        .expect("the device's pending root requests");
+    let [request] = listed.as_slice() else {
+        panic!("one pending root request names the device: {listed:?}");
+    };
+    assert_eq!(
+        request.change,
+        RootChange::Pin { root },
+        "the host's pin request"
+    );
+    let host_machine = host
+        .vault
+        .local_machine()
+        .expect("the host's machine")
+        .expect("a profiled host")
+        .id;
+    assert_eq!(
+        request.carrier,
+        CarrierReading {
+            machine: host_machine,
+            role: Some(MachineRole::HostedNode),
+            is_mine: false,
+        },
+        "the device's own records name the carrier: the vault's host, not his machine"
+    );
+    assert_eq!(
+        device.roots().awaiting.and_then(|awaited| awaited.request),
+        Some(request.entry),
+        "the awaited root names the request that asks for it"
+    );
+}
+
+/// A reading starts from the key that signed an act, never from the machine
+/// id the act names: an act that names the owner's device as its carrier and
+/// is signed by another key does not read as his machine's. An anchor this
+/// install does not pin can name any machine id under keys of its own, and
+/// the fold admits a carrier by any chain that names the signing key.
+#[test]
+fn a_carrier_reads_as_the_owners_machine_only_under_the_key_this_install_trusts_for_it() {
+    let host = host();
+    let device = device(&host);
+    let fold = device.vault.authority_fold().expect("the device's fold");
+    assert!(
+        fold.trusted_machine(device.machine).is_some(),
+        "guard: the device is the owner's machine on its own fold"
+    );
+
+    assert_eq!(
+        fold.carrier_reading(device.machine, &AuthorityKey::Ed25519(device.machine_key)),
+        CarrierReading {
+            machine: device.machine,
+            role: Some(MachineRole::Owned(MachineOwnership::Yours)),
+            is_mine: true,
+        },
+        "an act the device's own key signed reads as his machine's"
+    );
+    assert_eq!(
+        fold.carrier_reading(device.machine, &AuthorityKey::Ed25519(STRANGER_MACHINE_KEY)),
+        CarrierReading {
+            machine: device.machine,
+            role: None,
+            is_mine: false,
+        },
+        "an act that names the device and that another key signed is not his machine's"
     );
 }
