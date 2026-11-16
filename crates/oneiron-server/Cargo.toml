@@ -339,6 +339,12 @@ name = "broker_followup_job_binding"
 path = "tests/broker_followup_job_binding.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The self-browser door refusals root their server on a `MemoryKeystore` too.
+[[test]]
+name = "self_browser_doors"
+path = "tests/self_browser_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
 name = "note_session_bind_reply"
@@ -373,12 +379,6 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 [[test]]
 name = "rerank_pair_template_price"
 path = "tests/rerank_pair_template_price.rs"
-required-features = ["oneiron/test-support"]
-
-# The self-browser door refusals root their server on a `MemoryKeystore` too.
-[[test]]
-name = "self_browser_doors"
-path = "tests/self_browser_doors.rs"
 required-features = ["oneiron/test-support"]
 
 [lints]
