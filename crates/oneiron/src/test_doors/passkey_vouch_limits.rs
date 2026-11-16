@@ -4,9 +4,17 @@
 //! a sibling branch, which the fold judges.
 
 use crate::authority::{
-    ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityOp, OwnerKeyEnrollment,
+    ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, OwnerKeyEnrollment,
 };
 use crate::{Result, Vault};
+
+/// `transcript` signed as `issuer`'s host root: the Ed25519 signature the
+/// host root puts on every row it writes, as the custodial root's signature
+/// on a row of [`append_signed_rows`] (REVIEW2 #8451 P2-1).
+#[must_use]
+pub fn sign_as_host_root(issuer: &HostSlipIssuer, transcript: &[u8]) -> Vec<u8> {
+    issuer.sign_claim_handoff(transcript).to_vec()
+}
 
 /// Signs a `RevokeDevice` of `revoked` by `signer` alone (`sign` gets its
 /// authority transcript) at the vault's main-log heads and stores it.

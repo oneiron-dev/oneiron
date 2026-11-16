@@ -544,6 +544,9 @@ pub(super) fn fold_entry_state(
     if !has_authority_consent(&state, &participants, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
+    if !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &participants) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
     if let Some(prior_seq) = state.seqs.get(&signer).copied()
         && entry.seq <= prior_seq
     {
@@ -565,21 +568,24 @@ pub(super) fn fold_entry_state(
     // parents do not hold, which a sibling branch may enrol as one), and lend
     // no consent to one as a cosign (lead ruling WEBPASSKEY-BLIND-SIGNATURE =
     // B; Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
-    // review F1, F2; Astra stack review finding 1).
+    // review F1, F2; Astra stack review finding 1), nor the owner key's proof
+    // a revoke of an owner key needs (row HOSTED-ROOT-REVOKES-OWNER-KEY;
+    // REVIEW2 #8451 P2-1): the rest must give both.
     let barred =
         super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
-    if barred.contains(&signer)
-        || (!barred.is_empty()
-            && !has_authority_consent(
-                &state,
-                &participants
-                    .difference(&barred)
-                    .cloned()
-                    .collect::<BTreeSet<_>>(),
-                context,
-            ))
-    {
+    if barred.contains(&signer) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if !barred.is_empty() {
+        let counted = participants
+            .difference(&barred)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if !has_authority_consent(&state, &counted, context)
+            || !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &counted)
+        {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
     }
     if op_reuses_existing_device_key(&state, &entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));

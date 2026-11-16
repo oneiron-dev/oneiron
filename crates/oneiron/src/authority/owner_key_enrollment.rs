@@ -141,7 +141,9 @@ impl FoldState {
     /// signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
-    /// rule that counts an entry's participants asks it of each.
+    /// rule that counts an entry's participants asks it of each. Every rule
+    /// that reads a participant as the owner's proof, not only its consent,
+    /// leaves such a key out (REVIEW2 #8451 P2-1).
     pub(super) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
         self.passkey_contexts.contains_key(key) || self.passkey_vouch_unconfirmed(key)
     }

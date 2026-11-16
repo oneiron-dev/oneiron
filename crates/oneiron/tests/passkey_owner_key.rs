@@ -61,9 +61,9 @@ use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
     DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
-    ROLE_AGENT, ROLE_OWNER, machine_profile_proof_transcript, webauthn_assertion_envelope,
-    webauthn_challenge,
+    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment,
+    OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, machine_profile_proof_transcript,
+    webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -71,7 +71,7 @@ use oneiron::receipt::AuthorityAuditQuery;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::passkey_vouch_limits::{
     SignedRow, append_signed_rows, append_signed_rows_on, enrol_owner_key_on, main_log_heads,
-    revoke_owner_key_signed_by,
+    revoke_owner_key_signed_by, sign_as_host_root,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::machine_answer_revision;
@@ -1239,6 +1239,89 @@ fn a_key_only_a_passkey_vouched_for_lends_no_consent_to_a_revoke() {
     assert!(
         hosted.live_owner_key(&ed_key(&owner_device())),
         "the owner's device key stands"
+    );
+}
+
+/// The custodial root signs a `RevokeDevice` of the owner's device key,
+/// cosigned by `cosigner`, one of the keys this file holds or the passkey;
+/// true when it counted.
+fn custodial_root_revokes_device_key_with(hosted: &HostedVault, cosigner: AuthorityKey) -> bool {
+    let root = hosted.issuer.public_key();
+    let counted = append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op: AuthorityOp::RevokeDevice {
+                revoked_key: ed_key(&owner_device()),
+            },
+            signer: root.clone(),
+            cosigners: vec![cosigner],
+        }],
+        |key, transcript| {
+            if *key == root {
+                sign_as_host_root(&hosted.issuer, transcript)
+            } else if *key == passkey_roster_key() {
+                passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)
+            } else {
+                signs_as(key, transcript)
+            }
+        },
+    )
+    .expect("the row is stored");
+    counted == vec![true]
+}
+
+/// REVIEW2 #8451 P2-1: a revoke of an owner key counts only with an owner
+/// key's proof (row HOSTED-ROOT-REVOKES-OWNER-KEY), and a passkey-limited
+/// key gives none, as it lends no consent: the custodial root's revoke of the
+/// owner's device key, cosigned by a key only the passkey vouched for or by
+/// the passkey itself, counts for nothing. Each on its own vault, so the
+/// first revoke cannot decide the second.
+#[test]
+fn a_passkey_limited_cosign_proves_no_custodial_roots_revoke_of_an_owner_key() {
+    let counted: Vec<bool> = [ed_key(&host_held()), passkey_roster_key()]
+        .into_iter()
+        .map(|cosigner| {
+            let hosted = HostedVault::open();
+            passkey_vouched_host_key(&hosted);
+            let counted = custodial_root_revokes_device_key_with(&hosted, cosigner);
+            assert_eq!(
+                hosted.live_owner_key(&ed_key(&owner_device())),
+                !counted,
+                "guard: the device key stands exactly when the revoke counted nothing"
+            );
+            counted
+        })
+        .collect();
+    assert_eq!(
+        counted,
+        vec![false, false],
+        "[the passkey-vouched key's cosign, the passkey's cosign]: neither proves the root's revoke"
+    );
+}
+
+/// The control of the test above: once the owner's device key confirms the
+/// passkey-vouched key, its cosign is an owner key's proof, and the same
+/// custodial root's revoke counts.
+#[test]
+fn once_confirmed_the_passkey_vouched_keys_cosign_proves_the_custodial_roots_revoke() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert!(
+        custodial_root_revokes_device_key_with(&hosted, ed_key(&host_held())),
+        "a confirmed key's cosign proves the root's revoke"
+    );
+    assert!(
+        !hosted.live_owner_key(&ed_key(&owner_device())),
+        "the revoke of the device key counted"
     );
 }
 
