@@ -514,6 +514,7 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 // Module-internal only: nothing here leaves `authority`.
 use ancestor_index::*;
 pub(crate) use anchor_marks::anchor_mark_stands;
+pub use data_key_generation_fold::FoldedDataKeyGeneration;
 use entry_transition::*;
 use machine_profile::{
     KeyClaim, MachineChain, MarkProof, apply_anchor_profile, apply_machine_profile,
@@ -531,7 +532,6 @@ use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
-pub use data_key_generation_fold::FoldedDataKeyGeneration;
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{
     KeyFrontier, WideFrontier, next_sequence, own_world_key_records_in_txn,

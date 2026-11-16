@@ -45,8 +45,7 @@ struct Device {
 }
 
 fn enroll_device(home: &Vault, owner_home: &AuthenticatedOwner, path: &Path) -> Device {
-    let vault =
-        open_device_vault_adopting_storage_id(path, home).expect("the device's install");
+    let vault = open_device_vault_adopting_storage_id(path, home).expect("the device's install");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let home_id = home
         .authority_fold()
@@ -196,16 +195,16 @@ fn device_b_reads_a_checkpoint_sealed_on_a_after_as_new_generation_with_no_unloc
     assert_eq!(outcome.commitment, commitment_of(&after));
 
     device_b.take(&vault_a);
-    let fold_b = device_b
-        .vault
-        .authority_fold()
-        .expect("B's fold");
+    let fold_b = device_b.vault.authority_fold().expect("B's fold");
     let folded = fold_b
         .data_key_generation(1)
         .expect("A's delivery counts on B");
     assert!(!folded.conflicted, "one generation counts alone");
     assert!(
-        folded.capsules.iter().any(|(to, _)| *to == device_b.machine),
+        folded
+            .capsules
+            .iter()
+            .any(|(to, _)| *to == device_b.machine),
         "the delivery carries a capsule for B"
     );
     let (commitment_b, generation_b) = device_b.data_key_state();

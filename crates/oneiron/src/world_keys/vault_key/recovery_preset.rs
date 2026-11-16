@@ -164,9 +164,7 @@ pub(super) fn admit_generation_capsule(
     entry_counts: bool,
     link_chains: bool,
 ) -> Result<()> {
-    if preset.is_nobody_but_me()
-        && !(capsule_for_this_machine && entry_counts && link_chains)
-    {
+    if preset.is_nobody_but_me() && !(capsule_for_this_machine && entry_counts && link_chains) {
         return Err(refused(PRESET_GENERATION));
     }
     Ok(())

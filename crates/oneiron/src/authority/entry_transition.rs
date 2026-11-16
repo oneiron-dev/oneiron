@@ -435,11 +435,7 @@ pub(super) fn fold_entry_state(
     }
     if let AuthorityOp::DataKeyGeneration(record) = &entry.op {
         if let Err(issue) = super::data_key_generation_fold::apply_data_key_generation(
-            &mut state,
-            entry,
-            record,
-            hash,
-            context,
+            &mut state, entry, record, hash, context,
         ) {
             return EntryFold::Invalid(issue);
         }

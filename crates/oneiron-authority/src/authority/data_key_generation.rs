@@ -214,10 +214,7 @@ pub(super) fn data_key_generation_value(record: &DataKeyGenerationRecord) -> Val
             Value::from("generation"),
             Value::from(u64::from(record.generation)),
         ),
-        (
-            Value::from("commitment"),
-            binary_value(record.commitment),
-        ),
+        (Value::from("commitment"), binary_value(record.commitment)),
         (Value::from("previous"), binary_value(record.previous)),
         (Value::from("link"), Value::Binary(record.link.clone())),
         (Value::from("machine"), Value::from(record.machine.to_hex())),

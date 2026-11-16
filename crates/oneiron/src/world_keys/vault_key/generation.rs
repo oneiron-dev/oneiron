@@ -11,8 +11,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::*;
 use super::generation_capsule::{DataKeyGenerationBinding, seal_data_key_capsule};
+use super::*;
 use crate::authority::ActAuthority;
 use crate::authority::{
     AuthorityKey, AuthorityOp, DataKeyGenerationRecord, FrontierSigner, MAX_PARENTS,
@@ -191,9 +191,9 @@ impl Vault {
                 .ok_or_else(|| refused("the vault's data-key generations are exhausted"))?
         };
         let fold = self.authority_fold()?;
-        let authority_vault = fold.vault_id.ok_or_else(|| {
-            refused("the vault has no authority log to carry the new generation")
-        })?;
+        let authority_vault = fold
+            .vault_id
+            .ok_or_else(|| refused("the vault has no authority log to carry the new generation"))?;
         let recipients = generation_recipients(&fold, install);
         // A presented password or passkey must open the wrap of it the
         // vault carries, so the act never seals the new key to other bytes
@@ -528,9 +528,10 @@ impl Vault {
         if generation != draft.generation {
             return Err(refused("this handle holds another vault key"));
         }
-        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(|| {
-            refused("this install has no machine identity to sign the new generation")
-        })?;
+        let key =
+            crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(|| {
+                refused("this install has no machine identity to sign the new generation")
+            })?;
         let public_key = key.verifying_key().to_bytes();
         if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
             return Err(refused(
@@ -566,11 +567,6 @@ impl Vault {
                 DataKeyGenerationCause::KitOnlySwitch => {
                     crate::authority::DataKeyGenerationCause::KitOnlySwitch
                 }
-                _ => {
-                    return Err(refused(
-                        "this data-key generation's cause is not known here",
-                    ));
-                }
             },
         };
         let now = self.instant_in_txn(txn)?.secs();
@@ -588,12 +584,22 @@ impl Vault {
             end: now,
         };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        // The entry must count, and be the only counted delivery of its
+        // generation. A broken chain below (an earlier generation no entry
+        // carried) does not refuse the act: the other devices then wait.
         let after = self.authority_view_readonly_in_txn(txn)?;
-        let counted = after.data_key_generation(generation).is_some_and(|folded| {
-            !folded.conflicted && folded.entries.contains(&entry_hash)
-        });
-        if !counted {
-            return Err(crate::authority::invalid_authority());
+        let Some(folded) = after
+            .data_key_generation(generation)
+            .filter(|folded| folded.entries.contains(&entry_hash))
+        else {
+            return Err(refused(
+                "the vault's authority log did not count the new generation's delivery; nothing changed",
+            ));
+        };
+        if folded.entries.len() != 1 {
+            return Err(refused(
+                "another of the owner's devices started this data-key generation; receive it first, then start a new one",
+            ));
         }
         transition.stage_generation(committed, || self.staged_wraps_in_txn(txn, None))?;
         // No inference snapshot admitted under the old key commits after

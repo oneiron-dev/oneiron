@@ -111,15 +111,19 @@ pub(super) fn apply_data_key_generation(
         state.refused_data_key_generations.insert(hash);
         return Ok(());
     }
-    let held = state.data_key_generations.entry(record.generation).or_default();
+    let held = state
+        .data_key_generations
+        .entry(record.generation)
+        .or_default();
     let counted = CountedDataKeyGeneration {
         commitment: record.commitment,
         previous: record.previous,
         hash,
         machine: record.machine,
     };
-    if !held.contains(&counted) {
-        held.push(counted);
+    // Kept sorted, as a merge keeps them, so every fold order holds one list.
+    if let Err(at) = held.binary_search(&counted) {
+        held.insert(at, counted);
     }
     Ok(())
 }
@@ -164,10 +168,8 @@ pub(super) fn folded_data_key_generations(
     for (generation, counted) in &state.data_key_generations {
         let commitments: BTreeSet<[u8; 32]> =
             counted.iter().map(|entry| entry.commitment).collect();
-        let previous_set: BTreeSet<[u8; 32]> =
-            counted.iter().map(|entry| entry.previous).collect();
-        let mut entries: Vec<AuthorityEntryHash> =
-            counted.iter().map(|entry| entry.hash).collect();
+        let previous_set: BTreeSet<[u8; 32]> = counted.iter().map(|entry| entry.previous).collect();
+        let mut entries: Vec<AuthorityEntryHash> = counted.iter().map(|entry| entry.hash).collect();
         entries.sort_unstable();
         entries.dedup();
         let signers: BTreeSet<EntityId> = counted.iter().map(|entry| entry.machine).collect();
