@@ -95,6 +95,18 @@ impl Memory<'_> {
                     ],
                 ));
             }
+            // The stale mark writes under the row's own envelope with no
+            // closer, so a governing world-access grant meets the close rule
+            // here, with this caller as its closer (FIX
+            // [WORLD-ACCESS-GRANT-RETRACT-BY-FORMER-OWNER-AUTHOR]).
+            if matches!(action, ClaimDemotionAction::MarkStale) {
+                crate::claim::world_access::admit_world_access_stale_mark(
+                    &self.vault.store,
+                    wtxn,
+                    &body,
+                    self.actor,
+                )?;
+            }
             Ok(self
                 .vault
                 .apply_claim_demotion_in_txn(wtxn, &id, action, now)?)

@@ -21,7 +21,7 @@
 //! The live record's erase scrub is L11-B's (FIX 5718, [`erase_replies`]);
 //! this retires every image's copy beside it.
 
-use super::records::REPLAY_RECORDS;
+use super::replay_rows;
 use super::response_owners::response_owner_in_txn;
 use crate::code_run::payload::{
     answer_fold_words, decode_self_dispatch_outcome, keep_erased_fold_words,
@@ -53,7 +53,7 @@ pub(crate) use oneiron_verb_wire::code_run::storage::replay_bodies::CODE_RUN_OUT
 /// decode, or whose stub does not encode, is carried whole as an opaque
 /// response (FIX 6227).
 pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
-    let Ok(mut record) = REPLAY_RECORDS.decode_value(value) else {
+    let Ok(mut record) = replay_rows::decode(value) else {
         return ResponseScan::opaque_row();
     };
     if record.bridge_calls.is_empty() && record.outputs.is_empty() {
@@ -88,7 +88,7 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
     for output in &mut record.outputs {
         output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
     }
-    let Ok(stub) = REPLAY_RECORDS.encode_value(&record) else {
+    let Ok(stub) = replay_rows::encode(&record) else {
         return ResponseScan::opaque_row();
     };
     ResponseScan::Decoded(ResponseCarriage {
@@ -115,7 +115,7 @@ pub(crate) fn replay_owners(
     txn: &heed::RoTxn<'_>,
     value: &[u8],
 ) -> Result<Vec<EntityId>> {
-    let Ok(record) = REPLAY_RECORDS.decode_value(value) else {
+    let Ok(record) = replay_rows::decode(value) else {
         return Ok(Vec::new());
     };
     let mut owners = vec![record.run_id];
