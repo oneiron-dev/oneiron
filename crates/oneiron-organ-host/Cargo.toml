@@ -37,8 +37,8 @@ der = { version = "=0.7.10", features = ["alloc", "oid", "std"] }
 # crates, and the DSS read with the engine's own PDF parser. Not the organ.
 lopdf = { version = "=0.44.0", default-features = false }
 pkix-chain = { version = "=0.4.1", features = ["crl", "ocsp"] }
-# The DSS OCSP response's unsigned `certs`, extended with the responders the
-# organ may name from the DSS and the anchors.
+# The DSS's OCSP responses, which the host checks itself with the material's
+# time and producedAt kept apart (pkix's checker weighs both at producedAt).
 x509-ocsp = { version = "=0.2.1", default-features = false }
 x509-tsp = "=0.1.0"
 ipnet = "2"
@@ -48,6 +48,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }
+# SHA-1 names an OCSP responder by key and may hash a CertID (RFC 6960).
+sha1 = "=0.10.6"
 sha2 = "=0.10.9"
 thiserror = { workspace = true }
 # reqwest's own runtime, driven here so one deadline bounds a whole fetch.
