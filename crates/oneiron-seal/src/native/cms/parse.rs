@@ -646,7 +646,7 @@ fn subject_index(
         .saturating_add(decoded.len().saturating_mul(size_of::<usize>()))
         .saturating_add(held_bytes::btree::<Vec<u8>, Vec<usize>>(decoded.len()));
     let hold = memory.hold(bytes)?;
-    let mut by_subject = BTreeMap::new();
+    let mut by_subject: BTreeMap<Vec<u8>, Vec<usize>> = BTreeMap::new();
     for (idx, cert) in decoded.iter().enumerate() {
         let Some(cert) = cert.as_ref() else {
             continue;
