@@ -27,12 +27,12 @@ use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityTier,
-    CheckpointRootSigner, DeviceAuthority, HostSlipIssuer, MachineRole, ROLE_ADMIN, ROLE_CLOUD,
-    ROLE_OWNER,
+    AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey,
+    AuthorityTier, CheckpointRootSigner, DeviceAuthority, HeldAnswerListing, HostSlipIssuer,
+    MachineOwnership, MachineRole, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::error::{DevicePinRefusal, SecretError};
+use oneiron::error::{DevicePinRefusal, RecordError, SecretError};
 use oneiron::recovery::PassphraseCost;
 use oneiron::test_doors::device_pin::steps_that_waited;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -40,7 +40,7 @@ use oneiron::test_doors::steward::recover_cloud_account_signed_by_host_root;
 use oneiron::world_keys::{
     DEVICE_PIN_MIN_CHARS, DEVICE_PIN_SHORT_MIN_CHARS, DevicePin, DevicePinTier, OwnerKeyRest,
 };
-use oneiron::{Error, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_keystore::{
     AuthBoundError, AuthBoundSecretStore, DEVICE_PIN_WAIT_SECS, DEVICE_PIN_WRONG_TRIES,
     DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot,
@@ -434,12 +434,49 @@ impl PinDevice {
     fn pass_the_window(&self) {
         self.clock.advance(PRESENCE_WINDOW_SECS * 1000 + 1);
     }
+
+    /// This install's MACHINE row.
+    fn install(&self) -> EntityId {
+        self.vault
+            .local_machine()
+            .expect("local machine read")
+            .expect("this install's machine")
+            .id
+    }
+
+    /// Whether the fold trusts this install as the owner's machine.
+    fn install_is_mine(&self) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .trusted_machine(self.install())
+            .is_some()
+    }
+
+    /// The owner's acts that wait for his proof, and whether this install
+    /// can confirm them now.
+    fn held(&self) -> HeldAnswerListing {
+        self.vault
+            .held_machine_answers(&self.proof)
+            .expect("the held answer list")
+    }
 }
 
 fn verifies(key: [u8; 32], signature: &[u8]) -> bool {
+    verifies_over(key, STATEMENT, signature)
+}
+
+/// Whether `signature` is `key`'s over `message`.
+fn verifies_over(key: [u8; 32], message: &[u8], signature: &[u8]) -> bool {
     let verifying = VerifyingKey::from_bytes(&key).expect("an Ed25519 public key");
     let signature = Signature::from_slice(signature).expect("a 64-byte signature");
-    verifying.verify_strict(STATEMENT, &signature).is_ok()
+    verifying.verify_strict(message, &signature).is_ok()
+}
+
+/// Bytes in the authority transcript domain: what an owner act's proof
+/// signs, and what no checkpoint statement is.
+fn owner_act_transcript() -> Vec<u8> {
+    [AUTHORITY_TRANSCRIPT_DOMAIN, b" device pin test".as_slice()].concat()
 }
 
 /// Whether a second step waited for the first, which the test stopped
@@ -2045,5 +2082,215 @@ fn a_replacement_whose_sealed_write_answers_a_failure_is_not_told_as_the_replace
                 if public_key != replaced
         ),
         "the handle then names the key that rests, never the replaced one"
+    );
+}
+
+/// An owner act's proof (row CARRIER-OWNER-PROOF) on a device with a PIN:
+/// the doors prove with the key under the PIN only inside a window. Outside
+/// one the key is passed over as if this install held none. The answer that
+/// makes this machine the owner's needs the proof on every vault, so it is
+/// stored and held, the list says this install cannot confirm, and a confirm
+/// is refused before it writes. A right PIN lets the same install confirm.
+/// Each door picks and signs inside its own transaction.
+#[test]
+fn an_owner_act_is_proven_with_the_key_under_the_pin_only_inside_a_window() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let key = device.enrol();
+    assert!(device.signs(key), "guard: inside the window the key signs");
+    assert!(
+        device.held().can_confirm,
+        "inside the window this install proves the owner's acts"
+    );
+
+    device.pass_the_window();
+    assert!(
+        !device.held().can_confirm,
+        "outside the window no key of this install proves"
+    );
+    device
+        .vault
+        .set_machine_role(
+            &device.proof,
+            ActSurface::ThisInstall,
+            device.install(),
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("outside the window the answer door stores the answer, unproven");
+    let held = device.held();
+    assert_eq!(
+        held.answers.len(),
+        1,
+        "the unproven answer is held and asks the owner: {held:?}"
+    );
+    assert!(
+        !device.install_is_mine(),
+        "a held answer makes no machine the owner's"
+    );
+    let entries = [held.answers[0].entry];
+    let refused =
+        device
+            .vault
+            .confirm_held_machine_answers(&device.proof, ActSurface::ThisInstall, &entries);
+    assert!(
+        matches!(refused, Err(Error::Record(RecordError::OwnerKeyRequired))),
+        "outside the window a confirm is refused for the owner's key: {refused:?}"
+    );
+    assert_eq!(
+        device.held().answers,
+        held.answers,
+        "the refused confirm leaves the answer asking"
+    );
+
+    device
+        .vault
+        .confirm_device_pin(PIN)
+        .expect("the right PIN confirms");
+    assert!(
+        device.held().can_confirm,
+        "a right PIN lets this install prove again"
+    );
+    device
+        .vault
+        .confirm_held_machine_answers(&device.proof, ActSurface::ThisInstall, &entries)
+        .expect("inside the window the owner's confirm is proven and lands");
+    assert!(
+        device.install_is_mine(),
+        "the proven answer makes it his machine"
+    );
+    assert_eq!(
+        device.held().answers,
+        Vec::new(),
+        "nothing asks after the confirm"
+    );
+}
+
+/// The proof path of the key under the PIN refuses where its statement path
+/// refuses: a signer taken inside a window proves nothing once the window
+/// is over. A proof is signed over an authority transcript alone, and a
+/// transcript is never signed as a checkpoint statement.
+#[test]
+fn the_key_under_the_pin_signs_an_owner_proof_only_inside_a_window_and_over_a_transcript() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let key = device.enrol();
+    let taken = device
+        .listed_signer(key)
+        .expect("guard: inside the window the pass gets the signer");
+    let fold = device.vault.authority_fold().expect("authority fold");
+    let transcript = owner_act_transcript();
+
+    assert!(
+        taken.proves_now(&device.vault, &fold),
+        "inside the window the key proves"
+    );
+    let proof = taken
+        .sign_owner_proof(&device.vault, &fold, &transcript)
+        .expect("inside the window the key signs an owner act's proof");
+    assert!(verifies_over(key, &transcript, &proof));
+    assert!(
+        taken
+            .sign_owner_proof(&device.vault, &fold, STATEMENT)
+            .is_err(),
+        "a checkpoint statement is never signed as a proof"
+    );
+    assert!(
+        taken
+            .sign_checkpoint_statement(&device.vault, &transcript)
+            .is_err(),
+        "a transcript is never signed as a checkpoint statement"
+    );
+
+    device.pass_the_window();
+    assert!(
+        !taken.proves_now(&device.vault, &fold),
+        "outside the window the key does not prove"
+    );
+    assert_eq!(
+        pin_refusal(taken.sign_owner_proof(&device.vault, &fold, &transcript)),
+        DevicePinRefusal::Required,
+        "a signer taken inside the window signs no proof once it is over"
+    );
+}
+
+/// The proof path of a key read from its slot refuses where its statement
+/// path refuses: once a PIN is set on its keystore, and once the roster no
+/// longer lists the key live.
+#[test]
+fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_revoked() {
+    let transcript = owner_act_transcript();
+
+    let device = PinDevice::hardware_counted();
+    let key = device.enrol();
+    // The two ways a caller comes by the key while no PIN is set.
+    let listed = device
+        .listed_signer(key)
+        .expect("guard: with no PIN the pass gets the signer");
+    let handed_out = device
+        .vault
+        .device_owner_signing_key()
+        .expect("guard: with no PIN the key is handed out");
+    let fold = device.vault.authority_fold().expect("authority fold");
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        assert!(
+            signer.proves_now(&device.vault, &fold),
+            "guard: with no PIN the key in its slot proves"
+        );
+        let proof = signer
+            .sign_owner_proof(&device.vault, &fold, &transcript)
+            .expect("guard: with no PIN the key signs an owner act's proof from its slot");
+        assert!(verifies_over(key, &transcript, &proof));
+        assert!(
+            signer
+                .sign_owner_proof(&device.vault, &fold, STATEMENT)
+                .is_err(),
+            "a checkpoint statement is never signed as a proof"
+        );
+    }
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner adds a PIN to this device");
+    let fold = device.vault.authority_fold().expect("authority fold");
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        assert!(
+            !signer.proves_now(&device.vault, &fold),
+            "a signer taken before the PIN was set does not prove once it is set"
+        );
+        assert_eq!(
+            pin_refusal(signer.sign_owner_proof(&device.vault, &fold, &transcript)),
+            DevicePinRefusal::Required,
+            "and it signs no proof, inside the window too"
+        );
+    }
+
+    let unbound = PinDevice::hardware_counted();
+    let key = unbound.enrol();
+    let taken = unbound
+        .listed_signer(key)
+        .expect("guard: with no PIN the pass gets the signer");
+    let fold = unbound.vault.authority_fold().expect("authority fold");
+    assert!(
+        taken.proves_now(&unbound.vault, &fold),
+        "guard: the live key in its slot proves"
+    );
+    retire_the_roster(&unbound, key);
+    let fold = unbound.vault.authority_fold().expect("authority fold");
+    assert!(
+        !taken.proves_now(&unbound.vault, &fold),
+        "a key the roster no longer lists live does not prove"
+    );
+    assert!(
+        taken
+            .sign_owner_proof(&unbound.vault, &fold, &transcript)
+            .is_err(),
+        "and a signer taken before the key was revoked signs no proof after"
     );
 }

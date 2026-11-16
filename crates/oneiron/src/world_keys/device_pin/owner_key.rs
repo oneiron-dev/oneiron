@@ -15,7 +15,8 @@
 //!   key's public half only after it opened the seed with the device PIN key
 //!   and the seed is the one its envelope names.
 //! - A signer checks the roster and the window at each signature, not only
-//!   when a pass lists it.
+//!   when a pass lists it. An owner act's proof (row CARRIER-OWNER-PROOF) is
+//!   a signature under the same checks as a checkpoint statement.
 //!
 //! Setting the first PIN takes this vault's seed out of its slot in the same
 //! step: the seed is sealed under the new device PIN key and read back before
@@ -46,8 +47,8 @@ use super::{
     slot_seed_bar,
 };
 use crate::authority::{
-    ActAuthority, AuthorityKey, CheckpointRootSigner, HostSlipIssuer, OwnerKeyEnrollment,
-    OwnerKeyEnrollmentReceipt, authority_refused,
+    ActAuthority, AuthorityFold, AuthorityKey, CheckpointRootSigner, HostSlipIssuer,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, authority_refused,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -121,28 +122,36 @@ impl PinBoundOwnerSigner {
     /// Why the key does not sign on `vault` now, from what needs no key:
     /// `vault` is another vault's handle, the device PIN key was set or
     /// forgotten since the seed was opened, or the roster no longer lists
-    /// the key live.
-    fn refusal(&self, vault: &Vault) -> Option<Error> {
+    /// the key live. `held` is the fold of a caller that signs inside its
+    /// own transaction ([`Vault::owner_key_on_live_roster`]).
+    fn refusal(&self, vault: &Vault, held: Option<&AuthorityFold>) -> Option<Error> {
         if self.slot.vault_id != *vault.vault_id().as_bytes() {
             return Some(authority_refused(OTHER_VAULT_KEY));
         }
         if self.pin.key_generation() != self.key_generation {
             return Some(refused(SEALED_KEY_UNOPENED));
         }
-        if !vault.owner_key_on_live_roster(&self.public_key) {
+        if !vault.owner_key_on_live_roster(&self.public_key, held) {
             return Some(authority_refused(KEY_NOT_LIVE));
         }
         None
     }
 
-    /// The key's signature over the checkpoint statement `statement`.
+    /// One signature of the key, which `sign` makes with it: a checkpoint
+    /// statement's, or an owner act's proof. Both are made here, under the
+    /// same checks, and the key is dropped inside the call.
     ///
     /// # Errors
     /// [`crate::error::DevicePinRefusal::Required`] outside a window; the refusals of
     /// [`Self::refusal`]; a refusal for a seed that does not open, or opens
-    /// to another key than its envelope names.
-    fn sign(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
-        if let Some(refusal) = self.refusal(vault) {
+    /// to another key than its envelope names; what `sign` refuses.
+    fn sign(
+        &self,
+        vault: &Vault,
+        held: Option<&AuthorityFold>,
+        sign: impl FnOnce(&OwnerRootSigner) -> Result<Vec<u8>>,
+    ) -> Result<Vec<u8>> {
+        if let Some(refusal) = self.refusal(vault, held) {
             return Err(refusal);
         }
         // Read before the key's lock is taken: a home may be slow.
@@ -158,7 +167,7 @@ impl PinBoundOwnerSigner {
             if opened.public_key != self.public_key {
                 return Err(refused(SEALED_KEY_MISNAMED));
             }
-            OwnerRootSigner::from_seed(&opened.seed).sign_statement(statement)
+            sign(&OwnerRootSigner::from_seed(&opened.seed))
         })?
     }
 }
@@ -169,11 +178,25 @@ impl CheckpointRootSigner for PinBoundOwnerSigner {
     }
 
     fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
-        self.sign(vault, statement)
+        self.sign(vault, None, |key| key.sign_statement(statement))
     }
 
     fn signs_now(&self, vault: &Vault) -> bool {
-        self.pin.window_is_open() && self.refusal(vault).is_none()
+        self.pin.window_is_open() && self.refusal(vault, None).is_none()
+    }
+
+    /// Only inside the window a right PIN opened, as a checkpoint statement.
+    fn sign_owner_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.sign(vault, Some(fold), |key| key.sign_proof(transcript))
+    }
+
+    fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
+        self.pin.window_is_open() && self.refusal(vault, Some(fold)).is_none()
     }
 }
 

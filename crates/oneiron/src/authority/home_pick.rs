@@ -68,6 +68,7 @@ pub(super) fn apply_home_pick(
         machine: pick.machine,
         choice: pick.node_id.as_ref(),
         context: HOME_PICK_REVISION_CONTEXT,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -237,7 +238,7 @@ impl Vault {
             current,
         );
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -248,6 +249,7 @@ impl Vault {
                 node_id,
             }),
             now,
+            self.owner_proof_signer(&fold).as_ref(),
         )?;
         let act = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -256,6 +258,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        after.refuse_waiting_choice(&act)?;
         if !after.home_pick.live.contains_key(&act) || after.install.held_back.contains(&act) {
             return Err(invalid_authority());
         }

@@ -150,7 +150,7 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
             actor.to_hex()
         ),
         &[
-            "Establish an owner binding with a BindActor entry signed by an owner device.",
+            "An Owner binds by enrolling an owner signing key from their own device: on a self-hosted vault their first enrolled key binds them.",
             "Actor keys assert identity; the authority log decides whether it holds.",
         ],
     ))

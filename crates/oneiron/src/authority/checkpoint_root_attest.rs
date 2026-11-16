@@ -108,6 +108,34 @@ pub trait CheckpointRootSigner: Send + Sync {
         let _ = vault;
         true
     }
+    /// The root's raw signature over `transcript`, an authority entry's
+    /// transcript, as an owner key's proof of an owner act the install that
+    /// holds it carries on `vault` (row CARRIER-OWNER-PROOF). Refused for
+    /// any bytes outside the authority transcript domain, so a checkpoint
+    /// statement is never signed as a proof, nor a proof as a statement.
+    ///
+    /// A root whose right to sign can end refuses a proof wherever it
+    /// refuses a statement ([`Self::sign_checkpoint_statement`]), checked at
+    /// this call. One reading differs. A door signs the proof inside its own
+    /// transaction, so the roster is read from `fold`, the door's view of
+    /// it, and the signer opens no transaction of the vault: a second one on
+    /// the door's thread would fail, or read the roster as it was before the
+    /// door's own writes.
+    fn sign_owner_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>>;
+    /// Whether the root proves an owner act on `vault` at this moment, by
+    /// `fold`'s roster: what [`Self::sign_owner_proof`] checks, asked
+    /// without a signature and with no transaction of the vault.
+    /// The proof's pick (`Vault::owner_proof_signer`) leaves out a root that
+    /// does not prove now. The default always proves.
+    fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
+        let _ = (vault, fold);
+        true
+    }
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -120,6 +148,21 @@ impl CheckpointRootSigner for HostSlipIssuer {
     fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
         let _ = vault;
         self.sign_checkpoint(statement)
+    }
+
+    /// A host's root proves whenever it is asked: the fold decides whether
+    /// its proof counts.
+    fn sign_owner_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        let _ = (vault, fold);
+        if !transcript.starts_with(super::AUTHORITY_TRANSCRIPT_DOMAIN) {
+            return Err(super::invalid_authority());
+        }
+        Ok(self.sign_slip(transcript))
     }
 }
 
@@ -183,18 +226,37 @@ impl Vault {
         held.push(signer);
     }
 
-    /// The root signers this handle holds that sign at this moment
-    /// ([`CheckpointRootSigner::signs_now`]), in the order they were held.
-    #[must_use]
-    pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
-        // The list is copied first: a signer's answer may read the vault.
-        let held = self
-            .world_keys
+    /// Drops every root signer this handle holds (test door
+    /// `owner_key_release`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn release_checkpoint_root_signers(&self) {
+        self.world_keys
             .checkpoint_roots
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        held.into_iter()
+            .clear();
+    }
+
+    /// Every root signer this handle holds, in the order they were held,
+    /// whether or not it signs now. The list is a copy: a signer's answer
+    /// may read the vault, and none is asked under the list's lock.
+    pub(super) fn held_checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
+        self.world_keys
+            .checkpoint_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The root signers this handle holds that sign at this moment
+    /// ([`CheckpointRootSigner::signs_now`]), in the order they were held.
+    /// Each signer reads the vault's roster in a transaction of its own, so
+    /// the caller holds none: a door that picks a signer inside its
+    /// transaction asks the proof's pick (`Vault::owner_proof_signer`).
+    #[must_use]
+    pub fn checkpoint_root_signers(&self) -> Vec<Arc<dyn CheckpointRootSigner>> {
+        self.held_checkpoint_root_signers()
+            .into_iter()
             .filter(|signer| signer.signs_now(self))
             .collect()
     }

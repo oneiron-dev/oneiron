@@ -40,7 +40,9 @@
 //! PIN added to a key does not undo an earlier copy of that key. Renewing
 //! the key does (row DEVICE-PIN-ADD-ROTATES-OWNER-KEY). Either way, a key
 //! signs only while the roster lists it live, and it checks that at each
-//! signature.
+//! signature. An owner act's proof (row CARRIER-OWNER-PROOF) is signed under
+//! the same rules as a checkpoint statement: a key that signs no statement
+//! now proves nothing now.
 
 use std::sync::Arc;
 
@@ -52,12 +54,12 @@ use super::device_pin::{
     SlotSeedBar, device_pin_is_set, no_device_pin_here, pin_refused, slot_seed_bar,
 };
 use crate::authority::{
-    ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, authority_refused, checkpoint_statement_domain,
-    invalid_authority,
+    ActAuthority, AuthorityFold, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey,
+    HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, authority_refused,
+    checkpoint_statement_domain, invalid_authority,
 };
 use crate::entity_id::EntityId;
-use crate::error::{DevicePinRefusal, Error, Result};
+use crate::error::{DevicePinRefusal, Error, RecordError, Result};
 use crate::vault::Vault;
 
 /// The context the signing key is derived under from its seed.
@@ -72,9 +74,16 @@ const SEED_LEFT_ITS_SLOT: &str = "this owner signing key's seed no longer rests 
 pub(super) const KEY_NOT_LIVE: &str = "the roster does not list this owner signing key live";
 pub(super) const OTHER_VAULT_KEY: &str = "this owner signing key is another vault's";
 
+/// Why a managed host's serving install enrols no owner signing key of its
+/// own ([`Vault::enrol_serving_install_owner_signing_key`]).
+const MANAGED_HOST_HOLDS_NO_OWNER_KEY: &str =
+    "a managed host holds no owner key: enrol one on your own device";
+
 /// This install's owner signing key as a checkpoint root signer: the root is
 /// the key's own Ed25519 public half, and it signs nothing but a checkpoint
-/// statement. Its `Debug` prints only the public half.
+/// statement and, as the owner's proof, the transcript of an owner act this
+/// install carries (row CARRIER-OWNER-PROOF). Its `Debug` prints only the
+/// public half.
 pub struct OwnerRootSigner {
     signing: SigningKey,
     /// Where the seed was read from, for a key read from a keystore slot;
@@ -140,6 +149,16 @@ impl OwnerRootSigner {
         Ok(self.signing.sign(statement).to_bytes().to_vec())
     }
 
+    /// The key's raw signature over `transcript` as the owner's proof, for
+    /// a caller that has checked the key signs now. Refused for any bytes
+    /// outside the authority transcript domain.
+    pub(super) fn sign_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(crate::authority::AUTHORITY_TRANSCRIPT_DOMAIN) {
+            return Err(invalid_authority());
+        }
+        Ok(self.signing.sign(transcript).to_bytes().to_vec())
+    }
+
     /// Why the key does not sign on `vault` now; `None` when it does. A key
     /// read from a slot signs on that slot's vault alone, and stops once a
     /// device PIN is set on its keystore: from then on the key signs from
@@ -151,8 +170,10 @@ impl OwnerRootSigner {
     /// dead. A copy of the slot's stored form from before the PIN, put back,
     /// revives it: the module's known limit. A keystore that does not answer
     /// signs nothing. Every key stops when the roster no longer lists it
-    /// live.
-    fn refusal(&self, vault: &Vault) -> Option<Error> {
+    /// live: `held` is the fold of a caller that signs inside its own
+    /// transaction ([`Vault::owner_key_on_live_roster`]). The one rule of a
+    /// checkpoint statement and of an owner act's proof.
+    fn refusal(&self, vault: &Vault, held: Option<&AuthorityFold>) -> Option<Error> {
         if let Some(home) = &self.slot_home {
             if home.slot.vault_id != *vault.vault_id().as_bytes() {
                 return Some(authority_refused(OTHER_VAULT_KEY));
@@ -173,7 +194,7 @@ impl OwnerRootSigner {
                 Err(error) => return Some(super::keystore_error(error)),
             }
         }
-        if !vault.owner_key_on_live_roster(&self.public_key()) {
+        if !vault.owner_key_on_live_roster(&self.public_key(), held) {
             return Some(authority_refused(KEY_NOT_LIVE));
         }
         None
@@ -191,14 +212,33 @@ impl CheckpointRootSigner for OwnerRootSigner {
     /// the slot no longer holds its seed. Each is checked at this call, so a
     /// signer taken earlier stops with its key.
     fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
-        match self.refusal(vault) {
+        match self.refusal(vault, None) {
             Some(refusal) => Err(refusal),
             None => self.sign_statement(statement),
         }
     }
 
     fn signs_now(&self, vault: &Vault) -> bool {
-        self.refusal(vault).is_none()
+        self.refusal(vault, None).is_none()
+    }
+
+    /// Refused for any bytes outside the authority transcript domain, and
+    /// wherever [`Self::sign_checkpoint_statement`] refuses, with the roster
+    /// read from `fold`. Each is checked at this call.
+    fn sign_owner_proof(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
+        match self.refusal(vault, Some(fold)) {
+            Some(refusal) => Err(refusal),
+            None => self.sign_proof(transcript),
+        }
+    }
+
+    fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
+        self.refusal(vault, Some(fold)).is_none()
     }
 }
 
@@ -313,6 +353,34 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// The owner enrols the owner signing key of the install that serves
+    /// this vault: a server's own `enroll-this-install`
+    /// ([`Vault::enrol_device_owner_signing_key`] for the serving install).
+    ///
+    /// An enrolled owner key proves the owner acts its install carries (row
+    /// CARRIER-OWNER-PROOF), so it belongs on a machine the owner holds. A
+    /// managed host's server is not one: on a `Hosted` vault this refuses
+    /// before it makes a key or writes a row (ruling
+    /// CARRIER-HOSTED-SERVER-OWNER-KEY = A). A device's own install of a
+    /// hosted vault still enrols its key through
+    /// [`Vault::enrol_device_owner_signing_key`].
+    ///
+    /// # Errors
+    /// [`RecordError::AuthorityRefused`] on a `Hosted` vault; otherwise as
+    /// [`Vault::enrol_device_owner_signing_key`].
+    pub fn enrol_serving_install_owner_signing_key(
+        &self,
+        authority: &ActAuthority,
+        issuer: &HostSlipIssuer,
+    ) -> Result<OwnerKeyEnrollmentReceipt> {
+        if self.privacy_posture() == crate::HostingPrivacyPosture::Hosted {
+            return Err(Error::Record(RecordError::AuthorityRefused(
+                MANAGED_HOST_HOLDS_NO_OWNER_KEY,
+            )));
+        }
+        self.enrol_device_owner_signing_key(authority, issuer)
+    }
+
     /// Holds this install's owner signing key as a checkpoint root signer
     /// when the roster names it live: the call where the vault opens with
     /// its keystore, after this install's signing keys loaded. It never
@@ -368,10 +436,22 @@ impl Vault {
     }
 
     /// Whether the roster lists `public_key` as a live key now: the rule a
-    /// held owner signing key signs under at each use. A roster that cannot
-    /// be read lists nothing.
-    pub(super) fn owner_key_on_live_roster(&self, public_key: &[u8; 32]) -> bool {
+    /// held owner signing key signs under at each use. `held` is the fold of
+    /// a caller that signs inside its own transaction: the roster is read
+    /// from it, and no transaction is opened, since a second one on the
+    /// caller's thread would fail or read the roster as it was before the
+    /// caller's writes. With none, the vault's committed roster is read, in
+    /// a transaction of this call's own. A roster that cannot be read lists
+    /// nothing.
+    pub(super) fn owner_key_on_live_roster(
+        &self,
+        public_key: &[u8; 32],
+        held: Option<&AuthorityFold>,
+    ) -> bool {
         let key = AuthorityKey::Ed25519(*public_key);
+        if let Some(fold) = held {
+            return fold.roster.get(&key).is_some_and(|device| !device.revoked);
+        }
         let live = self
             .store
             .env

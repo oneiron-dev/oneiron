@@ -217,7 +217,9 @@ pub enum GrantMark {
 /// serving host's: rooted under the test host, the engine's MACHINE writers
 /// provisioned, the embedded owner seeded, an in-memory device keystore
 /// installed, and this install's machine profile enrolled, so the owner's
-/// agent-grant act has a carrier.
+/// agent-grant act has a carrier. The handle holds the test host's root as a
+/// serving host holds its own, so the owner acts it carries are proven (row
+/// CARRIER-OWNER-PROOF).
 ///
 /// # Errors
 ///
@@ -233,6 +235,7 @@ pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
         oneiron_keystore::MemoryKeystore::default(),
     ));
     vault.ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)?;
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer));
     Ok(vault)
 }
 

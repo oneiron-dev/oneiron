@@ -1,35 +1,26 @@
 //! Moved from `crates/oneiron/src/verbs/voice_records/consent.rs` (core split slice 2: consent state below core).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Whether a consent record grants or withdraws.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("voice.consent.state")]
 pub enum VoiceConsentState {
     Granted,
     Withdrawn,
 }
 
 impl VoiceConsentState {
-    /// Returns the pinned on-disk string for this state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Granted => "granted",
-            Self::Withdrawn => "withdrawn",
-        }
-    }
-
     /// Parses a pinned on-disk state string.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "granted" => Some(Self::Granted),
-            "withdrawn" => Some(Self::Withdrawn),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
