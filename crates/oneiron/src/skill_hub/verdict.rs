@@ -74,7 +74,19 @@ impl ScanVerdict {
 /// the activation dial (`skill_scan`) compares stored risks against a threshold
 /// with `>=`, so the variant sequence here is a wire-facing decision, not a
 /// cosmetic one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ScanRiskLevel {
     None,
     Low,
@@ -82,6 +94,10 @@ pub enum ScanRiskLevel {
     High,
     Critical,
 }
+
+/// The engine's catalogue key `skills.scan_activation_risk_threshold` holds one level, by the
+/// same lowercase names as [`ScanRiskLevel::as_str`].
+impl crate::setting::SettingValue for ScanRiskLevel {}
 
 impl ScanRiskLevel {
     /// The pinned on-disk string for this level.

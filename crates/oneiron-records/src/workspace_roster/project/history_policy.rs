@@ -12,7 +12,9 @@ pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
 /// its scan check (`joint`).
 pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The vault's history budget: the catalogue key `projects.history_policy`,
+/// which the owner sets through `vault.settings.set`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectHistoryPolicy {
     pub max_revisions: u64,
@@ -33,6 +35,18 @@ impl Default for ProjectHistoryPolicy {
             max_revisions: DEFAULT_PROJECT_HISTORY_MAX_REVISIONS,
             cycle_worlds_max: DEFAULT_PROJECT_CYCLE_WORLDS_MAX,
         }
+    }
+}
+
+impl oneiron_setting_contract::SettingValue for ProjectHistoryPolicy {
+    /// Each budget admits at least one revision and one world.
+    fn check(self) -> oneiron_contracts::error::Result<Self> {
+        if self.max_revisions == 0 || self.cycle_worlds_max == 0 {
+            return Err(oneiron_contracts::error::Error::InvalidConfig(
+                "project history budgets must admit at least one revision and one world".into(),
+            ));
+        }
+        Ok(self)
     }
 }
 

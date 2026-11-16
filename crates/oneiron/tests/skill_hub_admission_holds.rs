@@ -18,6 +18,7 @@ use oneiron::llm::decision::{
     HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin, TypedDecision,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{
     ForeignSkillPublisher, HubAdmissionDisposition, HubFile, HubPackage, HubPin, HubRef,
@@ -29,9 +30,7 @@ use oneiron::skill_hub::{
 use oneiron::skill_optimize::{
     HeldOutReplayCase, HeldOutReplayNotes, SkillOptimizeDecisions, SkillReplayResponses,
 };
-use oneiron::skill_scan::{
-    ActivationPosture, scan_gate_for_activation, set_skill_scan_activation_risk_threshold,
-};
+use oneiron::skill_scan::{ActivationPosture, scan_gate_for_activation};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -108,6 +107,31 @@ impl Fixture {
             owner,
             baseline,
         }
+    }
+
+    /// The owner sets the scan risk at which an activation waits for the
+    /// owner's tap: the Setting key `skills.scan_activation_risk_threshold`
+    /// (SETTING-PLAIN PLAIN-2b deleted
+    /// `set_skill_scan_activation_risk_threshold` and its table).
+    fn set_activation_risk_threshold(&self, level: ScanRiskLevel) {
+        let level = serde_json::to_value(level).expect("the risk level as JSON");
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.owner),
+                SetSetting::vault_value("skills.scan_activation_risk_threshold", level),
+            )
+            .expect("the owner sets the activation threshold");
+        assert!(
+            matches!(
+                outcome,
+                SetSettingOutcome::Applied {
+                    sequence: Some(_),
+                    ..
+                }
+            ),
+            "the owner's threshold applies: {outcome:?}"
+        );
     }
 
     fn hub(&self) -> (EntityId, ForeignSkillPublisher) {
@@ -537,7 +561,7 @@ fn gate_23_a_scanner_flag_does_not_hold_a_same_permission_shared_merge() -> Resu
         .0;
     let delta = package("fixture.base", "2", "check result", false);
     assert_eq!(delta.capabilities, SkillCapabilitySurface::default());
-    set_skill_scan_activation_risk_threshold(&fixture.vault, ScanRiskLevel::Low)?;
+    fixture.set_activation_risk_threshold(ScanRiskLevel::Low);
     let merged = fixture.vault.submit_shared_skill_delta(
         &fixture.baseline,
         &encode_hub_package(&delta)?,

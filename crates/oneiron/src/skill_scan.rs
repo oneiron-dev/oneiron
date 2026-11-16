@@ -19,10 +19,9 @@
 use crate::Vault;
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{ErrorKind, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SKILL;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::{
     SkillContentHash, SkillLifecycle, SkillRecord, decode_skill_record, encode_skill_record,
 };
@@ -39,28 +38,6 @@ use crate::store::Store;
 pub const SCAN_PROVIDER_STATIC_V1: &str = "oneiron.static.v1";
 /// Static provider for the complete pack tree, including knowledge-only facets.
 pub(crate) const SCAN_PROVIDER_STATIC_PACK_V1: &str = "oneiron.static.pack.v1";
-
-/// The activation risk threshold dial: a singleton row (house pattern, cf.
-/// `inbox::INBOX_REVIEW_DIAL_KEY`) under the owning module rather than
-/// `settings.rs`, since `settings.rs` is UI customization and this is a
-/// per-feature policy dial.
-const ACTIVATION_RISK_THRESHOLD: SideTable<(), ScanRiskLevel, Raw> =
-    SideTable::new(&side_table::SKILL_SCAN_ACTIVATION_RISK_THRESHOLD);
-
-/// `ScanRiskLevel` lives in `skill_hub`; this impl sits beside its one
-/// `Raw`-codec row instead, since only `skill_scan` persists it.
-impl RawValue for ScanRiskLevel {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.as_str().as_bytes().to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let token = std::str::from_utf8(bytes)
-            .map_err(|_| Error::CorruptedIndex("skill scan activation risk threshold"))?;
-        ScanRiskLevel::parse(token)
-            .ok_or_else(|| Error::CorruptedIndex("skill scan activation risk threshold").into())
-    }
-}
 
 /// Default risk at which activation escalates from `auto` to `proposed`.
 ///
@@ -354,32 +331,23 @@ pub(crate) fn escalate_activation_approval_in_txn(
     Ok(true)
 }
 
-/// Reads the persisted activation risk threshold (default: `High`).
+/// The activation risk threshold in force (default: `High`): the catalogue key
+/// `skills.scan_activation_risk_threshold`, which the owner sets through
+/// `vault.settings.set`.
 pub fn skill_scan_activation_risk_threshold(vault: &Vault) -> Result<ScanRiskLevel> {
     let rtxn = vault.store.env.read_txn()?;
     activation_risk_threshold_in_txn(&vault.store, &rtxn)
-}
-
-/// Sets the activation risk threshold dial.
-pub fn set_skill_scan_activation_risk_threshold(
-    vault: &Vault,
-    threshold: ScanRiskLevel,
-) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| {
-        ACTIVATION_RISK_THRESHOLD.put(&vault.store, wtxn, &(), &threshold)?;
-        Ok(())
-    })
 }
 
 fn activation_risk_threshold_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<ScanRiskLevel> {
-    Ok(ACTIVATION_RISK_THRESHOLD
-        .get(store, rtxn, &())?
-        .unwrap_or(DEFAULT_ACTIVATION_RISK_THRESHOLD))
+    Ok(setting_keys::ACTIVATION_RISK_THRESHOLD
+        .read_in_dbs_txn(store, rtxn, &[], None)?
+        .value)
 }
 
-pub(crate) mod tables;
+pub(crate) mod setting_keys;
 #[cfg(test)]
 mod tests;

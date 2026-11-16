@@ -9201,6 +9201,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sdk-build",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-store",
  "oneiron-vault-contract",

@@ -13,11 +13,13 @@
 
 use std::sync::{Arc, Mutex};
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::{
     Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingReconciler, payload_text,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_model::SecretScanMode;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -86,7 +88,7 @@ fn a_message_the_write_door_refuses_never_reaches_the_embedder_in_its_turns_text
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
     let at = vault.now_recorded_at();
     // The owner's scan off: the phrase is stored as written.
-    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, at)?;
+    switch_secret_scan_off(&vault, &owner);
 
     let turn = EntityId::now();
     vault
@@ -133,4 +135,27 @@ fn a_message_the_write_door_refuses_never_reaches_the_embedder_in_its_turns_text
         "the turn's other words still embed: sent {sent:?}, passes {reports:?}"
     );
     Ok(())
+}
+
+/// The owner switches the write door's secret scan off: the Setting key
+/// `secret_scan.mode` through `Vault::set_setting` (SETTING-PLAIN PLAIN-2b
+/// deleted `Vault::set_secret_scan_mode` and its receipt table).
+fn switch_secret_scan_off(vault: &Vault, owner: &AuthenticatedOwner) {
+    let mode = serde_json::to_value(SecretScanMode::Off).expect("the mode as JSON");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value("secret_scan.mode", mode),
+        )
+        .expect("the owner switches the scan off");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's switch applies: {outcome:?}"
+    );
 }
