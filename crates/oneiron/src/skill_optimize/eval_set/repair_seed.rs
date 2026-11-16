@@ -135,14 +135,19 @@ pub struct EvalRepairSeedLegs {
     pub candidate_receipt: String,
 }
 
+/// The seed's key: its seat, then the capture's claim ref as its reader
+/// names it (an entity id reads in any letter case; the key hashes its
+/// canonical hex, as the proposal's compiled task carries it), then the
+/// capture's hash, the outcome and the task pointer.
 fn seed_key(source: &EvalRepairTaskSource) -> Result<[u8; 32]> {
     let seat = source.seat.token()?;
+    let claim = EntityId::from_hex(&source.claim_ref)?.to_hex();
     let ordinal = source.outcome_ordinal.to_string();
     let mut hasher = ContentHasher::new();
     hasher.update(SEED_DOMAIN);
     for part in [
         seat.as_str(),
-        source.claim_ref.as_str(),
+        claim.as_str(),
         source.source_hash.as_str(),
         ordinal.as_str(),
         source.task_pointer.as_str(),
@@ -153,13 +158,33 @@ fn seed_key(source: &EvalRepairTaskSource) -> Result<[u8; 32]> {
     Ok(hasher.finish().into_bytes())
 }
 
-fn bounded_arm(arm: &EvalArmPin) -> Result<()> {
+fn bounded_arm(arm: &EvalArmPin) -> Result<&str> {
     bounded_ref(&arm.model)?;
     bounded_ref(&arm.revision)?;
     match &arm.skill_digest {
-        Some(digest) if !digest.trim().is_empty() && digest.len() <= MAX_REF_BYTES => Ok(()),
+        Some(digest) if !digest.trim().is_empty() && digest.len() <= MAX_REF_BYTES => {
+            Ok(digest.trim())
+        }
         _ => Err(invalid("a repair seed's arm pins a bounded skill digest")),
     }
+}
+
+/// A seed proves a skill repair: its two arms serve one model at one
+/// revision and pin two different skill digests (hex, in any letter case).
+/// Arms that differ only in their model, its revision or a digest's spelling
+/// compare no skill, and the gate would confirm a case run noise decided.
+fn skill_comparison(old: &EvalArmPin, candidate: &EvalArmPin) -> Result<()> {
+    let old_skill = bounded_arm(old)?;
+    let candidate_skill = bounded_arm(candidate)?;
+    if old.model != candidate.model
+        || old.revision != candidate.revision
+        || old_skill.eq_ignore_ascii_case(candidate_skill)
+    {
+        return Err(invalid(
+            "a repair seed compares two skills on one model at one revision",
+        ));
+    }
+    Ok(())
 }
 
 fn grade(task: &EvalRepairTask, answer: &EvalRepairLegAnswer) -> bool {
@@ -348,7 +373,8 @@ impl Memory<'_> {
     ///
     /// # Errors
     ///
-    /// An arm that pins no bounded skill digest, two equal arms, a task the
+    /// An arm that pins no bounded skill digest, arms that serve two models
+    /// or two revisions or pin one skill digest, a task the
     /// capture does not compile to, a capture erased before the seed was
     /// recorded, a root that already belongs to a family of another purpose
     /// or to a family a cohort already holds, or storage errors.
@@ -357,11 +383,7 @@ impl Memory<'_> {
         request: &EvalRepairSeedRequest,
         at: u64,
     ) -> MemoryResult<EvalRepairSeedRead> {
-        bounded_arm(&request.old)?;
-        bounded_arm(&request.candidate)?;
-        if request.old == request.candidate {
-            return Err(invalid("a repair seed compares two different arms").into());
-        }
+        skill_comparison(&request.old, &request.candidate)?;
         let read = self.read_eval_repair_task(&request.source)?;
         let Some(task) = read.task else {
             return Ok(EvalRepairSeedRead {
@@ -429,11 +451,13 @@ impl Memory<'_> {
 }
 
 impl Vault {
-    /// The seed proposed for `source`, if one was.
+    /// The seed proposed for `source`, if one was. The claim ref reads in
+    /// any letter case.
     ///
     /// # Errors
     ///
-    /// An invalid seat, an unreadable row, or storage errors.
+    /// An invalid seat, a claim ref that is not an entity id, an unreadable
+    /// row, or storage errors.
     pub fn eval_repair_seed(
         &self,
         source: &EvalRepairTaskSource,
