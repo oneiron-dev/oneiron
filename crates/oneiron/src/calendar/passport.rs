@@ -428,11 +428,8 @@ pub(in crate::calendar) fn revise_passport_in_txn(
         let landed = vault
             .get_claim_in_txn(txn, new_id)?
             .is_some_and(|body| claim_surfaceable(&body));
-        if landed {
-            vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
-        } else {
-            vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
-        }
+        let _ = landed;
+        vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
     }
     Ok(found)
 }
