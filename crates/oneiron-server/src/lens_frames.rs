@@ -435,11 +435,12 @@ impl LensFrameStore {
     /// or a weave Admin lens. `false` when the store holds no such card.
     #[cfg(oneiron_test_support)]
     pub(crate) fn set_proof(&self, card: &LensRenderId, proof: HeldCardProof) -> bool {
-        self.lock()
-            .cards
-            .get_mut(card)
-            .map(|entry| entry.proof = proof)
-            .is_some()
+        let mut frames = self.lock();
+        let Some(entry) = frames.cards.get_mut(card) else {
+            return false;
+        };
+        entry.proof = proof;
+        true
     }
 
     /// Retains a handle `auth`'s caller proved on `held`, beside its frame
