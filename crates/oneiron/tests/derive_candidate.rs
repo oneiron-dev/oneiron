@@ -56,6 +56,8 @@ const RESTATES_HEAD: &str = "gate.deny.derive.candidate_restates_head";
 const CONTESTS_HEAD: &str = "gate.deny.derive.candidate_contests_head";
 /// The refusal of a Candidate item whose claim already stands.
 const DUPLICATE: &str = "gate.deny.derive.candidate_duplicate";
+/// The refusal of a Candidate item whose landing is refused.
+const LANDING_REFUSED: &str = "gate.deny.derive.candidate_landing_refused";
 
 /// The predicate the extraction fixture asserts.
 const FOOD: &str = "preference.food";
@@ -617,6 +619,31 @@ fn only_the_attempt_s_dreamer_lands_a_candidate() -> TestResult<()> {
     assert_eq!(answer["items"][0]["landed"], false);
     assert_eq!(answer["items"][0]["rows"], json!([]));
     assert_eq!(answer["items"][0]["reasons"], json!([NOT_ATTEMPT_DREAMER]));
+    Ok(())
+}
+
+/// A candidate under a blank run lands nothing, as native's promotion
+/// refuses a blank run: it would hide the write from every reader that
+/// groups by the Dreamer's run. The queue admits a run that is only
+/// whitespace, and a stamp carries its attempt's run as recorded.
+#[test]
+fn a_candidate_under_a_blank_run_lands_nothing() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let (vault, attempt_id, turns, subject) = single_attempt(&dir)?;
+    let operand = operand_for(&subject.to_hex(), json!("green tea"), &turns[0]);
+    let spec = candidate_spec("first", member(operand, 0.9, vec![]));
+    let request = json!({"items": [spec], "sources": []});
+    let answer = derive_conflict::commit(
+        &vault,
+        dreamer(&vault)?,
+        EdgeActorClass::System,
+        "  ",
+        Some(attempt_id),
+        request,
+    )?;
+    assert_eq!(answer["items"][0]["landed"], false, "{answer}");
+    assert_eq!(answer["items"][0]["rows"], json!([]));
+    assert_eq!(answer["items"][0]["reasons"], json!([LANDING_REFUSED]));
     Ok(())
 }
 
