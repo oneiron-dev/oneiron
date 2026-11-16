@@ -85,4 +85,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
 | `tests/support/mod.rs` | test | m | 45 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
-| `tests/support/rogue_seal_organ.rs` | test | L | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |
+| `tests/support/rogue_evidence.rs` | test | s | 1 crate-vis | — | What a test hands the hostile seal organ's evidence modes (feature `hostile-organ-tests`): a timestamp… |
+| `tests/support/rogue_seal_organ.rs` | test | XL | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |

@@ -336,7 +336,7 @@ async fn session(
 
 /// A remote caller names its machine through the request's verified proof,
 /// never a JSON field. Direct on-device callers run on this install.
-pub(super) fn bound_session_key(
+pub(crate) fn bound_session_key(
     server: &SyncServer,
     actor: oneiron::EntityId,
     peer: oneiron::authority::PeerMachine,

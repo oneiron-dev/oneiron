@@ -78,3 +78,16 @@ pub struct MergeEvidence {
     pub antecedent: usize,
     pub confidence: f32,
 }
+
+/// A relation the tagger read between two of the set's mentions, saved as
+/// a derived tag: `head` and `tail` index the set's mentions, and `label` is
+/// the model's relation class. It is no claim; the Dreamer's child reads it
+/// through the host's relation table and authors any claim (ARCH-0026).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaggedRelation {
+    pub head: usize,
+    pub tail: usize,
+    pub label: String,
+    pub confidence: f32,
+}
