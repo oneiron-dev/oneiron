@@ -45,6 +45,7 @@ pub mod comm_late_stop;
 pub mod comm_party_lookup_reads;
 pub mod comm_thread_member_claim_reads;
 pub mod comm_widen_standing;
+pub mod compaction_request;
 pub mod compaction_step_read;
 pub mod companion_grant_index;
 pub mod connector_key_suspend;
@@ -70,6 +71,7 @@ pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod esign_commitments;
+pub mod extra_room_index;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
@@ -119,12 +121,16 @@ pub mod linkedin_seat_settings;
 pub mod live_run_claim_put;
 #[cfg(feature = "sync")]
 pub mod live_window_import;
+#[cfg(feature = "sync")]
+pub mod live_window_note_scrub;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+#[cfg(feature = "sync")]
+pub mod media_vector_replica;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
@@ -147,6 +153,7 @@ pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
 pub mod park_typed_wait;
+pub mod parked_own_retract;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
@@ -155,6 +162,8 @@ pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
 pub mod question_teardown;
 pub mod re_root_stale_sweep;
+pub mod read_exposure;
+pub mod removal_import_passes;
 pub mod replay_rows;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
@@ -210,6 +219,7 @@ pub mod verb_hook_ask;
 pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
+pub mod workaround_skills;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
