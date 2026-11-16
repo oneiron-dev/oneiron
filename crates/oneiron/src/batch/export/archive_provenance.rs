@@ -37,6 +37,7 @@
 
 use ed25519_dalek::Signer;
 use oneiron_authority::authority::verify_entry_signatures;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::WholeVaultDocumentManifest;
@@ -126,7 +127,7 @@ pub fn archive_provenance_transcript(
     transcript.extend_from_slice(vault_id);
     transcript.extend_from_slice(machine.as_bytes());
     transcript.extend_from_slice(machine_key);
-    transcript.extend_from_slice(blake3::hash(&encoded).as_bytes());
+    transcript.extend_from_slice(ContentHash::of(&encoded).as_bytes());
     Ok(transcript)
 }
 
@@ -162,8 +163,9 @@ pub(crate) fn sign_archive_manifest(
 /// The key must stand as its machine here ([`AuthorityFold::machine_proof_key`]:
 /// the trusted identity's key under this install's pin, else a live roster
 /// revision's in an answered role) and pass the one carrier rule
-/// ([`owner_act_signer_admits`]: a live machine no chain removed, never a
-/// roster key), and the signature must verify. Then the machine is the
+/// ([`owner_act_signer_admits`] under this install's pin: a live head the
+/// machine stands under here, none removed, never a roster key), and the
+/// signature must verify. Then the machine is the
 /// owner's own device exactly when this install trusts it as his explicit
 /// `Yours` by his own signature
 /// ([`AuthorityFold::trusted_yours_revision`]), holds the row of that
@@ -199,7 +201,12 @@ pub(crate) fn archive_signer(
         return Ok(ArchiveSigner::Unproven);
     };
     let stands = fold.machine_proof_key(machine) == Some(key)
-        && owner_act_signer_admits(fold.machine(machine), &fold.roster, &key)
+        && owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &key,
+            fold.pinned_root.as_ref(),
+        )
         && archive_provenance_transcript(vault_id, machine, &key, manifest).is_ok_and(
             |transcript| {
                 oneiron_authority::authority::strong_ed25519_verified_once(

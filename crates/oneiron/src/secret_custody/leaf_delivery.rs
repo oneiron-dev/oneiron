@@ -412,7 +412,7 @@ impl Asker {
 /// never another anchor's chain) verifies it, and the one carrier rule admits
 /// that key under this install's pin (any role, no head it believes removed,
 /// never a roster key).
-fn machine_signed(
+pub(super) fn machine_signed(
     fold: &AuthorityFold,
     machine: EntityId,
     transcript: &[u8],
