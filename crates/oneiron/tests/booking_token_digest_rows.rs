@@ -283,6 +283,7 @@ fn booking_rows_hold_only_digests_of_the_hold_checkout_and_revision_tokens() {
                 server_issued_lease: lease.clone(),
             },
             idempotency_key: None,
+            cap_override: None,
         }))
         .expect("hold under the lease")
     {
