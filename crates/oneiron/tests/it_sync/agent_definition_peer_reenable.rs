@@ -419,6 +419,19 @@ fn an_own_window_holds_a_turn_on_as_a_dependency_until_the_owner_states_it() {
         "the held row keeps its retry marker"
     );
     owner_edit(&vault, &owner, &id, &on);
+    let off = next(&on, "1.0.3", |def| def.enabled = false);
+    replay(
+        &vault,
+        &id,
+        &off,
+        ImportTier::Federated(FederationAdmissionRole::Member),
+    )
+    .expect("a peer turns the definition off again");
+    assert_eq!(
+        vault.get_agent_definition(&id).unwrap(),
+        Some(off),
+        "the peer's restrictive move lands after the statement"
+    );
     forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
     assert_eq!(
         vault.get_agent_definition(&id).unwrap(),
