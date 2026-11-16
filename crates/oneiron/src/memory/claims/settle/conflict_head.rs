@@ -3,8 +3,9 @@
 //! proposal's conflict set.
 //!
 //! The set is the key an Auto write replaces on: subject, predicate, world,
-//! relationship and exact scope, with the value key of a declared
-//! multi-cardinality predicate (`value.question_id`, `value.who`). Scopes
+//! relationship and exact scope, with the value key identity of a declared
+//! multi-cardinality predicate (`value.question_id`, `value.who` as a
+//! calendar address). Scopes
 //! compare by their canonical bytes, so two binary facet or project ids
 //! never read as one. The head must also
 //! carry the proposal's scope stamps, the facet and project each was born
@@ -44,8 +45,8 @@ struct ProposalConflictSet<'a> {
     proposal: &'a ClaimBody,
     scope: Option<Vec<u8>>,
     /// A declared multi-cardinality predicate's value key and the proposal's
-    /// value under it.
-    value_key: Option<(&'static str, Option<serde_json::Value>)>,
+    /// identity under it.
+    value_key: Option<(MultiCardinalityValueKey, Option<serde_json::Value>)>,
     beside_stated: bool,
 }
 
@@ -67,7 +68,7 @@ fn proposal_conflict_set(proposal: &ClaimBody) -> crate::Result<Option<ProposalC
         proposal,
         scope: canonical_scope(proposal.scope.as_ref())?,
         value_key: multi_cardinality_value_key(&proposal.predicate)
-            .map(|key| (key, value_key_field(&proposal.value, key))),
+            .map(|key| (key, key.identity(&msgpack_value_to_json(&proposal.value)))),
         beside_stated: crate::claim::is_observed_preference(proposal.source, &proposal.predicate),
     }))
 }
@@ -88,10 +89,9 @@ impl ProposalConflictSet<'_> {
             && canonical_scope(body.scope.as_ref())? == self.scope
             && body.scope_facet == proposal.scope_facet
             && body.scope_project == proposal.scope_project
-            && self
-                .value_key
-                .as_ref()
-                .is_none_or(|(key, wanted)| *wanted == value_key_field(&body.value, key))
+            && self.value_key.as_ref().is_none_or(|(key, wanted)| {
+                *wanted == key.identity(&msgpack_value_to_json(&body.value))
+            })
             && (!self.beside_stated || body.source != Some(ClaimSource::UserStated))
             && crate::Vault::require_source_trust_supersession_rights(proposal, body).is_ok())
     }
@@ -282,9 +282,4 @@ fn has_topic_key(scope: Option<&Value>) -> bool {
     fields
         .iter()
         .any(|(key, value)| key.as_str() == Some(TOPIC_KEY_SCOPE_FIELD) && !value.is_nil())
-}
-
-/// The `key` field of a multi-cardinality claim's value.
-fn value_key_field(value: &Value, key: &str) -> Option<serde_json::Value> {
-    msgpack_value_to_json(value).get(key).cloned()
 }

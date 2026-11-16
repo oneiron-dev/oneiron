@@ -5,7 +5,9 @@
 //! attendee through `vault.claims.review` + `vault.claims.settle` never
 //! closes another attendee of the same EVENT; it closes only an approved
 //! row for the same `who`, here the same person as another calendar system
-//! reported them. `vault.claims.list` reads the rows back.
+//! reported them, whichever way that system spells the address (a `MAILTO:`
+//! prefix and letter case are vendor spelling, as invite hygiene reads them).
+//! `vault.claims.list` reads the rows back.
 //!
 //! Fleet command: `cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test calendar_ics_attendee_doors`. The
@@ -42,6 +44,8 @@ const SUPERSEDED: &str = "superseded";
 
 const ADA: &str = "mailto:ada@example.test";
 const GRACE: &str = "mailto:grace@example.test";
+/// Ada's address as a second calendar system spells it.
+const ADA_OTHER_SPELLING: &str = "MAILTO:Ada@Example.test";
 
 /// The facade's generated dispatch polls a frame of several MiB in a dev
 /// build, more than a test thread's default stack, so each test runs on
@@ -54,6 +58,14 @@ fn approving_a_second_attendee_keeps_the_first() {
 #[test]
 fn an_attendee_approved_again_replaces_only_its_own_row() {
     run_on_engine_stack("attendee-same-who-replaces", same_who_replaces_only_its_row);
+}
+
+#[test]
+fn an_attendee_spelled_differently_by_another_system_is_one_attendee() {
+    run_on_engine_stack(
+        "attendee-other-spelling",
+        other_spelling_replaces_only_its_row,
+    );
 }
 
 /// One owner-signed facade call and its status, error code and body.
@@ -238,9 +250,9 @@ async fn attendee_rows(caller: &OwnerCaller, event_ref: &str) -> Vec<AttendeeRow
 
 /// The one pending attendee row for `(who, partstat)`.
 fn pending_row(rows: &[AttendeeRow], who: &str, partstat: &str) -> AttendeeRow {
-    let mut found = rows.iter().filter(|row| {
-        row.who == who && row.partstat == partstat && row.approval == PENDING
-    });
+    let mut found = rows
+        .iter()
+        .filter(|row| row.who == who && row.partstat == partstat && row.approval == PENDING);
     let row = found
         .next()
         .unwrap_or_else(|| panic!("a pending attendee {who} {partstat}: {rows:?}"))
@@ -298,7 +310,11 @@ async fn second_attendee_keeps_first() {
     let event = receipt_event_ref(&receipt);
 
     let rows = attendee_rows(&caller, &event).await;
-    assert_eq!(rows.len(), 2, "one attendee claim per ATTENDEE line: {rows:?}");
+    assert_eq!(
+        rows.len(),
+        2,
+        "one attendee claim per ATTENDEE line: {rows:?}"
+    );
     let ada = pending_row(&rows, ADA, "ACCEPTED");
     let grace = pending_row(&rows, GRACE, "NEEDS-ACTION");
 
@@ -313,7 +329,10 @@ async fn second_attendee_keeps_first() {
     );
     assert_stands(&rows, &grace.claim_ref, "the second approved attendee");
     let standing = rows.iter().filter(|row| row.lifecycle == ACTIVE).count();
-    assert_eq!(standing, 2, "an approved meeting keeps both attendees: {rows:?}");
+    assert_eq!(
+        standing, 2,
+        "an approved meeting keeps both attendees: {rows:?}"
+    );
 }
 
 async fn same_who_replaces_only_its_row() {
@@ -333,7 +352,11 @@ async fn same_who_replaces_only_its_row() {
     );
 
     let rows = attendee_rows(&caller, &event).await;
-    assert_eq!(rows.len(), 3, "each system files its own attendee rows: {rows:?}");
+    assert_eq!(
+        rows.len(),
+        3,
+        "each system files its own attendee rows: {rows:?}"
+    );
     let work_ada = pending_row(&rows, ADA, "NEEDS-ACTION");
     let work_grace = pending_row(&rows, GRACE, "ACCEPTED");
     let home_ada = pending_row(&rows, ADA, "ACCEPTED");
@@ -353,6 +376,55 @@ async fn same_who_replaces_only_its_row() {
         row_named(&rows, &work_ada.claim_ref).lifecycle,
         SUPERSEDED,
         "Ada's older approved row is closed by her newer one (conflict set (event, who)): {rows:?}"
+    );
+    let standing = rows.iter().filter(|row| row.lifecycle == ACTIVE).count();
+    assert_eq!(standing, 2, "one standing row per attendee: {rows:?}");
+}
+
+async fn other_spelling_replaces_only_its_row() {
+    let caller = serve("attendee-other-spelling").await;
+    let uid = "design-review-41c2@example.test";
+    let work = ics_feed(uid, &[(ADA, "NEEDS-ACTION"), (GRACE, "ACCEPTED")]);
+    let receipt = import_feed(&caller, "work-calendar", "work.ics", &work).await;
+    let event = receipt_event_ref(&receipt);
+    // The second system spells Ada's address with its own prefix and case.
+    let home = ics_feed(uid, &[(ADA_OTHER_SPELLING, "ACCEPTED")]);
+    let receipt = import_feed(&caller, "home-calendar", "home.ics", &home).await;
+    assert_eq!(
+        receipt_event_ref(&receipt),
+        event,
+        "the second system's feed lands on the one EVENT: {receipt}"
+    );
+
+    let rows = attendee_rows(&caller, &event).await;
+    assert_eq!(
+        rows.len(),
+        3,
+        "each system files its own attendee rows: {rows:?}"
+    );
+    let work_ada = pending_row(&rows, ADA, "NEEDS-ACTION");
+    let work_grace = pending_row(&rows, GRACE, "ACCEPTED");
+    let home_ada = pending_row(&rows, ADA_OTHER_SPELLING, "ACCEPTED");
+
+    approve(&caller, &work_ada.claim_ref).await;
+    approve(&caller, &work_grace.claim_ref).await;
+    approve(&caller, &home_ada.claim_ref).await;
+
+    let rows = attendee_rows(&caller, &event).await;
+    assert_stands(
+        &rows,
+        &work_grace.claim_ref,
+        "Grace, whom no later approval names",
+    );
+    assert_stands(
+        &rows,
+        &home_ada.claim_ref,
+        "Ada's newest approved answer, in the second system's spelling",
+    );
+    assert_eq!(
+        row_named(&rows, &work_ada.claim_ref).lifecycle,
+        SUPERSEDED,
+        "Ada's older row is closed by her newer one under another spelling of her address: {rows:?}"
     );
     let standing = rows.iter().filter(|row| row.lifecycle == ACTIVE).count();
     assert_eq!(standing, 2, "one standing row per attendee: {rows:?}");

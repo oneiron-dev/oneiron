@@ -11,6 +11,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::{ApplyOpsGateMode, BatchOp};
+use crate::calendar::claims::attendee_address_identity;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -22,16 +23,62 @@ use crate::serialize::msgpack_value_to_json;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
 
+/// How a multi-cardinality value key's field compares between two claims.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueKeyMatch {
+    /// Equal JSON values.
+    Exact,
+    /// Equal calendar address identities (`attendee_address_identity`): one
+    /// person spelled `MAILTO:Ada@...` by one system and `mailto:ada@...` by
+    /// another is one attendee.
+    AttendeeAddress,
+}
+
+/// A declared multi-cardinality predicate's value key: the field of its
+/// value that extends the prior-claim match, and how that field compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MultiCardinalityValueKey {
+    field: &'static str,
+    matching: ValueKeyMatch,
+}
+
+impl MultiCardinalityValueKey {
+    /// This key's identity in a claim value (its JSON form); `None` when the
+    /// value has no such field.
+    fn identity(self, value: &serde_json::Value) -> Option<serde_json::Value> {
+        let field = value.get(self.field)?;
+        match (self.matching, field.as_str()) {
+            (ValueKeyMatch::AttendeeAddress, Some(address)) => Some(serde_json::Value::String(
+                attendee_address_identity(address),
+            )),
+            _ => Some(field.clone()),
+        }
+    }
+}
+
 /// Predicates with declared multi-cardinality supersession keys (B1c,
-/// RATIFY-20260710 R0), each with the value field that extends the
+/// RATIFY-20260710 R0), each with the value key that extends the
 /// prior-claim match `subject+scope+predicate`: a claim replaces, and an
-/// approval closes, only a claim whose value names the same key.
-const MULTI_CARDINALITY_VALUE_KEYS: [(&str, &str); 2] = [
-    ("companion.onboarding.answer", "question_id"),
+/// approval closes, only a claim whose value has the same key identity.
+const MULTI_CARDINALITY_VALUE_KEYS: [(&str, MultiCardinalityValueKey); 2] = [
+    (
+        "companion.onboarding.answer",
+        MultiCardinalityValueKey {
+            field: "question_id",
+            matching: ValueKeyMatch::Exact,
+        },
+    ),
     // ARCH-0003 §G.1 predicate registry, line 272: one row per attendee,
     // conflict set `(event, who)`. A second attendee stands beside the
-    // first; the same attendee's newer role or answer replaces its row.
-    ("calendar.attendee", "who"),
+    // first; the same attendee's newer role or answer replaces its row,
+    // whichever calendar system spelled the address.
+    (
+        "calendar.attendee",
+        MultiCardinalityValueKey {
+            field: "who",
+            matching: ValueKeyMatch::AttendeeAddress,
+        },
+    ),
 ];
 
 /// The predicates of the value-key table `MULTI_CARDINALITY_VALUE_KEYS`.
@@ -45,9 +92,9 @@ pub const MULTI_CARDINALITY_PREDICATES: [&str; MULTI_CARDINALITY_VALUE_KEYS.len(
     predicates
 };
 
-/// The value field that keys `predicate`'s prior-claim match, when it is a
-/// declared multi-cardinality predicate.
-fn multi_cardinality_value_key(predicate: &str) -> Option<&'static str> {
+/// The value key of `predicate`'s prior-claim match, when it is a declared
+/// multi-cardinality predicate.
+fn multi_cardinality_value_key(predicate: &str) -> Option<MultiCardinalityValueKey> {
     MULTI_CARDINALITY_VALUE_KEYS
         .iter()
         .find_map(|&(name, key)| (name == predicate).then_some(key))
