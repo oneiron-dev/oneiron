@@ -19,6 +19,13 @@ name = "oneiron"
 path = "src/bin/oneiron.rs"
 doc = false
 
+# The connector doors over a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`).
+[[test]]
+name = "vault_connectors_doors"
+path = "tests/vault_connectors_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The credential broker (ARCH-0069 #broker-design). It ships beside the server
 # and calls only the `oneiron-broker` library: no model, no vault.
 [[bin]]
