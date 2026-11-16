@@ -681,6 +681,102 @@ fn a_person_proof_signed_for_an_earlier_revision_is_invalid() {
     assert_stays_out(&answer.fold(), entry);
 }
 
+/// Ruling PERSONKEY-PR2-STATEMENT-SOURCE = A, row
+/// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF: the client signs the fields the
+/// carrier named; a carrier naming a wrong vault gets an entry the fold
+/// refuses. The member's slip is live and bound to the client's key, but
+/// the statement names another vault, so the proof holds for no choice
+/// here: the entry is invalid and the member stays out.
+#[test]
+fn a_carrier_naming_another_vault_gets_an_entry_the_fold_refuses() {
+    let mut answer = HostedNodeAnswer::new();
+    let vault_id = answer.vault_id();
+    let slip_key = signing(MEMBER_SLIP_SEED);
+    let slip = [0x51; 32];
+    mint_slip(
+        &mut answer,
+        member_slip_claims(
+            vault_id,
+            member(),
+            slip_key.verifying_key().to_bytes(),
+            slip,
+        ),
+        2,
+    );
+    let seen = node_carries_the_members_opt_out(&mut answer);
+    let proof = person_proof(&[0xEE; 32], member(), false, seen, slip, &slip_key);
+    let entry = carry_opt_back_in(&mut answer, seen, Some(proof));
+    assert_stays_out(&answer.fold(), entry);
+}
+
+/// Ruling PERSONKEY-PR2-STATEMENT-SOURCE = A, row
+/// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF: the client signs the fields the
+/// carrier named; a carrier naming a wrong person gets an entry the fold
+/// refuses. The statement names another person while the act stays the
+/// member's, so the proof holds for no choice here: the entry is invalid
+/// and the member stays out.
+#[test]
+fn a_carrier_naming_another_person_gets_an_entry_the_fold_refuses() {
+    let mut answer = HostedNodeAnswer::new();
+    let vault_id = answer.vault_id();
+    let slip_key = signing(MEMBER_SLIP_SEED);
+    let slip = [0x51; 32];
+    mint_slip(
+        &mut answer,
+        member_slip_claims(
+            vault_id,
+            member(),
+            slip_key.verifying_key().to_bytes(),
+            slip,
+        ),
+        2,
+    );
+    let seen = node_carries_the_members_opt_out(&mut answer);
+    let proof = person_proof(&vault_id, another(), false, seen, slip, &slip_key);
+    let entry = carry_opt_back_in(&mut answer, seen, Some(proof));
+    assert_stays_out(&answer.fold(), entry);
+}
+
+/// Ruling PERSONKEY-PR2-STATEMENT-SOURCE = A, row
+/// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF: the client signs the fields the
+/// carrier named; a carrier naming a wrong slip gets an entry the fold
+/// refuses. The carrier named the member's second slip, so the client
+/// signed it with the first slip's key; that key is not the named slip's,
+/// so the entry is invalid and the member stays out.
+#[test]
+fn a_carrier_naming_another_slip_gets_an_entry_the_fold_refuses() {
+    let mut answer = HostedNodeAnswer::new();
+    let vault_id = answer.vault_id();
+    let slip_key = signing(MEMBER_SLIP_SEED);
+    let slip = [0x51; 32];
+    mint_slip(
+        &mut answer,
+        member_slip_claims(
+            vault_id,
+            member(),
+            slip_key.verifying_key().to_bytes(),
+            slip,
+        ),
+        2,
+    );
+    let other_key = signing(OTHER_SLIP_SEED);
+    let other_slip = [0x53; 32];
+    mint_slip(
+        &mut answer,
+        member_slip_claims(
+            vault_id,
+            member(),
+            other_key.verifying_key().to_bytes(),
+            other_slip,
+        ),
+        3,
+    );
+    let seen = node_carries_the_members_opt_out(&mut answer);
+    let proof = person_proof(&vault_id, member(), false, seen, other_slip, &slip_key);
+    let entry = carry_opt_back_in(&mut answer, seen, Some(proof));
+    assert_stays_out(&answer.fold(), entry);
+}
+
 /// Guard (ruling CARRIER-PERSON-OPT-BACK-IN = A, row
 /// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): an opt-out still lands with no
 /// person proof.
