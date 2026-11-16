@@ -31,7 +31,9 @@
 //! actor's for good (Astra delta 2 review finding 1). A device key's
 //! enrolment of a key confirms it, so a passkey's vouch for the same key on
 //! a sibling branch limits nothing once the fold merges the two (Astra
-//! delta review finding 2).
+//! delta review finding 2). An install that holds such a key as its only
+//! owner key proves no owner act with it, as the fold takes no proof from it
+//! (REVIEW-8451 P1).
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
@@ -61,9 +63,9 @@ use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
     DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
-    ROLE_AGENT, ROLE_OWNER, machine_profile_proof_transcript, webauthn_assertion_envelope,
-    webauthn_challenge,
+    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment,
+    OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, machine_profile_proof_transcript,
+    webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -936,6 +938,89 @@ fn once_confirmed_the_passkey_vouched_keys_cosign_proves_a_carried_machine_answe
     assert!(
         node_answer_proved_by(&hosted, &host_held()),
         "the confirmed key's cosign proves the carried answer"
+    );
+}
+
+/// An owner key this install holds as a root signer, as a device holds its
+/// enrolled owner signing key: what [`oneiron::Vault::hold_checkpoint_root_signer`]
+/// takes.
+struct HeldOwnerKey(ed25519_dalek::SigningKey);
+
+impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
+    fn root(&self) -> AuthorityKey {
+        ed_key(&self.0)
+    }
+
+    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// The writer reads the fold's one proof predicate (REVIEW-8451 P1): an
+/// install whose only owner key is one only the passkey vouched for holds
+/// no key whose cosign the fold takes as the owner's proof (Engine ANSWER
+/// WEBPASSKEY-LIMITED-KEY-OWNER-PROOF = A). So it lists no held answer as
+/// one it can confirm, and a confirm there is refused for want of an owner
+/// key. Otherwise it would sign each owner act it carries with that key's
+/// cosign, which the fold judges a forged proof: the act would fail to land
+/// where, unproven, it stands or is held.
+#[test]
+fn an_install_holding_only_a_key_a_passkey_vouched_for_proves_no_owner_act() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(HeldOwnerKey(host_held())));
+    let listing = hosted
+        .vault
+        .held_machine_answers(&hosted.proof)
+        .expect("the held answers");
+    assert!(
+        !listing.can_confirm,
+        "the limited key proves no owner act on this install"
+    );
+    let confirm =
+        hosted
+            .vault
+            .confirm_held_machine_answers(&hosted.proof, ActSurface::ThisInstall, &[]);
+    assert!(
+        matches!(
+            confirm,
+            Err(oneiron::Error::Record(RecordError::OwnerKeyRequired))
+        ),
+        "a confirm on this install is refused for want of an owner key: {confirm:?}"
+    );
+}
+
+/// Once a device key confirms it, the install that holds the
+/// passkey-vouched key proves owner acts with it.
+#[test]
+fn once_confirmed_an_install_holding_the_passkey_vouched_key_proves_owner_acts() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    hosted
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(HeldOwnerKey(host_held())));
+    let listing = hosted
+        .vault
+        .held_machine_answers(&hosted.proof)
+        .expect("the held answers");
+    assert!(
+        listing.can_confirm,
+        "the confirmed key proves owner acts on this install"
     );
 }
 
