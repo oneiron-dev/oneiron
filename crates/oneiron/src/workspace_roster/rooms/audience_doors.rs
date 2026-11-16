@@ -96,6 +96,24 @@ pub(super) fn vault_owner_or_admin_in(
     Ok(vault_standing_in(vault, txn, actor)?.is_some())
 }
 
+/// Whether the org two-admin rule holds an act `actor` makes on
+/// [`VaultStanding::Admin`] alone, in `txn`: while an Owner keeps
+/// `org.two_admin` on, an Admin's or a Deputy's power over another's private
+/// thread, its audience or a group mail source counts for nothing alone
+/// (Engine ANSWER UNBUILT06-PR2-UNHELD-ROLE-DOORS = A, 16 Nov 15:52). No held
+/// verb fronts these doors, so the act refuses with the hold's reason and an
+/// Owner makes it. Only writes ask; reads are unchanged.
+pub(crate) fn admin_standing_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<bool> {
+    let Some(creation) = vault.shared_vault_creation_in_txn(txn)? else {
+        return Ok(false);
+    };
+    vault.two_admin_holds_in_txn(txn, creation.vault_id, actor)
+}
+
 pub(crate) use crate::memory::vault_standing::VaultStanding;
 
 /// `actor`'s [`VaultStanding`] in `txn`, a pen through its PERSON; `None`
@@ -305,7 +323,10 @@ impl Memory<'_> {
     /// write `txn`, read strictly: a live TURN whose own binding names it, of
     /// the room a room-bound turn is bound to. Anyone not the Owner or an
     /// Admin, and not in its audience and its room now, is refused as an
-    /// unknown thread is.
+    /// unknown thread is. While the org two-admin rule holds an Admin
+    /// ([`admin_standing_held_in`]), the Admin edits only as a member in the
+    /// audience and the room does, and anywhere else refuses with the hold's
+    /// reason.
     pub(super) fn edited_thread_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -326,7 +347,8 @@ impl Memory<'_> {
         if self.room_turn().is_some_and(|turn| turn.room != room) {
             return Err(unknown_thread());
         }
-        let privileged = vault_owner_or_admin_in(vault, txn, actor)?;
+        let standing = vault_standing_in(vault, txn, actor)?;
+        let mut privileged = standing.is_some();
         let folded = match root_audience_in(vault, txn, room, root) {
             Ok(Some(folded)) => folded,
             Ok(None) if privileged => {
@@ -342,7 +364,14 @@ impl Memory<'_> {
             .into_iter()
             .collect();
         let inside = names_actor_in(vault, txn, &folded.current(), actor)?;
-        if !privileged && !(inside && names_actor_in(vault, txn, &members, actor)?) {
+        let participant = inside && names_actor_in(vault, txn, &members, actor)?;
+        if standing == Some(VaultStanding::Admin) && admin_standing_held_in(vault, txn, actor)? {
+            if !participant {
+                return Err(crate::federation::two_admin_hold_refusal().into());
+            }
+            privileged = false;
+        }
+        if !privileged && !participant {
             return Err(unknown_thread());
         }
         Ok(EditedThread {

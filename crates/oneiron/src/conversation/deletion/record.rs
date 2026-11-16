@@ -81,7 +81,7 @@ fn check_delete(
                 // messages with no room role (FIX 6381): this record's
                 // authority, never a role in the room.
                 (Err(Error::Record(RecordError::ConversationDenied)), Some(thread)) => {
-                    thread.role()
+                    thread.role()?
                 }
                 (Err(error), _) => return Err(error),
             };

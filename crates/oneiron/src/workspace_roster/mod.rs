@@ -259,7 +259,8 @@ pub(crate) use rooms::{
 };
 pub use rooms::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
 pub(crate) use rooms::{
-    VaultStanding, private_root_of_room_in, room_thread_source_in, vault_standing_in,
+    VaultStanding, admin_standing_held_in, private_root_of_room_in, room_thread_source_in,
+    vault_standing_in,
 };
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
