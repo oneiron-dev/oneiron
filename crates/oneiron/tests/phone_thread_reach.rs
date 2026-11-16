@@ -2436,3 +2436,100 @@ fn a_restricted_selector_does_not_export_a_brief_quoting_a_stale_note() {
         "the export is refused at Y's NOTE read admission: {refusal}",
     );
 }
+
+/// R1 door test (REACH-READ-DOOR-TESTS = A, Engine 09:28): a federation
+/// lane's release (FIX 8861). A local edit's UPDATE is saved while its row
+/// reads, waits in the document journal and the send buffer, and is judged
+/// again only as it leaves, by the client's release check: the device-only
+/// destination check, which fences device-only worlds and ASSET_TEXT
+/// sources, and the peer's read admission. A row that turns stale meanwhile
+/// (drawn from a MESSAGE the owner then erases) meets only that read
+/// admission's stored-row check (REACH-ERASED-SOURCE-EGRESS = A). A live
+/// control's UPDATE still leaves.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_federation_lane_does_not_release_a_saved_update_of_a_row_turned_stale() {
+    use oneiron::WriteActor;
+    use oneiron::memory::SafeDeleteReason;
+    use oneiron::sync::bridge::Materializer;
+    use oneiron::sync::client::{SyncClient, SyncClientConfig};
+    use oneiron::sync::federation_burst::FederationPeer;
+    use oneiron::sync::manager::WindowManager;
+    use oneiron::test_doors::sync_frame_release::frame_withheld;
+
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault"));
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let (owner, _) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let source = witness_owner_message(&vault, owner, "The boiler fails before the inspection.");
+    let target = witness_owner_message(&vault, owner, "Notes drawn from the boiler call.");
+    let control = witness_owner_message(&vault, owner, "Notes on the garden visit.");
+    let (scope, selector) = member_selector(&vault);
+    let peer = FederationPeer::authorize(&vault, selector.member_ref, scope, &selector)
+        .expect("FIXTURE: the Member's federation peer");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "federation-release",
+    ));
+    let (client, _events) = SyncClient::new(
+        Arc::clone(&manager),
+        SyncClientConfig {
+            federation_peer: Some(peer),
+            ..SyncClientConfig::default()
+        },
+    )
+    .expect("FIXTURE: the federation lane's sync client");
+    let edit = |id: EntityId| {
+        let document = manager
+            .documents()
+            .open(id)
+            .expect("FIXTURE: the row's document opens");
+        let update = document
+            .edit_text(actor, vault.now_recorded_at(), 0, 0, "Edited: ")
+            .expect("FIXTURE: a local edit while the row reads");
+        (document, update)
+    };
+    let (target_document, target_update) = edit(target);
+    let (_control_document, control_update) = edit(control);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(&vault, &target, &source)
+        .expect("FIXTURE: T registered as drawn from the MESSAGE S");
+    for (update, label) in [(&target_update, "T"), (&control_update, "the control")] {
+        assert!(
+            !frame_withheld(&client, update),
+            "precondition: the federation lane releases {label}'s UPDATE while its row reads",
+        );
+    }
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .safe_delete(&source.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner erases the MESSAGE S");
+    assert!(
+        vault.get_raw(&target).expect("read T").is_none(),
+        "FIXTURE: T reads as absent once S is erased",
+    );
+    assert!(
+        vault.get_raw(&control).expect("read the control").is_some(),
+        "FIXTURE: the control still reads",
+    );
+    assert!(
+        target_document
+            .pending_frames()
+            .expect("T's document journal")
+            .contains(&target_update),
+        "FIXTURE: T's saved UPDATE still waits in its journal for release",
+    );
+    assert!(
+        !frame_withheld(&client, &control_update),
+        "precondition: the federation lane still releases the live control's UPDATE",
+    );
+    assert!(
+        frame_withheld(&client, &target_update),
+        "LEAK: the federation lane releases the saved UPDATE of T, stale once its source S is erased",
+    );
+}
