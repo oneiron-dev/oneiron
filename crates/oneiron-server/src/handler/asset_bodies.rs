@@ -85,8 +85,26 @@ pub(super) async fn handle(
         TransportError::UnknownTag(tag) => ProtocolError::UnknownTag(tag),
         error => ProtocolError::InvalidPayload(protocol::transport_err_msg(error)),
     })?;
+    run_release_hooks(state, &frames);
     queue(direct_tx, frames)
 }
+
+/// RED PIN SEAM ([SELECTOR-RELEASE-ASSET-BODY-FRAMES]; never on the PR
+/// branch): the test door runs for each grant of a Selector socket's
+/// fetched windows as a non-empty body batch is queued, where the fix's
+/// queue_under runs it, so the red shows Data leaving after the grant went.
+#[cfg(oneiron_test_support)]
+fn run_release_hooks(state: &ConnState, frames: &[Vec<u8>]) {
+    if frames.is_empty() || !matches!(state.window_sync_mode, WindowSyncMode::Selector) {
+        return;
+    }
+    for grant in state.admitted_windows.grants() {
+        crate::test_doors::selector_release::run(&grant);
+    }
+}
+
+#[cfg(not(oneiron_test_support))]
+fn run_release_hooks(_state: &ConnState, _frames: &[Vec<u8>]) {}
 
 /// The socket's body upkeep: what its transfers owe now, queued on
 /// `direct_tx`. A failed scan is logged and the socket stays up.
@@ -119,6 +137,7 @@ pub(super) fn poll(
     hold_used(state, followed);
     match polled {
         Ok(frames) => {
+            run_release_hooks(state, &frames);
             let _ = queue(direct_tx, frames);
         }
         Err(error) => tracing::warn!(%error, "asset body poll failed"),

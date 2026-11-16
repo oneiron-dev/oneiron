@@ -87,6 +87,15 @@ impl AdmittedWindows {
         }
     }
 
+    /// Each grant this socket's fetched windows were admitted under, once.
+    #[cfg(oneiron_test_support)]
+    pub(super) fn grants(&self) -> std::collections::BTreeSet<oneiron::EntityId> {
+        self.windows
+            .values()
+            .map(|admitted| admitted.selector.grant_id)
+            .collect()
+    }
+
     /// Each admitted window whose selector `admits`, as a read sees it.
     pub(super) fn read(
         &self,
