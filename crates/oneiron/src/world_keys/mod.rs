@@ -160,7 +160,8 @@ pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
     DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationOutcome,
-    DataKeyGenerationWays, EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey,
+    DataKeyGenerationProposal, DataKeyGenerationWays, EscrowAddWarning, EscrowAdded,
+    EscrowRetirement, KitPasskey, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
     NewVaultKeyWrap, RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange,
     RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock,
     VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
