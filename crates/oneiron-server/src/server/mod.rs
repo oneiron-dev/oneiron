@@ -26,9 +26,10 @@ mod media_door;
 mod media_embedding;
 pub(crate) mod meeting_imports;
 mod merge_queue_checker;
+#[cfg(all(oneiron_test_support, unix))]
+pub(crate) use merge_queue_checker::run_empty_isolated_check;
 mod message_stream;
 mod mirror_pushes;
-mod model_settings;
 mod model_setup;
 mod note_editors;
 #[cfg(unix)]
