@@ -18,6 +18,8 @@ blake3 = { workspace = true }
 heed = { workspace = true }
 # The machine-memory probe behind the memory-derived `[limits]` rows.
 libc = "0.2"
+# The fingerprint door, re-exported as `oneiron_contracts::fingerprint` (PLAN-UC-04).
+oneiron-fingerprint = { version = "0.1.0", path = "../oneiron-fingerprint" }
 # The one hex policy (lowercase canonical); `bytes_to_hex_lower` re-exports its encoder.
 oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 rand_core = { workspace = true }
@@ -25,14 +27,15 @@ rand_core = { workspace = true }
 rand = "0.8"
 rand_distr = "0.4"
 loro = { workspace = true, optional = true }
+# The one reader for untyped MessagePack rows (`msgpack`, PLAN-UC-08) and its typed-row pair.
+rmp-serde = { workspace = true }
+rmpv = { workspace = true }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-# The moved retrieval-quality tests pin the msgpack wire form.
-rmp-serde = { workspace = true }
 uuid = { workspace = true }
 
 [features]
