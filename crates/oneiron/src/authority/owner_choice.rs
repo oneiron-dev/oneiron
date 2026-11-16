@@ -171,6 +171,11 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     /// goes through the gate as every act does (ruling
     /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
     pub(super) persons_own_narrowing: bool,
+    /// The act's own person proved it with their own slip key
+    /// ([`super::person_proof`]). It lets the act through the not-mine
+    /// carrier's wait as an owner key's proof does, and it never answers
+    /// the owner's asks.
+    pub(super) person_proved: bool,
     /// The choice lowers what the vault asks of every later act (the switch
     /// back to web sign-in, the owner's ruling AUTH-5), so it counts only
     /// with an owner key's proof on the entry: no carrier's word lands it,
@@ -226,7 +231,8 @@ pub(super) enum OwnerChoiceLanding<P> {
 /// An admitted choice from a carrier that is not the owner's machine (its
 /// signing key is not its trusted mine key, pin-free) waits with no proof
 /// where the vault asks for an owner key, unless it is a person's own
-/// narrowing of their own row. A choice only an owner key may make waits
+/// narrowing of their own row or the person proved it with their own slip
+/// key ([`super::person_proof`]). A choice only an owner key may make waits
 /// with no proof, whoever carries it.
 pub(super) fn owner_choice_landing<P: Clone>(
     state: &FoldState,
@@ -273,7 +279,8 @@ pub(super) fn owner_choice_landing<P: Clone>(
     }
     if proof.is_none()
         && (op.owner_key_only
-            || (!carrier_is_mine
+            || (!op.person_proved
+                && !carrier_is_mine
                 && !op.persons_own_narrowing
                 && super::owner_proof::owner_key_required(state)))
     {
