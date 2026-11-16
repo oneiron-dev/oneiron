@@ -1252,8 +1252,9 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
     vault_config.store_clock = clock.bundle();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).expect("vault"));
     assert_default_policy_manifest_fixture(vault.as_ref());
+    // The server roots the vault with this install's seed (FIX-LIST 3018).
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             SyncServerConfig {
                 auth_secret: Some("secret".to_owned()),

@@ -899,9 +899,23 @@ fn seed_reactive_citation(
     let citing =
         oneiron::EntityId::from_hex(&memory.author_brief("authored text", &[pin]).unwrap().id_hex)
             .unwrap();
-    let other =
-        oneiron::EntityId::from_hex(&memory.author_brief("unrelated text", &[]).unwrap().id_hex)
-            .unwrap();
+    // A brief cites at least one claim span (note/document_store.rs): the
+    // unrelated brief cites a second take, which the erasure never touches.
+    let kept = oneiron::EntityId::from_hex(
+        &memory
+            .author_take(oneiron::note::TakeTarget::Subject(actor), "kept quote")
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let kept_pin = server.vault().pin_note_span(kept, claim, 0, 6).unwrap();
+    let other = oneiron::EntityId::from_hex(
+        &memory
+            .author_brief("unrelated text", &[kept_pin])
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
     (source, citing, other)
 }
 

@@ -328,9 +328,10 @@ async fn dag_addressing_route_validates_recipients_without_limiting_listing() {
 
 #[tokio::test]
 async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply() {
-    // A sitting's summary call answers in lines citing the call-local T
-    // labels its records show (FIX 7509); anything else on this one-model
-    // fake (a Micro round's extraction) is answered with no candidates.
+    // A route-declared scope summary is no sitting: it answers the typed
+    // text/keep contract (OF-028); the FIX 7509 lines contract is a sitting's
+    // only. Anything else on this one-model fake (a Micro round's extraction)
+    // is answered with no candidates.
     let reply = Reply::Computed(Arc::new(move |request: &Value| {
         let texts = seen_texts(request);
         if !texts
@@ -339,46 +340,7 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
         {
             return json!({"candidates": []}).to_string();
         }
-        let mut labels: Vec<String> = Vec::new();
-        let mut page_index = 0_u64;
-        for text in texts.iter().rev() {
-            let Ok(input) = serde_json::from_str::<Value>(text) else {
-                continue;
-            };
-            let Some(records) = input.get("records").and_then(Value::as_str) else {
-                continue;
-            };
-            page_index = input["page"]["index"].as_u64().unwrap_or(0);
-            // The T labels the records show, in first-seen order: `[T1] ..`.
-            let bytes = records.as_bytes();
-            let mut i = 0;
-            while i + 3 <= bytes.len() {
-                if bytes[i] == b'[' && bytes[i + 1] == b'T' {
-                    let mut j = i + 2;
-                    while j < bytes.len() && bytes[j].is_ascii_digit() {
-                        j += 1;
-                    }
-                    if j > i + 2 && j < bytes.len() && bytes[j] == b']' {
-                        let label = &records[i + 1..j];
-                        if !labels.iter().any(|seen| seen == label) {
-                            labels.push(label.to_owned());
-                        }
-                        i = j + 1;
-                        continue;
-                    }
-                }
-                i += 1;
-            }
-            break;
-        }
-        // Past the first page a page writes no line; the first page's line
-        // (or the one call's) is the body the test reads back.
-        let lines = if page_index <= 1 {
-            vec![json!({"text": "the Dreamer's summary", "turn_refs": labels})]
-        } else {
-            Vec::new()
-        };
-        json!({"lines": lines, "keep": ""}).to_string()
+        json!({"text": "the Dreamer's summary", "keep": ""}).to_string()
     }));
     let fake = FakeLlm::start(vec![], Some(reply)).await;
     let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
@@ -1492,17 +1454,6 @@ summary_prompt = "Summarize these records."
     .await;
     let (summary, _) = dreamt_summary(&server, &root["id"]).await;
     assert_dreamer_body(&server, &summary, "thread summary");
-    assert!(
-        eventually(Duration::from_secs(30), || read_by_a_round(
-            &extractor, "Osaka"
-        ))
-        .await,
-        "no Micro round read the turn"
-    );
-    host.shutdown().await;
-
-    // Both extraction-role shapes (FIX 7510) go to the extraction provider,
-    // and neither reaches the narrator's.
     let opens_with = |seen: &crate::fake_llm::Seen, prompt: &str| {
         seen_texts(&seen.body)
             .first()
@@ -1510,6 +1461,21 @@ summary_prompt = "Summarize these records."
     };
     let extraction =
         |seen: &crate::fake_llm::Seen| opens_with(seen, "Extract durable memory claims");
+    // The sieve follower's batched reading (FIX 7510) quotes the turn too,
+    // and it can come before the Micro round's extraction: wait for the
+    // extraction call itself, not for any request naming "Osaka".
+    assert!(
+        eventually(Duration::from_secs(30), || extractor
+            .seen()
+            .iter()
+            .any(extraction))
+        .await,
+        "no Micro round extracted the turn"
+    );
+    host.shutdown().await;
+
+    // Both extraction-role shapes (FIX 7510) go to the extraction provider,
+    // and neither reaches the narrator's.
     let extraction_role = |seen: &crate::fake_llm::Seen| {
         extraction(seen) || opens_with(seen, "You follow one append-only log")
     };
