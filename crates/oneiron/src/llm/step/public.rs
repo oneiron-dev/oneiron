@@ -49,7 +49,8 @@ const WORKER: &str = "model-step-door";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::step::public::{
-    ModelStepReceipt, ModelStepReceiptRequest, ModelStepSubmitRequest,
+    DecisionStepQuestion, DecisionStepSubmit, ModelStepReceipt, ModelStepReceiptRequest,
+    ModelStepSubmitRequest, StepSubmit,
 };
 
 /// Submit or resume the caller's own logical step. Successes AND terminal
@@ -855,6 +856,7 @@ fn view(vault: &Vault, id: AttemptId, row: &Submission) -> Result<ModelStepRecei
         retry: row.input.retry,
         progression,
         result: row.result.clone(),
+        decision: None,
     })
 }
 

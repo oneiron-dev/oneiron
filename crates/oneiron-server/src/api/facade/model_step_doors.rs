@@ -11,7 +11,7 @@ use axum::response::Response;
 use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
-    ModelStepSubmitRequest, RunStepCaller,
+    ModelStepSubmitRequest, RunStepCaller, StepSubmit,
 };
 use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
 use oneiron::llm::{BudgetDenied, StepSpendScope};
@@ -34,6 +34,8 @@ use crate::api::llm::RefusalCode;
 use crate::auth::CoreAuth;
 use crate::models::OfferLadder;
 use crate::server::{HeldLiveRun, SyncServer};
+
+mod decision_step;
 
 /// The run a live run's own physical step calls are admitted in, on its
 /// scope's meter or its Grant's wallet.
@@ -69,9 +71,14 @@ pub(crate) async fn ai_steps_submit(
     session: Option<EntityId>,
     input: ModelStepSubmitRequest,
 ) -> Listed<ModelStepReceipt> {
-    let (live_run, mut input) = input.into_parts();
-    let answer = match live_run {
-        None => {
+    let Some((live_run, step)) = input.into_parts() else {
+        return listed(Err(MemoryError::bad_request_with(
+            "ai.steps.submit takes a model request or a decision",
+            &["Name exactly one of request and decision."],
+        )));
+    };
+    let answer = match (live_run, step) {
+        (None, StepSubmit::Model(mut input)) => {
             let submitted = input.clone();
             let answer = submit(server, auth, &mut input).await;
             if let Ok(ModelStepReceipt {
@@ -83,7 +90,18 @@ pub(crate) async fn ai_steps_submit(
             }
             answer
         }
-        Some(handle) => submit_on_run(server, auth, session, &handle, input).await,
+        (Some(handle), StepSubmit::Model(input)) => {
+            submit_on_run(server, auth, session, &handle, input).await
+        }
+        // A run's typed question as a step of its own (FIX
+        // RUN-STEP-TYPED-DECISION-MODE).
+        (Some(handle), StepSubmit::Decision(input)) => {
+            decision_step::decide_on_run(server, auth, session, &handle, input).await
+        }
+        (None, StepSubmit::Decision(_)) => Err(MemoryError::bad_request_with(
+            "a decision step is a live run's own",
+            &["Name the run's live_run, or ask the question through ai.verdict."],
+        )),
     };
     listed(answer)
 }

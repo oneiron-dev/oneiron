@@ -92,6 +92,21 @@ pub enum GeneratedStep<'a> {
     Raw { lease: &'a BudgetLease },
     /// The raw seam, each request admitted on the guard and settled on what it spent.
     Admitted { guard: &'a BudgetGuard },
+    /// The caller's own durable step (a live run's step, FIX RUN-STEP-TYPED-DECISION-MODE):
+    /// `submit` sends the sealed request as that step and gives back its reply, the saved
+    /// one on a retry, or `None` when the step kept no reply (a budget trap, a park, a
+    /// failure, a refusal), which the caller answers itself. It blocks on the host's
+    /// runtime, so it runs on its own thread; the rung's backend is never called.
+    Submitted {
+        submit: &'a (dyn Fn(LlmRequest) -> Result<Option<SubmittedRead>> + Sync),
+    },
+}
+
+/// What a [`GeneratedStep::Submitted`] step replied: its response, and whether it was
+/// the saved reply of an earlier submission.
+pub struct SubmittedRead {
+    pub response: LlmResponse,
+    pub memoized: bool,
 }
 
 /// What a generated pack gave its caller.
@@ -310,6 +325,17 @@ async fn read(
                     Err(miss) => return Ok(Reply::Unread(miss)),
                 },
                 None => return Ok(Reply::Answers(Err(cut()))),
+            }
+        }
+        // The caller's step blocks on the host's runtime, which a thread driving this
+        // future cannot enter: it runs on its own thread, as the close does. A step that
+        // kept no reply stops the read as a trapped durable step does.
+        GeneratedStep::Submitted { submit } => {
+            let submitted = std::thread::scope(|scope| scope.spawn(move || submit(request)).join())
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+            match submitted {
+                Some(SubmittedRead { response, memoized }) => (response, None, memoized),
+                None => return Ok(Reply::Trapped),
             }
         }
     };

@@ -245,7 +245,8 @@ impl Fixture {
         let input = ModelStepSubmitRequest {
             live_run: Some(self.handle.clone()),
             step_key: key.to_owned(),
-            request: step_request()?,
+            request: Some(step_request()?),
+            decision: None,
             retry,
         };
         self.post(
