@@ -122,6 +122,27 @@ pub(crate) fn wait_delivered_in_txn(
         || SETTLED.contains(&vault.store, txn, &(SETTLED_TAG, key.wait_id))?)
 }
 
+/// Whether `key`'s run still sits parked on it at `txn`'s revision with no
+/// reply yet (L2-37): its trap binding stands, `attempt`'s park row is the
+/// one that trap owns, and nothing was delivered or settled. A parked run's
+/// idle fold lands only on this, read inside its own write, which every
+/// delivery, retire and resume commit serializes with.
+pub(crate) fn wait_still_parked_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &WaitKey,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<bool> {
+    let Some(trap) = TRAPS.get(&vault.store, txn, &key.row())? else {
+        return Ok(false);
+    };
+    let owner = crate::llm::trap_park_owner(&trap.trap_claim_id);
+    let parked = crate::DreamerRunnerStore::new(vault)
+        .parked_attempt_in_txn(txn, attempt)?
+        .is_some_and(|park| park.park_owner == owner);
+    Ok(parked && !wait_delivered_in_txn(vault, txn, key)?)
+}
+
 /// Wakes the trap bound to `key`'s wait (FIX 1503): `Proceed` runs the
 /// existing wake; `Skip` logs, retires this wait key's `TRAPS` row and this
 /// trap's peer binding, and succeeds so the delivery commits.
