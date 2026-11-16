@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use sha2::{Digest, Sha256};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::EdgeActorClass;
 use crate::consent::AuthenticatedOwner;
@@ -43,7 +43,6 @@ const PENDING: SideTable<(), EsignRulePack, Named> =
 const NOTICE: SideTable<[u8; 4], String, Raw> = SideTable::new(&side_table::ESIGN_RULES_NOTICE);
 
 const SEED_JSON: &str = include_str!("rules_seed_v1.json");
-const PROPOSAL_HASH_DOMAIN: &[u8] = b"oneiron.esign.rules.proposal.v1\0";
 const GET_VERB: &str = "vault.esign.rules.get";
 const AMEND_VERB: &str = "vault.esign.rules.amend";
 
@@ -199,16 +198,14 @@ fn classify(current: &EsignRulePack, proposed: &EsignRulePack) -> Result<AmendCl
     })
 }
 
-/// The canonical hash a stamp binds: the domain, then the pack with its rows in id order.
+/// The canonical hash a stamp binds: the content hash (the fingerprint door's plain BLAKE3)
+/// of the pack encoded with its rows in id order.
 fn proposal_hash(pack: &EsignRulePack) -> Result<[u8; 32]> {
     let mut canonical = pack.clone();
     canonical.rows.sort_by(|left, right| left.id.cmp(&right.id));
     let bytes = rmp_serde::to_vec_named(&canonical)
         .map_err(|_| Error::InvariantViolation("e-sign rule pack encode failed"))?;
-    let mut hasher = Sha256::new();
-    hasher.update(PROPOSAL_HASH_DOMAIN);
-    hasher.update(bytes);
-    Ok(hasher.finalize().into())
+    Ok(ContentHash::of(&bytes).into_bytes())
 }
 
 fn hash_hex(hash: &[u8; 32]) -> String {
