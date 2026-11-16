@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::store::GateSystemNoticeRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 use oneiron_model::llm::{BudgetLease, LlmBackend};
 
 use super::clock::PolicyCallClock;
@@ -302,7 +303,9 @@ impl Vault {
             &mut wtxn,
             &request,
             &verdict,
-            "owner_plane_stale_fail_open",
+            // A fail-open is a fact on the record: the plane answered nothing
+            // for the policy in force (`gate.policy_model.stale_manifest`).
+            GateReceiptOutcome::Noted,
             reason_codes,
             Vec::new(),
         )?;
@@ -574,7 +577,7 @@ impl Vault {
                     &mut wtxn,
                     &request,
                     &verdict,
-                    action.as_str(),
+                    verdict.decision.ledger_outcome(),
                     reason_codes,
                     system_notices.clone(),
                 )?;

@@ -33,6 +33,7 @@ use crate::git_wire::operation::GitWireOperation;
 use crate::git_wire::repo::GitWireRepo;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_contracts::fingerprint::LegacyDigest;
 
 /// A git object's type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -194,16 +195,15 @@ impl GitSpool {
         Ok(out)
     }
 
-    /// The spool into `hasher` under `record::hash_field`'s framing: its
-    /// length as a big-endian `u32` (saturating), then its bytes.
+    /// The spool into `digest` under the git wire's field framing: its length
+    /// as a big-endian `u32` (saturating), then its bytes.
     ///
     /// # Errors
     /// As [`Self::for_each_chunk`].
-    pub fn hash_framed(&self, hasher: &mut blake3::Hasher) -> Result<()> {
-        let length = u32::try_from(self.0.len).unwrap_or(u32::MAX);
-        hasher.update(&length.to_be_bytes());
+    pub fn hash_framed(&self, digest: &mut LegacyDigest) -> Result<()> {
+        digest.len_u32_be_saturating(usize::try_from(self.0.len).unwrap_or(usize::MAX));
         self.for_each_chunk(&mut |chunk| {
-            hasher.update(chunk);
+            digest.raw(chunk);
             Ok(())
         })
     }
