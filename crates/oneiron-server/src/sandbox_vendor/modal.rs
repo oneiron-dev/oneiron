@@ -60,12 +60,17 @@ const ROUTER: &str = "/modal.task_command_router.TaskCommandRouter/";
 const APP_NAME: &str = "oneiron-batch";
 /// The file tool Modal puts in every sandbox.
 const FS_TOOLS: &str = "/__modal/.bin/modal-sandbox-fs-tools";
-/// Who this client says it is: the behaviour of Modal's own Go client
-/// (`CLIENT_TYPE_LIBMODAL_GO`, at the version that client sends), and its
-/// own name.
+/// Who this client says it is: Modal's own Go client
+/// (`CLIENT_TYPE_LIBMODAL_GO`), with the Python behaviour version and the
+/// library version that client sends (modal-client `go/client.go` and
+/// `go/version.go`, 16 Nov 2026). Modal reads a Go client's version from
+/// `x-modal-libmodal-version` as `modal-go/<version>`, and it refuses to
+/// make an app for a client whose version it cannot read
+/// (`FAILED_PRECONDITION`, live run of 16 Nov 2026), so this client sends
+/// Modal's own string.
 const CLIENT_TYPE: &str = "9";
 const CLIENT_VERSION: &str = "1.0.0";
-const LIBRARY_VERSION: &str = concat!("oneiron-server/", env!("CARGO_PKG_VERSION"));
+const LIBRARY_VERSION: &str = "modal-go/0.11.1";
 /// What a sandbox lives past the step's own time left, so Modal terminates
 /// one a lost run left soon after the run would have ended.
 const LIFETIME_MARGIN: Duration = Duration::from_secs(60);
