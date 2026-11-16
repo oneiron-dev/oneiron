@@ -163,3 +163,22 @@ pub(crate) fn forget_person_party_key_index(vault: &Vault) -> Result<()> {
     wtxn.commit()?;
     Ok(())
 }
+
+/// Test door (`test_doors::do_not_contact_subject_reads`): replaces the
+/// whole index with `rows` and stamps it `version`, as a vault file that an
+/// earlier index recipe wrote holds them.
+#[cfg(oneiron_test_support)]
+pub(crate) fn replace_person_party_key_index(
+    vault: &Vault,
+    rows: &[([u8; 32], EntityId)],
+    version: u64,
+) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    PERSON_PARTY_KEY.delete_from(&vault.store, &mut wtxn, &[])?;
+    for key in rows {
+        PERSON_PARTY_KEY.put(&vault.store, &mut wtxn, key, &())?;
+    }
+    PERSON_PARTY_KEY_STATE.put(&vault.store, &mut wtxn, &(), &version)?;
+    wtxn.commit()?;
+    Ok(())
+}

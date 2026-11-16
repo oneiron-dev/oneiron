@@ -33,6 +33,21 @@ pub fn forget_person_party_key_index(vault: &Vault) -> Result<()> {
     crate::store::person_party_keys::forget_person_party_key_index(vault)
 }
 
+/// Replaces the PERSON party-key index with `rows` (each a party-key digest
+/// and a PERSON) and stamps it `version`, as a vault file that an earlier
+/// index recipe wrote holds them.
+///
+/// # Errors
+/// The write transaction's.
+#[doc(hidden)]
+pub fn replace_person_party_key_index(
+    vault: &Vault,
+    rows: &[([u8; 32], EntityId)],
+    version: u64,
+) -> Result<()> {
+    crate::store::person_party_keys::replace_person_party_key_index(vault, rows, version)
+}
+
 /// The rebuild of the PERSON party-key index a writable open runs.
 ///
 /// # Errors
