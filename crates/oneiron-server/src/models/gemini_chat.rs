@@ -85,64 +85,82 @@ impl GeminiTransport for GeminiHttp {
         if let Some(generation) = request.body.get_mut("generationConfig") {
             self.cap.apply(generation);
         }
-        let mut inference = InferenceUsage::new(lease, self.inference_model(&request.path));
-        let mut closed = false;
+        let inference = InferenceUsage::new(lease, self.inference_model(&request.path));
         let events =
             self.http
                 .post_sse_leased(&request.path, &BTreeMap::new(), &request.body, lease);
-        let frames = events.map(move |item| -> LlmResult<GeminiFrame> {
-            let item = match item {
-                Ok(item) => item,
-                Err(error) => {
-                    closed = true;
-                    return Err(released_transport(error));
-                }
-            };
-            match item {
-                SseItem::Status(mut reply) => {
-                    if !closed {
-                        inference.record(reply.body.get_mut("usageMetadata"));
-                    }
-                    // The lower decoder continues past a successful Status.
-                    closed |= !(200..300).contains(&reply.status);
-                    Ok(GeminiFrame::Status(GeminiHttpResponse {
-                        status: reply.status,
-                        body: reply.body,
-                    }))
-                }
-                SseItem::Event(event) => {
-                    let mut chunk: JsonValue = match serde_json::from_str(&event.data) {
-                        Ok(chunk) => chunk,
-                        Err(_) => {
-                            closed = true;
-                            return Err(FatalLlmError::EmptyResponse.into());
-                        }
-                    };
-                    if !closed {
-                        inference.record(chunk.get_mut("usageMetadata"));
-                        if chunk
-                            .get("candidates")
-                            .and_then(JsonValue::as_array)
-                            .and_then(|candidates| candidates.first())
-                            .and_then(|candidate| candidate.get("finishReason"))
-                            .and_then(JsonValue::as_str)
-                            .is_some()
-                        {
-                            inference.finish();
-                            closed = true;
-                        }
-                    }
-                    Ok(GeminiFrame::Chunk(chunk))
-                }
-            }
-        });
-        Ok(Box::pin(frames))
+        Ok(generate_frames(events, Some(inference)))
     }
+}
+
+/// A `streamGenerateContent` reply's events as the adapter's frames, plain
+/// or brokered. `inference` records the native counts each chunk carries;
+/// the brokered stream passes none, as the brokered whole reply records none
+/// (`broker.rs` `answer`).
+pub(super) fn generate_frames<'a, S>(
+    events: S,
+    mut inference: Option<InferenceUsage>,
+) -> GeminiProviderStream<'a>
+where
+    S: futures_util::Stream<Item = Result<SseItem, HttpReleaseError>> + Send + 'a,
+{
+    let mut closed = false;
+    let frames = events.map(move |item| -> LlmResult<GeminiFrame> {
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => {
+                closed = true;
+                return Err(released_transport(error));
+            }
+        };
+        match item {
+            SseItem::Status(mut reply) => {
+                if !closed && let Some(inference) = inference.as_mut() {
+                    inference.record(reply.body.get_mut("usageMetadata"));
+                }
+                // The lower decoder continues past a successful Status.
+                closed |= !(200..300).contains(&reply.status);
+                Ok(GeminiFrame::Status(GeminiHttpResponse {
+                    status: reply.status,
+                    body: reply.body,
+                }))
+            }
+            SseItem::Event(event) => {
+                let mut chunk: JsonValue = match serde_json::from_str(&event.data) {
+                    Ok(chunk) => chunk,
+                    Err(_) => {
+                        closed = true;
+                        return Err(FatalLlmError::EmptyResponse.into());
+                    }
+                };
+                if !closed {
+                    if let Some(inference) = inference.as_mut() {
+                        inference.record(chunk.get_mut("usageMetadata"));
+                    }
+                    if chunk
+                        .get("candidates")
+                        .and_then(JsonValue::as_array)
+                        .and_then(|candidates| candidates.first())
+                        .and_then(|candidate| candidate.get("finishReason"))
+                        .and_then(JsonValue::as_str)
+                        .is_some()
+                    {
+                        if let Some(inference) = inference.as_mut() {
+                            inference.finish();
+                        }
+                        closed = true;
+                    }
+                }
+                Ok(GeminiFrame::Chunk(chunk))
+            }
+        }
+    });
+    Box::pin(frames)
 }
 
 /// The calls this send's usage names, retained on the lease if it fails or
 /// is dropped. Native list positions stay stable across usage updates.
-struct InferenceUsage {
+pub(super) struct InferenceUsage {
     lease: BudgetLease,
     calls: Vec<ObservedCall>,
     model: Option<ModelId>,
