@@ -110,6 +110,7 @@ pub mod scope_summary;
 pub mod seat_park_model_step;
 pub mod setting;
 pub mod setting_keys;
+pub mod settling_lineage_deleted_try;
 pub mod shared_act_family;
 pub mod skill_gate;
 pub mod skill_hub_restore;
