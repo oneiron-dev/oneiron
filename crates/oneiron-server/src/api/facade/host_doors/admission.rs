@@ -180,6 +180,12 @@ pub(in crate::api::facade) fn door_admits(
         Proof::WorkflowMember => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
+        // A drafted reply's approval (FIX 18868): the mailbox's own person on
+        // their own slip, member or owner, as the door acts under; the door
+        // then admits only the person whose mailbox the draft is from.
+        Proof::MailboxPerson => {
+            crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
+        }
         // A check-in holder's answer (ROLES-CHECKIN P2.3c): a live person on
         // their own slip, bound to it, as the door answers under.
         Proof::CheckInHolder => {
