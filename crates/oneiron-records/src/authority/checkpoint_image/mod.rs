@@ -50,9 +50,13 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-/// 34: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
+/// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
+/// 34 to 36 are unused: they were left for PRs that were open when 37 landed, and each of
+/// those takes the next number at its own landing.
+/// 38: a revocation retires its key on every branch, as a handoff retires its predecessors
 /// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 34;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 38;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
