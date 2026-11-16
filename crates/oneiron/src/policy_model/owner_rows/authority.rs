@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound, StandingConsentGrant};
 use crate::error::{Error, Result};
-use crate::federation::{FederationGrantRole, FederationGrantScope};
+use crate::federation::FederationGrantRole;
 use crate::{EntityId, Vault};
 
 /// A named action grant; a broad consent about another verb cannot authorize this one.
@@ -326,53 +326,6 @@ pub(crate) fn is_live_vault_owner_in_txn(
     actor: &EntityId,
 ) -> Result<bool> {
     Ok(owners_in_txn(vault, txn)?.contains(actor))
-}
-
-/// [`is_live_vault_owner_in_txn`], with a shared vault's ownership read from the fold's counted
-/// acts (pass 28 R1): its Owner member owns only while one of their Owner rows matches the one
-/// counted giving on its line and no counted act ended it. A bare row, or one a counted
-/// withdrawal already ended before its delete arrived, names no owner here. A personal vault's
-/// embedded owner reads as before. The R2d statement reader asks this (R2d review finding 2);
-/// pass 28 R3 moves the census itself onto the counted acts.
-pub(crate) fn is_counted_vault_owner_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    actor: &EntityId,
-) -> Result<bool> {
-    if !is_live_vault_owner_in_txn(vault, txn, actor)? {
-        return Ok(false);
-    }
-    let Some(raw) = vault.store.vault_meta.get(txn, SHARED_CREATION_KEY)? else {
-        return Ok(true);
-    };
-    let creation: crate::federation::SharedVaultCreation =
-        serde_json::from_slice(&raw).map_err(|_| invalid())?;
-    let now = vault.store.clock.now_recorded_at();
-    for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-        &vault.store,
-        txn,
-        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-        None,
-    )? {
-        let Some(standing) = vault.standing_grant_in_txn(
-            txn,
-            entry?,
-            crate::authority::GrantFamily::SharedMember,
-            now,
-        )?
-        else {
-            continue;
-        };
-        let grant = standing.grant();
-        if grant.member_ref == *actor
-            && grant.role == FederationGrantRole::Owner
-            && grant.scope == FederationGrantScope::vault(creation.vault_id)
-            && grant.confers_at(now)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The vault's one recorded Owner, its PERSON's liveness not read: the

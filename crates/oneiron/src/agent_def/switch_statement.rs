@@ -108,7 +108,7 @@ impl Vault {
     /// The switches the vault's owner last stated for agent definition `id`, read in `txn`:
     /// the one counted statement on its line, when the person who made it is a live owner of
     /// the vault now, a shared vault's by a counted Owner giving
-    /// ([`crate::policy_model::is_counted_vault_owner_in_txn`]). `None` when no statement
+    /// ([`crate::policy_model::is_live_vault_owner_in_txn`]). `None` when no statement
     /// stands.
     ///
     /// # Errors
@@ -123,7 +123,7 @@ impl Vault {
         let Some((giver, switches)) = fold.stated_agent_switches(id) else {
             return Ok(None);
         };
-        if !crate::policy_model::is_counted_vault_owner_in_txn(self, txn, &giver)? {
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &giver)? {
             return Ok(None);
         }
         Ok(Some(switches.clone()))
@@ -270,7 +270,7 @@ impl Vault {
         }
         let owner = match person {
             Some(person)
-                if crate::policy_model::is_counted_vault_owner_in_txn(self, txn, &person)? =>
+                if crate::policy_model::is_live_vault_owner_in_txn(self, txn, &person)? =>
             {
                 Some(person)
             }
