@@ -186,7 +186,7 @@ fn bound_extraction_inputs_page(
                 if extraction_turn_in_txn(
                     vault,
                     txn,
-                    &read,
+                    (&read, turn_read),
                     reader_scope.as_ref(),
                     scope,
                     key,
