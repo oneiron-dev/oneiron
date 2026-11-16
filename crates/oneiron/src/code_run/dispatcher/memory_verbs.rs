@@ -470,7 +470,7 @@ impl HostSelfDispatcher<'_> {
         };
         let actual_id = match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
-                .put_claim_candidate_with_landing_returning_actual(
+                .put_claim_candidate_with_gate_decision_returning_actual(
                     &call.id,
                     candidate,
                     &envelope,

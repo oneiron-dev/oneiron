@@ -10,17 +10,31 @@ use rmpv::Value;
 use std::collections::{HashMap, VecDeque};
 
 impl Vault {
-    /// `gate_decision`: the decision the write gate already recorded for this
-    /// exact candidate in an earlier transaction (a live-run claim put's
-    /// pre-check, FIX LIVE-RUN-CHECKER-INJECT). The apply reuses it rather
-    /// than judge the candidate again (FIX 8752): a checker that decision
-    /// consulted is not asked twice, and its hold stays the verdict. `None`
-    /// judges it here.
+    pub(super) fn apply_candidate_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.apply_candidate_with_gate_decision_in_txn(
+            txn, id, candidate, envelope, occurred, learned_at, None,
+        )
+    }
+
+    /// [`Self::apply_candidate_in_txn`] of a candidate the write gate already
+    /// judged in an earlier transaction and recorded `gate_decision` for (a
+    /// live-run claim put's pre-check, FIX LIVE-RUN-CHECKER-INJECT). The
+    /// apply reuses that decision rather than judge the candidate again (FIX
+    /// 8752): a checker it consulted is not asked twice, and its hold stays
+    /// the verdict. `None` judges the candidate here.
     #[expect(
         clippy::too_many_arguments,
         reason = "the candidate apply carries the gate decision its pre-check recorded"
     )]
-    pub(super) fn apply_candidate_in_txn(
+    fn apply_candidate_with_gate_decision_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: EntityId,
@@ -64,17 +78,31 @@ impl Vault {
     /// original and returns its successor. Stable state and non-semantic
     /// updates keep their requested id. The landing and both writes share
     /// one transaction; neither a refused birth nor a refused close commits.
-    ///
-    /// `gate_decision`: the decision the write gate recorded for the
-    /// requested row ([`Self::apply_candidate_in_txn`]). It answers only for
-    /// that row: a successor is a fresh row, which that decision did not
-    /// judge (a re-put the gate saw closing its stored value consults no
-    /// checker), so the successor is judged afresh.
+    pub(crate) fn put_claim_candidate_with_landing_returning_actual(
+        &self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<EntityId> {
+        self.put_claim_candidate_with_gate_decision_returning_actual(
+            id, candidate, envelope, occurred, learned_at, landing, None,
+        )
+    }
+
+    /// [`Self::put_claim_candidate_with_landing_returning_actual`] of a
+    /// candidate the write gate already judged and recorded `gate_decision`
+    /// for ([`Self::apply_candidate_with_gate_decision_in_txn`]). That
+    /// decision answers only for the requested row: a successor is a fresh
+    /// row it did not judge (a re-put the gate saw closing its stored value
+    /// consults no checker), so a successor is judged afresh.
     #[expect(
         clippy::too_many_arguments,
         reason = "the claim put carries its landing and the gate decision its pre-check recorded"
     )]
-    pub(crate) fn put_claim_candidate_with_landing_returning_actual(
+    pub(crate) fn put_claim_candidate_with_gate_decision_returning_actual(
         &self,
         id: &EntityId,
         candidate: ClaimCandidate,
@@ -114,7 +142,7 @@ impl Vault {
             None => (*id, candidate),
         };
         let gate_decision = gate_decision.filter(|_| actual == *id);
-        self.apply_candidate_in_txn(
+        self.apply_candidate_with_gate_decision_in_txn(
             &mut txn,
             actual,
             candidate,

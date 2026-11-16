@@ -410,7 +410,6 @@ impl OffRecordSession<'_> {
             occurred,
             learned_at,
             |txn| landing.in_txn(txn),
-            None,
         )
     }
 
