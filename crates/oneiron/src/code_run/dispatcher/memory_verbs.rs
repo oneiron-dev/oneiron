@@ -229,7 +229,7 @@ impl HostSelfDispatcher<'_> {
     /// filters by the key's authorization alone (FIX 5976).
     fn keyed_claims(&self) -> ClaimReadStatus {
         match &self.agent_verbs {
-            Some(door) if !door.keyed_search_surfaceable_only() => ClaimReadStatus::Recorded,
+            Some(door) if !door.keyed_search_surfaceable_only() => ClaimReadStatus::Surfaceable,
             _ => ClaimReadStatus::Surfaceable,
         }
     }
