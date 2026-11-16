@@ -18,7 +18,7 @@ fn put_reserved_fixture(
     body: &crate::claim::ClaimBody,
 ) -> crate::Result<()> {
     vault.with_write_txn(|wtxn| {
-        vault.put_reserved_claim_in_txn(wtxn, id, body, landing_time(), now_secs())
+        vault.put_reserved_claim_in_txn(wtxn, id, body, landing_time(), crate::unix_seconds_now())
     })
 }
 
@@ -239,7 +239,12 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     unrelated.predicate = "test.unrelated_source".to_owned();
     let unrelated_id = EntityId::now();
     vault
-        .put_claim(&unrelated_id, &unrelated, landing_time(), now_secs())
+        .put_claim(
+            &unrelated_id,
+            &unrelated,
+            landing_time(),
+            crate::unix_seconds_now(),
+        )
         .expect("unrelated active claim");
     assert!(
         vault
@@ -307,7 +312,7 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
         actor_id: attribution.actor_id,
         provenance_claim_id: attribution.provenance_claim_id,
         occurred: landing_time(),
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     assert!(
         vault

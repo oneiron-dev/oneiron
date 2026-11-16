@@ -56,7 +56,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::secret_record::SecretCustodyRecord;
-use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
+use crate::store::{KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
 pub(crate) use self::forms::{decodings, occurrences};
@@ -72,8 +72,8 @@ pub const KNOWN_VALUE_MIN_BYTES: usize = 1;
 /// A window this long keeps each tag's candidates few.
 const TAG_WINDOW: usize = 12;
 
-/// How many bytes of a value's first window its tag keeps.
-const TAG_BYTES: usize = KNOWN_TAG_BYTES;
+#[doc(hidden)]
+use oneiron_records::store::known_value_index::TAG_BYTES;
 
 /// How many of an open stream's last bytes, at most, are held back unseen
 /// because no window can tell yet whether a known value starts there (FIX
