@@ -35,6 +35,10 @@ use crate::world_keys::{
 };
 use crate::{EntityId, Result, Vault};
 
+mod box_wait;
+
+use box_wait::HoldEnd;
+
 /// The roster still holds a live root key, and the root's authority key is
 /// not a live owner key on it. Nothing was written.
 const ROOT_KEY_NOT_LIVE: &str = "the recovery root's authority key is not a live owner key on this \
@@ -75,6 +79,16 @@ pub enum RootMaterial {
     /// The root's authority key alone, as the recovery box releases it
     /// (WAYBACK-BOX-AUTHORITY-SEED = A): it vouches, and never appoints.
     Released(RecoveryAuthoritySigner),
+    /// The root's authority key as the recovery box releases it at the end
+    /// of the box's own wait, with `release_at`, the box's release second.
+    /// On a hosted vault the box's wait is the recovery wait
+    /// (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT = A), so the door's hold lands
+    /// at `release_at`, never later than its own wait from now, and a hold
+    /// already due lands in the same call. Otherwise as [`Self::Released`].
+    ReleasedAfterBoxWait {
+        signer: RecoveryAuthoritySigner,
+        release_at: u64,
+    },
 }
 
 /// The new owner key the root's door puts on the roster.
@@ -146,6 +160,10 @@ impl Vault {
     /// kit arm never waits. On a box call this install's due holds land
     /// first, and a landing that enrolled this call's successor answers
     /// [`RootRecovery::Vouched`]: the call completes the attempt it held.
+    /// After the box's own wait (`RootMaterial::ReleasedAfterBoxWait`) the
+    /// hold lands at the box's release second, and one already due lands
+    /// in this call, which answers [`RootRecovery::Vouched`]: one wait, and
+    /// the hold row stays as its receipt.
     ///
     /// # Errors
     /// As [`Self::recover_owner_root`].
@@ -160,7 +178,10 @@ impl Vault {
     ) -> Result<RootRecovery> {
         // A kit recovery lands nothing first: it cancels every live hold in
         // its write, a due one too, so no hold's landing stands in its way.
-        if matches!(material, RootMaterial::Released(_)) {
+        if matches!(
+            material,
+            RootMaterial::Released(_) | RootMaterial::ReleasedAfterBoxWait { .. }
+        ) {
             let landed = self.land_due_recovery_holds()?;
             if let Some(done) = self.landing_for_successor(&landed, &successor)? {
                 return Ok(done);
@@ -174,6 +195,7 @@ impl Vault {
         // rotation. A kit with none live falls through to the rooted check,
         // as a never-enrolled key does. The box's released bytes need no
         // finder: they name their generation directly.
+        let mut end = HoldEnd::AfterWait(wait);
         let (signer, kit, released) = match material {
             RootMaterial::Kit { seed, confirm } => {
                 let found = self.recovery_authority_generations_in_txn(&txn, &seed, &vault_id)?;
@@ -183,6 +205,10 @@ impl Vault {
                 }
             }
             RootMaterial::Released(signer) => (Some(signer), None, true),
+            RootMaterial::ReleasedAfterBoxWait { signer, release_at } => {
+                end = HoldEnd::AtBoxRelease { release_at, wait };
+                (Some(signer), None, true)
+            }
         };
         // While kit-only holds the box holds nothing: the released key is
         // refused before the liveness check, so a revoked released key under
@@ -198,13 +224,14 @@ impl Vault {
             if live_owner_key(&fold, &signer.authority_key()) {
                 let authority = ActAuthority::Owner(owner.clone(), surface);
                 if released && !wait.is_zero() {
-                    return self.hold_with_root_key(
-                        (owner, &authority),
-                        signer,
-                        successor,
-                        lost,
-                        wait,
-                    );
+                    let held =
+                        self.hold_with_root_key((owner, &authority), signer, successor, lost, end)?;
+                    return match (end, held) {
+                        (HoldEnd::AtBoxRelease { .. }, RootRecovery::Held { hold, lands_at }) => {
+                            self.land_held_after_box_wait(hold, lands_at)
+                        }
+                        (_, held) => Ok(held),
+                    };
                 }
                 return self.vouch_with_root_key(
                     (owner, &authority),
@@ -334,7 +361,7 @@ impl Vault {
         signer: &RecoveryAuthoritySigner,
         successor: RootSuccessor,
         lost: &[AuthorityKey],
-        wait: std::time::Duration,
+        end: HoldEnd,
     ) -> Result<RootRecovery> {
         // Preparing this install's signing keys writes, so its slot is made
         // ready before any transaction opens, as at the vouch arm.
@@ -400,7 +427,7 @@ impl Vault {
             successor,
             install,
             lost,
-            wait,
+            end,
             machine,
             successor_key,
         );
@@ -459,7 +486,7 @@ impl Vault {
         successor: RootSuccessor,
         install: Option<OwnerSigningSlot>,
         lost: &[AuthorityKey],
-        wait: std::time::Duration,
+        end: HoldEnd,
         machine: EntityId,
         successor_key: [u8; 32],
     ) -> Result<RootRecovery> {
@@ -495,7 +522,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let now = self.instant_in_write_txn(&mut txn)?.secs();
-        let lands_at = now.saturating_add(wait.as_secs());
+        let lands_at = end.lands_at(now);
         let hold = self.append_recovery_hold_in_txn(
             &mut txn,
             &root_key,

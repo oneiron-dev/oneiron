@@ -43,6 +43,17 @@
 //! shared judge): `a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold`
 //! and `the_kits_cancel_is_the_root_keys_own_row`.
 //!
+//! One wait on a hosted vault (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT = A):
+//! the box's wait is the recovery wait, so after it the door's hold lands at
+//! the box's release second (`RootMaterial::ReleasedAfterBoxWait`):
+//! `a_hosted_recovery_waits_once_at_the_box_and_lands_at_its_release`,
+//! `a_box_release_never_waits_past_its_release_or_this_installs_wait` and
+//! `a_wait_report_the_box_refuses_answers_its_error`. Without a box (self-host,
+//! `RootMaterial::Released`) the engine's own wait is unchanged:
+//! `a_released_recovery_waits_then_lands`. The three fail at the mutation
+//! that drops the box's release second and the report (the red branch
+//! `opus-wayback/recovery-box-one-wait-red`).
+//!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
 //! landing, no `RootRecovery::Held`, no `recover_owner_root_waiting`).
@@ -54,6 +65,7 @@
 //! --all-features --test owner_root_recovery_wait`.
 #![cfg(oneiron_test_support)]
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,10 +76,10 @@ use oneiron::authority::{
     ActorBindingStatus, AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner, DeviceAuthority,
     HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineRole,
-    OwnerKeyEnrollment, OwnerRootRecord, ROLE_ADMIN, RecoveryHoldAnswer, RecoveryHoldAnswerKind,
-    RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery,
-    RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
+    OwnerKeyEnrollment, OwnerRootRecord, RECOVERY_WAIT_DEFAULT, ROLE_ADMIN, RecoveryHoldAnswer,
+    RecoveryHoldAnswerKind, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial,
+    RootRecovery, RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
@@ -83,7 +95,7 @@ use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
-    NoRecoveryBox, RecoveryAuthoritySigner, RecoveryPreset, RecoveryRootSeed,
+    NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxHold, RecoveryPreset, RecoveryRootSeed,
 };
 use oneiron::{
     EdgeActorClass, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
@@ -2604,4 +2616,199 @@ fn a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands() {
         RecoveryHoldState::Cancelled,
         "the first hold stays cancelled"
     );
+}
+
+/// A recovery box as the cloud keeps it (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT
+/// = A): it records each wait the vault reports, and a release it opens at
+/// `opened` gives the root's authority key out at `opened` plus the last
+/// reported wait, or 24 hours before any report. With `fail_report`, a
+/// report answers `Err`.
+#[derive(Default)]
+struct WaitingBox {
+    reports: RefCell<Vec<Duration>>,
+    fail_report: bool,
+}
+
+impl RecoveryBoxHold for WaitingBox {
+    fn hold_kit_only(&self, _kit_only: bool) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn report_recovery_wait(&self, wait: Duration) -> oneiron::Result<()> {
+        self.reports.borrow_mut().push(wait);
+        if self.fail_report {
+            return Err(oneiron::Error::Io(std::io::Error::other(
+                "the recovery box did not answer",
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl WaitingBox {
+    /// The second a release opened at `opened` gives the root's authority
+    /// key out.
+    fn release_at(&self, opened: u64) -> u64 {
+        let wait = self
+            .reports
+            .borrow()
+            .last()
+            .copied()
+            .unwrap_or(Duration::from_secs(24 * 60 * 60));
+        opened + wait.as_secs()
+    }
+}
+
+impl Fixture {
+    /// Generation `generation`'s authority key as the box gives it out at
+    /// `release_at`, at the end of the box's own wait.
+    fn released_after_box_wait(&self, generation: u32, release_at: u64) -> RootMaterial {
+        let RootMaterial::Released(signer) = self.released_material(generation) else {
+            panic!("the box's bytes are a released authority key");
+        };
+        RootMaterial::ReleasedAfterBoxWait { signer, release_at }
+    }
+}
+
+/// One wait end to end: the vault reports its recovery wait to the box, the
+/// box waits it out before it gives R out, and the door then lands at once
+/// with the hold row as the receipt, with no second wait of its own.
+#[test]
+fn a_hosted_recovery_waits_once_at_the_box_and_lands_at_its_release() {
+    let fixture = fixture();
+    let root_key = AuthorityKey::Ed25519(fixture.generation_key(0));
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let recovery_box = WaitingBox::default();
+    fixture
+        .vault
+        .report_recovery_wait_to_box(&recovery_box)
+        .expect("the vault reports its wait");
+    assert_eq!(
+        *recovery_box.reports.borrow(),
+        vec![RECOVERY_WAIT_DEFAULT],
+        "the box is told the vault's recovery wait"
+    );
+    // Sign-in and the recovery PIN open the release at T0; the box gives R
+    // out once its wait ends, and the door is called then.
+    let release_at = recovery_box.release_at(T0);
+    assert_eq!(release_at, T0 + RECOVERY_WAIT_DEFAULT.as_secs());
+    fixture.at(release_at + 5);
+    let before_history = fixture.history().len();
+
+    let answer = fixture
+        .vault
+        .recover_owner_root(
+            &fixture.owner(),
+            ActSurface::ThisInstall,
+            fixture.released_after_box_wait(0, release_at),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            std::slice::from_ref(&lost_key),
+        )
+        .expect("the box's wait was the recovery wait");
+
+    assert_vouched(&fixture, answer, &root_key, &new, &lost_key);
+    assert_eq!(
+        fixture.history().len(),
+        before_history + 3,
+        "the hold, its revocation and its enrolment, in one call"
+    );
+    let holds = fixture.holds();
+    assert_eq!(holds.len(), 1, "one hold row: the recovery's receipt");
+    assert_eq!(holds[0].state, RecoveryHoldState::Landed);
+    assert_eq!(
+        holds[0].lands_at, release_at,
+        "the hold lands at the box's release second"
+    );
+    assert_eq!(
+        fixture.row(&holds[0].hold).signer_key(),
+        &root_key,
+        "R signed the hold"
+    );
+    assert!(
+        !fixture.slot_present(&new_key.verifying_key().to_bytes()),
+        "the landing deletes R's seed"
+    );
+}
+
+/// The box's clock may run ahead of this install's: the hold then waits
+/// until the box's release second, and a release second past this
+/// install's own wait is cut to that wait.
+#[test]
+fn a_box_release_never_waits_past_its_release_or_this_installs_wait() {
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_after_box_wait(0, T0 + 120),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("a release ahead of this clock holds"),
+    );
+    assert_eq!(
+        lands_at,
+        T0 + 120,
+        "the hold lands at the box's release second"
+    );
+    assert!(!fixture.live(&new), "nothing lands before it");
+    fixture.at(T0 + 180);
+    let landings = fixture.land();
+    assert_eq!(
+        landings.len(),
+        1,
+        "the hold is due at the box's release second"
+    );
+    assert_eq!(landings[0].hold, hold);
+    assert!(fixture.live(&new), "the successor landed");
+    assert!(!fixture.live(&lost_key), "the lost key was revoked");
+
+    let new2_key = SigningKey::from_bytes(&[NEW2_KEY_SEED; 32]);
+    let far = T0 + 180 + 10 * WAIT.as_secs();
+    let (_, capped) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_after_box_wait(0, far),
+                RootSuccessor::Device(fixture.enrollment(&new2_key)),
+                &[],
+            )
+            .expect("a release far ahead of this clock holds"),
+    );
+    assert!(
+        capped >= T0 + 180 + WAIT.as_secs() && capped < T0 + 180 + WAIT.as_secs() + 300,
+        "never later than this install's own wait: {capped}"
+    );
+}
+
+/// A report the box refuses is the caller's error to log: the box keeps its
+/// last value, and the next managed boot reports again.
+#[test]
+fn a_wait_report_the_box_refuses_answers_its_error() {
+    let fixture = fixture();
+    let recovery_box = WaitingBox {
+        fail_report: true,
+        ..WaitingBox::default()
+    };
+    fixture
+        .vault
+        .report_recovery_wait_to_box(&recovery_box)
+        .expect_err("the box's error is the answer");
+    assert_eq!(
+        *recovery_box.reports.borrow(),
+        vec![RECOVERY_WAIT_DEFAULT],
+        "the report was sent once"
+    );
+    fixture
+        .vault
+        .report_recovery_wait_to_box(&NoRecoveryBox)
+        .expect("no box: nothing to report");
 }
