@@ -259,6 +259,14 @@ pub enum RecordError {
     /// owner, or a write facet outside the link's facets.
     #[error("invalid pairing scope: {0}")]
     InvalidPairingScope(&'static str),
+    /// A pairing link names verbs for a published app's backend that no
+    /// Grant row names. The app's grant rows are the owner's explicit Ask,
+    /// default none (PUBLIC-BACKEND = A; APP-BACKEND-LINK-GRANT = A): he
+    /// mints that row as its own act first. Nothing was written.
+    #[error(
+        "an app backend's link names verbs only under a Grant row the owner mints: mint it with vault.agents.grants.mint, then issue the link"
+    )]
+    AppBackendGrantRequired,
     /// Context-pack assembly found a cross-record anomaly before surfacing output.
     #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
     ContextPackValidation { id: EntityId, reason: &'static str },
@@ -484,6 +492,7 @@ impl RecordError {
             Self::InvalidConversationDag(_) => ErrorKind::InvalidConversationDag,
             Self::InvalidScopeSummary(_) => ErrorKind::InvalidScopeSummary,
             Self::InvalidPairingScope(_) => ErrorKind::InvalidPairingScope,
+            Self::AppBackendGrantRequired => ErrorKind::AppBackendGrantRequired,
             Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
             Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
             Self::StreamLimit { .. } => ErrorKind::StreamLimit,

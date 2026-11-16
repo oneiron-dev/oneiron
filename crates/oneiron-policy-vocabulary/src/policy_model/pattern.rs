@@ -36,6 +36,7 @@
 //! (`Decide` > `Escalate` > `Log`) and rule order breaks ties. Every matched id
 //! is receipted regardless of which one acted.
 
+use oneiron_contracts::register::Register;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -49,9 +50,20 @@ pub const POLICY_PATTERN_MAX_LEN: usize = 512;
 /// What a matching pattern is allowed to do. See the module doc for why
 /// [`Self::Escalate`] is the default.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("policy.pattern.role")]
 pub enum PolicyPatternRole {
     /// Trigger the safeguard model; never decide while a model verdict is
     /// obtainable.
@@ -64,26 +76,12 @@ pub enum PolicyPatternRole {
 }
 
 impl PolicyPatternRole {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Escalate => "escalate",
-            Self::Decide => "decide",
-            Self::Log => "log",
-        }
-    }
-
     /// Parses the wire spelling. Returns `None` for anything else, so a
     /// manifest naming a role the engine does not have fails closed rather
     /// than silently falling back to the default.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "escalate" => Some(Self::Escalate),
-            "decide" => Some(Self::Decide),
-            "log" => Some(Self::Log),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// Ordering only — the numbers are never stored and never emitted. They

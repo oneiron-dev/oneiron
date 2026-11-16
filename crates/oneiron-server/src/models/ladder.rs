@@ -71,7 +71,7 @@ use super::forward::{Ended, forward};
 use super::http;
 use super::media::{HeldJob, MediaAnswer, MediaDispatchRelease, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
-use super::served::served_receipt;
+use super::served::{served_receipt, stamp_cache_horizon};
 use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
@@ -762,11 +762,19 @@ impl OfferLadder {
     }
 
     /// The usage an answer of the rung at `index` reports, with this ladder's
-    /// receipt. Stamped after its permit settled: the permit already charged
-    /// each failed rung on its own.
-    fn answered(&self, index: usize, walk: &Walk, mut usage: LlmUsage) -> LlmUsage {
+    /// receipt and the cached prefix its send noted the provider confirmed.
+    /// Stamped after its permit settled: the permit already charged each
+    /// failed rung on its own.
+    fn answered(
+        &self,
+        index: usize,
+        walk: &Walk,
+        mut usage: LlmUsage,
+        horizon: Option<oneiron::llm::ServedCacheHorizon>,
+    ) -> LlmUsage {
         let raw = std::mem::take(&mut usage.raw_provider);
         usage.raw_provider = self.served(index, walk).stamp(raw);
+        stamp_cache_horizon(&mut usage.raw_provider, horizon);
         usage
     }
 
