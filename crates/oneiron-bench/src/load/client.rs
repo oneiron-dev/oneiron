@@ -1,11 +1,10 @@
 //! One agent on the facade doors: its signed slip, a fresh holder proof per
 //! request, and the three verbs the bench drives (witness, claim upsert, recall).
 
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::SigningKey;
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+use oneiron::authority::CapabilitySlip;
 use serde_json::{Value, json};
 
 use super::corpus::{Corpus, Record, Subject, tag_index};
@@ -17,40 +16,9 @@ pub(super) struct Agent {
     base: String,
     bearer: String,
     slip: CapabilitySlip,
-    signer: Signer,
+    key: SigningKey,
     /// Seconds added to the wall clock for a holder proof's timestamp.
     skew: i64,
-}
-
-/// What signs each request's holder proof.
-enum Signer {
-    /// A minted agent's own holder key (`token agent`'s binding key).
-    Holder(SigningKey),
-    /// The vault's host issuer, for its host root slip: the vault owner. The
-    /// lives bench's in-process store draws this issuer itself, as the fleet
-    /// bench does (`fleet/workload.rs`).
-    HostRoot(Arc<HostSlipIssuer>),
-}
-
-impl Signer {
-    /// The `x-oneiron-binding` value: `{timestamp, nonce, signature}`.
-    fn proof(&self, slip: &CapabilitySlip, timestamp: u64) -> Result<Value, String> {
-        match self {
-            Self::Holder(key) => oneiron::authority::holder_proof(slip, key, timestamp)
-                .map_err(|e| format!("proof: {e}")),
-            Self::HostRoot(issuer) => {
-                let nonce = oneiron::EntityId::now().to_hex();
-                let challenge = oneiron::authority::holder_proof_challenge(timestamp, &nonce);
-                let signature = issuer
-                    .binding_proof(slip, &challenge)
-                    .map_err(|e| format!("proof: {e}"))?
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>();
-                Ok(json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}))
-            }
-        }
-    }
 }
 
 /// What a recall answered, beside its timing.
@@ -109,30 +77,28 @@ impl Agent {
             bearer: format!("Bearer {}", credential.token),
             slip: CapabilitySlip::from_token(&credential.token)
                 .map_err(|e| format!("slip: {e}"))?,
-            signer: Signer::Holder(SigningKey::from_bytes(&decode_seed(
-                &credential.binding_key,
-            )?)),
+            key: SigningKey::from_bytes(&decode_seed(&credential.binding_key)?),
             skew,
         })
     }
 
-    /// The vault owner on its host root slip, signed by the host issuer that
-    /// rooted the vault: the in-process store's caller.
-    pub(super) fn host_root(
+    /// The caller on `slip`, held by `key`: the lives bench's in-process
+    /// store mints the vault owner such a slip.
+    pub(super) fn holder(
         http: &reqwest::blocking::Client,
         base: &str,
-        root: CapabilitySlip,
-        issuer: Arc<HostSlipIssuer>,
+        slip: CapabilitySlip,
+        key: SigningKey,
     ) -> Result<Self, String> {
         Ok(Self {
             http: http.clone(),
             base: base.to_owned(),
             bearer: format!(
                 "Bearer {}",
-                root.to_token().map_err(|e| format!("root slip: {e}"))?
+                slip.to_token().map_err(|e| format!("slip: {e}"))?
             ),
-            slip: root,
-            signer: Signer::HostRoot(issuer),
+            slip,
+            key,
             skew: 0,
         })
     }
@@ -149,7 +115,7 @@ impl Agent {
         let mut accepted = |skew: i64| -> Result<bool, String> {
             self.skew = skew;
             let body = json!({"query": "clock", "effort": "light", "limit": 1});
-            match self.post("vault.recall", &body).1 {
+            match self.post_explained("vault.recall", &body).1 {
                 Ok(_) => Ok(true),
                 Err(error) if error.starts_with("401") => Ok(false),
                 Err(error) => Err(format!("clock probe: {error}")),
@@ -182,15 +148,25 @@ impl Agent {
     }
 
     /// POSTs `body` to a facade verb; the time covers the round trip only,
-    /// not the holder proof made before it.
+    /// not the holder proof made before it. A refusal reads `<status> <code>`.
     pub(super) fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+        self.call(verb, body, false)
+    }
+
+    /// [`Self::post`] whose refusal also carries the reply's message, for a
+    /// call whose refusal ends the run, so the run says why.
+    fn post_explained(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+        self.call(verb, body, true)
+    }
+
+    fn call(&self, verb: &str, body: &Value, explain: bool) -> (f64, Result<Value, String>) {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let timestamp = wall.saturating_add_signed(self.skew);
-        let proof = match self.signer.proof(&self.slip, timestamp) {
+        let proof = match oneiron::authority::holder_proof(&self.slip, &self.key, timestamp) {
             Ok(proof) => proof.to_string(),
-            Err(e) => return (0.0, Err(e)),
+            Err(e) => return (0.0, Err(format!("proof: {e}"))),
         };
         let started = Instant::now();
         let sent = self
@@ -213,16 +189,26 @@ impl Agent {
             if status.is_success() {
                 serde_json::from_str(&text).map_err(|_| "json".to_owned())
             } else {
-                let code = serde_json::from_str::<Value>(&text)
-                    .ok()
-                    .and_then(|v| {
-                        v["code"]
-                            .as_str()
-                            .or_else(|| v["error"]["code"].as_str())
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_default();
-                Err(format!("{} {code}", status.as_u16()).trim().to_owned())
+                let reply = serde_json::from_str::<Value>(&text).unwrap_or_default();
+                let field = |name: &str| {
+                    reply[name]
+                        .as_str()
+                        .or_else(|| reply["error"][name].as_str())
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                let refused = format!("{} {}", status.as_u16(), field("code"))
+                    .trim()
+                    .to_owned();
+                let message = field("message");
+                Err(if explain && !message.is_empty() {
+                    format!(
+                        "{refused}: {}",
+                        message.chars().take(400).collect::<String>()
+                    )
+                } else {
+                    refused
+                })
             }
         });
         (started.elapsed().as_secs_f64() * 1000.0, result)
@@ -329,9 +315,12 @@ impl Agent {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let proof = self
-            .signer
-            .proof(&self.slip, wall.saturating_add_signed(self.skew))?;
+        let proof = oneiron::authority::holder_proof(
+            &self.slip,
+            &self.key,
+            wall.saturating_add_signed(self.skew),
+        )
+        .map_err(|e| format!("proof: {e}"))?;
         Ok(request
             .header("authorization", &self.bearer)
             .header("x-oneiron-binding", proof.to_string()))
