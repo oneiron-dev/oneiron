@@ -335,3 +335,50 @@ fn an_erased_record_leaves_its_rows_and_not_the_count() -> TestResult {
     );
     Ok(())
 }
+
+/// A row an as-of read drops is not served, so it adds nothing (review round 2): at second 1
+/// no record had been learned, and the house's reads leave it no exposure; at the read's
+/// latest instant both rows are served and both count.
+#[test]
+fn a_row_an_as_of_read_drops_is_not_counted() -> TestResult {
+    let fx = open(VaultConfig::default())?;
+    let [r1, r2, _] = fx.three_records()?;
+    let reads = [PointRead::id(r1), PointRead::id(r2)];
+
+    let before = fx
+        .vault
+        .scoped_read(fx.house_key(0xc1)?)
+        .read_as_of(&reads, None, 1)?;
+    assert!(
+        before.value.iter().all(Option::is_none),
+        "no record had been learned by second 1"
+    );
+    assert_eq!(
+        fx.vault.actor_read_exposure(&fx.house)?,
+        None,
+        "a dropped row waits for no write"
+    );
+    fx.next_write()?;
+    assert_eq!(
+        fx.vault.actor_read_exposure(&fx.house)?,
+        None,
+        "the write keeps no row for a dropped one"
+    );
+
+    let latest = fx
+        .vault
+        .scoped_read(fx.house_key(0xc2)?)
+        .read_as_of(&reads, None, u64::MAX)?;
+    assert_eq!(
+        latest
+            .value
+            .iter()
+            .flatten()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
+        vec![r1, r2],
+        "both rows stand at the latest instant"
+    );
+    assert_eq!(fx.house_exposure()?.distinct_records, 2);
+    Ok(())
+}
