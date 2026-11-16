@@ -4,13 +4,10 @@
 //! extraction loan exists yet, so a checked pack parks without asking a model.
 
 use super::{BoundFacet, DreamerAttemptBinding, facet_refused};
-use crate::llm::decision::{AnswerContract, DecisionRung};
+use crate::llm::decision::{AnswerContract, DecisionRung, Reversibility};
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::model_decision::MAX_DECISION_STATE_BYTES;
-use crate::verbs::{
-    AiVerdict, AiVerdictRequest, AiVerdictReversibility, ExtractionPack, ExtractionPart,
-    ExtractionRead,
-};
+use crate::verbs::{AiVerdict, AiVerdictRequest, ExtractionPack, ExtractionPart, ExtractionRead};
 
 impl DreamerAttemptBinding {
     /// Dispatches a verdict only to the handler owned by its admitted facet.
@@ -59,7 +56,7 @@ fn check_extraction_request(input: &AiVerdictRequest, pack: &ExtractionPack) -> 
             &["Name a ceiling below human, or ask the owner through ask."],
         ));
     }
-    if input.reversibility != AiVerdictReversibility::ReversibleRead {
+    if input.reversibility != Reversibility::ReversibleRead {
         return Err(MemoryError::bad_request(
             "an extraction verdict requires reversible_read reversibility",
         ));
