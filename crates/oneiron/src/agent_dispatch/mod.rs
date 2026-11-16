@@ -106,7 +106,8 @@ mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
 pub(crate) use skill_default::{
-    bootstrap_skill_root_in_txn, bootstrap_skill_root_sourced_in_txn, workflow_default,
+    bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,
+    bootstrap_skill_root_sourced_in_txn, workflow_default,
 };
 mod spend_calibration;
 #[cfg(feature = "sync")]

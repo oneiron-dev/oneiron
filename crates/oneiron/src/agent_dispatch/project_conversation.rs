@@ -169,11 +169,7 @@ impl AgentDispatcher<'_> {
             return Ok(configured);
         }
         let txn = self.vault.store.env.read_txn()?;
-        let root = super::bootstrap_skill_root_in_txn(self.vault, &txn, GOAL_INTAKE_SKILL)?;
-        Ok(
-            super::task_type_tree::skill_head_in_force_in_txn(self.vault, &txn, root)?
-                .unwrap_or(root),
-        )
+        super::bootstrap_skill_in_force_in_txn(self.vault, &txn, GOAL_INTAKE_SKILL)
     }
 
     fn prepare_project_conversation_run_with(
@@ -185,10 +181,6 @@ impl AgentDispatcher<'_> {
         at: u64,
     ) -> Result<Option<LoadedSkillPack>> {
         let run = self.live_project_run(leased)?;
-        let skills = &ProjectConversationSkills {
-            goal_intake: self.goal_intake_skill_in_force(skills.goal_intake)?,
-            ..skills.clone()
-        };
         // Both project runs are roots, so the briefing their dispatch froze is
         // the one they run with. Any other run's briefing is not read here.
         let briefing = run
@@ -198,6 +190,16 @@ impl AgentDispatcher<'_> {
             .and_then(|spec| spec.briefing.as_deref())
             .and_then(project_briefing)
             .transpose()?;
+        // Only a goal-intake run resolves the goal-intake skill it loads.
+        let skills = &ProjectConversationSkills {
+            goal_intake: match &briefing {
+                Some(ProjectRunBriefing::GoalIntake(_)) => {
+                    self.goal_intake_skill_in_force(skills.goal_intake)?
+                }
+                _ => skills.goal_intake,
+            },
+            ..skills.clone()
+        };
         let Some(briefing) = briefing else {
             return Ok(None);
         };

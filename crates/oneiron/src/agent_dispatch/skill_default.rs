@@ -60,3 +60,15 @@ pub(crate) fn bootstrap_skill_root_sourced_in_txn(
     }
     Ok((seed, None))
 }
+
+/// The revision a pass loads for the shipped loop skill `name`: the in-force
+/// head from [`bootstrap_skill_root_in_txn`]'s root, else that root, so a
+/// load answers as before when no revision is loadable.
+pub(crate) fn bootstrap_skill_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+) -> Result<EntityId> {
+    let root = bootstrap_skill_root_in_txn(vault, txn, name)?;
+    Ok(super::task_type_tree::skill_head_in_force_in_txn(vault, txn, root)?.unwrap_or(root))
+}

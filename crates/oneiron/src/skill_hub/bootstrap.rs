@@ -326,64 +326,23 @@ fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<(
         .into_iter()
         .map(str::to_owned)
         .collect();
-    let occurred = TimeRange { start: 0, end: 0 };
     for (name, markdown) in pending {
         offered.insert(name.to_owned());
-        let package = package(name, markdown)?;
-        let seed_id = stable_id(name)?;
-        let content_hash = package.content_hash()?;
-        // A caller-chosen record (or a deleted seed) owns this ID regardless
-        // of its files. Never offer it to the import/update door: doing so
-        // could rewrite the holder or make Vault::open fail on immutable fields.
-        let deletion =
-            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &wtxn, &seed_id)?;
-        if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &wtxn, &seed_id)?
-            || deletion.deleted
-            || deletion.stale
-        {
-            continue;
+        if let Err(error) = seed_bootstrap_file_in_txn(vault, &mut wtxn, name, markdown) {
+            // A vault that has opened before keeps opening: the pass rolls
+            // back whole (this transaction is dropped unwritten), so a later
+            // engine's loop skill that fails to seed is offered again at the
+            // next open. A first open fails as before.
+            if marker.is_some() {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    skill = name,
+                    "a shipped loop skill was not seeded; the next open offers it again"
+                );
+                return Ok(());
+            }
+            return Err(error);
         }
-        // A prior import already holds these exact files. Its entity ID is
-        // not bootstrap admission, even when it equals our deterministic ID.
-        // Check before the import door can attach provenance, scans, receipts
-        // or capabilities, and promote only a record minted by this pass.
-        if vault
-            .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
-            .is_some()
-        {
-            continue;
-        }
-        let hub_ref = HubRef::new(
-            stable_id("hub")?,
-            name,
-            HubPin::ContentHash(content_hash.to_hex()),
-        )?;
-        let id = vault.import_skill_from_hub_in_txn(
-            &mut wtxn,
-            &hub_ref,
-            &package,
-            seed_id,
-            occurred,
-            0,
-            &mut super::SkillImportRows::default(),
-        )?;
-        if id != seed_id {
-            // A different holder cannot appear while this write transaction owns
-            // the preflight and import; roll back rather than mutate it.
-            return Err(Error::InvariantViolation("bootstrap skill holder changed"));
-        }
-        let mut record = vault.read_skill_record_in_txn(&wtxn, &id)?;
-        // Local seed admission, not a remote package's approval stamp. The
-        // ordinary update/scan gates still run. Reopen never reactivates edits.
-        if record.lifecycle_status == SkillLifecycle::Candidate {
-            record.lifecycle_status = SkillLifecycle::Active;
-            let data = crate::skill::encode_skill_record(&record)?;
-            let proof = HubAdmissionProof::bootstrap(id, &data);
-            vault.admit_hub_skill_record_in_txn(&mut wtxn, occurred, 0, data, proof)?;
-        }
-        // A pattern skill is a team the planner can offer only once bound
-        // (OF-540), in the transaction that admitted it.
-        bind_shipped_pattern_in_txn(vault, &mut wtxn, name, id)?;
     }
     let mut value = env!("CARGO_PKG_VERSION").to_owned();
     for name in &offered {
@@ -392,6 +351,74 @@ fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<(
     }
     SEEDED.put(&vault.store, &mut wtxn, &(), &value)?;
     wtxn.commit()?;
+    Ok(())
+}
+
+/// Seeds one shipped skill at its bootstrap id with the bootstrap proof, in
+/// the seed pass's write transaction. Skips it when its seed id is present,
+/// deleted or stale, or when another import holds its bytes.
+fn seed_bootstrap_file_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    name: &str,
+    markdown: &str,
+) -> Result<()> {
+    let occurred = TimeRange { start: 0, end: 0 };
+    let package = package(name, markdown)?;
+    let seed_id = stable_id(name)?;
+    let content_hash = package.content_hash()?;
+    // A caller-chosen record (or a deleted seed) owns this ID regardless
+    // of its files. Never offer it to the import/update door: doing so
+    // could rewrite the holder or make Vault::open fail on immutable fields.
+    let deletion =
+        crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, &seed_id)?;
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, wtxn, &seed_id)?
+        || deletion.deleted
+        || deletion.stale
+    {
+        return Ok(());
+    }
+    // A prior import already holds these exact files. Its entity ID is
+    // not bootstrap admission, even when it equals our deterministic ID.
+    // Check before the import door can attach provenance, scans, receipts
+    // or capabilities, and promote only a record minted by this pass.
+    if vault
+        .skill_entity_for_content_hash_in_txn(wtxn, content_hash)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let hub_ref = HubRef::new(
+        stable_id("hub")?,
+        name,
+        HubPin::ContentHash(content_hash.to_hex()),
+    )?;
+    let id = vault.import_skill_from_hub_in_txn(
+        wtxn,
+        &hub_ref,
+        &package,
+        seed_id,
+        occurred,
+        0,
+        &mut super::SkillImportRows::default(),
+    )?;
+    if id != seed_id {
+        // A different holder cannot appear while this write transaction owns
+        // the preflight and import; roll back rather than mutate it.
+        return Err(Error::InvariantViolation("bootstrap skill holder changed"));
+    }
+    let mut record = vault.read_skill_record_in_txn(wtxn, &id)?;
+    // Local seed admission, not a remote package's approval stamp. The
+    // ordinary update/scan gates still run. Reopen never reactivates edits.
+    if record.lifecycle_status == SkillLifecycle::Candidate {
+        record.lifecycle_status = SkillLifecycle::Active;
+        let data = crate::skill::encode_skill_record(&record)?;
+        let proof = HubAdmissionProof::bootstrap(id, &data);
+        vault.admit_hub_skill_record_in_txn(wtxn, occurred, 0, data, proof)?;
+    }
+    // A pattern skill is a team the planner can offer only once bound
+    // (OF-540), in the transaction that admitted it.
+    bind_shipped_pattern_in_txn(vault, wtxn, name, id)?;
     Ok(())
 }
 

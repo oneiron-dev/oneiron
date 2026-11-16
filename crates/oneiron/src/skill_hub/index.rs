@@ -463,6 +463,7 @@ impl Vault {
             }
             Ok(None::<()>)
         })?;
+        holders.sort_unstable();
         Ok(holders)
     }
 

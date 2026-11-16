@@ -22,7 +22,7 @@ use oneiron::dreamer_runner::maintenance::coach_diagnostic::{ProducerFixDraft, P
 use oneiron::dreamer_runner::maintenance::coach_heal::{
     CoachEnvironmentDraft, CoachHealAuthor, CoachPromptDraft, EnvironmentGrantTarget,
 };
-use oneiron::dreamer_runner::maintenance::coach_learning::coach_improver_skill_id;
+use oneiron::dreamer_runner::maintenance::coach_learning::coach_improver_skill_in_force;
 use oneiron::failure_ladder::HealerCase;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::self_heal::HealEvidenceContext;
@@ -141,7 +141,7 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
         let now = oneiron_base::unix_seconds_now();
         let (loaded, pack_sources) = match server.vault().load_attempt_skill_pack_sourced(
             attempt.id,
-            &coach_improver_skill_id()?,
+            &coach_improver_skill_in_force(server.vault())?,
             attempt.lease_owner.as_deref().unwrap_or_default(),
             attempt.attempt_count,
             &executor,

@@ -41,6 +41,20 @@ pub fn coach_improver_skill_id() -> Result<EntityId> {
     )
 }
 
+/// The improver workflow the Coach loads on an optimization attempt: the
+/// in-force head from the shipped revision, or from the admitted restored
+/// default once the shipped revision's succession holds no loadable
+/// revision (`agent_dispatch::bootstrap_skill_root_in_txn`); else the
+/// shipped id, so the load refuses as before.
+///
+/// # Errors
+///
+/// A store error, or an id derivation failure.
+pub fn coach_improver_skill_in_force(vault: &Vault) -> Result<EntityId> {
+    let txn = vault.store.env.read_txn()?;
+    crate::agent_dispatch::bootstrap_skill_in_force_in_txn(vault, &txn, COACH_IMPROVER_SKILL)
+}
+
 /// The Coach's reliability cell for one kind of its work.
 ///
 /// # Errors
@@ -149,18 +163,22 @@ fn improver_cell(vault: &Vault, proposal: &EntityId) -> Result<Option<LearningCe
     Ok(Some(cell))
 }
 
-/// The shared improver revision at `version`: the shipped one when it is
-/// that version, else the one SKILL record of that name and version. `None`
-/// when none, or more than one, is.
+/// The shared improver revision at `version`: the one the Coach loads now,
+/// then the shipped one, when it is that version; else the one SKILL record
+/// of that name and version. `None` when none, or more than one, is.
 fn improver_revision(vault: &Vault, version: &str) -> Result<Option<EntityId>> {
     let pinned =
         |record: &SkillRecord| record.skill_id == COACH_IMPROVER_SKILL && record.version == version;
-    let shipped = coach_improver_skill_id()?;
-    if vault
-        .get_skill_record(&shipped)?
-        .is_some_and(|record| pinned(&record))
-    {
-        return Ok(Some(shipped));
+    for known in [
+        coach_improver_skill_in_force(vault)?,
+        coach_improver_skill_id()?,
+    ] {
+        if vault
+            .get_skill_record(&known)?
+            .is_some_and(|record| pinned(&record))
+        {
+            return Ok(Some(known));
+        }
     }
     let mut found = None;
     for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {

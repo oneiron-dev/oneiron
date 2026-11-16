@@ -37,8 +37,7 @@ pub fn judge_rubric_skill(vault: &Vault) -> Result<Option<EntityId>> {
 ///
 /// A store error, or an id derivation failure.
 pub fn coach_improver_skill(vault: &Vault) -> Result<EntityId> {
-    let _ = vault;
-    crate::dreamer_runner::maintenance::coach_learning::coach_improver_skill_id()
+    crate::dreamer_runner::maintenance::coach_learning::coach_improver_skill_in_force(vault)
 }
 
 /// The reviewer revision the agent-health pass loads its policy from, or
