@@ -142,7 +142,8 @@ pub enum PressMode {
     PerSend,
     /// One press covered a reviewed batch; sends run until it is spent.
     PerBatch,
-    /// The standing grant covers the class; no press.
+    /// No press: the vault's send grant or a standing grant covers the
+    /// class.
     None,
 }
 

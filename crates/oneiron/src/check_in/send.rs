@@ -24,6 +24,11 @@
 //! `Vault::approve_outbound_batch`); in every other case one press covers one
 //! send.
 //!
+//! A browser or desktop guest's classified send checks in here too, through
+//! `agent_send_check_in_in_txn` (PLAN L4-03 D1; Engine ruling
+//! L403-NO-ROW-ROLE = A): the vault's rows, else the agent's role column,
+//! the same composition as the Gate's.
+//!
 //! The Gate's decision record names the rows that decided and the answer, in
 //! its receipt vocabulary (`check_in_row_<ref>`, `check_in_go_never_ask`).
 //!
