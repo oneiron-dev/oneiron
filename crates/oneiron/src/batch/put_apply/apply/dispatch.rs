@@ -231,6 +231,18 @@ pub(super) fn dispatch_put_type(
                 }));
             }
         }
+        // Before an act that gives or ends a Grant lands, each ruling the Grant's stored row
+        // admits now keeps that admission (review #8852 P1-1, R3B-WITNESS-BINDING = A): the
+        // row-change witness reads the Grant as it stands, so a ruling admitted before a
+        // demotion keeps its witness whichever of the act and the row arrives first.
+        for grant in entry.op.grant_line_subjects() {
+            if let Some(row) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &grant)?
+            {
+                store
+                    .record_hooks
+                    .witness_grant_rulings_in_txn(store, wtxn, &grant, &row)?;
+            }
+        }
         dispatch.authority_entry_hash_pin = Some(entry_hash);
         dispatch.authority_entry_observation = Some(entry);
     } else if crate::store::project_kind::is_project_revision_type(store, fixed.entity_type) {

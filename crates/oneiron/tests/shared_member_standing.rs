@@ -28,7 +28,9 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::grant_act::{
     end_member_grant, put_keyed_member_grant, put_unkeyed_member_grant,
 };
-use oneiron::test_doors::grant_standing::{grant_row, standing_member_grant_act};
+use oneiron::test_doors::grant_standing::{
+    grant_row, replicate_admin_ruling, standing_member_grant_act,
+};
 use oneiron::test_support::provision_act_carrier;
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -358,40 +360,168 @@ fn a_bare_admin_row_appends_no_ruling() {
     );
 }
 
-/// Catches a ruling still read from its grant's row after a counted act ended the grant,
-/// with no witness kept: the ruling read judged the row alone (review of R3a, P2-2).
-#[test]
-fn an_ended_admins_unwitnessed_ruling_is_not_read() {
-    let (_dir, vault, owner, admin, (admin_grant, _)) = vault_with_admin();
-    vault
+/// `holder`'s admin ruling on `key` in the shared vault: its claim id.
+fn rule(vault: &Vault, holder: EntityId, key: &str) -> EntityId {
+    let receipt = vault
         .append_admin_ruling(
-            &proof(&vault, admin),
+            &proof(vault, holder),
             SHARED,
-            "review:ended",
+            key,
             serde_json::json!("kept"),
             vault.now_recorded_at(),
         )
         .expect("FIXTURE: the admin rules");
-    assert!(
-        vault
-            .live_admin_ruling(SHARED, "review:ended")
-            .expect("ruling read")
-            .is_some(),
-        "FIXTURE: the admin's ruling is read"
-    );
+    EntityId::from_hex(&receipt.ruling.id).expect("a ruling id")
+}
+
+/// Whether `vault` reads the admin ruling on `key`.
+fn ruling_read(vault: &Vault, key: &str) -> bool {
+    vault
+        .live_admin_ruling(SHARED, key)
+        .expect("ruling read")
+        .is_some()
+}
+
+/// The Grant row `id`'s body as `vault` stores it now.
+fn row_body(vault: &Vault, id: EntityId) -> Vec<u8> {
+    grant_row(vault, id)
+        .expect("row read")
+        .expect("the Grant's row")
+}
+
+/// Puts the keyed Grant row `body` at `id` in `vault`, with no act, over whatever row is there.
+fn put_back(vault: &Vault, id: EntityId, body: &[u8]) {
+    let (grant, key) = decode_federation_grant_body_keyed(body).expect("a Grant body");
+    let key = key.expect("a member row keyed by its giving");
+    put_keyed_member_grant(vault, id, &grant, &key).expect("the row is put");
+}
+
+/// A fresh vault that folds `history`, another install's signed authority rows.
+fn replica(history: &[Vec<u8>]) -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("replica directory");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh replica");
+    vault
+        .import_signed_authority_history(history)
+        .expect("the owner's signed history");
+    (dir, vault)
+}
+
+/// `owner` demotes `admin` to Member through the membership door.
+fn demote(vault: &Vault, owner: EntityId, admin: EntityId) {
+    vault
+        .change_shared_member_role(&proof(vault, owner), SHARED, admin, Role::Member, None)
+        .expect("FIXTURE: the owner demotes the admin");
+}
+
+/// Guards an admin's ruling through a counted end of the admin's Grant (R3B-WITNESS-BINDING
+/// = A): the end witnesses the ruling its standing grant admitted before the end lands, so
+/// the ruling stays read with the ended row left in place, as a removal that deletes the row
+/// keeps it. Catches a ruling read from an ended grant's row alone (review of R3a, P2-2): a
+/// replica that first receives the ruling after that end does not admit it.
+#[test]
+fn an_ended_admins_earlier_ruling_stays_read_and_a_replica_reads_none_from_the_row() {
+    let (_dir, vault, owner, admin, (admin_grant, _)) = vault_with_admin();
+    let admin_body = row_body(&vault, admin_grant);
+    let ruling = rule(&vault, admin, "review:ended");
     end_member_grant(&vault, admin_grant, owner).expect("a counted end, the row left in place");
     assert!(
         grant_row(&vault, admin_grant).expect("row read").is_some(),
         "FIXTURE: the ended Grant's row is still stored"
     );
-
     assert!(
-        vault
-            .live_admin_ruling(SHARED, "review:ended")
-            .expect("ruling read")
-            .is_none(),
-        "a ruling whose grant a counted act ended, and that no witness keeps, is not read"
+        ruling_read(&vault, "review:ended"),
+        "the end dropped a ruling its standing grant admitted before it"
     );
+
+    let (_replica_dir, replica) =
+        replica(&vault.export_signed_authority_history().expect("history"));
+    put_back(&replica, admin_grant, &admin_body);
+    replicate_admin_ruling(&vault, &replica, ruling).expect("the ruling replicates");
+    assert!(
+        !ruling_read(&replica, "review:ended"),
+        "a replica read a ruling from an ended grant's row alone"
+    );
+}
+
+/// Catches a replayed Admin row witnessing a ruling its grant never admitted here (review
+/// #8852 P1-1): a replica that folded the admin's counted demotion before the ruling arrived
+/// does not admit it, and the old Admin body put back and then replaced by the Member body
+/// takes no witness for it. The row-change witness reads the grant as it stands, never an
+/// earlier giving that stated the old row.
+#[test]
+fn a_replayed_admin_row_after_a_demotion_witnesses_no_ruling() {
+    let (_dir, vault, owner, admin, (admin_grant, _)) = vault_with_admin();
+    let admin_body = row_body(&vault, admin_grant);
+    let ruling = rule(&vault, admin, "review:replayed");
+    demote(&vault, owner, admin);
+    let member_body = row_body(&vault, admin_grant);
+    let (_replica_dir, replica) =
+        replica(&vault.export_signed_authority_history().expect("history"));
+    replicate_admin_ruling(&vault, &replica, ruling).expect("the ruling replicates");
+    assert!(
+        !ruling_read(&replica, "review:replayed"),
+        "FIXTURE: a ruling first delivered after the demotion is not admitted"
+    );
+
+    put_back(&replica, admin_grant, &admin_body);
+    put_back(&replica, admin_grant, &member_body);
+    assert!(
+        standing(&replica, admin_grant).is_some(),
+        "FIXTURE: the Member row stands on the demotion's giving on the replica"
+    );
+    assert!(
+        !ruling_read(&replica, "review:replayed"),
+        "a replayed Admin row witnessed a ruling after a counted demotion"
+    );
+}
+
+/// Guards an admin's ruling a replica admitted before the demotion reached it
+/// (R3B-WITNESS-BINDING = A): whether the Member row or the counted demotion arrives first,
+/// the ruling keeps its witness and stays read.
+#[test]
+fn an_admitted_ruling_keeps_its_witness_in_both_arrival_orders() {
+    let (_dir, vault, owner, admin, (admin_grant, _)) = vault_with_admin();
+    let admin_body = row_body(&vault, admin_grant);
+    let ruling = rule(&vault, admin, "review:arrival");
+    let before = vault.export_signed_authority_history().expect("history");
+    demote(&vault, owner, admin);
+    let member_body = row_body(&vault, admin_grant);
+    let demotion: Vec<Vec<u8>> = vault
+        .export_signed_authority_history()
+        .expect("history")
+        .into_iter()
+        .filter(|row| !before.contains(row))
+        .collect();
+    assert!(!demotion.is_empty(), "FIXTURE: the demotion appended acts");
+    for row_first in [true, false] {
+        let order = if row_first { "row first" } else { "act first" };
+        let (_replica_dir, replica) = replica(&before);
+        put_back(&replica, admin_grant, &admin_body);
+        replicate_admin_ruling(&vault, &replica, ruling).expect("the ruling replicates");
+        assert!(
+            ruling_read(&replica, "review:arrival"),
+            "FIXTURE, {order}: the replica admits the ruling before the demotion"
+        );
+        if row_first {
+            put_back(&replica, admin_grant, &member_body);
+            replica
+                .import_signed_authority_history(&demotion)
+                .expect("the demotion");
+        } else {
+            replica
+                .import_signed_authority_history(&demotion)
+                .expect("the demotion");
+            put_back(&replica, admin_grant, &member_body);
+        }
+        assert!(
+            standing(&replica, admin_grant).is_some(),
+            "FIXTURE, {order}: the Member row stands on the demotion's giving"
+        );
+        assert!(
+            ruling_read(&replica, "review:arrival"),
+            "{order}: the admitted ruling lost its witness"
+        );
+    }
 }
 
 /// Guards an admin's ruling through a demotion: the role change gives the new terms before

@@ -178,9 +178,17 @@ pub(super) fn project_once(
         revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             state.actor_revocation_hashes.keys().cloned().collect()
         }),
+        // A general grant act's end withdraws its Grant's slips only where the merged line
+        // takes it as its end (review #8846 P1-1).
         slips: merged
             .as_ref()
-            .map_or_else(SlipAuthorityState::default, |state| state.slips.clone()),
+            .map_or_else(SlipAuthorityState::default, |state| {
+                let mut slips = state.slips.clone();
+                for grant in super::grant_lines::slip_withdrawing_lines(state) {
+                    slips.revoke_grant(grant.to_hex());
+                }
+                slips
+            }),
         vault_id: merged.as_ref().map(|state| state.vault_id),
         valid_entries,
         roster: merged

@@ -17,12 +17,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
-    FederationDirectionScope, FederationGrant, FederationGrantRole as Role, InitialSharedMember,
-    Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling, decode_federation_grant_body_keyed,
-    selector_range_of,
+    FederationDirectionScope, FederationGrant, FederationGrantRole as Role, FederationGrantScope,
+    InitialSharedMember, Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
+    decode_federation_grant_body_keyed, selector_range_of,
 };
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
@@ -407,5 +408,78 @@ fn a_bare_connect_row_with_no_pact_mints_no_slip() {
     assert!(
         local.mint_slip(bare).is_err(),
         "a Connect row no pact binds mints no slip"
+    );
+}
+
+/// Catches a counted guest Grant re-put in a member's shape keeping its slip live past the
+/// guest Grant's own end (review #8855 P1-1): the slip's member shortcut accepted any member
+/// row no counted act ended, never asking whether a counted giving stated it. The guest's
+/// slip outlives its Connect Grant; the Grant's row is re-put as a Member row with no expiry
+/// and no new giving; once the Connect Grant has expired, the slip no longer stands.
+#[test]
+fn a_guest_grant_re_put_as_a_member_row_keeps_no_slip_live() {
+    const CHALLENGE: &[u8] = b"oneiron-request:guest-grant-member-shape";
+    let (local, _peer, grant) = pacted_connect();
+    let body = grant_row(&local.vault, grant)
+        .expect("row read")
+        .expect("FIXTURE: the pacted Grant is live");
+    let (guest_row, terms_key) = decode_federation_grant_body_keyed(&body).expect("decodes");
+    let grant_end = guest_row
+        .expires_at
+        .expect("FIXTURE: the Connect Grant was minted with an end");
+    let holder = SigningKey::from_bytes(&[0x55; 32]);
+    let slip = local
+        .vault
+        .mint_guest_slip(
+            &local.proof,
+            &local.issuer,
+            grant,
+            Some(holder.verifying_key().to_bytes()),
+            grant_end + 3_600,
+            None,
+        )
+        .expect("FIXTURE: the guest's slip outlives its Grant");
+    let signature = holder
+        .sign(&slip.binding_transcript(CHALLENGE).expect("transcript"))
+        .to_bytes();
+    let verified = local
+        .vault
+        .verify_capability_slip(&local.issuer.public_key(), &slip, CHALLENGE, &signature)
+        .expect("FIXTURE: the guest proves its slip");
+    assert!(
+        local
+            .vault
+            .capability_slip_is_live(&verified)
+            .expect("FIXTURE: liveness read"),
+        "FIXTURE: the honest guest slip is live"
+    );
+
+    if local
+        .vault
+        .get(&guest_row.member_ref)
+        .expect("person read")
+        .is_none()
+    {
+        person(&local.vault, guest_row.member_ref);
+    }
+    let mut member_row = guest_row.clone();
+    member_row.scope = FederationGrantScope::vault(SHARED);
+    member_row.role = Role::Member;
+    member_row.guest = None;
+    member_row.expires_at = None;
+    member_row.authority_scope = Scope::top();
+    match terms_key {
+        Some(key) => put_keyed_member_grant(&local.vault, grant, &member_row, &key),
+        None => put_unkeyed_member_grant(&local.vault, grant, &member_row),
+    }
+    .expect("the guest Grant's row is re-put as a member row");
+    local
+        .vault
+        .advance_authority_clock_for_test(grant_end + 60)
+        .expect("the clock passes the Connect Grant's end");
+
+    assert!(
+        !matches!(local.vault.capability_slip_is_live(&verified), Ok(true)),
+        "a guest Grant re-put as a member row kept its slip live past the Grant's end"
     );
 }
