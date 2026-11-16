@@ -306,7 +306,7 @@ pub(in crate::calendar) fn classify_event_passport(
     content_hash: [u8; 32],
 ) -> Result<PassportDecision, CalendarError> {
     let Some((_, current)) = live_passport_for(vault, &event_ref, system, uid)? else {
-        return Ok(PassportDecision::AttachToExisting { event_ref });
+        return Ok(PassportDecision::CreateEvent);
     };
     if current.presence == CalendarPassportPresence::Absent
         || sequence > current.last_sequence
