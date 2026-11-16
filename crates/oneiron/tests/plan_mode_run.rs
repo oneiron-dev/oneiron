@@ -171,6 +171,8 @@ fn verdict(plan: EntityId, revision: &str) -> PlanDocVerdictRequest {
     PlanDocVerdictRequest {
         plan_ref: plan,
         expected_revision: revision.to_owned(),
+        approving_turn_ref: None,
+        approving_thread_ref: None,
     }
 }
 

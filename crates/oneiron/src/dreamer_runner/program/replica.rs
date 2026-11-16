@@ -46,16 +46,15 @@ use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::sync::WindowKey;
 
 /// The largest row either map carries whole; an arming or wake past it stays
 /// on its machine, as an arming that names a custody handle does.
 pub(crate) const MAX_ROW_BYTES: usize = 1 << 16;
 
-fn refused(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("turn program row refused: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::program::replica::{encode, refused};
 
 /// What a carried arming row says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,10 +118,6 @@ impl WakeRow {
             } => (*turn, *registration),
         }
     }
-}
-
-fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(row).map_err(|_| refused("does not encode"))
 }
 
 fn decode_arming(bytes: &[u8]) -> Result<ArmingRow> {
@@ -679,10 +674,16 @@ pub(crate) enum RowPlacement {
     Structure { dependencies: Vec<EntityId> },
 }
 
-/// Where the arming row `bytes` goes: its actor's, held while the
-/// conversation it listens to is.
-pub(crate) fn arming_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
-    Some(match decode_arming(bytes).ok()? {
+/// Where the arming row `bytes`, filed under `map_key`, goes: its actor's,
+/// held while the conversation it listens to is. `None` for bytes that read
+/// as no arming, or one filed under another registration, which admit
+/// refuses and no writer files (FIX SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED).
+pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
+    let row = decode_arming(bytes).ok()?;
+    if arming_key(row.registration()) != map_key {
+        return None;
+    }
+    Some(match row {
         ArmingRow::Armed(arming) => RowPlacement::Owned {
             owner: arming.actor,
             dependencies: arming.conversation.into_iter().collect(),
@@ -694,11 +695,17 @@ pub(crate) fn arming_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
     })
 }
 
-/// Where the wake row `bytes` goes: an `Owed` row is its actor's, held while
-/// its turn and conversation are; an `Admitted` row is ids alone, held while
-/// its turn is.
-pub(crate) fn wake_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
-    Some(match decode_wake(bytes).ok()? {
+/// Where the wake row `bytes`, filed under `map_key`, goes: an `Owed` row is
+/// its actor's, held while its turn and conversation are; an `Admitted` row
+/// is ids alone, held while its turn is. `None` for bytes that read as no
+/// wake, or one filed under another wake, which admit refuses and no writer
+/// files.
+pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
+    let row = decode_wake(bytes).ok()?;
+    if wake_key(row.key()) != map_key {
+        return None;
+    }
+    Some(match row {
         WakeRow::Owed(wake) => RowPlacement::Owned {
             owner: wake.authority.actor(),
             dependencies: vec![wake.turn.turn, wake.turn.conversation],

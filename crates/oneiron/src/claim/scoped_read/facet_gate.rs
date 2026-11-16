@@ -12,11 +12,39 @@ impl ScopedRead<'_> {
     /// Read inside `room`'s signed facets, as a turn in it does, while
     /// keeping every other term (FIX 643): the read a named-room assembly
     /// outside a turn makes. The owner's key reads past them, as past every
-    /// facet.
+    /// facet. A reader the conversation home binds
+    /// ([`ScopedReadActorKey::homed_unnamed`]) reads the room's stamped
+    /// claims only if it stands in the room now
+    /// ([`ScopedReadActorKey::standing_in_room_in`]); naming a room whose
+    /// record it can read but that it is not in lifts no home. A store
+    /// failure reading the room finds it standing in none: the home stays.
     #[must_use]
     pub fn within_room_facets(mut self, room: EntityId) -> Self {
-        self.actor_key = self.actor_key.within_room_facets(room);
+        let key = self.actor_key.within_room_facets(room);
+        self.actor_key = if key.is_homed_unnamed() {
+            match Self::standing_in_room(self.vault, key.clone(), room) {
+                Ok(key) => key,
+                Err(error) => {
+                    tracing::warn!(%error, "room standing unread; the conversation home stays");
+                    key
+                }
+            }
+        } else {
+            key
+        };
         self
+    }
+
+    /// `key` marked as standing in `room` in a snapshot of its own
+    /// ([`ScopedReadActorKey::standing_in_room_in`]). It takes the vault, not
+    /// the read: its caller has moved the key out of the read.
+    fn standing_in_room(
+        vault: &crate::vault::Vault,
+        key: ScopedReadActorKey,
+        room: EntityId,
+    ) -> Result<ScopedReadActorKey> {
+        let txn = vault.store.env.read_txn()?;
+        key.standing_in_room_in(vault, &txn, room)
     }
 
     /// Whether a deleted row's shell may be named to this read: a read limited
@@ -81,15 +109,27 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         for facets in limits.axes() {
-            let inside = match self.session_view {
-                Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets)?,
-                None => facets_admit_in(self.vault, &self.vault.store, txn, *id, raw, facets)?,
-            };
-            if !inside {
+            if !self.row_inside_facets_in(txn, id, raw, facets)? {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+
+    /// Whether the stored row `id`, with header and body `raw`, sits inside
+    /// `facets` as this read's store holds it (`facets_admit_in`): a whole
+    /// axis holds every row, an empty one none.
+    pub(super) fn row_inside_facets_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        facets: &ScopeAxis<ScopeId>,
+    ) -> Result<bool> {
+        match self.session_view {
+            Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets),
+            None => facets_admit_in(self.vault, &self.vault.store, txn, *id, raw, facets),
+        }
     }
 }
 

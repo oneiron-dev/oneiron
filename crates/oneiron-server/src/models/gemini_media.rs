@@ -1,18 +1,19 @@
 //! The Gemini API's media leg: one request per call over [`ProviderHttp`],
-//! the key in `x-goog-api-key`. The adapter (`oneiron-llm-gemini`) owns the
+//! the key in `x-goog-api-key`. The adapter (`oneiron_gen::gemini`) owns the
 //! versioned paths, so the provider's `base_url` is the API's origin; a base
 //! written with its `/v1beta` drops it.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use oneiron::llm::DispatchRelease;
 use oneiron::llm::media::MediaBackend;
 use oneiron::{BudgetLease, LlmError, ModelId};
-use oneiron_llm_gemini::{
+use oneiron_gen::gemini::{
     GeminiMediaBackend, GeminiMediaFuture, GeminiMediaHttpRequest, GeminiMediaHttpResponse,
     GeminiMediaTransport,
 };
 
-use super::http::{KeyStyle, MediaSend, ProviderHttp};
+use super::http::{HttpReleaseError, KeyStyle, MediaSend, ProviderHttp};
 use super::rerank::transport;
 use crate::config::models::ProviderConfig;
 
@@ -43,6 +44,35 @@ impl GeminiMediaTransport for GeminiMediaHttp {
                 body: reply.body,
             })
         })
+    }
+
+    /// A post under the caller's release re-checks it before each physical
+    /// send, a fresh-connection resend included, and counts each one on the
+    /// lease (UC-16). A get or a fetch is a job's, which rides its permit.
+    fn execute_released<'a>(
+        &'a self,
+        request: GeminiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> GeminiMediaFuture<'a> {
+        match (request, release) {
+            (GeminiMediaHttpRequest::Post { path, body }, Some(release)) => Box::pin(async move {
+                let reply = self
+                    .http
+                    .send_json_released(&path, body, release, lease)
+                    .await
+                    .map_err(|error| match error {
+                        HttpReleaseError::Transport(failure) => transport(failure),
+                        HttpReleaseError::Release(error) => error,
+                    })?;
+                Ok::<_, LlmError>(GeminiMediaHttpResponse {
+                    status: reply.status,
+                    headers: reply.headers,
+                    body: reply.body,
+                })
+            }),
+            (request, _) => self.execute(request, lease),
+        }
     }
 }
 

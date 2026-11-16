@@ -43,23 +43,18 @@ pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
         .layer(axum::middleware::from_fn(private_response))
 }
 
+/// The QR page's shell: one hash-pinned script, isolated as every
+/// first-party page on the API's origin is (ARCH-0050 #artifact-origin-open).
 async fn page() -> Response {
-    use base64::Engine;
-    use sha2::{Digest, Sha256};
     let script = include_str!("esign_qr/page.js");
-    let digest =
-        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()));
+    let source = super::first_party_html::inline_script_source(script);
     let csp = format!(
-        "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src {source}; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     let html = format!(
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=robots content=noindex><title>Document verification</title><main><h1>Document verification</h1><p id=status></p><dl id=report></dl><div id=reading></div></main><script>{script}</script></html>"
     );
-    (
-        [(header::CONTENT_SECURITY_POLICY, csp)],
-        axum::response::Html(html),
-    )
-        .into_response()
+    super::first_party_html::isolated_html(csp, html)
 }
 
 /// The capability in the request's header, when it has the capability's
@@ -73,12 +68,12 @@ fn capability(headers: &HeaderMap) -> Option<EsignQrCapability> {
 
 async fn report(State(server): State<Arc<SyncServer>>, headers: HeaderMap) -> Response {
     let Some(token) = capability(&headers) else {
-        return refused(&server, QR_REPORT_PATH);
+        return refused(&server, QR_REPORT_PATH).await;
     };
     let vault = Arc::clone(&server.vault);
     match tokio::task::spawn_blocking(move || vault.esign_qr_page(&token)).await {
         Ok(Ok(page)) => Json(page).into_response(),
-        Ok(Err(_)) | Err(_) => refused(&server, QR_REPORT_PATH),
+        Ok(Err(_)) | Err(_) => refused(&server, QR_REPORT_PATH).await,
     }
 }
 
@@ -101,7 +96,7 @@ async fn pdf(
         capability(&headers),
         serde_json::from_slice::<QrPdfBody>(&body),
     ) else {
-        return refused(&server, QR_PDF_PATH);
+        return refused(&server, QR_PDF_PATH).await;
     };
     let vault = Arc::clone(&server.vault);
     match tokio::task::spawn_blocking(move || vault.esign_qr_sealed_pdf(&token, item)).await {
@@ -120,7 +115,7 @@ async fn pdf(
             )
                 .into_response()
         }
-        Ok(Err(_)) | Err(_) => refused(&server, QR_PDF_PATH),
+        Ok(Err(_)) | Err(_) => refused(&server, QR_PDF_PATH).await,
     }
 }
 
@@ -128,11 +123,15 @@ async fn pdf(
 /// erased alike, and on `/esign/verify/pdf` a document whose QR PDF download
 /// is off. Each refusal counts in the wire window beside its route's call,
 /// under no caller, so guesses at a capability ask the call-volume question
-/// past the per-verb row; none is refused for its rate.
-fn refused(server: &SyncServer, path: &str) -> Response {
-    let _ = server
-        .wire_telemetry
-        .record_capability_refusal(&format!("POST {path}"), oneiron_vault_contract::now_ts());
+/// past the per-verb row; none is refused for its rate. The count waits on
+/// the blocking pool, never on a runtime worker (FIX
+/// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+async fn refused(server: &SyncServer, path: &str) -> Response {
+    let route = format!("POST {path}");
+    crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+        telemetry.record_capability_refusal(&route, now)
+    })
+    .await;
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error":{"code":"verification_unavailable"}})),
@@ -140,7 +139,14 @@ fn refused(server: &SyncServer, path: &str) -> Response {
         .into_response()
 }
 
-async fn private_response(
+/// Counts one capability refusal on the report route, as `report` counts
+/// it: the door for `tests/wire_counts_off_runtime.rs`.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn count_capability_refusal_for_test(server: &SyncServer) {
+    let _ = refused(server, QR_REPORT_PATH).await;
+}
+
+pub(super) async fn private_response(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
