@@ -11,6 +11,10 @@
 //! keep local `/a/`, a `*.localhost` name of another vault serves nothing,
 //! and the unauthenticated `/api/health` names no vault.
 //!
+//! FIX LOCALHOST-VAULT-NAME-HELP: the config refuses the vault name
+//! `localhost`, which would answer only at `localhost.localhost` (red at
+//! main: it resolves).
+//!
 //! `cargo test --locked -p oneiron-server --features oneiron/test-support,oneiron/test-hooks
 //! --test artifact_localhost_origins`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -26,6 +30,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use oneiron::artifact_hosting::ArtifactServeTier;
 use oneiron::{TimeRange, Vault, VaultConfig};
+use oneiron_server::config::{EnvConfig, ServeArgs, resolve_serve_config_with_sources};
 use oneiron_server::managed::ManagedShutdown;
 use oneiron_server::managed::ShutdownSignal;
 use oneiron_server::managed::preview::{
@@ -400,4 +405,34 @@ fn local_run_serves_preview_shape_on_localhost() {
         lease.close();
         host_stop.trigger();
     });
+}
+
+/// `localhost` names no vault: the bare `localhost` keeps local `/a/`, so a
+/// vault served by that name would answer only at `localhost.localhost`. The
+/// config refuses it in any case; a DNS label still resolves.
+#[test]
+fn the_vault_name_localhost_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolve = |name: &str| {
+        resolve_serve_config_with_sources(
+            &ServeArgs {
+                vault_path: Some(dir.path().join("vault")),
+                artifact_vault_name: Some(name.to_owned()),
+                ..ServeArgs::default()
+            },
+            EnvConfig::default(),
+            None,
+        )
+    };
+    for name in ["localhost", "LocalHost", " localhost "] {
+        let refusal = resolve(name).err().map(|error| format!("{error:#}"));
+        assert!(
+            refusal
+                .as_deref()
+                .is_some_and(|refusal| refusal.contains("artifact_vault_name")),
+            "{name:?} resolved: {refusal:?}"
+        );
+    }
+    let config = resolve("Quarry").expect("a DNS label resolves");
+    assert_eq!(config.artifact_vault_name.as_deref(), Some("quarry"));
 }
