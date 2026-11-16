@@ -9,7 +9,7 @@
 use super::BoundBranchRead;
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::claim::{ClaimSource, ScopedRead};
+use crate::claim::{ClaimSource, ClaimSubject, ScopedRead};
 use crate::dreamer_consolidation::TurnText;
 use crate::dreamer_consolidation::evidence::{
     EvidenceLocator, EvidenceReader, ExtractedCandidate, VerifiedCandidate,
@@ -269,6 +269,8 @@ impl BoundBranchRead {
     /// Reads a verified candidate's evidence meet and observed-preference qualification in the caller transaction.
     /// The meet folds from the verified evidence set exactly as native verification folds it.
     /// A generated meet with a preference predicate qualifies only when the verified refs hold observed-preference support.
+    /// The support is read for the candidate's subject, as the derive claim item reads it at the commit: the owner's keys move the bar for a preference about the owner.
+    /// A candidate with an edge subject never qualifies, because the claim item takes only an entity subject.
     /// Proposal times play no role here, so stamped and stamp-free verification share this one rule.
     pub(crate) fn observation_qualification_in_txn(
         vault: &Vault,
@@ -276,15 +278,18 @@ impl BoundBranchRead {
         candidate: &VerifiedCandidate,
     ) -> MemoryResult<(ClaimSource, bool)> {
         let meet = candidate.evidence.meet();
-        let predicate =
-            crate::dreamer_consolidation::candidate_probe_body(&candidate.candidate)?.predicate;
+        let fresh = crate::dreamer_consolidation::candidate_probe_body(&candidate.candidate)?;
         let observed = meet == ClaimSource::Generated
-            && crate::claim::is_preference_predicate(&predicate)
-            && crate::claim::observed_preference_support_in_txn(
-                vault,
-                txn,
-                &candidate.evidence.refs(),
-            )?;
+            && crate::claim::is_preference_predicate(&fresh.predicate)
+            && match fresh.subject {
+                ClaimSubject::Entity(subject) => crate::claim::observed_preference_support_in_txn(
+                    vault,
+                    txn,
+                    &subject,
+                    &candidate.evidence.refs(),
+                )?,
+                ClaimSubject::Edge { .. } => false,
+            };
         Ok((meet, observed))
     }
     /// Binds one turn evidence to its stored locator in the caller transaction.
