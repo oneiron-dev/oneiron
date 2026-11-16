@@ -56,12 +56,12 @@ mod version_codec;
 mod version_rows;
 mod versions;
 
-pub(crate) use self::body::validate_blob_artifact_body_bytes;
 pub use self::body::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES,
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub(crate) use self::body::{body_with_secret_taint_refs, validate_blob_artifact_body_bytes};
 pub use self::body_file::BlobBodyFile;
 pub(crate) use self::body_file::BlobContent;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
