@@ -19,8 +19,9 @@ use crate::store::ManifestDbs;
 use crate::store::source_audience_obligation::SOURCE_AUDIENCE_REQUIRED_KEY;
 
 /// Tolerated clock skew for a witnessed turn's occurrence time (seconds), as
-/// for a reaction's.
-const WITNESS_OCCURRENCE_SKEW_SECS: u64 = 300;
+/// for a reaction's. The public raw batch door holds a TURN's learned time to
+/// the same ceiling (`batch::refuse_future_turn`).
+pub(crate) const WITNESS_OCCURRENCE_SKEW_SECS: u64 = 300;
 
 /// A witnessed row is learned as it occurs, so a time past the store clock's
 /// skew would carry the consolidation watermark past every later turn. It is

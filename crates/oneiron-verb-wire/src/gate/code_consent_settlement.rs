@@ -3,6 +3,7 @@
 
 pub use oneiron_consent_state::gate::code_consent_settlement::CodeConsentSettlementEligibility;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
@@ -66,7 +67,5 @@ impl CodeConsentSettlementRow {
 }
 
 pub fn field<'a>(fields: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    let mut matching = fields.iter().filter(|(name, _)| name.as_str() == Some(key));
-    let (_, value) = matching.next()?;
-    matching.next().is_none().then_some(value)
+    msgpack::Entries::new(fields).get(key).ok().flatten()
 }
