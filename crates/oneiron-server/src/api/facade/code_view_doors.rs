@@ -194,7 +194,15 @@ async fn view_editor_listing<T: Send + 'static>(
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
+    // The agent an MCP call's verified credential registered, read on the
+    // async side as `as_owner` reads it (FIX 8960): a read that says why may
+    // then ask for the real bytes.
+    let recipient = crate::api::mcp_gateway::skill_execution::mcp_call_recipient();
     credential_listing(server, auth, caller, verb, move |_, _, memory| {
+        let memory = match recipient {
+            Some(recipient) => memory.for_repo_reveal_recipient(recipient),
+            None => memory,
+        };
         read(&memory, proof)
     })
     .await

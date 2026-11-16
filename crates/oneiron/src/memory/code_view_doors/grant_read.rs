@@ -7,6 +7,12 @@
 //! editable globs and the repository's retained edit ceiling admit, always as
 //! a masked reader, so a marked file or a masked copy reads as its
 //! projection. A revoke refuses its next read. The read mints nothing.
+//!
+//! As at the edit door, the Grant's view and globs take the place of the
+//! credential's record lane; the answer lists the repository and the tested
+//! revision it is read from. The Grant arm answers no host folder: the
+//! owner's view folder holds every file's stored bytes, and the agent reads
+//! the view through these doors alone.
 
 use std::collections::BTreeSet;
 
@@ -47,8 +53,10 @@ impl Memory<'_> {
     /// `vault.code.views.read` for the view editor `proof` names: the
     /// Owner's stored bytes as [`Self::code_view_read_as`] reads them; for
     /// the Grant arm, one path its Grant admits, read as a masked reader
-    /// reads it ([`Self::code_view_read_projected_as`]'s read, readmitted
-    /// under the same Grant before a `why` releases anything).
+    /// reads it ([`Self::code_view_read_projected_as`]'s read): a masked copy
+    /// answers with its projection label, and a `why` asks as it does for a
+    /// tool when the call registered its agent (an MCP call), the same Grant
+    /// admitted again before anything is released.
     ///
     /// # Errors
     /// As [`Self::code_view_read_as`] for the Owner. For the Grant arm, the
@@ -67,7 +75,11 @@ impl Memory<'_> {
     }
 
     /// The Grant arm's get. One Grant answers it, as Grants are never
-    /// unioned: the first one the edit door's seam admits for this view.
+    /// unioned: the first, in id order, that the edit door's seam admits for
+    /// this view with no path named. It lists the files and edited files
+    /// that Grant's editable globs and the edit ceiling admit. A path only
+    /// another Grant bound to the same view admits is not listed; it still
+    /// reads by its path.
     fn code_view_get_under_grant(&self, input: CodeViewRequest) -> MemoryResult<CodeWorkingView> {
         let (mut receipt, readable) = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
@@ -86,6 +98,7 @@ impl Memory<'_> {
             }
             (receipt, readable)
         };
+        self.produced_from([input.repo, input.tested]);
         let set = CodeViewSet::open(self.vault)?;
         // An edit whose copy did not land heals before any read of the view.
         set.project_view_forks(input.view)?;
@@ -99,6 +112,7 @@ impl Memory<'_> {
             input.account,
         )?;
         view.forks.retain(|fork| readable.contains(&fork.path));
+        view.host_path = String::new();
         Ok(view)
     }
 
@@ -118,6 +132,7 @@ impl Memory<'_> {
         if !receipt.files.contains_key(&path) {
             return Err(MemoryError::not_found("path is not an input of this view"));
         }
+        self.produced_from([view.repo, view.tested]);
         let set = CodeViewSet::open(self.vault)?;
         set.project_view_forks(view.view)?;
         let bytes = crate::code_view::read_view_file(&set.view_path(view.view)?, &path)?;
@@ -127,10 +142,17 @@ impl Memory<'_> {
             bytes,
             projection: None,
         };
-        self.project_view_file(&view, file, why.as_deref(), || {
+        let mut read = self.project_view_file(&view, file, why.as_deref(), || {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             self.admit_view_grant_in_txn(&txn, &view, &paths).map(drop)
-        })
+        })?;
+        // A masked copy's bytes are already its placeholder, which no mark
+        // matches: it answers with the label the materializer recorded, as a
+        // run's work view lists it.
+        if read.projection.is_none() {
+            read.projection = receipt.projections.get(&read.path).cloned();
+        }
+        Ok(read)
     }
 
     /// The view edit door's own Grant arm admission

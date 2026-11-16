@@ -9,6 +9,7 @@
   "admission": {
     "lane_record_scope": true
   },
+  "mcp_scope": "filtered",
   "section": false,
   "host_door": true,
   "host_door_lists": true,
