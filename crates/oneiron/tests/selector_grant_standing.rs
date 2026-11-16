@@ -34,6 +34,7 @@ use oneiron::test_doors::grant_act::{
     end_member_grant, put_keyed_member_grant, put_unkeyed_member_grant,
 };
 use oneiron::test_doors::grant_standing::{grant_row, standing_member_grant_act};
+use oneiron::test_doors::steward::{STEWARD_READ_VERB, stand_steward_grant};
 use oneiron::test_support::provision_act_carrier;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -434,13 +435,12 @@ fn a_connect_grant_widened_in_place_under_its_pact_backs_no_selector() {
     );
 }
 
-/// The owner's agent `agent`, minted a read Grant on `vault`: the Grant's id.
-fn minted_agent_read_grant(vault: &Vault, owner: EntityId) -> (EntityId, EntityId) {
-    let owner = proof(vault, owner);
+/// An agent `owner` defines on `vault`: the agent's id.
+fn defined_agent(vault: &Vault, owner: &AuthenticatedOwner) -> EntityId {
     let agent = EntityId::now();
     create_agent_definition_as(
         vault,
-        &owner,
+        owner,
         AgentDefinitionCreateRequest {
             agent_def_ref: agent,
             definition: serde_json::from_value(serde_json::json!({
@@ -454,6 +454,32 @@ fn minted_agent_read_grant(vault: &Vault, owner: EntityId) -> (EntityId, EntityI
         },
     )
     .expect("the owner creates the agent");
+    agent
+}
+
+/// The live row `grant` re-put in place over `scope`, every other term and its terms key
+/// kept.
+fn put_row_over(vault: &Vault, grant: EntityId, scope: FederationGrantScope) {
+    let body = grant_row(vault, grant)
+        .expect("row read")
+        .expect("the live minted row");
+    let (mut moved, terms_key) = decode_federation_grant_body_keyed(&body).expect("decodes");
+    assert_ne!(
+        moved.scope, scope,
+        "FIXTURE: the mint's row holds this vault's residence"
+    );
+    moved.scope = scope;
+    match terms_key {
+        Some(key) => put_keyed_member_grant(vault, grant, &moved, &key),
+        None => put_unkeyed_member_grant(vault, grant, &moved),
+    }
+    .expect("the row is put over another scope");
+}
+
+/// The owner's agent `agent`, minted a read Grant on `vault`: the Grant's id.
+fn minted_agent_read_grant(vault: &Vault, owner: EntityId) -> (EntityId, EntityId) {
+    let owner = proof(vault, owner);
+    let agent = defined_agent(vault, &owner);
     let mut scope = Scope::top();
     scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     let minted = mint_agent_grant_as(
@@ -491,25 +517,40 @@ fn an_owner_agent_row_put_over_another_scope_backs_no_selector() {
         .is_ok(),
         "FIXTURE: the minted Grant backs its agent's selector over the residence"
     );
-    let body = grant_row(&vault, grant)
-        .expect("row read")
-        .expect("the live minted row");
-    let (mut moved, terms_key) = decode_federation_grant_body_keyed(&body).expect("decodes");
     let elsewhere = FederationGrantScope::vault(99);
-    assert_ne!(
-        moved.scope, elsewhere,
-        "FIXTURE: the mint's row holds this vault's residence"
-    );
-    moved.scope = elsewhere;
-    match terms_key {
-        Some(key) => put_keyed_member_grant(&vault, grant, &moved, &key),
-        None => put_unkeyed_member_grant(&vault, grant, &moved),
-    }
-    .expect("the row is put over another scope");
+    put_row_over(&vault, grant, elsewhere);
 
     assert!(
         authorize_sync_selector(&vault, elsewhere, &member_selector(grant, agent)).is_err(),
         "an owner's agent row put over another scope backs no selector"
+    );
+}
+
+/// Catches the owner's signed Steward mint of an agent's `read` re-put over another scope
+/// backing a selector there: its row is no `owner_agent` row and names more than
+/// `engine.controls`, so its shape names no owner's mint, and its counted mint matched the
+/// row under whatever scope the row named (review #8943, Astra P1).
+#[test]
+fn an_owner_minted_steward_row_put_over_another_scope_backs_no_selector() {
+    let (_dir, vault, _, owner) = carrier_vault();
+    let agent = defined_agent(&vault, &proof(&vault, owner));
+    let grant = stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB])
+        .expect("the owner's signed Steward mint of the agent's read");
+    assert!(
+        authorize_sync_selector(
+            &vault,
+            own_device_residence_scope(),
+            &member_selector(grant, agent)
+        )
+        .is_ok(),
+        "FIXTURE: the Steward mint backs its agent's selector over the residence"
+    );
+    let elsewhere = FederationGrantScope::vault(99);
+    put_row_over(&vault, grant, elsewhere);
+
+    assert!(
+        authorize_sync_selector(&vault, elsewhere, &member_selector(grant, agent)).is_err(),
+        "an owner's Steward mint row put over another scope backs no selector"
     );
 }
 
