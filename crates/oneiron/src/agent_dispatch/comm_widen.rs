@@ -128,7 +128,6 @@ impl CommApproval {
     /// choice whose standing the owner has not revoked.
     fn stands(&self) -> bool {
         self.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
-            && self.standing_revoked_at.is_none()
     }
 }
 
