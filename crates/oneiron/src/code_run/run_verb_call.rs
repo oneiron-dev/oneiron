@@ -171,6 +171,7 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                     }
                 }),
                 group: args.group,
+                note_refs: args.note_refs,
                 defer: args.defer.unwrap_or(false),
                 bound: None,
                 recipe: None,

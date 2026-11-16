@@ -16,10 +16,10 @@
   "sources": {
     "guest.c": "fac7f416152488370b086423a820dc6d484e8a590d88d14743c2989b9bff53c6",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "c56e2a1dac0dae73e7b8f468e3f139b6dd3222ceb60b9dd06e6cbf2d4ce1ed0d",
+    "bootstrap.js": "ec6f6132ffaa87819e911c3181dc71e1286536f5cb7ad620681b7c33ff6343ea",
     "reader_forks.js": "8418c12bf23be76f4a4b00682a3fa524acf7b601bf373cfc3328cd2c6b3d1b6a",
     "diff.js": "128383271eadf64d3e8ca2c0b92e104b14e39dc69b191c39da045766c0c9047a",
-    "runtime.d.ts": "e3d891d52c137335ef309adc12274e8f01f28d3014a9ef9526420c0877cdc115",
+    "runtime.d.ts": "f6ebfb1af8989d17f39cebfbcd4dda41a30370714ea527606f32a98fbff5f4e1",
     "hook_guest.c": "16546a88af133b79f9789c515fc4da8470bae0585ddc438bb3e14fc9184021ab",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
     "generate_bridge.py": "ced7da842794bdeefdc3ef3fef23880e7f1cc6bee87d01c72a07cd5d75cfa799",
@@ -28,13 +28,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "e5834da0b993858d72b9813ddeaee40c30cd1539d79ccd7d0497f85e75c643f8",
-      "bytes": 1108113
+      "sha256": "5fd9100b32908e1079763e4c5ff92a276caee7785f176db4787566b431cb5312",
+      "bytes": 1108241
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "1222dbcfeec9de23261064478d518eea90509243cef70c138946986a80fbf282",
-      "bytes": 1103912
+      "sha256": "76e25d530708e86587143949df034878c356abe7669550a6acb108eb46f4c53c",
+      "bytes": 1104040
     },
     "hook": {
       "file": "quickjs-hook.wasm",
