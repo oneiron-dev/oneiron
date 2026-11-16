@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::super::invalid;
-use super::{CASES, CaseCaller, FrozenCall, erase, index};
+use super::{CASES, CaseCaller, FrozenCall, index};
 use crate::error::{ClaimError, Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::store::Store;
@@ -73,7 +73,7 @@ pub fn amend_callable_case(
             {
                 Some(receipt) => receipt.attempt_caller(),
                 None => {
-                    let attempt = erase::receipt_attempt(&input.receipt);
+                    let attempt = crate::receipt::parse_attempt_pack_receipt_id(&input.receipt);
                     let queue = crate::attempt_queue::AttemptQueue::from_store(&vault.store);
                     match attempt {
                         Some(attempt) => match queue.get_in_txn(&rtxn, attempt)? {

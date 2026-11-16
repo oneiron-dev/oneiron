@@ -18,7 +18,9 @@
 //! agent's delete under a delete Grant, and the two typed refusals
 //! (`not_owner_of_item`, `no_delete_grant`). Guards (pass on main too): the
 //! owner's delete, a person with no role keeping the owner refusal though it
-//! presents a credential, and a Member with no credential keeping it.
+//! presents a credential, and a Member with no credential keeping it. UC-03
+//! PR 5b: the owner's delete row reads `approved` (red on its base, which
+//! wrote `allow`), and a Member's admitted delete row keeps `allow`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test delete_authority`.
 #![cfg(oneiron_test_support)]
@@ -287,6 +289,54 @@ fn the_owner_deletes_any_note_as_before() {
         .unwrap_or_else(|error| panic!("the owner deletes anything: {error:?}"));
     assert!(existed);
     assert!(deleted(&fx.vault, &note), "the NOTE is a deleted shell");
+}
+
+/// UC-03 PR 5b (D2): the owner's own delete is the owner's yes, so its Gate
+/// row reads `approved`; a Member's delete the delete authority admitted is
+/// the rule letting it go and keeps `allow`. Red on the base for the owner's
+/// row (it read `allow`); the Member's row is a guard.
+#[test]
+fn the_owner_delete_row_reads_approved_and_an_admitted_delete_row_allow() {
+    let fx = shared();
+    let member_note = fx.member_note();
+    let owner_note = fx.member_note();
+    let member_deleted = fx
+        .delete_with_credential(fx.member_a, &member_note)
+        .unwrap_or_else(|error| panic!("a Member deletes its own NOTE: {error:?}"));
+    assert!(member_deleted);
+    let owner_deleted = delete_as(&fx.vault, fx.owner, &owner_note)
+        .unwrap_or_else(|error| panic!("the owner deletes the NOTE: {error:?}"));
+    assert!(owner_deleted);
+    let rows: Vec<(Option<String>, String, Vec<String>)> = fx
+        .vault
+        .gate_decisions(64)
+        .expect("gate decisions")
+        .into_iter()
+        .filter(|row| row.content_kind == "deletion")
+        .map(|row| (row.actor_ref, row.outcome, row.reason_codes))
+        .collect();
+    let rows_of = |actor: EntityId| -> Vec<(String, Vec<String>)> {
+        rows.iter()
+            .filter(|(actor_ref, _, _)| actor_ref.as_deref() == Some(actor.to_hex().as_str()))
+            .map(|(_, outcome, reasons)| (outcome.clone(), reasons.clone()))
+            .collect()
+    };
+    assert_eq!(
+        rows_of(fx.owner),
+        [(
+            "approved".to_owned(),
+            vec!["gate.allow.owner_delete".to_owned()]
+        )],
+        "the owner's delete row: {rows:?}"
+    );
+    assert_eq!(
+        rows_of(fx.member_a),
+        [(
+            "allow".to_owned(),
+            vec!["gate.allow.delete_member".to_owned()]
+        )],
+        "the Member's admitted delete row: {rows:?}"
+    );
 }
 
 #[test]
