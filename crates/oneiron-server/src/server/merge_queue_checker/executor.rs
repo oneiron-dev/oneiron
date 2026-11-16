@@ -220,21 +220,14 @@ impl QueueCheckExecutor {
             .as_deref()
             .and_then(|dir| record_guest(dir, &started));
         let mut lease = transport.lease;
-        let mut input = transport.writer;
         let driven = drive(
             transport.reader,
-            input.as_mut(),
+            transport.writer,
             &mut || lease.is_running() && !lease.abandoned(),
             invocation,
             inputs,
             stop,
         )?;
-        // The helper runs until its input closes, so its container's cgroup
-        // still reads here: the run's manifest carries the pressure its
-        // guest showed (FIX 8013). Then its input closes, as it did at the
-        // drive's end.
-        let pressure = lease.observe_pressure();
-        drop(input);
         let abandoned = lease.abandoned() || relay.abandoned.load(Ordering::Acquire);
         // The guest ends with its lease, after its output is read; its
         // record goes with it.
@@ -242,15 +235,12 @@ impl QueueCheckExecutor {
         if let Some(record) = record {
             let _removed = std::fs::remove_file(record);
         }
-        let mut manifest = relay
+        let manifest = relay
             .manifest
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .unwrap_or(started);
-        if pressure.is_some() {
-            manifest.guest_pressure = pressure;
-        }
         let refused = relay
             .refused
             .lock()
@@ -314,20 +304,19 @@ impl QueueCheckExecutor {
                 )));
             }
         };
-        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
             return Ok(unavailable("the check helper has no pipes".to_owned()));
         };
         let driven = drive(
             Box::new(stdout),
-            &mut stdin,
+            Box::new(stdin),
             &mut || matches!(child.try_wait(), Ok(None)),
             invocation,
             inputs,
             stop,
         );
-        drop(stdin);
         let _ = child.kill();
         let _ = child.wait();
         driven
@@ -446,12 +435,10 @@ struct InputsFrame {
 }
 
 /// Drives the helper over `reader` and `writer`: header and tree in, then
-/// its frames until the terminal one, the host's stop, or its end. The
-/// helper's input stays open until its terminal frame is read: the caller
-/// closes `writer` after it reads what the session needs.
+/// its frames until the terminal one, the host's stop, or its end.
 fn drive(
     mut reader: Box<dyn Read + Send>,
-    writer: &mut dyn Write,
+    mut writer: Box<dyn Write + Send>,
     alive: &mut dyn FnMut() -> bool,
     invocation: &QueueCheckInvocation<'_>,
     inputs: &QueueCheckInputs,
@@ -484,10 +471,10 @@ fn drive(
             .collect(),
     };
     let header = serde_json::to_vec(&header).map_err(io::Error::other)?;
-    if write_frame(writer, FRAME_HEADER, &header).is_err() {
+    if write_frame(writer.as_mut(), FRAME_HEADER, &header).is_err() {
         return Ok(interrupted("the check helper closed before its header"));
     }
-    let sent = match send_tree(writer, invocation.tree, commit)? {
+    let sent = match send_tree(writer.as_mut(), invocation.tree, commit)? {
         Sent::Tree(digest) => digest,
         Sent::Closed(error) => {
             return Ok(interrupted(&format!(
@@ -542,6 +529,8 @@ fn drive(
             }
         }
     }
+    // The helper's input stays open until its terminal frame is read.
+    drop(writer);
     collected.finish(&sent, inputs)
 }
 
