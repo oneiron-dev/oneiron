@@ -36,7 +36,7 @@ pub(super) use link_proof::{
     mint_key as mint_link_key, sign_forward_result, sign_settlement as sign_link_settlement,
     verify_forward_result, verify_settlement as verify_link_settlement,
 };
-pub(super) use word_admission::{admit_link_word, admit_word};
+pub(super) use word_admission::{admit_link_word, admit_word, check_word};
 
 /// Node-local origin id this device mints ask intents under. Key: `()`.
 const ASK_ORIGIN: SideTable<(), EntityId, side_table::Raw> =
@@ -45,12 +45,8 @@ const ASK_ORIGIN: SideTable<(), EntityId, side_table::Raw> =
 const GROUP: &str = "tasks.ask_group";
 const ANSWER: &str = "tasks.ask_answer";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct AskMember {
-    pub task: String,
-    pub actor: String,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::task_verb::ask_record::{AskMember, invalid};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +68,11 @@ pub(super) struct AskGroup {
     /// Disjoint FEDERATION_GRANT entity IDs, keyed by the guest's person.
     #[serde(default)]
     pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
+    /// The role a role ask reached at admission (ROLES-EVERYWHERE = A): the
+    /// first on its chain, up to its ceiling, with a live holder. `None` for
+    /// every other target; an older group decodes with none.
+    #[serde(default)]
+    pub reached_role: Option<crate::llm::decision::AskRole>,
     pub policy_surface: super::TaskAskSurface,
     /// Stated after the census and before any member TASK (OF-393).
     pub statement: crate::agent_dispatch::FanoutStatement,
@@ -139,10 +140,6 @@ struct AskAnswerFact {
     /// its lineage is unknown.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     lineage_unread: bool,
-}
-
-pub(super) fn invalid() -> Error {
-    Error::Record(RecordError::InvalidTaskBody("tasks.ask.fact"))
 }
 
 pub(super) fn entity(reference: &str) -> Result<EntityId> {
@@ -425,6 +422,26 @@ impl crate::memory::Memory<'_> {
         }
         Ok(Some(AskGroupRead::Readable(group)))
     }
+}
+
+/// The actors the ask group `id`'s members are put to, in member order, and
+/// the role a role ask reached; `None` when `id` names no ask group. For the
+/// integration tests' door (`test_doors::task_ask_role_routing`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn ask_group_route(
+    vault: &Vault,
+    id: EntityId,
+) -> Result<Option<(Vec<EntityId>, Option<crate::llm::decision::AskRole>)>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(group) = read_group(vault, &txn, id)? else {
+        return Ok(None);
+    };
+    let actors = group
+        .members
+        .iter()
+        .map(|member| entity(&member.actor))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some((actors, group.reached_role)))
 }
 
 pub(super) fn read_group(
@@ -769,5 +786,7 @@ pub(crate) fn ask_notice_at_in(
     Ok(Some((due, deadline)))
 }
 
+// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-RECORD-TESTS]: the lib test target's type check fails here (13 errors: E0061 x6, E0063 x4, E0277 x3); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;

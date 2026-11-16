@@ -28,14 +28,30 @@
 //!   later is proved against it; where the server names messages by
 //!   `EMAILID`, the live sync names a copy proved so by the import's id.
 //!
+//! A `.zip` passes the archive pre-check first (ARCH-0027 #archive-precheck,
+//! [`crate::ingest::archive_precheck`]), before any of its entries is read:
+//! one declaring more entries than the request's `archive_max_entries`
+//! (262,144 when absent), one holding a name twice, or one whose entries'
+//! bytes overlap is refused; an entry whose path would leave the archive, a
+//! symbolic link and a device file, FIFO or socket are skipped, never read,
+//! and listed in the report; and each mbox file's first bytes must start as
+//! an mbox. A `.zip` unpacks into the vault, so a vault whose host set a
+//! storage cap (`VaultConfig::storage_cap_bytes`, `[import]
+//! storage_cap_bytes` on a served vault) reads it only up to the room the
+//! cap leaves: the call stops there, keeps what landed, and says so
+//! (`stopped_at_storage_cap`). A plain mbox is read in place, not unpacked,
+//! and never stops so.
+//!
 //! Trash, spam, drafts and chats never land; a "recent months" copy setting
 //! leaves older mail out; a search-only mailbox imports nothing. One call
 //! reads a bounded number of messages and keeps its place, so a large
 //! export imports over several calls; a changed file starts over, and what
 //! landed already lands as the same.
 
+mod takeout;
+
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -54,6 +70,7 @@ use super::source::{
 };
 use super::state::{MailOccurrence, MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::{MailFull, MailHeaders};
+use crate::ingest::archive_precheck::{ArchiveBounds, DEFAULT_ARCHIVE_MAX_ENTRIES, SkippedEntry};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -70,8 +87,10 @@ const MAX_MESSAGES: u32 = 5_000;
 const PROGRESS_EVERY: u64 = 100;
 /// The read buffer.
 const READ_BUFFER_BYTES: usize = 1 << 20;
-/// The most refusal reasons one report lists.
-const MAX_REASONS: usize = 20;
+#[doc(hidden)]
+use oneiron_verb_wire::mail_pack::mbox_import::MAX_REASONS;
+#[doc(hidden)]
+pub use oneiron_verb_wire::mail_pack::mbox_import::MailMboxImportRequest;
 
 /// Where one file's import stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -92,20 +111,6 @@ struct MboxImportProgress {
     updated_at: u64,
 }
 
-/// `vault.mail.sources.import_mbox`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailMboxImportRequest {
-    /// The mailbox source, 32-hex.
-    pub source_ref: String,
-    /// The mbox file, or a Google Takeout `.zip` holding mbox files, on this
-    /// device: an absolute path.
-    pub path: String,
-    /// The messages this call reads; 500 when absent, at most 5,000.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messages: Option<u32>,
-}
-
 /// What one import call did.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -123,10 +128,21 @@ pub struct MailMboxImportReport {
     /// Messages left out: trash, spam, drafts, chats, older than the copy
     /// setting keeps, or larger than this host reads.
     pub skipped: u64,
+    /// The `.zip`'s entries the archive pre-check skipped, unread: a path
+    /// that would leave the archive, a symbolic link, a device file, FIFO or
+    /// socket. Listed by each call that reads the archive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_entries: Vec<SkippedEntry>,
     /// Messages read from this file over every call so far.
     pub read_total: u64,
     /// Whether the whole file has been read.
     pub done: bool,
+    /// Whether this call stopped at the room the vault's storage cap leaves
+    /// (ARCH-0027 #archive-precheck): what landed before it stays, the
+    /// message the cap cut did not land, and a later call goes on from there
+    /// once the vault holds less. Only a `.zip` stops so.
+    #[serde(default)]
+    pub stopped_at_storage_cap: bool,
 }
 
 impl MailMboxImportReport {
@@ -140,10 +156,6 @@ impl MailMboxImportReport {
 
 fn unreadable(error: &std::io::Error) -> MemoryError {
     MemoryError::bad_request(format!("the file cannot be read: {error}"))
-}
-
-fn zip_unreadable(error: &zip::result::ZipError) -> MemoryError {
-    MemoryError::bad_request(format!("the archive cannot be read: {error}"))
 }
 
 /// The Gmail id of a Takeout message: the decimal `X-GM-MSGID` its
@@ -457,7 +469,9 @@ impl Intake<'_> {
 }
 
 /// Reads up to `budget` messages of one mbox stream into `intake`, keeping
-/// the place in `progress`. Answers whether the stream ended.
+/// the place in `progress`. Answers whether the stream ended; a stream past
+/// the room the vault's storage cap leaves stops before the message the cap
+/// cut, unended, and the report says so.
 fn read_stream<R: BufRead>(
     mut reader: MboxReader<R>,
     key: &(EntityId, [u8; 32]),
@@ -466,8 +480,14 @@ fn read_stream<R: BufRead>(
     intake: &mut Intake<'_>,
 ) -> MemoryResult<bool> {
     while *budget > 0 {
-        let Some(message) = reader.next_message().map_err(|error| unreadable(&error))? else {
-            return Ok(true);
+        let message = match reader.next_message() {
+            Ok(Some(message)) => message,
+            Ok(None) => return Ok(true),
+            Err(error) if takeout::past_storage_cap(&error) => {
+                intake.report.stopped_at_storage_cap = true;
+                return Ok(false);
+            }
+            Err(error) => return Err(unreadable(&error)),
         };
         *budget -= 1;
         intake.take(&message)?;
@@ -481,12 +501,14 @@ fn read_stream<R: BufRead>(
 }
 
 /// Reads the next `limit` messages of the file at `path`: a plain mbox, or
-/// each mbox file of a `.zip` in turn.
+/// each mbox file of a `.zip` the archive pre-check passed, under `bounds`,
+/// in turn, up to the room the vault's storage cap leaves.
 fn read_file(
     path: &Path,
     key: &(EntityId, [u8; 32]),
     progress: &mut MboxImportProgress,
     limit: u32,
+    bounds: ArchiveBounds,
     intake: &mut Intake<'_>,
 ) -> MemoryResult<()> {
     let mut budget = limit;
@@ -506,50 +528,7 @@ fn read_file(
         }
         return Ok(());
     }
-    let file = File::open(path).map_err(|error| unreadable(&error))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|error| zip_unreadable(&error))?;
-    let mut entries = Vec::new();
-    for index in 0..archive.len() {
-        let entry = archive
-            .by_index(index)
-            .map_err(|error| zip_unreadable(&error))?;
-        if !entry.is_dir() && entry.name().to_ascii_lowercase().ends_with(".mbox") {
-            entries.push(index);
-        }
-    }
-    if entries.is_empty() {
-        return Err(MemoryError::bad_request_with(
-            "the archive holds no .mbox file",
-            &["Export Mail from Google Takeout as mbox, then import its .zip or its .mbox file."],
-        ));
-    }
-    while let Some(&index) = entries.get(progress.entry as usize) {
-        let entry = archive
-            .by_index(index)
-            .map_err(|error| zip_unreadable(&error))?;
-        let mut reader = BufReader::with_capacity(READ_BUFFER_BYTES, entry);
-        // A zipped mbox reads from its start: what an earlier call read is
-        // passed over.
-        std::io::copy(
-            &mut (&mut reader).take(progress.offset),
-            &mut std::io::sink(),
-        )
-        .map_err(|error| unreadable(&error))?;
-        let ended = read_stream(
-            MboxReader::new(reader, progress.offset),
-            key,
-            progress,
-            &mut budget,
-            intake,
-        )?;
-        if !ended {
-            return Ok(());
-        }
-        progress.entry += 1;
-        progress.offset = 0;
-    }
-    progress.done = true;
-    Ok(())
+    takeout::read_archive(path, key, progress, budget, bounds, intake)
 }
 
 impl Memory<'_> {
@@ -652,7 +631,12 @@ impl Memory<'_> {
                 .messages
                 .unwrap_or(DEFAULT_MESSAGES)
                 .clamp(1, MAX_MESSAGES);
-            let outcome = read_file(path, &key, &mut progress, limit, &mut intake);
+            let bounds = ArchiveBounds {
+                max_entries: input
+                    .archive_max_entries
+                    .unwrap_or(DEFAULT_ARCHIVE_MAX_ENTRIES),
+            };
+            let outcome = read_file(path, &key, &mut progress, limit, bounds, &mut intake);
             progress.landed += intake.report.landed;
             progress.updated_at = at;
             intake.save(&key, &progress)?;

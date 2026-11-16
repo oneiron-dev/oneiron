@@ -21,7 +21,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
 | `src/supervisor/budget_tests.rs` | test | m | — | — | Durable budget-id, index-scan, and config-validation tests |
 | `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 6 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
-| `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 16 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
+| `src/supervisor/dreamer_jobs.rs` | src | s | 1 struct · 1 fn | DreamerJobsExecutor | The host adapter for the Dreamer's job crate (untangle 6.9c PR 4, S69-RUN = A): a strength attempt runs… |
+| `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 17 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | L | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/inference.rs` | src | s | 1 struct · 1 trait · 1 type | WorkerProbe, WorkerSpec | The model-worker probe seam (FIX 8314, INFERENCE R1): what one worker is declared to be, and the one call… |
 | `src/supervisor/inference_admission.rs` | src | L | 8 struct · 3 enum · 23 fn · 2 type · 1 re-export · 1 crate-vis | AdmissionSnapshot, AdmissionStop, DeviceAdmission, DeviceGrant, ExecutorRegistration, LoadGrant, PressureDecision, PressureState +3 | Host/device admission for inference work (DESIGN-V2 R4) |
@@ -35,7 +36,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/inference_worker/startup.rs` | src | s | 1 fn · 1 crate-vis | — | A replacement's startup follows the retirement of every pending predecessor |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn | WakeSupervisor, WakeSupervisorReport | The supervisor loop: one arbiter over fresh ticks, owed retries and wave quanta (see `arbiter`), at most one… |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
-| `src/supervisor/mod.rs` | src | s | 11 re-export | — | The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter… |
+| `src/supervisor/mod.rs` | src | s | 12 re-export | — | The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter… |
 | `src/supervisor/pass.rs` | src | s | 5 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/program_factory.rs` | src | s | 1 struct · 1 fn | ProgramExecutorFactory | The turn program runtime around a host's executor factory (DOOR-141 PR2) |
 | `src/supervisor/retry.rs` | src | s | 13 crate-vis | — | What a pass's outcome leaves owed, and the debt of owed passes (FIX 8601) |
@@ -58,3 +59,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wave.rs` | src | s | 1 struct · 3 fn | WaveHost | Host-side consumption of a queued planning attempt and live TASK dispatch |
 | `src/wave/tests.rs` | test | s | — | — | — |
 | `src/wave_dispatch.rs` | src | m | 2 struct · 3 enum · 1 fn · 10 crate-vis | WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome, WaveHandoffReceipt | Bounded, per-item delivery of durable wave TASKs to a host dispatcher |
+| `tests/dreamer_strength_archive.rs` | test | s | — | — | The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production… |

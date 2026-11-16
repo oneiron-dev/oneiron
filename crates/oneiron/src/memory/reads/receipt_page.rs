@@ -16,6 +16,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::family_receipt;
@@ -29,8 +30,10 @@ use crate::receipt::{
     ReceiptScanPosition,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::request_limits::{PageLimit, ZeroLimitRefused, page_limit_zero_refused};
 use crate::settings::ReadDestination;
 use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::verb_names::VAULT_RECEIPTS_LIMIT_DEFAULT;
 
 /// Who reads `vault.receipts`, and through what (FIX 7355): the vault, where
 /// the read's rows go, the content its served forms are read from, the
@@ -100,12 +103,22 @@ pub struct VaultReceiptsPage {
     pub next_after: Option<String>,
     /// The requested number of receipts this page could hold.
     pub effective_limit: usize,
-    /// Whether the page lowered the requested count; always false.
+    /// Whether the requested count was over the page's maximum and cut to
+    /// it, as the list's limit rule reports it. Both ledgers have no maximum
+    /// (#5059), so this is false: the page holds the requested count.
     #[serde(default)]
     pub limit_clamped: bool,
     /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
     /// read as receipts. None on the gate ledger, which holds no sends.
     pub undecodable: u32,
+    /// Who made each receipt's change, keyed by the `actor_ref` it names, as
+    /// this reader may name them (FIX [UI-GATE-PREVIEW] phase 3): one entry
+    /// per actor on the page, `unknown` for one the reader cannot name. The
+    /// principal a receipt was made on behalf of stays its own field. The
+    /// caller's own `vault.receipts` fills it; a room session's read of the
+    /// verb leaves it empty.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub actors: std::collections::BTreeMap<String, crate::context_board::ActorAttribution>,
 }
 
 /// Where a family page ends, in newest-first, then kind and id, order.
@@ -145,7 +158,7 @@ impl FamilyCursor {
         let mut parts = text.splitn(3, ':');
         Some(Self {
             occurred_at: parts.next()?.parse().ok()?,
-            kind: ReceiptKind::parse(parts.next()?)?,
+            kind: ReceiptKind::named(parts.next()?)?,
             receipt_id: parts.next()?.to_owned(),
         })
     }
@@ -163,7 +176,7 @@ fn foreign_cursor() -> MemoryError {
 fn family_query(limit: usize, kinds: &[String]) -> MemoryResult<ReceiptQuery> {
     let mut query = ReceiptQuery::new(limit);
     for name in kinds {
-        let kind = ReceiptKind::parse(name.trim()).ok_or_else(|| {
+        let kind = ReceiptKind::named(name.trim()).ok_or_else(|| {
             MemoryError::bad_request_with(
                 format!("unknown receipt kind {name:?}"),
                 &[
@@ -226,7 +239,14 @@ impl Memory<'_> {
         kinds: &[String],
         after: Option<&str>,
     ) -> MemoryResult<VaultReceiptsPage> {
-        receipts_page_for(self, limit, kinds, after)
+        let mut page = receipts_page_for(self, limit, kinds, after)?;
+        page.actors = self.actor_attributions(
+            page.receipts
+                .iter()
+                .filter_map(|receipt| receipt.actor_ref.clone())
+                .collect(),
+        )?;
+        Ok(page)
     }
 }
 
@@ -333,13 +353,19 @@ pub(crate) fn receipts_page_for(
     kinds: &[String],
     after: Option<&str>,
 ) -> MemoryResult<VaultReceiptsPage> {
-    if limit == 0 {
-        return Err(MemoryError::bad_request_with(
-            "limit must be at least 1",
-            &["Request one receipt or more and continue from next_after."],
-        ));
-    }
-    let page = limit;
+    // The list's limit rule: zero is refused, and no ceiling cuts the ask
+    // (#5059), so the page reports no clamp.
+    let PageLimit {
+        rows: page,
+        clamped: limit_clamped,
+    } = page_limit_zero_refused(Some(limit), VAULT_RECEIPTS_LIMIT_DEFAULT, usize::MAX).map_err(
+        |ZeroLimitRefused| {
+            MemoryError::bad_request_with(
+                "limit must be at least 1",
+                &["Request one receipt or more and continue from next_after."],
+            )
+        },
+    )?;
     let (receipts, next_after) = if kinds.is_empty() {
         gate_page(reader, after, page)?
     } else {
@@ -349,10 +375,11 @@ pub(crate) fn receipts_page_for(
         receipts,
         next_after,
         effective_limit: page,
-        limit_clamped: false,
+        limit_clamped,
         undecodable: reader
             .receipt_vault()
             .undecodable_send_receipts_for_kinds(kinds)?,
+        actors: std::collections::BTreeMap::new(),
     })
 }
 

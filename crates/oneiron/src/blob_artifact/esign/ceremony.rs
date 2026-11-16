@@ -10,50 +10,35 @@ use super::{
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SigningAction {
     Load,
-    SaveField { field: String, value: FieldValue },
-    Complete { consent: bool, next: Option<String> },
-    Reject { reason: String },
-}
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SigningPage {
-    pub item_count: usize,
-    pub title: String,
-    pub recipient: String,
-    pub fields: Vec<EsignField>,
-    pub presentations: Vec<super::render::FieldPresentation>,
-    pub values: BTreeMap<String, SignatureRow>,
-}
-/// Receipt observations of the sealed bytes, in document item order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SigningSealedItem {
-    pub sha256: String,
-    pub active_content: super::sealer::SealActiveContentFacts,
+    SaveField {
+        field: String,
+        value: FieldValue,
+    },
+    /// The signer reviews what they sign (UETA section 10): the frozen items
+    /// and their own field values as they stand now. Complete needs a review
+    /// that still stands; the signer's next saved field voids it.
+    Review,
+    Complete {
+        consent: bool,
+        next: Option<String>,
+    },
+    Reject {
+        reason: String,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
-pub enum SigningOutcome {
-    Page(SigningPage),
-    NotYourTurn,
-    Terminal {
-        status: DocumentStatus,
-        item_count: usize,
-        /// None when no sealing receipt is available to read.
-        sealed_items: Option<Vec<SigningSealedItem>>,
-    },
-    AwaitingSeal,
-    /// D6: the signing dial does not open this automated sign act, so the
-    /// call is held for its role chain's answer, never dropped.
-    HeldForOwner {
-        held_at: u64,
-    },
-    ConsentRequired,
-}
+/// The e-sign rule pack's UETA section 10 row (`esign.rules`; ARCH-0064
+/// :235, :241): the review-before-complete step, non-waivable. A Complete
+/// with no standing review is refused citing it.
+const UETA_REVIEW_ROW: &str = "us.ueta.s10.review_before_complete";
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::esign::ceremony::{
+    SigningOutcome, SigningPage, SigningSealedItem,
+};
 
 /// Who a signing call shows itself to be (OF-415). The capability proves
 /// access to a recipient's turn, not who holds the link: only a vault
@@ -85,6 +70,7 @@ impl SigningAction {
         match self {
             Self::Load => "load",
             Self::SaveField { .. } => "save_field",
+            Self::Review => "review",
             Self::Complete { .. } => "complete",
             Self::Reject { .. } => "reject",
         }
@@ -197,7 +183,10 @@ pub(super) fn sign(
 /// The PDFs a signing act's writer lays fields on, inspected before it (FIX
 /// 9609): none for an act that appends no field event, or that the writer's
 /// own capability, ceiling, turn, status, consent or D6 gates refuse in this
-/// read snapshot, so a refused call parses nothing.
+/// read snapshot, so a refused call parses nothing. The review gate is not
+/// mirrored: a Review landing between this read and the writer would leave
+/// the Complete the writer admits uninspected, parsed inside the writer. A
+/// Complete refused for want of a review is inspected here, outside it.
 fn inspect_act_pages(
     vault: &Vault,
     token: &EsignCapability,
@@ -264,7 +253,9 @@ fn inspect_act_pages(
                 }
                 EventFields::Signer(recipient.id.clone())
             }
-            SigningAction::Load | SigningAction::Reject { .. } => return Ok(None),
+            SigningAction::Load | SigningAction::Review | SigningAction::Reject { .. } => {
+                return Ok(None);
+            }
         };
         Ok(Some((state, fields)))
     })
@@ -528,6 +519,21 @@ impl Vault {
                         )?;
                     }
                 }
+                SigningAction::Review => {
+                    state = append(
+                        self,
+                        txn,
+                        document,
+                        EsignEvent::Reviewed {
+                            recipient: recipient.id.clone(),
+                            items: state.document.items.clone(),
+                            values: state.recipient_values(&recipient.id),
+                            authentication_method: caller.authentication_method(),
+                        },
+                        actor,
+                        now,
+                    )?;
+                }
                 SigningAction::Complete { consent, next } => {
                     if !consent {
                         return Ok(SigningOutcome::ConsentRequired);
@@ -543,6 +549,16 @@ impl Vault {
                         return Err(invalid(
                             "a natural-person recipient signs in person, never through an agent",
                         ));
+                    }
+                    // UETA section 10: the signer reviewed the frozen items
+                    // and these values, and has saved nothing since; a
+                    // person's Complete needs a person's review. A held sign
+                    // act lands later only on these values, while this
+                    // review still stands.
+                    if !state.review_stands(&recipient.id, caller.authentication_method()) {
+                        return Ok(SigningOutcome::ReviewRequired {
+                            row: UETA_REVIEW_ROW.to_owned(),
+                        });
                     }
                     if automated
                         && !automated_signing_allowed(
@@ -565,6 +581,7 @@ impl Vault {
                             &recipient,
                             next,
                             evidence.clone(),
+                            state.recipient_values(&recipient.id),
                             &actor,
                             now,
                         )?;

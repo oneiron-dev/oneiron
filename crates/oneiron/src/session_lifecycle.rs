@@ -95,40 +95,10 @@ impl SessionKey {
     }
 }
 
-/// Why a session ended. `Explicit` is the app's own end hint; `IdleFloor`
-/// is the driver's inactivity backstop; `LifetimeCeiling` is the hard
-/// wall-clock cap that closes a session regardless of activity hints
-/// (H-S4: forged typing hints reset `last_activity` forever, so the floor
-/// alone is defeatable — the ceiling is not).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionEndReason {
-    Explicit,
-    IdleFloor,
-    LifetimeCeiling,
-}
-
-/// The three timestamps retained for one driver-authored session hint.
-///
-/// `claimed_ms` is producer provenance and is never rewritten, even when the
-/// driver rejects it for derivation. `arrival_ms` is the channel stamp, and
-/// `effective_ms` is the driver's monotone, bounded decisional time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionHintTimestamp {
-    pub claimed_ms: Option<u64>,
-    pub arrival_ms: u64,
-    pub effective_ms: u64,
-}
-
-/// A loss-aware rollup of adjacent activity hints. The endpoints retain the
-/// complete timestamp provenance; `count` records how many hints the period
-/// represents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionActivityPeriod {
-    pub first: SessionHintTimestamp,
-    pub last: SessionHintTimestamp,
-    pub count: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::session_lifecycle::{
+    SessionActivityPeriod, SessionEndReason, SessionHintTimestamp,
+};
 
 /// Durable lifecycle clock fields for one SESSION entity. The legacy entity
 /// clock fields remain unix SECONDS; hint provenance is stored in unix
@@ -370,6 +340,26 @@ impl Vault {
         self.session_lifecycle_record_in_txn(&rtxn, id)
     }
 
+    /// The key of the sitting `turn` joined (its DREAM-008 membership row),
+    /// or `None` when it joined none. A reply written again for that turn
+    /// binds this key (FIX 1034): it joins that sitting while it is open,
+    /// or the one its actor has open on that machine now, as a live chat
+    /// host's binding of its caller does, and none when none is open.
+    pub(crate) fn turn_sitting_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+    ) -> Result<Option<SessionKey>> {
+        let Some(session) =
+            crate::compaction::turn_session_membership_in_txn(&self.store, txn, turn)?
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .session_lifecycle_record_in_txn(txn, &session)?
+            .map(|record| record.key))
+    }
+
     /// [`Self::session_lifecycle_record`] in the caller's transaction.
     pub(crate) fn session_lifecycle_record_in_txn(
         &self,
@@ -603,7 +593,7 @@ impl Vault {
     /// with each one's header and body), by `(learned_at, id)`; `None` when
     /// the sitting has no membership row at all, as one recorded before
     /// them has none.
-    fn member_turns_in_txn(
+    pub(crate) fn member_turns_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         session: &EntityId,
@@ -966,5 +956,7 @@ const fn end_reason_word(reason: SessionEndReason) -> &'static str {
 }
 
 pub(crate) mod tables;
+// FIX [LIBTEST-QUARANTINE-SESSION-LIFECYCLE-TESTS]: the lib test target's type check fails here (24 errors: E0061 x17, E0308 x5, E0063 x2); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;

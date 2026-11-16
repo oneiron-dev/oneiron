@@ -25,11 +25,29 @@ use crate::sync::window_rows::{
 #[cfg(feature = "sync")]
 mod documents;
 
+/// How long a pass that compacts waits for the handles to a registered
+/// window to drop before it defers the window (census L9-41). A window that
+/// sync traffic holds a frame at a time is let go within it; a caller that
+/// asks for it meanwhile waits up to this, then for the compaction.
+#[cfg(feature = "sync")]
+pub(super) const WINDOW_DRAIN_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How many times a pass compacts a window a holder still keeps when a write
+/// raced the compaction (census L6-05): a live holder persists more often
+/// than a closed window changes.
+#[cfg(feature = "sync")]
+const HELD_WINDOW_TRIES: usize = 3;
+
 /// Per-window outcome of [`compact_window`].
 #[cfg(feature = "sync")]
 pub(super) enum CompactOutcome {
     /// Persisted state existed and was rebuilt through a shallow snapshot.
     Compacted,
+    /// The window holds no history: it was cut at its tip before, no `u:w:`
+    /// row came since, and no scrub changed it, so a cut would store what it
+    /// holds (census L6-07). Nothing is written and no `fr:w:` is asserted
+    /// again; the window counts as compacted for the completion gate.
+    Unchanged,
     /// No persisted state for this window — nothing to compact. While a
     /// withdrawn generation is due, its queued sends went (OF-013).
     Empty,
@@ -209,24 +227,11 @@ pub(super) fn compact_all_windows(
         }
         let key = WindowKey::new(label);
 
-        // OPEN or retained-handle windows are deferred (pinned): the live doc
-        // keeps the full history in memory and its next full-snapshot persist
-        // would resurrect the carrier over the shallow row, even after forced
-        // deregistration removed the manager registry entry. A closed window
-        // stays closed while it compacts: an open waits, then reads the
-        // compacted window, rather than registering the history dropped here.
-        let compact = || compact_window_with(vault, &key, erased, withdrawn, full_carriers);
-        let Some(compacted) = vault.while_window_closed(&key, compact) else {
-            tracing::warn!("sweep: window live or retained — deferred");
-            run.windows_deferred_live += 1;
-            if matches!(state, WindowSweepState::AllCompacted) {
-                state = WindowSweepState::Deferred;
-            }
-            continue;
-        };
-
+        let compacted =
+            compact_registered_window(vault, &key, erased, withdrawn, full_carriers, run);
         match compacted {
             Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
+            Ok(CompactOutcome::Unchanged) => run.windows_unchanged += 1,
             Ok(CompactOutcome::Empty) => {}
             Ok(CompactOutcome::RacedDefer) => {
                 tracing::warn!("sweep: window raced between read and compaction write — deferred");
@@ -307,6 +312,166 @@ pub(super) fn compact_all_windows(
     Ok(WindowSweepState::AllCompacted)
 }
 
+/// Compacts window `key` for a pass. A registered window is first taken from
+/// its holders, who have until the drain bound to let it go (census L9-41),
+/// and stays closed while it compacts: an open waits, then reads the
+/// compacted window, rather than registering the history dropped here.
+///
+/// A window still held at the bound, or that the drain cannot take (its
+/// persist failed, an orphaned handle, a manager gone while attached), is
+/// compacted while its holder keeps it ([`compact_held_window`], census
+/// L6-05), and counted in `windows_compacted_held` when it is cut.
+#[cfg(feature = "sync")]
+pub(super) fn compact_registered_window(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+    withdrawn: &mut WithdrawnSweep,
+    full_carriers: bool,
+    run: &mut HardEraseSweepRun,
+) -> Result<CompactOutcome> {
+    let compact = || compact_window_with(vault, key, erased, withdrawn, full_carriers);
+    if let Some(compacted) = vault.while_window_drained_closed(key, WINDOW_DRAIN_BOUND, compact) {
+        return compacted;
+    }
+    tracing::warn!("sweep: window still held at the drain bound — compacted under its pin");
+    let compacted = compact_held_window(vault, key, erased, withdrawn, full_carriers);
+    if matches!(compacted, Ok(CompactOutcome::Compacted)) {
+        run.windows_compacted_held += 1;
+    }
+    compacted
+}
+
+/// Compacts window `key` while a holder keeps it (census L6-05, ARCH-0038
+/// `#housekeeping-sla-open`). The holder's doc keeps the full history in
+/// memory, and an unpinned persist of it would store that history over the
+/// cut. So the window is pinned history-free first
+/// ([`crate::sync::window::require_history_free_window_in_txn`]): from then on every
+/// persist of the holder's doc stores a history-free snapshot, and every
+/// export checks the history it ships, which holds back a value whose key a
+/// hard delete took out. Then its persisted rows are cut as a closed
+/// window's are ([`compact_window_with`]); the holder keeps its window and
+/// sees no error.
+///
+/// A window a legal hold keeps (OF-470) is neither pinned nor cut: the pin
+/// would make every later persist of the holder's doc history-free, which
+/// drops the held rows' history as a cut would. The hold check and the pin
+/// share one write transaction ([`pin_window_unless_held`]). A write that
+/// lands between the read and the pin or the compaction write defers the
+/// window as raced; it is tried again, up to [`HELD_WINDOW_TRIES`] times in
+/// all. A hold placed after the pin defers the cut as on a closed window, and
+/// the holder's persists keep the held history (census L6-05 round 1). An
+/// unproved cut or a window that holds no history settles as on a closed
+/// window. The pin is never lifted.
+#[cfg(feature = "sync")]
+fn compact_held_window(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+    withdrawn: &mut WithdrawnSweep,
+    full_carriers: bool,
+) -> Result<CompactOutcome> {
+    let mut tries = 1;
+    loop {
+        let outcome = match pin_window_unless_held(vault, key)? {
+            HeldWindowPin::Pinned => {
+                compact_window_with(vault, key, erased, withdrawn, full_carriers)?
+            }
+            HeldWindowPin::Held => return Ok(CompactOutcome::HeldDefer),
+            HeldWindowPin::Raced => CompactOutcome::RacedDefer,
+        };
+        if !matches!(outcome, CompactOutcome::RacedDefer) || tries == HELD_WINDOW_TRIES {
+            return Ok(outcome);
+        }
+        tries += 1;
+    }
+}
+
+/// How [`pin_window_unless_held`] left a window.
+#[cfg(feature = "sync")]
+enum HeldWindowPin {
+    /// Pinned history-free: no legal hold keeps a row it carries.
+    Pinned,
+    /// A legal hold keeps a row it carries, or its indexed hold row is
+    /// missing: not pinned.
+    Held,
+    /// Its persisted rows changed after they were read: not pinned.
+    Raced,
+}
+
+/// Pins window `key` history-free
+/// ([`crate::sync::window::require_history_free_window_in_txn`]) unless a
+/// legal hold keeps it (OF-470, FIX 3061): a hold on a row its persisted
+/// state carries, live or tombstoned, or on such a pad's world, judged as
+/// [`compact_window_with`] judges it. The rows are read and inventoried
+/// outside the write; the write proves they are the rows the window still
+/// holds (the same snapshot bytes and update keys, as the cut proves its
+/// own), checks the holds and pins, in one transaction (census L6-05 round
+/// 1). So a hold placed after the read keeps the window unpinned, and a row
+/// that landed after it is judged on the next try. A window with no
+/// persisted state carries no row and is pinned. A missing indexed hold row
+/// keeps the window too, as the cut treats it.
+#[cfg(feature = "sync")]
+fn pin_window_unless_held(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+) -> Result<HeldWindowPin> {
+    use crate::ports::WindowAddress;
+    use crate::sync::loro_support::{doc_from_snapshot, import_doc};
+    use crate::sync::schema::create_window_doc;
+
+    let window = key.to_string();
+    let address = WindowAddress::new(&window);
+    // One read txn for the rows, dropped before any Loro work.
+    let (snapshot_bytes, update_rows) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let snapshot = vault
+            .store
+            .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+        let rows = vault
+            .store
+            .port_window_updates(&rtxn, address, |k, bytes| {
+                (WINDOW_UPDATE.key_bytes(&k), bytes.to_vec())
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        (snapshot, rows)
+    };
+    let carried = if snapshot_bytes.is_none() && update_rows.is_empty() {
+        None
+    } else {
+        let doc = match &snapshot_bytes {
+            Some(bytes) => doc_from_snapshot(bytes)?,
+            None => create_window_doc("local", key),
+        };
+        for (_, bytes) in &update_rows {
+            import_doc(&doc, bytes)?;
+        }
+        Some(crate::sync::carrier_holds::CarrierInventory::of_window(
+            &doc,
+        ))
+    };
+    let read_keys: BTreeSet<Vec<u8>> = update_rows.into_iter().map(|(k, _)| k).collect();
+    vault.with_write_txn_grouped(|wtxn| {
+        let current_snapshot = vault
+            .store
+            .port_window_doc_with_raw(wtxn, address, |raw| Ok(raw.to_vec()))?;
+        let current_keys: BTreeSet<Vec<u8>> = vault
+            .store
+            .port_window_updates(wtxn, address, |k, _| WINDOW_UPDATE.key_bytes(&k))?
+            .collect::<Result<_>>()?;
+        if current_snapshot != snapshot_bytes || current_keys != read_keys {
+            return Ok(HeldWindowPin::Raced);
+        }
+        if let Some(carried) = &carried
+            && carried.held_in_txn(&vault.store, wtxn)?
+        {
+            return Ok(HeldWindowPin::Held);
+        }
+        crate::sync::window::require_history_free_window_in_txn(vault, wtxn, key)?;
+        Ok(HeldWindowPin::Pinned)
+    })
+}
+
 /// [`compact_window_with`] with no withdrawn generation to rewrite.
 #[cfg(all(feature = "sync", test))]
 fn compact_window(
@@ -314,16 +479,19 @@ fn compact_window(
     key: &crate::sync::types::WindowKey,
     erased: &BTreeSet<EntityId>,
 ) -> Result<CompactOutcome> {
-    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default())
+    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default(), false)
 }
 
-/// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
+/// Compacts one window from its persisted rows (a closed one, or one a
+/// holder keeps under its history-free pin): load `d:w:` + pending `u:w:` rows, scrub
 /// live-map residue for erased ids, rewrite withdrawn generations' carriers
 /// to their keyframes, export a shallow snapshot at the latest frontiers,
 /// and atomically replace the persistence triple, prune the subsumed `u:w:`
 /// rows, re-assert `fr:w:` and, while a withdrawn generation is due or on a
 /// `full_carriers` pass (FIX 7800), drop the window's queued sends. Returns
-/// whether any persisted state existed.
+/// whether any persisted state existed. A window that holds no history and
+/// that no scrub changed is read and scrubbed, and left as it is
+/// ([`CompactOutcome::Unchanged`], census L6-07).
 #[cfg(feature = "sync")]
 pub(super) fn compact_window_with(
     vault: &Vault,
@@ -368,6 +536,12 @@ pub(super) fn compact_window_with(
     for (_, bytes) in &update_rows {
         import_doc(&doc, bytes)?;
     }
+    // A window a cut rooted at its tip, with no `u:w:` row on top, holds no
+    // history: its tip is its shallow root. Taken before any scrub.
+    let history_free_tip = (update_rows.is_empty()
+        && doc.is_shallow()
+        && doc.shallow_since_frontiers() == doc.oplog_frontiers())
+    .then(|| doc.oplog_frontiers());
 
     // A shallow snapshot drops every row's history, and the erased and
     // withdrawn rows' bytes with it: each row the window carries or carried,
@@ -383,6 +557,11 @@ pub(super) fn compact_window_with(
     // across hex-casing aliases (fail closed). Tombstones map untouched
     // (permanent); receipt entities are receipt-ids, never erased ids.
     scrub_erased_ids_from_doc(vault, &doc, erased)?;
+    // ARCH-0038 release-fence follow-up: and each row this vault holds
+    // deleted whose tombstone the window no longer names, as egress drops it.
+    // A fence alone (a release, or a hard delete not yet purged) is no
+    // hard-delete record, so `erased` does not name the row.
+    crate::sync::window::scrub_withdrawn_delete_carriers(vault, &doc, None)?;
 
     // OF-522: a turn row of a room this vault deleted leaves the window; the
     // shallow export below drops its history, so nothing is pinned.
@@ -422,6 +601,16 @@ pub(super) fn compact_window_with(
     withdrawn.held.extend(found.held);
     let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
 
+    // Census L6-07: a history-free window no scrub or withdrawal changed,
+    // with no queued sends to drop, would be cut to what it holds. It is not
+    // rewritten, and peers are not sent to a full resync of it again.
+    doc.commit();
+    if !scrub_sends && history_free_tip.is_some_and(|tip| tip == doc.oplog_frontiers()) {
+        #[cfg(test)]
+        before_compact_write(vault, key, &snapshot_bytes)?;
+        return settle_unchanged_window(vault, address, snapshot_bytes.as_deref(), &destroyed);
+    }
+
     // Strict shallow cut at the latest frontiers (FIX 6520): live state
     // byte-exact, op history (the payload carrier) dropped, identity kept, VV
     // extended by exactly one barrier op when the window has several heads.
@@ -456,15 +645,8 @@ pub(super) fn compact_window_with(
         }
     }
 
-    // Test-only race injection point: lands a concurrent write AFTER the
-    // read phase, BEFORE the compaction write txn, so the in-txn re-read
-    // guards below have something to catch (one-shot).
     #[cfg(test)]
-    inject_race_before_compact_write(vault, key, &snapshot_bytes)?;
-    #[cfg(test)]
-    if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
-        hook();
-    }
+    before_compact_write(vault, key, &snapshot_bytes)?;
 
     // ABORT-ONLY raced-defer signal: the write closure returns `Err` (so
     // `with_write_txn` rolls the txn back, committing NOTHING) and sets this
@@ -562,6 +744,61 @@ pub(super) fn compact_window_with(
         Err(_) if held.get() => Ok(CompactOutcome::HeldDefer),
         Err(err) => Err(err),
     }
+}
+
+/// Settles a window a cut would store as it is (census L6-07). The compaction
+/// write's guards run read-only and nothing is written: a `d:w:` snapshot
+/// replaced or a `u:w:` row landed since the read defers it as raced, and a
+/// legal hold on a row it carries keeps it, as for a cut.
+#[cfg(feature = "sync")]
+fn settle_unchanged_window(
+    vault: &Vault,
+    address: crate::ports::WindowAddress<'_>,
+    snapshot_bytes: Option<&[u8]>,
+    carried: &crate::sync::carrier_holds::CarrierInventory,
+) -> Result<CompactOutcome> {
+    let rtxn = vault.store.env.read_txn()?;
+    let current = vault
+        .store
+        .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+    let updated = vault
+        .store
+        .port_window_updates(&rtxn, address, |_, _| ())?
+        .next()
+        .transpose()?
+        .is_some();
+    if updated || current.as_deref() != snapshot_bytes {
+        return Ok(CompactOutcome::RacedDefer);
+    }
+    match carried.reject_held_in_txn(
+        &vault.store,
+        &rtxn,
+        &crate::store::legal_hold::HoldActor::TIMER,
+    ) {
+        Ok(()) => Ok(CompactOutcome::Unchanged),
+        Err(refused) if super::holds::refused_by_hold(&refused) => Ok(CompactOutcome::HeldDefer),
+        Err(Error::CorruptedIndex("legal hold target")) => {
+            tracing::warn!("sweep: indexed legal hold row missing — window kept as it is");
+            Ok(CompactOutcome::HeldDefer)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// The test-only points between a window's read and its compaction write:
+/// the race injection, which lands a concurrent write so the re-read guards
+/// have something to catch, then the armed hook (each one-shot).
+#[cfg(all(feature = "sync", test))]
+fn before_compact_write(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    snapshot_bytes: &Option<Vec<u8>>,
+) -> Result<()> {
+    inject_race_before_compact_write(vault, key, snapshot_bytes)?;
+    if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
+    Ok(())
 }
 
 /// Drops the queued sends of window `window`, which holds no persisted state
@@ -1077,6 +1314,111 @@ mod scoped_update_tests {
                 .get(&vault.store, &rtxn, &window)
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    /// ARCH-0038 release-fence follow-up 3: a carrier whose row this vault
+    /// holds deleted, while the window's tombstone map no longer names it,
+    /// leaves before the shallow cut, as egress drops it. A fence alone is
+    /// no hard-delete record, so the sweep's erased set never names the row:
+    /// a blob-artifact release (H125) and a hard delete published but not yet
+    /// purged. The cut drops the history, so the window is not pinned; a live
+    /// row's carrier stays.
+    #[test]
+    fn compaction_removes_a_withdrawn_delete_carrier_before_the_shallow_cut() {
+        use crate::side_table::HexId;
+        use crate::sync::loro_support::{doc_from_snapshot, map_get_bytes, map_insert_bytes};
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let learned_at = 1_771_027_200u64;
+        let at = crate::temporal::TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        let put_turn = |body: &[u8]| {
+            let id = EntityId::now();
+            vault
+                .put_entity(&id, crate::registry::ENTITY_TYPE_TURN, at, learned_at, body)
+                .unwrap();
+            id
+        };
+        let live = put_turn(b"placeholder live body");
+        let released = put_turn(b"placeholder released body");
+        let unpurged = put_turn(b"placeholder deleted body");
+        // The carriers are read first: a fenced row reads absent here.
+        let key = WindowKey::from_timestamp(learned_at);
+        let doc = create_window_doc("local", &key);
+        let entities = doc.get_map("entities");
+        for id in [live, released, unpurged] {
+            map_insert_bytes(
+                &entities,
+                &id.to_hex(),
+                &vault.get_raw(&id).unwrap().unwrap(),
+            )
+            .unwrap();
+        }
+        doc.commit();
+        vault
+            .with_write_txn(|wtxn| {
+                crate::deletion::ROW_DELETION_FENCE.put(
+                    &vault.store,
+                    wtxn,
+                    &HexId(released),
+                    &b"blob_artifact:release".to_vec(),
+                )?;
+                crate::deletion::ROW_DELETION_FENCE.put(
+                    &vault.store,
+                    wtxn,
+                    &HexId(unpurged),
+                    &Vec::new(),
+                )
+            })
+            .unwrap();
+        {
+            let rtxn = vault.store.env.read_txn().unwrap();
+            assert!(
+                crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, &released).unwrap(),
+                "precondition: only a release fences the first row"
+            );
+            assert!(
+                !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, &unpurged).unwrap(),
+                "precondition: the second row's fence is a delete's"
+            );
+        }
+        let snapshot = export_snapshot(&doc).unwrap();
+        vault
+            .with_write_txn(|txn| {
+                WINDOW_SNAPSHOT.put(&vault.store, txn, &key.to_string(), &snapshot)
+            })
+            .unwrap();
+
+        assert!(matches!(
+            compact_window(&vault, &key, &BTreeSet::new()).unwrap(),
+            CompactOutcome::Compacted
+        ));
+        let stored = {
+            let rtxn = vault.store.env.read_txn().unwrap();
+            WINDOW_SNAPSHOT
+                .get(&vault.store, &rtxn, &key.to_string())
+                .unwrap()
+                .expect("the compacted window is stored")
+        };
+        let compacted = doc_from_snapshot(&stored).unwrap();
+        let entities = compacted.get_map("entities");
+        assert!(
+            map_get_bytes(&entities, &released.to_hex()).is_none(),
+            "a release-fenced row's carrier leaves before the cut"
+        );
+        assert!(
+            map_get_bytes(&entities, &unpurged.to_hex()).is_none(),
+            "an unpurged hard delete's carrier leaves before the cut"
+        );
+        assert!(
+            map_get_bytes(&entities, &live.to_hex()).is_some(),
+            "positive control: a live row's carrier stays"
+        );
+        assert!(
+            !crate::sync::window::history_free_window_required(&vault, &key).unwrap(),
+            "the cut drops the history, so the sweep does not pin the window"
         );
     }
 }

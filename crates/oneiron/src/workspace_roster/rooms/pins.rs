@@ -19,43 +19,11 @@ use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::workspace_roster::join_consent::person_of_actor_in_txn;
 use crate::write_envelope::WriteActor;
-use serde::{Deserialize, Serialize};
 
-/// `vault.rooms.pins.pin` and `vault.rooms.pins.unpin`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinRequest {
-    /// The room whose shared pins change.
-    pub room: EntityId,
-    /// The record the pin names.
-    pub target: EntityId,
-}
-
-/// `vault.rooms.pins.pin`'s reply: the room's record for the target. A
-/// target pinned already keeps its first record, which this returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinReply {
-    pub room: EntityId,
-    pub pin: RoomPin,
-}
-
-/// `vault.rooms.pins.unpin`'s reply. It says nothing about whether the
-/// target was pinned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomUnpinReply {
-    pub room: EntityId,
-}
-
-/// `vault.rooms.pins.policy.set`'s input, and its reply with the stored
-/// policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPinPolicySet {
-    pub room: EntityId,
-    pub policy: RoomPinPolicy,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::pins::{
+    RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply,
+};
 
 fn lacks(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
@@ -137,30 +105,43 @@ impl PinnedBody {
                 crate::store::conversation_body::encode(body)?
             }
         };
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
-            .ok_or(Error::EntityNotFound)?;
-        if raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return Err(Error::CorruptedIndex("conversation header"));
-        }
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("conversation header"))?;
         PIN_UPDATES.put(&vault.store, txn, &room, &[1])?;
-        vault
-            .batch_in()
-            .put(
-                &room,
-                ENTITY_TYPE_CONVERSATION,
-                crate::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                &bytes,
-            )
-            .apply(txn)?;
+        put_room_body_in(vault, txn, room, &bytes)?;
         PIN_UPDATES.delete(&vault.store, txn, &room)?;
         Ok(())
     }
+}
+
+/// Writes `bytes` as `room`'s body, keeping the room's header times, in the
+/// caller's write transaction. The door that calls it sets its own marker
+/// around the write, as the all-writer guard asks.
+pub(super) fn put_room_body_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.len() < ENTITY_METADATA_HEADER_LEN {
+        return Err(Error::CorruptedIndex("conversation header"));
+    }
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("conversation header"))?;
+    vault
+        .batch_in()
+        .put(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            bytes,
+        )
+        .apply(txn)?;
+    Ok(())
 }
 
 /// The pins `room`'s stored body holds, in their stored order, as `txn`
@@ -228,6 +209,25 @@ fn pin_writer_in(
         return Err(lacks(NOT_MANAGER));
     }
     Ok((person, agent))
+}
+
+/// Whether `caller` sets `room`'s pin policy, read in `txn`: only a person
+/// who runs the room ([`manager_in`]), never an agent. Answers the stored
+/// body the policy lives on.
+fn policy_setter_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<PinnedBody> {
+    if caller.actor_class() != EdgeActorClass::Human {
+        return Err(lacks(POLICY_BY_PERSON));
+    }
+    let body = PinnedBody::read_in(vault, txn, room)?;
+    if !manager_in(vault, txn, room, caller.entity_ref(), true, body.home())? {
+        return Err(lacks(NOT_ROOM_MANAGER));
+    }
+    Ok(body)
 }
 
 impl Memory<'_> {
@@ -330,25 +330,12 @@ impl Memory<'_> {
         let caller = self.write_actor();
         let policy = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
-            if caller.actor_class() != EdgeActorClass::Human {
-                return Err(MemoryError::from(lacks(POLICY_BY_PERSON)));
-            }
-            let mut body = PinnedBody::read_in(vault, txn, input.room)?;
-            if !manager_in(
-                vault,
-                txn,
-                input.room,
-                caller.entity_ref(),
-                true,
-                body.home(),
-            )? {
-                return Err(MemoryError::from(lacks(NOT_ROOM_MANAGER)));
-            }
+            let mut body = policy_setter_in(vault, txn, input.room, caller)?;
             if body.policy() != input.policy {
                 body.set_policy(input.policy);
                 body.write_in(vault, txn, input.room)?;
             }
-            Ok(body.policy())
+            Ok::<_, MemoryError>(body.policy())
         })?;
         #[cfg(feature = "sync")]
         vault.refresh_room_cell_in_live_window(input.room, None);
@@ -356,5 +343,69 @@ impl Memory<'_> {
             room: input.room,
             policy,
         })
+    }
+}
+
+/// The pin doors' admissions, read only, for `can({verb})` (FIX
+/// [UI-GATE-PREVIEW]): each meets the checks its door meets, in its order,
+/// in read transactions, and writes nothing. The door checks all of it
+/// again in its own write transaction.
+impl Memory<'_> {
+    /// `vault.rooms.pins.pin`'s admission: the bound room turn, the writer
+    /// rule ([`pin_writer_in`]), the target read through the room's lane,
+    /// then the writer's own standing.
+    pub(crate) fn rooms_pins_pin_admission(&self, input: &RoomPinRequest) -> MemoryResult<()> {
+        self.require_pin_room(input.room)?;
+        let vault = self.vault();
+        let caller = self.write_actor();
+        {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            let body = PinnedBody::read_in(vault, &txn, input.room)?;
+            pin_writer_in(vault, &txn, input.room, caller, &body)?;
+        }
+        // The preflight reader (FIX 22102): the pin's own lane, scope and
+        // admission, its grants judged at the snapshot's authority instant,
+        // so the preview persists no grant time. The pin reads to serve.
+        if self
+            .for_room_turn(input.room)?
+            .memory()
+            .peek_entity(&input.target.to_hex())?
+            .value
+            .is_none()
+        {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        Ok(())
+    }
+
+    /// `vault.rooms.pins.unpin`'s admission: the bound room turn, the
+    /// writer's own standing, then the writer rule ([`pin_writer_in`]). It
+    /// reads no target, as the door reads none.
+    pub(crate) fn rooms_pins_unpin_admission(&self, input: &RoomPinRequest) -> MemoryResult<()> {
+        self.require_pin_room(input.room)?;
+        let vault = self.vault();
+        let caller = self.write_actor();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        let body = PinnedBody::read_in(vault, &txn, input.room)?;
+        pin_writer_in(vault, &txn, input.room, caller, &body)?;
+        Ok(())
+    }
+
+    /// `vault.rooms.pins.policy.set`'s admission: the bound room turn, the
+    /// writer's own standing, then [`policy_setter_in`].
+    pub(crate) fn rooms_pins_policy_set_admission(
+        &self,
+        input: &RoomPinPolicySet,
+    ) -> MemoryResult<()> {
+        self.require_pin_room(input.room)?;
+        let vault = self.vault();
+        let caller = self.write_actor();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        policy_setter_in(vault, &txn, input.room, caller)?;
+        Ok(())
     }
 }

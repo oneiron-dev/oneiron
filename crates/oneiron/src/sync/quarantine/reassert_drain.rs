@@ -232,7 +232,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     use crate::sync::loro_support::{TombstoneIndex, doc_version_vector};
     use crate::sync::window::{
         CarrierRemoval, apply_tombstone_to_indexed_window_doc, entity_carriers,
-        export_scrubbed_window_snapshot, export_tombstone_commit_delta, load_window_from_state,
+        export_scrubbed_window_state, export_tombstone_commit_delta, load_window_from_state,
         mark_removed_carriers_first, merge_persisted_state_into_doc, persist_window_doc_in_txn,
         rebuild_window_from_updates,
     };
@@ -255,7 +255,10 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             // tombstones map between this commit and the persist below
             // (mirrors `Vault::write_crdt_tombstone`; lock order
             // materializer → LMDB txn matches every other holder, and the
-            // registry lock is NOT held here).
+            // registry lock is NOT held here). The live-window turn spans the
+            // merge and the indexed commit below (L7-45): no peer import lands
+            // between this tombstone index's build and the commit.
+            let _turn = manager.materializer().enter_live_window();
             merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
             let _guard = manager.materializer().lock();
             let vv_before = window.doc.oplog_vv();
@@ -270,6 +273,13 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             for (key, value) in &markers {
                 apply_tombstone_to_indexed_window_doc(&window.doc, &tombstones, &key.id, value)?;
             }
+            // The policies no binding reaches now go in this commit, the
+            // window pinned history-free first (fix list row 17211).
+            crate::sync::source_audiences::prune_unreached_policies(
+                vault,
+                &window.doc,
+                Some(window_key),
+            )?;
             // BRIDGE_ORIGIN: Observer B must skip this commit — LMDB
             // already holds the delete truth (`dt:` + the origin purge
             // txn); Observer A still persists/broadcasts as usual.
@@ -279,7 +289,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
             (
                 delete_update,
-                export_scrubbed_window_snapshot(vault, window_key, &window.doc)?,
+                export_scrubbed_window_state(vault, window_key, &window.doc)?,
                 doc_version_vector(&window.doc),
             )
         }
@@ -306,11 +316,12 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             for (key, value) in &markers {
                 apply_tombstone_to_indexed_window_doc(&doc, &tombstones, &key.id, value)?;
             }
+            crate::sync::source_audiences::prune_unreached_policies(vault, &doc, Some(window_key))?;
             doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
             (
                 delete_update,
-                export_scrubbed_window_snapshot(vault, window_key, &doc)?,
+                export_scrubbed_window_state(vault, window_key, &doc)?,
                 doc_version_vector(&doc),
             )
         }
@@ -319,8 +330,11 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     // ONE transaction: snapshot triple + delete-bearing queue row + marker
     // deletions. An empty delta (every apply was downgrade-blocked / no-op)
     // skips the queue push — nothing new to propagate.
+    // The export read the pin; a legal hold read here keeps the history a
+    // pinned export dropped (census L6-05).
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        let (stored, history_free) = snapshot.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, stored, &vv, history_free)?;
         if let Some(update) = &delete_update {
             crate::sync::queue::push_delete_bearing_in_txn(
                 vault,

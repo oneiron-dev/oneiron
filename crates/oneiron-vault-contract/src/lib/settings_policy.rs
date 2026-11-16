@@ -28,7 +28,9 @@
 /// `--hosted-private-origin`. An owner's `[browser] runtime` and
 /// `[desktop] runtime` stay his, inside the vault's own storage. The vault's
 /// clock (`[runtime] clock` and `clock_file`) is never the settings file's:
-/// a managed vault reads its host's clock.
+/// a managed vault reads its host's clock. Nor is the core-dump switch for
+/// off-record rooms (`off_record_dump_suppression`): a managed vault's process
+/// is the host's, and keeps suppression on.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
     "host",
@@ -69,6 +71,7 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "hosted_private_origins",
     "runtime.clock",
     "runtime.clock_file",
+    "off_record_dump_suppression",
 ];
 
 /// The leaves that name a key by the environment variable holding it.

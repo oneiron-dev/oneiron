@@ -18,8 +18,8 @@ use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::task_verb::sdk::{
     self, ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, EngineControlChangeEntry,
-    FreeTimeScheduleSetRequest, ProactivityPeriodSetRequest, RetuneThresholdsSetRequest,
-    SieveBudgetsLowerRequest, StewardshipRulePeriodSetRequest,
+    FreeTimeScheduleSetRequest, RetuneThresholdsSetRequest, SieveBudgetsLowerRequest,
+    StewardshipRulePeriodSetRequest,
 };
 
 use super::FacadeApiError;
@@ -53,6 +53,21 @@ async fn as_controller<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&SyncServer, EngineControlActor<'_>) -> oneiron::Result<T> + Send + 'static,
 ) -> MemoryResult<T> {
+    as_controller_answering(server, auth, verb, move |server, actor| {
+        act(server, actor).map_err(MemoryError::from)
+    })
+    .await
+}
+
+/// [`as_controller`] for an `act` that answers its own memory errors: a
+/// door that runs work, not a knob, under a class grant
+/// (`vault.coach.training_offers.run`).
+pub(super) async fn as_controller_answering<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, EngineControlActor<'_>) -> MemoryResult<T> + Send + 'static,
+) -> MemoryResult<T> {
     let controller = match engine_controller(server, auth, verb)? {
         Some(owner) => Controller::Owner(owner),
         None => Controller::Holder(
@@ -67,7 +82,7 @@ async fn as_controller<T: Send + 'static>(
             Controller::Owner(owner) => EngineControlActor::Owner(owner),
             Controller::Holder(holder) => EngineControlActor::Holder(*holder),
         };
-        act(&server, actor).map_err(MemoryError::from)
+        act(&server, actor)
     })
     .await
     .map_err(|_| internal(verb))?
@@ -118,22 +133,6 @@ pub(crate) async fn vault_curator_cadence_set(
         auth,
         "vault.curator.cadence.set",
         move |server, actor| sdk::set_curator_cadence_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.proactivity.period.set`.
-pub(crate) async fn vault_proactivity_period_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ProactivityPeriodSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.proactivity.period.set",
-        move |server, actor| sdk::set_proactivity_period_as(server.vault(), actor, input),
     )
     .await;
     (answer, Vec::new())

@@ -63,59 +63,8 @@ pub struct ShapeApplyRequest {
     pub conversation_learning: Option<bool>,
 }
 
-/// Where one item stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ShapeItemState {
-    /// Not reached yet; a torn apply resumes here.
-    Pending,
-    /// Landed through its door, with that door's receipt.
-    Landed { at: u64, receipt: String },
-    /// Waits for the owner's word: an owner's apply that approves its `seq`
-    /// lands it.
-    Proposed,
-    /// A new grant an actor's apply filed to the owner's widen inbox, where
-    /// accepting `proposal_ref` mints it. Until the owner answers, it waits
-    /// as [`Self::Proposed`] does, and an owner's apply may land it.
-    Filed {
-        proposal_ref: String,
-        expires_at: u64,
-    },
-    /// A new grant an actor's apply tried to file, but the widen inbox
-    /// refused, with the reason it gave. It waits as [`Self::Proposed`]
-    /// does, and an owner's apply may land it.
-    FileRefused { reason: String },
-    /// A channel retire the identity's lifecycle gate holds for the owner's
-    /// approve-once press on `approval_digest` (FIX 2577). It waits as
-    /// [`Self::Proposed`] does, and the owner's next apply asks again as
-    /// exactly this request: under `request_ref`, with the quarantine bound
-    /// and the clock it first asked with, so the gate reads the same request
-    /// and asks for no second approval.
-    Held {
-        request_ref: String,
-        approval_digest: String,
-        quarantine_until: u64,
-        requested_at: u64,
-    },
-    /// A channel provision the identity's lifecycle gate holds for the
-    /// owner's approve-once press on `approval_digest` (FIX 2300). It waits
-    /// as [`Self::Proposed`] does, and the owner's next apply asks again as
-    /// exactly this request: under `request_ref`, for the identity
-    /// `identity_ref` it first asked for, on the clock it first asked with.
-    HeldProvision {
-        request_ref: String,
-        approval_digest: String,
-        identity_ref: String,
-        requested_at: u64,
-    },
-    /// An authority operation, for its AUTHORITY_LOG ceremony.
-    Ceremony,
-    /// The vault has no door for it yet; nothing landed.
-    NoDoor,
-    /// Its door refused it, the structure changed since the plan read it,
-    /// or the owner declined it.
-    Refused { reason: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::apply::ShapeItemState;
 
 /// One plan item and where it stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -980,6 +929,35 @@ impl Vault {
         Ok(id)
     }
 
+    /// The live FACET `person` wears under the name `name`, if any: the one
+    /// name rule [`Self::create_facet`] refuses a second facet by.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub(crate) fn worn_facet_named_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: &EntityId,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        for mask in self.filtered_edge_peers(
+            txn,
+            EdgeDirection::Out,
+            person,
+            EdgeKind::HasFacet,
+            Some(ENTITY_TYPE_FACET),
+        )? {
+            if let LiveEntityRow::Live { body, .. } =
+                live_entity_row_in_txn(&self.store, txn, &mask)?
+                && facet_name(&body).as_deref() == Some(name)
+            {
+                return Ok(Some(mask));
+            }
+        }
+        Ok(None)
+    }
+
     /// Creates a facet named `name` that `person` wears, as `owner`: a mask
     /// that grants nothing (ARCH-0022), wired by its has_facet edge in the
     /// same writer. A live mask of that person already carrying the name
@@ -1021,21 +999,10 @@ impl Vault {
             ) {
                 return Err(invalid("a facet's wearer is a live person"));
             }
-            for mask in self.filtered_edge_peers(
-                txn,
-                EdgeDirection::Out,
-                &person,
-                EdgeKind::HasFacet,
-                Some(ENTITY_TYPE_FACET),
-            )? {
-                if let LiveEntityRow::Live { body, .. } =
-                    live_entity_row_in_txn(&self.store, txn, &mask)?
-                    && facet_name(&body).as_deref() == Some(name)
-                {
-                    return Err(invalid(
-                        "a live facet of that person already carries that name",
-                    ));
-                }
+            if self.worn_facet_named_in_txn(txn, &person, name)?.is_some() {
+                return Err(invalid(
+                    "a live facet of that person already carries that name",
+                ));
             }
             self.batch_in()
                 .put(

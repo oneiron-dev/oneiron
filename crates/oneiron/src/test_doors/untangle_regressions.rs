@@ -3,7 +3,8 @@
 //! crate-private item, or a port of a seed helper of the `#[cfg(test)]`
 //! fixtures, so the ruled behaviour tests of X01, X02, CONSENT-RAMP and the
 //! repeat revoke (#6874) run from an integration target while the lib test
-//! target does not compile. Compiled only under `--cfg oneiron_test_support`
+//! target does not compile. UC-12's `tests/expiry_boundaries.rs` reaches the
+//! tagging trace history's age prune through the last two. Compiled only under `--cfg oneiron_test_support`
 //! (`test_doors`); the shared fixture writes they call are in `test_fixtures`
 //! and the process-memory keystore is `oneiron_keystore::MemoryKeystore`, both
 //! compiled under the same cfg, so no `test-support` feature is needed.
@@ -244,10 +245,9 @@ pub enum DreamerLandingRow {
     GeneratedPermit,
 }
 
-/// The owner narrowed the Dreamer's landing
-/// (`test_util::seeded_without_dreamer_landing_row`): the seeded default
-/// without `row`, its read grant and its other landing row kept, and still
-/// the untouched seed.
+/// The owner narrowed the Dreamer's landing: the seeded default without
+/// `row`, its read grant and its other landing row kept, and still the
+/// untouched seed.
 ///
 /// # Errors
 /// The store's.
@@ -522,17 +522,6 @@ pub fn micro_attempt(vault: &Vault) -> Result<Option<AttemptId>> {
         .map(|row| row.id))
 }
 
-/// The strength archive (`strength::archive_quiet_claims`), as the scoring
-/// attempt `attempt` runs it at `now_ms`. Returns how many claims it
-/// archived.
-///
-/// # Errors
-/// The archive's.
-#[doc(hidden)]
-pub fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
-    crate::dreamer_consolidation::strength::archive_quiet_claims(vault, attempt, now_ms)
-}
-
 /// One gate decision the ledger holds for a claim, in plain values.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -661,4 +650,25 @@ pub fn ramp_demotion_receipt_ids(vault: &Vault) -> Result<Vec<String>> {
         .filter(crate::consent_graduation::is_ramp_demotion_receipt)
         .map(|record| record.receipt_id)
         .collect())
+}
+
+/// Records one first-try tagging trace of `turn` at `recorded_at`, as a
+/// settling attempt does (UC-12 PR 4). A vault with no tagging armed records
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn record_tagging_trace(vault: &Vault, turn: EntityId, recorded_at: u64) -> Result<()> {
+    vault.record_tagging_trace_for_test(turn, recorded_at)
+}
+
+/// One round of the tagging trace history's age prune at `now`, as a worker
+/// pass runs before it claims; how many traces went (UC-12 PR 4).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn prune_expired_tagging_traces(vault: &Vault, now: u64) -> Result<usize> {
+    vault.prune_expired_tagging_traces_for_test(now)
 }

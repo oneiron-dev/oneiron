@@ -48,6 +48,10 @@ fn logged_key(key: &str) -> String {
     EntityId::from_hex(key).map_or_else(|_| "not_an_entity_id".to_owned(), |id| id.to_hex())
 }
 
+/// The tombstones map's pass in the shape Observer B registers. Observer B
+/// runs [`materialize_tombstones_with_deletes`] in its place, as it runs the
+/// entities pass with its changes, so that the NOTEs the batch deleted leave
+/// the other live windows once its materializer lock is down (FIX 25183).
 pub(super) fn materialize_tombstones_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -55,6 +59,32 @@ pub(super) fn materialize_tombstones_from_delta(
     window_key: &str,
     _lease_vault_id: u64,
 ) -> Option<Vec<EntityId>> {
+    materialize_tombstones_with_deletes(doc, delta, vault, window_key)
+        .map(|materialized| materialized.affected)
+}
+
+/// What a tombstone batch committed: the ids whose rows it changed, and the
+/// ids its tombstones deleted.
+pub(super) struct MaterializedTombstones {
+    /// Every id whose rows the batch changed, for the live-query diff.
+    pub(super) affected: Vec<EntityId>,
+    /// The ids whose tombstones applied. The NOTEs among them still owe the
+    /// scrub of their attachments out of the other live windows
+    /// ([`crate::sync::note::deleted_elsewhere`]), which lists those windows
+    /// through the window registry lock and so runs only once the caller
+    /// has dropped the materializer lock (FIX 25183).
+    pub(super) applied: Vec<EntityId>,
+}
+
+/// Materializes a tombstones delta under the caller's materializer lock,
+/// leaving the scrub of the deleted NOTEs' attachments out of the other live
+/// windows to the caller ([`MaterializedTombstones::applied`]).
+pub(super) fn materialize_tombstones_with_deletes(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+) -> Option<MaterializedTombstones> {
     let entities_map = doc.get_map("entities");
     let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     // Staged BEFORE the batch transaction opens: the door gates below are
@@ -90,6 +120,7 @@ pub(super) fn materialize_tombstones_from_delta(
                             );
                         }
                     }
+                    TombstoneStep::Skip => {}
                     TombstoneStep::Replay { id, hard } => {
                         let residence: Result<crate::sync::types::TombstoneResidence> = (|| {
                             let txn = vault.store.env.read_txn()?;
@@ -405,7 +436,7 @@ fn apply_tombstone_batch(
     vault: &Vault,
     window_key: &str,
     staged: &[TombstoneWork],
-) -> Option<Vec<EntityId>> {
+) -> Option<MaterializedTombstones> {
     let mut state = TombstoneBatch::default();
 
     #[cfg(test)]
@@ -475,10 +506,17 @@ impl TombstoneEffects {
         })
     }
 
-    fn publish_under_lock(self, vault: &Vault, window_key: &str) -> Vec<EntityId> {
-        self.publish(vault, window_key, |applied| {
-            crate::sync::note::deleted_elsewhere_under_lock(vault, window_key, applied);
-        })
+    /// Publishes under the materializer lock, all but the NOTE scrub of the
+    /// other live windows: that scrub lists them through the window registry
+    /// lock, which a replacement holds while it takes the materializer lock,
+    /// so the caller runs it once the lock is down (FIX 25183).
+    fn publish_under_lock(self, vault: &Vault, window_key: &str) -> MaterializedTombstones {
+        let mut deleted = Vec::new();
+        let affected = self.publish(vault, window_key, |applied| deleted = applied);
+        MaterializedTombstones {
+            affected,
+            applied: deleted,
+        }
     }
 
     fn publish(
@@ -582,6 +620,7 @@ pub(in crate::sync) fn stage_tombstones_in_txn(
                 )?;
                 continue;
             }
+            TombstoneStep::Skip => continue,
             TombstoneStep::Replay { id, hard } => (id, hard),
         };
         let mut residence =

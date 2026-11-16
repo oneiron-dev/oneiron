@@ -4,7 +4,10 @@ use std::cell::Cell;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor};
+use crate::write_envelope::WriteActor;
+use oneiron_contracts::RecordedSeconds;
 
 use super::tombstone::{DeleteReason, TombstoneReason};
 
@@ -108,11 +111,20 @@ pub(crate) struct GatedDeletion<'a> {
     /// The owner act the delete carries out, when its door bound one (FIX
     /// 11883): an erase's custody revokes reach his other machines under it.
     owner_act: Option<&'a crate::secret_custody::EraseOwnerAct<'a>>,
+    /// The code run that asks this delete, when its door bound one
+    /// (ARCH-0040 #revert-run): the write that commits the delete joins it
+    /// to that run's change journal.
+    run: Option<&'a str>,
 }
 
 impl<'a> GatedDeletion<'a> {
     pub(super) fn actor_principal(&self) -> EntityId {
         self.context.actor
+    }
+
+    /// The actor this delete runs as, as a write names it: the revoker of a share it retracts.
+    pub(super) fn write_actor(&self) -> crate::write_envelope::WriteActor {
+        crate::write_envelope::WriteActor::new(self.context.actor, self.context.actor_class)
     }
 
     /// The owner act the delete carries out, when its door bound one.
@@ -158,6 +170,7 @@ impl<'a> GatedDeletion<'a> {
             claim: None,
             guest_revoke: None,
             owner_act: None,
+            run: None,
         }
     }
 
@@ -176,6 +189,7 @@ impl<'a> GatedDeletion<'a> {
             claim: None,
             guest_revoke: None,
             owner_act: None,
+            run: None,
         }
     }
 
@@ -204,6 +218,12 @@ impl<'a> GatedDeletion<'a> {
         self
     }
 
+    /// Binds the code run that asks the delete (ARCH-0040 #revert-run).
+    pub(crate) fn with_run(mut self, run: Option<&'a str>) -> Self {
+        self.run = run;
+        self
+    }
+
     pub(super) fn note_soft_scrub_committed(&self) {
         self.soft_scrub_committed.set(true);
     }
@@ -220,6 +240,24 @@ pub(super) fn claim_in_txn(
 ) -> Result<()> {
     match gate.and_then(|gate| gate.claim) {
         Some(claim) => (claim.apply)(txn, &tombstone.request_id, receipt),
+        None => Ok(()),
+    }
+}
+
+/// Joins the delete of `id` to the change journal of the code run `gate`
+/// binds, in `txn`, the write that commits it: a soft delete's scrub, or an
+/// erase's purge (`erase`). With no run bound it records nothing.
+pub(super) fn journal_deletion_in_txn(
+    vault: &crate::Vault,
+    gate: Option<&GatedDeletion<'_>>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    erase: bool,
+) -> Result<()> {
+    match gate.and_then(|gate| gate.run) {
+        Some(run) => {
+            crate::memory::run_review::record_run_deletion_in_txn(&vault.store, txn, run, id, erase)
+        }
         None => Ok(()),
     }
 }
@@ -408,7 +446,7 @@ impl DeletionGateContext {
         target: &EntityId,
         reason: DeleteReason,
         created_at: u64,
-    ) -> GateDecisionRecord {
+    ) -> Result<GateDecisionRecord> {
         let mut diff = Sha256::new();
         diff.update(b"oneiron.gate.deletion.v0");
         diff.update(self.actor.as_bytes());
@@ -417,41 +455,47 @@ impl DeletionGateContext {
             diff.update(room.as_bytes());
         }
         diff.update([TombstoneReason::from(reason).wire_byte()]);
-        GateDecisionRecord {
-            version: 0,
-            // The ledger key is the deletion request id, so recovery and
-            // REDACTION_AUDIT correlation never need a second identifier.
-            decision_id: GateDecisionId::from_bytes(request_id),
-            created_at,
-            outcome: "allow".to_owned(),
-            reason_codes: match self.admitted {
-                Some((admitted, AdmittedDeleteDoor::Archive)) => vec![format!(
-                    "gate.allow.archive_delete_{}",
-                    admitted.role().as_str()
-                )],
-                Some((admitted, AdmittedDeleteDoor::Record)) => {
-                    vec![format!("gate.allow.delete_{}", admitted.role().as_str())]
-                }
-                None => self.room_role.map_or_else(
-                    || vec!["gate.allow.owner_delete".to_owned()],
-                    |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
-                ),
-            },
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: self.actor_class.gate_actor_class().to_owned(),
-            actor_ref: Some(self.actor.to_hex()),
-            content_kind: "deletion".to_owned(),
-            policy_manifest_version: self.policy_manifest_version.clone(),
-            claim_id: None,
-            grant_ref: self
-                .admitted
-                .and_then(|(admitted, _)| admitted.grant())
-                .map(|grant| grant.to_hex()),
-            diff_handle: diff.finalize().to_vec(),
-            read_frontier_hash: self.read_frontier_hash,
-            context: Default::default(),
-            redacted_at: None,
-        }
+        // The owner's own delete is the owner's yes; a delete a Grant or a room
+        // role admitted is the rule's `allow` (UC-03 PR 5b, D2).
+        let (outcome, reason_code) = match (self.admitted, self.room_role) {
+            (Some((admitted, AdmittedDeleteDoor::Archive)), _) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.archive_delete_{}", admitted.role().as_str()),
+            ),
+            (Some((admitted, AdmittedDeleteDoor::Record)), _) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.delete_{}", admitted.role().as_str()),
+            ),
+            (None, Some(role)) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.room_{role:?}").to_lowercase(),
+            ),
+            (None, None) => (
+                GateReceiptOutcome::Approved,
+                "gate.allow.owner_delete".to_owned(),
+            ),
+        };
+        let mut receipt = GateReceipt::new(
+            outcome,
+            "deletion",
+            reason_code,
+            ReceiptActor::Row(WriteActor::new(self.actor, self.actor_class)),
+            diff.finalize().to_vec(),
+            PolicyBasis::versioned(
+                self.read_frontier_hash,
+                self.policy_manifest_version.clone(),
+            ),
+        );
+        receipt.grant_ref = self
+            .admitted
+            .and_then(|(admitted, _)| admitted.grant())
+            .map(|grant| grant.to_hex());
+        // The ledger key is the deletion request id, so recovery and
+        // REDACTION_AUDIT correlation never need a second identifier.
+        receipt.id = Some(GateDecisionId::from_bytes(request_id));
+        // The plan builds the row before any write transaction opens: the
+        // request's own time.
+        receipt.decided_at = Some(RecordedSeconds::from_secs(created_at));
+        receipt.mint_bound()
     }
 }

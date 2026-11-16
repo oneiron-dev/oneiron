@@ -48,28 +48,10 @@ pub use standing::TurnActionAuthority;
 
 pub use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
 
-/// Names the assistant TURN an action acts on.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TurnActionRequest {
-    /// The assistant TURN: a short ref or a 32-hex id.
-    pub turn_id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::conversation::turn_actions::{TurnActionReceipt, TurnActionRequest};
 
 pub use crate::attempt_queue::turn_action_kind::TurnAction;
-
-/// A queued action: the attempt that will run it, never a claim that text
-/// exists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TurnActionReceipt {
-    pub action: TurnAction,
-    /// 32-hex id of the assistant TURN acted on.
-    pub turn_id: String,
-    /// 32-hex id of its generated MESSAGE.
-    pub message_id: String,
-    /// 32-hex id of the queued attempt.
-    pub attempt_id: String,
-}
 
 /// The payload of a [`TURN_ACTION_ATTEMPT_KIND`] attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,7 +79,7 @@ pub struct TurnActionAttempt {
 /// One earlier line of the conversation, as a chat request carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnActionLine {
-    /// `User` or `Companion`.
+    /// `User`, `Companion` or `Counterparty`.
     pub author: WitnessAuthor,
     pub text: String,
     /// The selected TURN and MESSAGE behind this line; unknown if either
@@ -121,6 +103,12 @@ pub struct TurnActionContext {
     pub user_sources: Option<Vec<EntityId>>,
     /// What the reply says now: exactly its saved text.
     pub saved: String,
+    /// The sitting the reply joined, by its actor and machine (FIX 1034),
+    /// read by the engine from the reply's TURN, never named by the caller
+    /// (as FIX G230-RETRY-OMITTED-SESSION-BAND places a room's Retry). The
+    /// action's answer binds it, so its end signals activity on that sitting
+    /// as the first reply's did. `None` when the reply joined none.
+    pub sitting: Option<crate::session_lifecycle::SessionKey>,
 }
 
 impl TurnActionAttempt {
@@ -630,6 +618,7 @@ impl Memory<'_> {
             .ok_or_else(|| invalid_state("no user turn comes before this turn"))?;
         // The turn's one generated MESSAGE: a companion reply a stream wrote.
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let sitting = vault.turn_sitting_key_in_txn(&txn, &assistant_turn)?;
         let mut generated = Vec::new();
         for message in turn
             .messages
@@ -685,6 +674,7 @@ impl Memory<'_> {
                 user_text,
                 user_sources,
                 saved: reply.text.clone(),
+                sitting,
             },
         })
     }

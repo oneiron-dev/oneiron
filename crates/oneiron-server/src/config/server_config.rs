@@ -198,6 +198,12 @@ pub struct SyncServerConfig {
     /// hub or name) adds to it. Empty: every pack organ build is third party; a
     /// seal organ program the host names stays first party.
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
+    /// `--release-payment-credentials-unfenced`, argv only and plain serve
+    /// only: the self-hoster lifts the withholding of payment credentials on
+    /// a host whose runner fence is unproven (L8-60). Off: a credential the
+    /// owner marks as a payment credential is withheld at both value doors
+    /// wherever the organ host proves no filesystem fence.
+    pub release_payment_credentials_unfenced: bool,
     /// The private origins a managed node's egress guard admits, from
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
     /// everywhere else, and no config file, settings file or environment sets it.
@@ -267,6 +273,7 @@ impl Default for SyncServerConfig {
             merge_queue: None,
             agent_failure_healer: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
+            release_payment_credentials_unfenced: false,
             hosted_private_origins: std::collections::BTreeSet::new(),
         }
     }
@@ -458,6 +465,10 @@ pub struct ServeConfig {
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
+    /// The `[phonetic_embedder]` section: the model behind the learned
+    /// phonetic rung, absent until the config file names it. Absent means
+    /// no model: names keep their codes alone.
+    pub phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// Operator-only enterprise/advanced checkpoint selection capability.
@@ -480,6 +491,12 @@ pub struct ServeConfig {
     /// [`oneiron::PAGE_SEAL_WARNING`]). The tier is chosen when the vault is
     /// created; a sealed vault opens sealed whatever this says.
     pub maximum_tier: bool,
+    /// `off_record_dump_suppression`: whether a process that holds an
+    /// off-record room turns its core dumps off (ARCH-0052 threat-model
+    /// note; census row L6-18). On by default; `false`, or
+    /// `ONEIRON_OFF_RECORD_DUMP_SUPPRESSION=false`, lets the owner attach a
+    /// debugger or keep a core file. `oneiron doctor` reports it.
+    pub off_record_dump_suppression: bool,
     /// `device_class = "phone"` or `"computer"`: what kind of machine this
     /// install is, as this host declares it (FIX 3349). Its enrolment carries
     /// it for the owner to approve; it is never read off the operating
@@ -511,6 +528,9 @@ pub struct ServeConfig {
     /// `--trusted-organ-build`, argv only, plain or managed: the organ builds
     /// this server runs as first party, as on [`SyncServerConfig`].
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
+    /// `--release-payment-credentials-unfenced`, argv only, plain serve
+    /// only, as on [`SyncServerConfig`].
+    pub release_payment_credentials_unfenced: bool,
 }
 
 impl Default for ServeConfig {
@@ -587,6 +607,7 @@ impl Default for ServeConfig {
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
+            phonetic_embedder: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -596,6 +617,7 @@ impl Default for ServeConfig {
             hosted_kms_key_ref: None,
             hooks: true,
             maximum_tier: false,
+            off_record_dump_suppression: true,
             device_class: vault.machine_device_class,
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
@@ -604,6 +626,7 @@ impl Default for ServeConfig {
                 .to_owned(),
             shared_model_root: None,
             trusted_organ_builds: server.trusted_organ_builds,
+            release_payment_credentials_unfenced: server.release_payment_credentials_unfenced,
         }
     }
 }
@@ -663,6 +686,7 @@ impl ServeConfig {
             merge_queue: self.merge_queue.clone(),
             agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
+            release_payment_credentials_unfenced: self.release_payment_credentials_unfenced,
             // Managed boot alone sets it (FIX 7657).
             hosted_private_origins: std::collections::BTreeSet::new(),
         };
@@ -703,6 +727,10 @@ impl ServeConfig {
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
         config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
+        // `[import] storage_cap_bytes`: an archive an import unpacks stops at
+        // the room it leaves, in every door that unpacks one (ARCH-0027
+        // #archive-precheck).
+        config.storage_cap_bytes = self.import.storage_cap_bytes;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);

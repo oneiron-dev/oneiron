@@ -31,7 +31,7 @@ use super::super::budget::{
 };
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
-use super::super::channels::{execute_phonetic, fusion_fetch_limit};
+use super::super::channels::fusion_fetch_limit;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::criticality::critical_candidate_ids;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
@@ -39,9 +39,7 @@ use super::super::trace::{
     capture_replay_identity_in_txn, capture_replay_inputs, record_ppr_cache_outcome,
     retrieval_trace_fused_scores,
 };
-use super::super::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode, TurnFold,
-};
+use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, RelMode, TurnFold};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
@@ -69,7 +67,7 @@ struct SnapshotInputs<'a> {
 struct StagePlan(usize);
 
 impl StagePlan {
-    fn new(planned: [bool; 6]) -> Self {
+    fn new(planned: [bool; 7]) -> Self {
         Self(planned.into_iter().filter(|planned| *planned).count())
     }
     /// The stages left, this one included; counts this one down.
@@ -255,6 +253,7 @@ impl PipelineBuilder<'_> {
                 hyde_expansion.is_some(),
                 self.text_search.is_some(),
                 self.phonetic_search.is_some(),
+                self.phonetic_vector_search.is_some(),
                 self.temporal_search.is_some(),
                 self.ppr_search.is_some(),
             ]);
@@ -365,7 +364,7 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && let Some(phonetic_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        execute_phonetic(&self.read, rtxn, codes)
+                        self.scoped_phonetic_results(rtxn, codes, filter_config, &claim_gate)
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
@@ -377,6 +376,27 @@ impl PipelineBuilder<'_> {
                     filter_config,
                     &mut metadata_cache,
                 )?);
+            }
+
+            // The learned rung: its own ranked list of the phonetic channel, scored over its
+            // hits as a dense list is, never mixed raw with the code rung's.
+            if let Some(query) = &self.phonetic_vector_search
+                && let Some(learned_results) =
+                    self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
+                        self.phonetic_vector_results(rtxn, query, filter_config, &claim_gate)
+                    })?
+            {
+                if !diagnostics.succeeded.contains(&RetrievalSignal::Phonetic) {
+                    diagnostics.succeeded.push(RetrievalSignal::Phonetic);
+                }
+                acc.admit_channel(
+                    RetrievalSignal::Phonetic,
+                    learned_results,
+                    &self.read,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
             }
 
             if let Some(config) = &self.temporal_search
@@ -420,7 +440,7 @@ impl PipelineBuilder<'_> {
                                 rtxn,
                                 seeds,
                                 *depth,
-                                PPR_DAMPING,
+                                self.params.ppr_damping,
                                 self.ppr_vad_alpha,
                                 crate::ppr::SeedWeighting::Specificity,
                                 &visibility,
@@ -432,7 +452,7 @@ impl PipelineBuilder<'_> {
                             rtxn,
                             seeds,
                             *depth,
-                            PPR_DAMPING,
+                            self.params.ppr_damping,
                             self.ppr_vad_alpha,
                             crate::ppr::SeedWeighting::Specificity,
                             self.deadline,
@@ -566,6 +586,7 @@ impl PipelineBuilder<'_> {
                 claim_aging_profiles: self.claim_aging_profiles,
                 access_factor_application: AccessFactorApplication::Apply,
                 affect: self.affect_policy,
+                cosine_ghost_vector_threshold: self.params.cosine_ghost_vector_threshold,
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
@@ -1208,6 +1229,7 @@ impl PipelineBuilder<'_> {
             self.vector_search.is_some(),
             self.vault.evidence_space(),
             &floors,
+            &self.params,
             &mut kind_of,
         )? {
             capabilities.clear();
@@ -1228,6 +1250,7 @@ impl PipelineBuilder<'_> {
                 self.vector_search.is_some(),
                 self.vault.evidence_space(),
                 &floors,
+                &self.params,
                 &mut kind_of,
             )?
         {

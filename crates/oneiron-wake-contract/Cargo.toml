@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The Dreamer wake contract below the oneiron engine: wake triggers, requests and pass reports, deadlines and cancellation, the sieve recipe records, and the attempt progress and park vocabulary"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false
@@ -17,6 +16,7 @@ loro = { workspace = true }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-setting-contract = { version = "0.1.0", path = "../oneiron-setting-contract" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
 schemars = "=0.8.22"
 serde = { workspace = true }

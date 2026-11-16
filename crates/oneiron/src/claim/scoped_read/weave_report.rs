@@ -35,34 +35,8 @@ pub enum WeaveReader<'a> {
     Admin(&'a crate::authority::AuthenticatedWeaveAdmin),
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum WeaveSectionKind {
-    Changes,
-    Projects,
-    OpenAsks,
-    Links,
-    Conflicts,
-    Exceptions,
-    Admissions,
-    Budgets,
-    SieveScore,
-    Digest,
-}
-
-/// A resident-authored recipe uses exact predicate names; no prose or
-/// per-deployment ontology is compiled into the engine. Projects and budgets
-/// read the typed project records and need no predicate list.
-#[derive(Debug, Clone)]
-pub struct WeaveSectionSpec {
-    pub kind: WeaveSectionKind,
-    pub predicates: Vec<String>,
-    /// Direct graph kinds to project in a Links section. Empty for claim-only
-    /// sections; the recipe, not the engine, decides which links belong here.
-    pub edge_kinds: Vec<EdgeKind>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::claim::scoped_read::weave_report::{WeaveSectionKind, WeaveSectionSpec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WeaveItem {
@@ -182,6 +156,28 @@ impl WeaveReport {
         }
         rows
     }
+
+    /// The rows whose content or metadata this report hands its reader, which count toward
+    /// the reader's read exposure (L8-65): each claim, each project with its goal ref, a
+    /// dreaming's resident, and what an agent-health card is built from. A row an item names
+    /// only by id does not count: a project's goal, a budget's project and budget ref, a link's
+    /// endpoints, the rows a sieve audit stands on, and a loop decision's evidence refs.
+    #[must_use]
+    pub(crate) fn served_rows(&self) -> Vec<EntityId> {
+        let mut rows = Vec::new();
+        for item in self.sections.iter().flat_map(|section| &section.items) {
+            match item {
+                WeaveItem::Claim { id, .. } | WeaveItem::Project { id, .. } => rows.push(*id),
+                WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
+                WeaveItem::AgentHealth { card, .. } => rows.extend(card_rows(card)),
+                WeaveItem::Budget { .. }
+                | WeaveItem::Link { .. }
+                | WeaveItem::SieveAudit { .. }
+                | WeaveItem::LoopDecision { .. } => {}
+            }
+        }
+        rows
+    }
 }
 
 /// The rows an agent-health card is built from, as the card keeps them:
@@ -228,6 +224,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
         self.project_card_moves_in(&txn, &policy, &filter, &mut report.value);
+        self.charge_served(report.value.served_rows());
         Ok(report)
     }
 
@@ -478,23 +475,6 @@ impl WeaveReader<'_> {
         }
     }
 }
-impl WeaveSectionKind {
-    pub(super) fn policy_name(self) -> &'static str {
-        match self {
-            Self::Changes => "changes",
-            Self::Projects => "projects",
-            Self::OpenAsks => "open_asks",
-            Self::Links => "links",
-            Self::Conflicts => "conflicts",
-            Self::Exceptions => "exceptions",
-            Self::Admissions => "admissions",
-            Self::Budgets => "budgets",
-            Self::SieveScore => "sieve_score",
-            Self::Digest => "digest",
-        }
-    }
-}
-
 pub(super) fn validate_weave_recipe(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

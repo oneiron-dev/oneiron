@@ -210,13 +210,19 @@ fn admit_federated_entity_blob_graded(
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
         refuse_peer_agent_definition_widening(&vault.store, txn, &here, blob)?;
+        refuse_peer_task_authority_fact(blob)?;
         if matches!(grading, ImportGrading::Imported { .. })
             && matches!(
                 header.entity_type,
                 ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
             )
         {
-            return restamp_federated_transcript(blob).map(|blob| (here, blob));
+            return restamp_federated_transcript(
+                blob,
+                header.entity_type,
+                &vault.config.assistant_display_names,
+            )
+            .map(|blob| (here, blob));
         }
         return Ok((here, blob.to_vec()));
     }
@@ -252,6 +258,35 @@ fn admit_federated_entity_blob_graded(
     Ok((id, admitted))
 }
 
+/// Refuses a peer's TASK authority fact in one entity blob
+/// ([`crate::task_authority::is_task_authority_fact_body`]). Who owns, took,
+/// cancelled or acknowledged a task is read from these facts, and the task
+/// fold believes every fact it holds: a fact carries no proof of who made it
+/// until it carries its carrier's signature (pass 28 R5). So a federation
+/// peer sends none (an export to another vault withholds every fact), or its
+/// Owner or Cancelled fact would decide a task here. A peer's ask record
+/// shares role 6 and carries its own proof, so it is not refused here. Typed
+/// as the peer's bytes, so the frame quarantines; a staged import's
+/// confirmation runs it again (FIX TASK-FACT-FROM-FEDERATION-PEER).
+#[cfg(feature = "sync")]
+pub(super) fn refuse_peer_task_authority_fact(blob: &[u8]) -> Result<()> {
+    let header =
+        EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
+        return Ok(());
+    }
+    let body = blob
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if crate::task_authority::is_task_authority_fact_body(body) {
+        return Err(RecordError::InvalidTaskBody(
+            "a federation peer cannot send a task authority fact",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// The source a foreign TURN or CONVERSATION is stamped with (OF-149).
 pub(crate) const FEDERATION_IMPORT_SOURCE: &str = "federation";
 
@@ -261,8 +296,22 @@ pub(crate) const FEDERATION_IMPORT_SOURCE: &str = "federation";
 /// already named one. The stamp is a birth fact, so a peer row landing
 /// on an unstamped local one is refused by the put door, never relabelled.
 /// An empty body (a deleted shell) carries no words and passes unchanged.
+///
+/// A guest's conversational TURN speaks as a counterparty (FIX 15412): the
+/// peer's person and assistant are neither this vault's own person nor its
+/// own companion. Each speaker alias this vault reads as its own user or
+/// assistant (with its `assistant_display_names`) becomes `counterparty`,
+/// the original kept as `import_speaker`, and the TURN's `actor` byline is
+/// kept inert as `import_actor` (`memory::speak_as_counterparty`); a stamp
+/// the peer named does not skip this. A system, tool or injected TURN and a
+/// TURN-shaped row with no speaker keep their bytes. A body this already
+/// adapted comes back as it is.
 #[cfg(feature = "sync")]
-fn restamp_federated_transcript(blob: &[u8]) -> Result<Vec<u8>> {
+fn restamp_federated_transcript(
+    blob: &[u8],
+    entity_type: u8,
+    assistant_display_names: &[String],
+) -> Result<Vec<u8>> {
     let body = &blob[ENTITY_METADATA_HEADER_LEN..];
     if body.is_empty() {
         return Ok(blob.to_vec());
@@ -279,17 +328,27 @@ fn restamp_federated_transcript(blob: &[u8]) -> Result<Vec<u8>> {
         return Err(refused());
     };
     let key = crate::memory::IMPORTED_SOURCE_KEY;
-    match entries
+    let mut changed = match entries
         .iter()
         .filter(|(name, _)| name.as_str() == Some(key))
         .count()
     {
-        0 => entries.push((
-            rmpv::Value::from(key),
-            rmpv::Value::from(FEDERATION_IMPORT_SOURCE),
-        )),
-        1 => return Ok(blob.to_vec()),
+        0 => {
+            entries.push((
+                rmpv::Value::from(key),
+                rmpv::Value::from(FEDERATION_IMPORT_SOURCE),
+            ));
+            true
+        }
+        1 => false,
         _ => return Err(refused()),
+    };
+    if entity_type == ENTITY_TYPE_TURN {
+        changed |= crate::memory::speak_as_counterparty(&mut entries, assistant_display_names)
+            == crate::memory::ForeignTurn::Relabelled;
+    }
+    if !changed {
+        return Ok(blob.to_vec());
     }
     let mut encoded = Vec::with_capacity(blob.len() + 32);
     encoded.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);

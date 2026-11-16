@@ -11,11 +11,12 @@
 //! An empty pick on the live socket renegotiates again, and the next socket
 //! asks for no world window.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::EntityId;
@@ -43,7 +44,7 @@ const STEP_WAIT: Duration = Duration::from_secs(20);
 
 /// What the fake home saw, in the order it saw it.
 #[derive(Debug)]
-enum HomeEvent {
+pub(super) enum HomeEvent {
     /// A sync socket opened: its number, counted from 1.
     SyncOpened(usize),
     /// A sync socket asked about a world window.
@@ -71,15 +72,33 @@ struct RpcRequest {
     id: u64,
     method: String,
     window: String,
+    params: serde_json::Value,
 }
 
-struct FakeHome {
+/// What the fake home serves and records for the predicted residence tests.
+#[derive(Debug, Default)]
+pub(super) struct PredictedHome {
+    /// The selectors of the `residence.predict` asks, in order.
+    pub(super) asks: Mutex<Vec<String>>,
+    /// The set bodies `residence.predicted_set` serves, by 64-hex digest.
+    pub(super) sets: Mutex<HashMap<String, Vec<u8>>>,
+    /// The windows of the `residence.promote` asks, in order.
+    pub(super) promotes: Mutex<Vec<String>>,
+    /// The windows of the `residence.window.vv` asks, in order.
+    pub(super) vvs: Mutex<Vec<String>>,
+    /// Every predicted residence RPC method seen, in order.
+    pub(super) methods: Mutex<Vec<String>>,
+}
+
+pub(super) struct FakeHome {
     /// The root image every sync socket gets for its root vector.
     root: Vec<u8>,
     events: mpsc::UnboundedSender<HomeEvent>,
     sync_sockets: AtomicUsize,
     /// Released by the test; taken by the first thin index read.
     held_index: Mutex<Option<oneshot::Receiver<()>>>,
+    /// The predicted residence RPCs' state, when a predicted test serves them.
+    predicted: Option<Arc<PredictedHome>>,
 }
 
 impl FakeHome {
@@ -107,6 +126,43 @@ impl FakeHome {
             events,
             sync_sockets: AtomicUsize::new(0),
             held_index: Mutex::new(Some(held)),
+            predicted: None,
+        });
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(Arc::clone(&home).serve(stream));
+            }
+        });
+        (url, seen, release)
+    }
+
+    /// Listens like [`Self::start`], serving the predicted residence RPCs from `predicted`:
+    /// `residence.predict` answers unchanged, `residence.predicted_set` serves a planted body,
+    /// `residence.promote` records the ask and refuses it, and `residence.window.vv` answers an
+    /// empty vector.
+    pub(super) async fn start_predicted(
+        root: Vec<u8>,
+        predicted: Arc<PredictedHome>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener");
+        let url = format!(
+            "ws://{}/ws",
+            listener.local_addr().expect("listener address")
+        );
+        let (events, seen) = mpsc::unbounded_channel();
+        let (release, held) = oneshot::channel();
+        let home = Arc::new(Self {
+            root,
+            events,
+            sync_sockets: AtomicUsize::new(0),
+            held_index: Mutex::new(Some(held)),
+            predicted: Some(predicted),
         });
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -178,7 +234,10 @@ impl FakeHome {
                         sub_tag,
                     });
                 }
-                if sub_tag == window_sub_tags::PROMOTION_REQUEST {
+                if matches!(
+                    sub_tag,
+                    window_sub_tags::PROMOTION_REQUEST | window_sub_tags::FOLLOW_REQUEST
+                ) {
                     vec![
                         transport::encode_window_sync(
                             window,
@@ -202,6 +261,16 @@ impl FakeHome {
         };
         if request.id == BIND_ID {
             return vec![bind_reply()];
+        }
+        if let Some(predicted) = &self.predicted
+            && request.method != "residence.index"
+        {
+            predicted
+                .methods
+                .lock()
+                .expect("the recorded methods")
+                .push(request.method.clone());
+            return answer_predicted(predicted, request).await;
         }
         if request.method != "residence.index" {
             return vec![rpc_envelope(
@@ -241,7 +310,96 @@ fn rpc_request(frame: &[u8]) -> Option<RpcRequest> {
             .as_str()
             .unwrap_or_default()
             .to_owned(),
+        params: envelope["payload"]["params"].clone(),
     })
+}
+
+/// Answers one predicted residence RPC: `residence.predict` records the ask and answers
+/// unchanged, `residence.predicted_set` serves the planted body from the asked offset,
+/// `residence.promote` records the window and refuses it (the tests assert on the recorded
+/// request), and `residence.window.vv` answers an empty vector. Anything else is refused.
+async fn answer_predicted(predicted: &PredictedHome, request: RpcRequest) -> Vec<Vec<u8>> {
+    let RpcRequest {
+        id,
+        method,
+        window,
+        params,
+    } = request;
+    match method.as_str() {
+        "residence.predict" => {
+            predicted
+                .asks
+                .lock()
+                .expect("the recorded asks")
+                .push(params["selector"].as_str().unwrap_or_default().to_owned());
+            let page = serde_json::json!({ "state": "unchanged" });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(
+                    rmp_serde::to_vec_named(&page).expect("encode the prediction answer"),
+                ),
+            )]
+        }
+        "residence.predicted_set" => {
+            let digest = params["digest"].as_str().unwrap_or_default();
+            let offset = params["offset"].as_u64().unwrap_or(u64::MAX);
+            let sets = predicted.sets.lock().expect("the served sets");
+            let (Some(body), Ok(offset)) = (sets.get(digest), usize::try_from(offset)) else {
+                return vec![refusal(id)];
+            };
+            if offset > body.len() {
+                return vec![refusal(id)];
+            }
+            let total = u64::try_from(body.len()).expect("a served set fits its total");
+            let page = serde_json::json!({
+                "digest": digest,
+                "offset": offset,
+                "total": total,
+                "part": base64::engine::general_purpose::STANDARD.encode(&body[offset..]),
+            });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the set part")),
+            )]
+        }
+        "residence.promote" => {
+            predicted
+                .promotes
+                .lock()
+                .expect("the recorded promotes")
+                .push(window);
+            vec![refusal(id)]
+        }
+        "residence.window.vv" => {
+            predicted
+                .vvs
+                .lock()
+                .expect("the recorded vv asks")
+                .push(window.clone());
+            let page = serde_json::json!({
+                "window": window,
+                "vv": base64::engine::general_purpose::STANDARD
+                    .encode(loro::VersionVector::new().encode()),
+            });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the vv answer")),
+            )]
+        }
+        _ => vec![refusal(id)],
+    }
+}
+
+/// The fake home's refusal of one residence RPC.
+fn refusal(id: u64) -> Vec<u8> {
+    rpc_envelope(
+        "rpc.err",
+        id,
+        Value::Map(vec![(Value::from("code"), Value::from("REFUSED"))]),
+    )
 }
 
 /// One reply envelope, as the home writes it.
@@ -424,7 +582,7 @@ async fn pick_change_renegotiates_live() {
                     synced(sync) >= 2
                         && world_asks(home, 2).contains(&(
                             founder.as_str().to_owned(),
-                            window_sub_tags::PROMOTION_REQUEST,
+                            window_sub_tags::FOLLOW_REQUEST,
                         ))
                 },
             )
@@ -459,4 +617,95 @@ async fn pick_change_renegotiates_live() {
     };
     let (ran, ()) = tokio::join!(run, script);
     ran.expect("the run ends at shutdown");
+}
+
+/// FOLLOWED-WINDOW-FULL-RESYNC: a followed world's window carries a
+/// full-resync marker (`fr:w:`). The device re-bootstraps it over the follow
+/// the home granted on this connection: it asks the home for the window's
+/// replacement. Before, each connect failed with "opened-item full-resync
+/// requires explicit sync-all recovery", since only a window this device
+/// promoted (`rp:w:`) could recover.
+#[test]
+fn a_marked_followed_window_rebootstraps_over_its_follow() {
+    let run = std::thread::Builder::new()
+        .name("a_marked_followed_window_rebootstraps_over_its_follow".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(marked_followed_window_rebootstraps_over_its_follow());
+        })
+        .expect("test thread");
+    if let Err(panic) = run.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn marked_followed_window_rebootstraps_over_its_follow() {
+    let device = Device::open();
+    let at = now_secs();
+    let founder = WindowKey::for_world(at, device.founder);
+    let (url, home, release_index) = FakeHome::start(root_frame(at, &[device.founder])).await;
+    release_index.send(()).expect("the index read is not held");
+    device
+        .vault
+        .sync_state_put(&format!("fr:w:{founder}"), &[1])
+        .expect("the followed window's full-resync marker");
+    let connection = SyncConnection::new(
+        device.manager(),
+        ConnectionConfig {
+            client_config: SyncClientConfig {
+                server_url: url,
+                residence_mode: SyncResidenceMode::Opened,
+                residence_selector: Some(SyncSelector::new(
+                    EntityId::now(),
+                    EntityId::now(),
+                    SyncSelectorWorld::All,
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                note_session: Some(note_session(&device)),
+                ..SyncClientConfig::default()
+            },
+            auto_reconnect: false,
+        },
+    )
+    .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let (sync_tx, sync) = mpsc::unbounded_channel();
+    let run = connection.run_observed(shutdown_rx, move |event| {
+        let _ = sync_tx.send(event);
+    });
+    let mut watch = Watch {
+        home,
+        sync,
+        home_seen: Vec::new(),
+        sync_seen: Vec::new(),
+    };
+    let script = async {
+        watch
+            .until(
+                "the device asks the home for the marked followed window's replacement",
+                |home, _| {
+                    world_asks(home, 1).contains(&(
+                        founder.as_str().to_owned(),
+                        window_sub_tags::REPLACEMENT_REQUEST,
+                    ))
+                },
+            )
+            .await;
+        assert!(
+            world_asks(&watch.home_seen, 1)
+                .contains(&(founder.as_str().to_owned(), window_sub_tags::FOLLOW_REQUEST,)),
+            "the window was asked as a follow first",
+        );
+        // The fake home answers no replacement; the run may have ended.
+        let _ = shutdown.send(());
+    };
+    let (_ran, ()) = tokio::join!(run, script);
 }

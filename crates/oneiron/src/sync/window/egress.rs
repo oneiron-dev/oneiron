@@ -106,10 +106,32 @@ pub fn history_free_window_required(vault: &Vault, key: &WindowKey) -> Result<bo
 
 /// Durably pins this window to history-free snapshot transport/persistence.
 pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| {
-        HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
-        Ok(())
-    })
+    vault.with_write_txn_grouped(|wtxn| require_history_free_window_in_txn(vault, wtxn, key))
+}
+
+/// [`require_history_free_window`] in the caller's write transaction `wtxn`.
+pub(crate) fn require_history_free_window_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+) -> Result<()> {
+    HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])
+}
+
+/// Whether the entities-map value `blob` under key `raw_key` is a carrier no
+/// window ships, by its body: a diagnostic observation, a secret-custody row,
+/// a delegated channel identity or an LFS chunk. The live scrub
+/// ([`scrub_local_only_carriers`]) removes such a value, and the export's
+/// history scan holds back one an operation inserted.
+pub(super) fn is_local_only_carrier(raw_key: &str, blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
+        matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_SECRET_CUSTODY | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        )
+    }) || is_delegated_channel_identity_carrier(blob)
+        || EntityId::from_hex(raw_key)
+            .is_ok_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob))
 }
 
 /// Removes local-only diagnostic and secret-custody carriers from the window
@@ -145,17 +167,7 @@ pub(super) fn scrub_local_only_carriers(
             key_carriers.push((raw_key.to_owned(), blob.to_vec()));
             return;
         }
-        let lfs_chunk = EntityId::from_hex(raw_key)
-            .ok()
-            .is_some_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob));
-        if crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|h| {
-            !matches!(
-                h.entity_type,
-                crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            ) && !is_delegated_channel_identity_carrier(blob)
-        }) && !lfs_chunk
-        {
+        if !is_local_only_carrier(raw_key, blob) {
             return;
         }
         match EntityId::from_hex(raw_key) {
@@ -226,6 +238,9 @@ pub(super) fn scrub_local_only_carriers(
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
         crate::sync::origin_positions::drop_unbound(doc)?;
+        // The policies no binding reaches now go in this commit (fix list
+        // row 17211).
+        crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(key))?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -418,8 +433,9 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 }
 
 /// Scrubs every [`withdrawn_delete_carriers`] entry from the live document.
-/// The window is pinned history-free first, so neither the body nor the
-/// withdrawal's operations ship. Returns whether it pinned.
+/// `pin` names the window pinned history-free first, so neither the body nor
+/// the withdrawal's operations ship; the sweep, whose shallow cut drops that
+/// history, passes `None`. Returns whether it pinned.
 ///
 /// A carrier only a blob-artifact release fences (H125) is dropped with an
 /// ordinary delete and does not pin: nobody withdrew a delete there, the bytes
@@ -428,27 +444,29 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 /// A pin would answer every later version request with a snapshot rooted at
 /// this vault's newest operation, which a peer even one change behind cannot
 /// apply.
-pub(super) fn scrub_withdrawn_delete_carriers(
+pub(crate) fn scrub_withdrawn_delete_carriers(
     vault: &Vault,
-    key: &WindowKey,
     doc: &LoroDoc,
+    pin: Option<&WindowKey>,
 ) -> Result<bool> {
-    let (withdrawn, pin) = {
+    let (withdrawn, pinned) = {
         let rtxn = vault.store.env.read_txn()?;
         let withdrawn = withdrawn_delete_carriers(vault, &rtxn, doc)?;
-        let mut pin = false;
-        for (_, id) in &withdrawn {
-            if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
-                pin = true;
-                break;
+        let mut pinned = None;
+        if let Some(key) = pin {
+            for (_, id) in &withdrawn {
+                if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
+                    pinned = Some(key);
+                    break;
+                }
             }
         }
-        (withdrawn, pin)
+        (withdrawn, pinned)
     };
     if withdrawn.is_empty() {
         return Ok(false);
     }
-    if pin {
+    if let Some(key) = pinned {
         require_history_free_window(vault, key)?;
     }
     let entities = doc.get_map("entities");
@@ -468,7 +486,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
     crate::sync::origin_positions::drop_unbound(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    Ok(pin)
+    Ok(pinned.is_some())
 }
 
 /// Remove attribution carriers defeated by permanent author-redaction facts.
@@ -530,17 +548,92 @@ pub(crate) fn export_history_free_window_snapshot(
 
 /// Scrubs the live state and persists it: a pinned window keeps only the history
 /// [`super::history_free::HistoryCheck`] ships where a root allows it, every other window all
-/// it holds.
+/// it holds. The bytes of [`export_scrubbed_window_state`].
 pub(in crate::sync) fn export_scrubbed_window_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
+    export_scrubbed_window_state(vault, key, doc).map(|state| state.bytes)
+}
+
+/// A scrubbed window state ready to persist ([`export_scrubbed_window_state`]).
+pub(in crate::sync) struct ScrubbedWindowState {
+    /// The snapshot to store while no legal hold keeps the history it dropped.
+    pub(in crate::sync) bytes: Vec<u8>,
+    /// Whether it was exported under the window's history-free pin: the pin
+    /// the export read, which is never lifted (census L6-05).
+    pub(in crate::sync) history_free: bool,
+    /// Set when `bytes` dropped history the doc holds: the snapshot of all of
+    /// it, and the carriers that history holds.
+    whole: Option<WholeWindowState>,
+}
+
+/// The snapshot of all the history a pinned window's doc holds, and its
+/// carriers ([`ScrubbedWindowState`]).
+struct WholeWindowState {
+    bytes: Vec<u8>,
+    carriers: crate::sync::carrier_holds::CarrierInventory,
+}
+
+impl ScrubbedWindowState {
+    /// The snapshot to store in `txn`, the transaction that stores it, and
+    /// whether it is history-free ([`Self::keeps_whole_in_txn`]).
+    pub(in crate::sync) fn stored_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(&[u8], bool)> {
+        let whole = self.keeps_whole_in_txn(vault, txn)?;
+        Ok(match (&self.whole, whole) {
+            (Some(state), true) => (&state.bytes, false),
+            _ => (&self.bytes, self.history_free),
+        })
+    }
+
+    /// Whether the snapshot of all the doc's history ([`Self::whole_bytes`])
+    /// is stored in `txn`, the transaction that stores it, in place of
+    /// `bytes`, as not history-free. A legal hold keeps every row it names
+    /// (OF-470), so it is when one keeps a row the dropped history carries,
+    /// or its indexed hold row is missing (census L6-05 round 1). The hold is
+    /// read in the storing transaction, so one placed after the export is
+    /// seen. The pin guard of [`super::persist_window_doc_in_txn`] then owes
+    /// the erasure sweep a compaction, which defers while the hold stands. An
+    /// export to a peer still checks the history it ships.
+    pub(in crate::sync) fn keeps_whole_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        let Some(whole) = &self.whole else {
+            return Ok(false);
+        };
+        let held = whole.carriers.held_in_txn(&vault.store, txn)?;
+        if held {
+            tracing::warn!("window persist: a legal hold keeps its history — stored whole");
+        }
+        Ok(held)
+    }
+
+    /// The snapshot of all the doc's history, set when `bytes` dropped some.
+    pub(in crate::sync) fn whole_bytes(&self) -> Option<&[u8]> {
+        self.whole.as_ref().map(|whole| whole.bytes.as_slice())
+    }
+}
+
+/// [`export_scrubbed_window_snapshot`] with what its persist needs: whether the snapshot was
+/// exported under the window's pin, and the snapshot of all the doc's history when it dropped
+/// some ([`ScrubbedWindowState::stored_in_txn`]).
+pub(in crate::sync) fn export_scrubbed_window_state(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<ScrubbedWindowState> {
     crate::sync::note::refresh(vault, doc, key)?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
-    scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    scrub_withdrawn_delete_carriers(vault, doc, Some(key))?;
     super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
     // A deleted room's turn rows leave the window (OF-522).
     crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
@@ -577,26 +670,42 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
-    persisted_window_snapshot(vault, key, doc)
+    persisted_window_state(vault, key, doc)
 }
 
-/// The snapshot a scrubbed window state is stored as: a window pinned history-free keeps only the
+/// The state a scrubbed window is stored as: a window pinned history-free keeps only the
 /// history [`super::history_free::HistoryCheck`] ships where a root allows it, else the strict cut
-/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]); every
-/// other window all it holds. Window persist stores it, and so does the sealed mirror of a private
-/// world's window once the erased-actor scrubs ran over it (FIX 19525).
-pub(crate) fn persisted_window_snapshot(
+/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]), with the
+/// snapshot of all of it beside when that dropped some; every other window all it holds.
+fn persisted_window_state(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
-) -> Result<Vec<u8>> {
-    if history_free_window_required(vault, key)? {
-        let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
-        super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
-    } else {
+) -> Result<ScrubbedWindowState> {
+    if !history_free_window_required(vault, key)? {
         // A shallow doc's snapshot keeps its own root.
-        export_snapshot(doc)
+        return Ok(ScrubbedWindowState {
+            bytes: export_snapshot(doc)?,
+            history_free: false,
+            whole: None,
+        });
     }
+    let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
+    let (bytes, kept_all) =
+        super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)?;
+    let whole = if kept_all {
+        None
+    } else {
+        Some(WholeWindowState {
+            bytes: export_snapshot(doc)?,
+            carriers: crate::sync::carrier_holds::CarrierInventory::of_window(doc),
+        })
+    };
+    Ok(ScrubbedWindowState {
+        bytes,
+        history_free: true,
+        whole,
+    })
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
@@ -714,6 +823,13 @@ fn replay_mirrors(
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {
                 require_history_free_window(vault, window_key)?;
+                // The policies no binding reaches now go in this commit
+                // (fix list row 17211).
+                crate::sync::source_audiences::prune_unreached_policies(
+                    vault,
+                    doc,
+                    Some(window_key),
+                )?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
             settled.settle(vault, marker_key)?;
@@ -983,6 +1099,9 @@ pub(in crate::sync) fn withhold_audience_carriers(
     // it lands this marker (REVIEW-5911), rather than under the binding it
     // travelled with.
     crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
+    // No prune here (fix list row 17211): the refresh that called this
+    // prunes after it writes the bindings it publishes, which may reach a
+    // policy this map's carried bindings do not reach yet.
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }

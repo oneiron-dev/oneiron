@@ -1,7 +1,5 @@
 //! Calendar scoped-read surface (read/search/freebusy) plus the invite entry point.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::support::Memory;
 use super::super::{MemoryError, MemoryResult};
 use super::invite::{CalendarInviteOrigin, CalendarInviteSurfaceInput};
@@ -11,14 +9,8 @@ use crate::calendar::{
 };
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::temporal::TimeRange;
-/// One source-redacted busy interval, half-open `[start_utc, end_utc)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarFreebusyIntervalDto {
-    /// Inclusive half-open start, Unix seconds.
-    pub start_utc: u64,
-    /// Exclusive half-open end, Unix seconds.
-    pub end_utc: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::outbound::calendar::CalendarFreebusyIntervalDto;
 
 /// External freebusy projection: occupancy only.
 pub type CalendarFreebusyDto = Vec<CalendarFreebusyIntervalDto>;

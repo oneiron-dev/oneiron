@@ -463,6 +463,7 @@ impl ClaimStore for Memory {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at,
+                    row_version: 0,
                     body: bytes,
                 },
             )?;
@@ -475,6 +476,7 @@ impl ClaimStore for Memory {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at,
+                    row_version: 0,
                     body: bytes,
                 },
             )?;

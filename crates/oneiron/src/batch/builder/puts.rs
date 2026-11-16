@@ -95,6 +95,45 @@ impl BatchBuilder<'_> {
             self.commit_checks
                 .push(CommitCheck::PublicType(self.ops.len()));
         }
+        // A TURN's learned time is held to the witness door's ceiling on the
+        // store clock (ARCH-0002 `#turn-time-built`).
+        if self.validation_error.is_none()
+            && let Err(e) =
+                refuse_future_turn(entity_type, learned_at, self.vault.now_recorded_at())
+        {
+            self.validation_error = Some(e);
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::Public,
+        )
+    }
+
+    /// [`Self::put`] of a row a whole-vault import restores from its
+    /// archive: every public check except the TURN learned-time ceiling.
+    ///
+    /// An import keeps the archive's learned time, and the clock of the
+    /// install that wrote the archive may run ahead of this store's.
+    /// Refusing such a TURN would refuse the owner's restore of the owner's
+    /// own archive over clock skew, so the import names its exemption here
+    /// (Engine ruling on census L7-21, Fri 13 Nov 16:27). A far-future TURN
+    /// from an archive waits outside consolidation, as one from sync does.
+    pub(crate) fn put_archived(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
         self.put_through(
             id,
             entity_type,
@@ -158,6 +197,37 @@ impl BatchBuilder<'_> {
             learned_at,
             data,
             RawPutDoor::SourceBound,
+        )
+    }
+
+    /// [`Self::put`] of a row that rewrites the stored row `id` and keeps the
+    /// source-audience stamp its stored bytes carry (fix list row 16256), as
+    /// a host's taint mark rewrites a mail attachment (census L6-32). The
+    /// early check lets the key through; the write transaction admits it
+    /// only when the stored row states the same stamp
+    /// ([`crate::source_audience::admit_obligation_in_txn`]), so this door
+    /// keeps a stamp and never births one. A body without the key, over a
+    /// row without one, is judged as through [`Self::put`]. Every other
+    /// public check runs as for [`Self::put`].
+    pub(crate) fn put_keeping_stored_stamp(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::KeptStoredStamp,
         )
     }
 
@@ -516,6 +586,7 @@ impl BatchBuilder<'_> {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: true,

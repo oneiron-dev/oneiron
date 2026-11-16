@@ -719,7 +719,7 @@ Response:
 
 Method: `GET`
 
-Authentication: none for a public pin or a link-token URL; a world-member pin needs a verified read credential (see the serving tiers below).
+Authentication: none for a public pin or a link-token URL; a world-member pin needs a verified read credential; a private pin answers the vault's owner alone, on his own owner credential (see the serving tiers below).
 
 Origins: ordinary serve answers `/a/` on a second listener of its own, at the port `/api/health` reports as `artifact_port`, which serves nothing else. Open bundles there: a code bundle keeps that origin, so its module scripts and fonts load. The API's own `/a/` still answers, but there a code bundle is sandboxed into an opaque origin, where module scripts and fonts do not load. A server with no artifact listener (managed serve) answers `/a/` on the API's origin as before.
 
@@ -737,7 +737,7 @@ Query parameters:
 Response behavior:
 
 - Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
-- Serving tiers are private by default: an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
+- Serving tiers are private by default: a private pin serves the vault's owner alone, on his full slip, a managed vault's attested owner or a self-hosted root (never on his narrowed slip, another holder's credential or the unauthenticated dev mode); an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
 - Returns `400` for malformed or mutually exclusive selector parameters. No vault API is available to served bundles.
 - Public code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; pinned public code snapshots use `public, max-age=31536000, immutable`. Public blob channels use `private, no-cache, max-age=0, must-revalidate` and direct public blob versions use `private, max-age=31536000, immutable`. Token and member responses use `private, no-store`. All responses send `Referrer-Policy: no-referrer` to protect capability URLs. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`.
 
@@ -1294,12 +1294,16 @@ Operations:
 - `availability` — body: `event_type`, `window` (`start`/`end`, UTC seconds), `visitor_tz`,
   `constraint` (`null`, `{"kind":"object","value":{...}}`, or `{"kind":"free_text","value":"..."}`),
   `session_ref`. Free text is normalized into a canonical constraint before any solve; the original
-  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`) plus
-  `flex_used`.
+  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`),
+  `flex_used`, and `full_days`: each visitor-local day (`date`, `YYYY-MM-DD`) whose times a meeting
+  cap removed, with the `cap` that filled it (`daily` or `weekly`). A full day has no slots; it
+  carries no booking detail.
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
-  hold requires a server-issued checkout lease, not a caller's ask. `confirm` takes `hold_token`,
+  hold requires a server-issued checkout lease, not a caller's ask. The vault's owner alone may add
+  `cap_override_reason` (1-4096 bytes) to hold a day a meeting cap filled; the reason is recorded on
+  the booking, and any other caller gets a 400. `confirm` takes `hold_token`,
   `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
   `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
   `stage: slot_taken` with the oracle's nearest `alternatives`.
@@ -1680,6 +1684,7 @@ Codes the server's HTTP error type defines:
 - `OWNER_BINDING_REQUIRED`
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
+- `PROCESS_NOT_READY` (503): this vault process's event loop is hung (`draining`) or recovering from a hang (`recovering`); it takes no new work, and work it admitted runs to its end. Retry after the `Retry-After` wait (`details.retryAfterSecs`).
 - `4001`
 - `4002`
 - `4003`

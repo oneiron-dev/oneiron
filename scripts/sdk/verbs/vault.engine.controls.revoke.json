@@ -1,0 +1,16 @@
+{
+  "name": "vault.engine.controls.revoke",
+  "description": "The owner takes back every engine.controls grant given to an agent that is no base agent; the answer names each grant revoked, none when none stood.",
+  "input": "crate::task_verb::sdk::EngineControlsRevokeRequest",
+  "output": "crate::task_verb::sdk::EngineControlsRevoked",
+  "call": "crate::task_verb::sdk::revoke_engine_controls_as(memory.vault(), &memory.embedded_owner(\"vault.engine.controls.revoke\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

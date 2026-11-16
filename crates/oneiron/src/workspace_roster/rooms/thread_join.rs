@@ -33,59 +33,27 @@ use super::audience_events::{
 use super::audience_notices::{ThreadNotice, tell_requester, tell_thread_members};
 use super::*;
 use crate::EdgeActorClass;
+use crate::check_in::DoorCheckIn;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::RosterActor;
 
-/// `vault.rooms.thread_join.request`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadJoinRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::thread_join::{
+    ThreadJoinDecisionRequest, ThreadJoinRequest, ThreadJoinRequestState, ThreadJoinRequestView,
+};
 
 pub use crate::store::conversation_body::ThreadJoinRequestsRequest;
 
-/// `vault.rooms.thread_join.approve` and `.deny`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadJoinDecisionRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-    /// The request's TURN, 32-hex.
-    pub request_ref: String,
-}
+/// The verb whose door approves a request to join a private thread.
+const THREAD_JOIN_APPROVE_VERB: &str = "vault.rooms.thread_join.approve";
 
-/// How a request to join stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ThreadJoinRequestState {
-    /// No member answered it yet.
-    Pending,
-    /// The one who asked was added, by an approval or otherwise.
-    Approved,
-    /// A member denied it.
-    Denied,
-}
-
-/// One request to join a private thread.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadJoinRequestView {
-    /// The thread's root TURN, 32-hex.
-    pub thread_ref: String,
-    /// The request's TURN, 32-hex.
-    pub request_ref: String,
-    /// Who asked, 32-hex.
-    pub requester_ref: String,
-    /// When they asked, Unix seconds.
-    pub at: u64,
-    pub state: ThreadJoinRequestState,
-    /// The TURN that settled it, 32-hex; absent while it is pending.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision_ref: Option<String>,
+/// What an answer's writer did: the answer and whom to tell, or an
+/// approval that waits on its pending check-in, the writer's one write.
+enum JoinAnswer {
+    Done(Box<ThreadJoinRequestView>, Option<(EntityId, EntityId)>),
+    Waits(EntityId),
 }
 
 /// The refusal for an answer naming no request of the thread, or one whose
@@ -124,6 +92,7 @@ fn view_in(
         at,
         state,
         decision_ref,
+        check_in: None,
     }))
 }
 
@@ -195,6 +164,7 @@ impl Memory<'_> {
                 at,
                 state: ThreadJoinRequestState::Pending,
                 decision_ref: None,
+                check_in: None,
             };
             Ok((view, Some(event)))
         })?;
@@ -229,7 +199,10 @@ impl Memory<'_> {
 
     /// Approves a request to join a private thread: any one member in its
     /// audience now adds the one who asked from now on, citing the request,
-    /// and they are told. A settled request answers how it settled.
+    /// and they are told. A settled request answers how it settled. The add
+    /// is judged by check-in (ROLES-CHECKIN P2.6a): an agent's approval
+    /// waits (`CHECK_IN_PENDING`) until the approval that names the
+    /// approved check-in as `check_in_ref`.
     pub fn rooms_thread_join_approve(
         &self,
         input: &ThreadJoinDecisionRequest,
@@ -239,11 +212,17 @@ impl Memory<'_> {
 
     /// Denies a request to join a private thread: any one member in its
     /// audience now, and the one who asked is told. A settled request
-    /// answers how it settled.
+    /// answers how it settled. A denial adds no one: it takes no
+    /// `check_in_ref`.
     pub fn rooms_thread_join_deny(
         &self,
         input: &ThreadJoinDecisionRequest,
     ) -> MemoryResult<ThreadJoinRequestView> {
+        if input.check_in_ref.is_some() {
+            return Err(MemoryError::bad_request(
+                "a denial adds no one, so it spends no check-in: drop check_in_ref",
+            ));
+        }
         self.answer_thread_join(input, JoinSettlement::Denied)
     }
 
@@ -301,8 +280,10 @@ impl Memory<'_> {
     }
 
     /// The write approve and deny both make, in one transaction: the
-    /// thread, the caller's place in it now, the request, and the answer's
-    /// TURN; the one who asked is told once it committed.
+    /// thread, the caller's place in it now, the request, an approval's
+    /// check-in, and the answer's TURN; the one who asked is told once it
+    /// committed. An approval that waits writes nothing but its pending
+    /// check-in.
     fn answer_thread_join(
         &self,
         input: &ThreadJoinDecisionRequest,
@@ -310,8 +291,16 @@ impl Memory<'_> {
     ) -> MemoryResult<ThreadJoinRequestView> {
         let root = EntityId::from_hex(&input.thread_ref)?;
         let request = EntityId::from_hex(&input.request_ref)?;
+        let check_in_ref = input
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
         let actor = self.actor();
-        let (view, told) = self.with_verified_actor_write_txn(|txn| {
+        let answered = self.with_verified_actor_write_txn(|txn| {
             let vault = self.vault();
             let (binding, folded) = self.join_thread_in(txn, root)?;
             self.require_thread_member_in(txn, &folded)?;
@@ -319,7 +308,7 @@ impl Memory<'_> {
             let requester = asked.person.live().ok_or_else(unknown_request)?;
             if asked.settled.is_some() {
                 let view = view_in(vault, txn, root, asked)?.ok_or_else(unknown_request)?;
-                return Ok((view, None));
+                return Ok(JoinAnswer::Done(Box::new(view), None));
             }
             let (op, history, state) = match answer {
                 JoinSettlement::Approved => {
@@ -343,6 +332,30 @@ impl Memory<'_> {
                     (AudienceOp::DenyJoin, None, ThreadJoinRequestState::Denied)
                 }
             };
+            // An approval adds the one who asked: the add is judged.
+            let check_in = match answer {
+                JoinSettlement::Approved => {
+                    let digest = crate::check_in::room_add_effect_digest(
+                        &binding.room,
+                        Some(&root),
+                        &requester,
+                        false,
+                    );
+                    match crate::check_in::room_add_check_in_in_txn(
+                        self,
+                        txn,
+                        THREAD_JOIN_APPROVE_VERB,
+                        binding.room,
+                        digest,
+                        check_in_ref.as_ref(),
+                    )? {
+                        Some(DoorCheckIn::Go(decision)) => Some(decision),
+                        Some(DoorCheckIn::Wait(id)) => return Ok(JoinAnswer::Waits(id)),
+                        None => None,
+                    }
+                }
+                JoinSettlement::Denied => None,
+            };
             let event = put_audience_event_in(
                 vault,
                 txn,
@@ -359,8 +372,13 @@ impl Memory<'_> {
             let mut view = view_in(vault, txn, root, asked)?.ok_or_else(unknown_request)?;
             view.state = state;
             view.decision_ref = Some(event.to_hex());
-            Ok((view, Some((event, requester))))
+            view.check_in = check_in;
+            Ok(JoinAnswer::Done(Box::new(view), Some((event, requester))))
         })?;
+        let (view, told) = match answered {
+            JoinAnswer::Done(view, told) => (*view, told),
+            JoinAnswer::Waits(id) => return Err(Error::CheckInPending(id.to_hex()).into()),
+        };
         if let Some((event, requester)) = told {
             let notice = match answer {
                 JoinSettlement::Approved => ThreadNotice::JoinApproved { event, request },

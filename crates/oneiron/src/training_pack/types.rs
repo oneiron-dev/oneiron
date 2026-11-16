@@ -5,13 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::entity_id::EntityId;
+use crate::llm::ModelId;
 use crate::llm::manifest::{ModelBinding, ModelRole};
-use crate::llm::run_admission::{BudgetLine, LeaseUnit, Payer};
-use crate::llm::{ModelId, ModelLocality};
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::llm::run_admission::BudgetLine;
 use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 
-use super::TrainingTarget;
+use super::{DataTimeline, TrainingTarget};
 
 /// A source is a repository and an immutable revision, never a moving branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -20,24 +19,11 @@ pub struct SourcePin {
     pub revision: String,
 }
 
-/// A particular version in the vault's existing blob custody.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArtifactPin {
-    pub artifact: EntityId,
-    pub version: u64,
-    pub blake3: [u8; 32],
-    pub bytes: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CheckpointFileKind {
-    Weights,
-    Tokenizer,
-    Config,
-    Template,
-    AdapterConfig,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::training_pack::types::{
+    ArtifactPin, CalibrationResult, CandleParityCheck, CheckpointFileKind, ExportCheck,
+    QuestionExportCheck, TrainingOwner,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CheckpointFilePin {
@@ -71,25 +57,11 @@ pub struct CheckpointUpload {
     pub files: Vec<CheckpointFileUpload>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProbeCase {
-    pub id: String,
-    pub input: Value,
-}
-
-/// Host measurements on one fixed input, comparing training and export weights.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProbeMeasurement {
-    pub probe_id: String,
-    pub input_blake3: [u8; 32],
-    /// The trainer's BLAKE3 of the probe's token ids, as the windows it fed
-    /// the encoder (FIX 7568); none from a trainer that reports none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tokens_blake3: Option<[u8; 32]>,
-    pub training_argmax: u64,
-    pub export_argmax: u64,
-    pub max_logit_difference: f64,
-}
+#[doc(hidden)]
+pub use oneiron_records::training_pack::types::{
+    ComputePin, DetectorProvenance, ProbeCase, ProbeMeasurement, SplitPolicy, SplitRow, SplitSide,
+    TrainingDispatch, TrainingHold, TrainingTeachersPin,
+};
 
 /// The skill supplies the recipe; the engine supplies no model or tolerance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,27 +76,6 @@ pub struct TrainingPlan {
     pub harness: SourcePin,
     pub probes: Vec<ProbeCase>,
     pub export_logit_tolerance: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SplitPolicy {
-    /// OF-578 assigns source families before derivation and seals this cohort.
-    pub held_out_cohort: EntityId,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SplitSide {
-    Training,
-    HeldOut,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SplitRow {
-    pub receipt: String,
-    pub family: EntityId,
-    pub content_blake3: [u8; 32],
-    pub side: SplitSide,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,52 +99,9 @@ pub struct CorpusSplit {
     pub detector: Option<DetectorProvenance>,
 }
 
-/// Where a question run's rows come from: the source-family split and the
-/// consent behind them, as the ingress receipted them. The trainer echoes
-/// both and certifies neither.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DetectorProvenance {
-    pub split_receipt: String,
-    pub consent_receipt: String,
-}
-
 pub use crate::skill_optimize::training_choice::ComputeChoice;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ComputePin {
-    pub choice: ComputeChoice,
-    pub connector: String,
-    pub adapter: String,
-    pub origin: String,
-    pub locality: ModelLocality,
-    pub payer: Payer,
-    pub binding_blake3: [u8; 32],
-    pub quantity: u64,
-    pub unit_cost: u64,
-    pub cost_unit: LeaseUnit,
-}
-
 pub use crate::skill_optimize::training_choice::TrainingState;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TrainingDispatch {
-    pub declaration_revision: u32,
-    pub budget: BudgetLine,
-    pub permit: Value,
-    pub dispatched: bool,
-    /// The completion that first recorded a result claimed the run's one
-    /// Used settlement; a later idempotent completion settles nothing.
-    pub settlement_claimed: bool,
-}
-
-/// The teachers a run declaration names, as the owner authorized them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrainingTeachersPin {
-    pub models: Vec<ModelId>,
-    pub aliases: BTreeMap<String, ModelId>,
-    pub target: String,
-    pub purpose: String,
-}
 
 /// The facts of a declared run the dispatch checks, frozen when the owner
 /// authorizes; a changed declaration refuses the dispatch.
@@ -207,69 +115,6 @@ pub struct TrainingDeclarationPin {
 
 pub use crate::skill_optimize::training_choice::TrainingAuthorizationSource;
 
-/// The owner a run, an authorization or a swap receipt names: an actor, or
-/// no one once that actor was erased (FIX 3520). It reads and writes as the
-/// actor's hex id, or as [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrainingOwner {
-    Actor(EntityId),
-    Erased,
-}
-
-impl TrainingOwner {
-    /// Whether this is `actor`.
-    #[must_use]
-    pub fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-
-    /// Makes this no one when it is `actor`; whether it was.
-    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
-        let named = self.is(actor);
-        if named {
-            *self = Self::Erased;
-        }
-        named
-    }
-}
-
-impl Serialize for TrainingOwner {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for TrainingOwner {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
-impl schemars::JsonSchema for TrainingOwner {
-    fn schema_name() -> String {
-        "TrainingOwner".to_owned()
-    }
-
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        <String as schemars::JsonSchema>::json_schema(generator)
-    }
-}
-
 /// The owner's yes on one prepared spec and declaration. It holds no
 /// credential, key, lease or permit; the host takes a fresh permit at dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -279,69 +124,6 @@ pub struct TrainingAuthorization {
     pub spec_blake3: [u8; 32],
     pub declaration: TrainingDeclarationPin,
     pub source: TrainingAuthorizationSource,
-}
-
-/// Why the host cannot advance an authorized or returned run yet, for the
-/// owner to read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrainingHold {
-    pub code: String,
-    pub detail: String,
-    pub at: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ExportCheck {
-    pub hash_mismatches: Vec<String>,
-    pub probe_coverage_matches: bool,
-    pub probe_checkpoints_match: bool,
-    pub settings_match: bool,
-    pub harness_matches: bool,
-    pub argmax_flips: u64,
-    pub max_logit_difference: f64,
-    pub tolerance: f64,
-    /// A question head's own producer check; a role run has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub question_check: Option<QuestionExportCheck>,
-    /// The host's Candle-side reproduction of a question head's probe
-    /// evidence (FIX 7568); a role run has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candle_parity: Option<CandleParityCheck>,
-}
-
-/// What the host reproduced of a trained classifier's receipt on the stack
-/// that would serve it (FIX 7568), before it may serve: a check of our own
-/// artifact against the trainer's word.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CandleParityCheck {
-    /// Every probe's token ids, rendered and tokenized here with the
-    /// export's own pinned tokenizer and cut into its windows, hash to the
-    /// trainer's.
-    pub tokens_match: bool,
-    /// The probes whose ids did not reproduce, by id.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub token_mismatches: Vec<String>,
-    /// Whether the export's logits reproduced in Candle: `None` while no
-    /// Candle classifier loader is built here, so none was run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logits_match: Option<bool>,
-}
-
-impl CandleParityCheck {
-    /// No half that ran failed.
-    #[must_use]
-    pub fn passed(&self) -> bool {
-        self.tokens_match && self.logits_match != Some(false)
-    }
-}
-
-/// What a question head's trainer also measured on its fixed probes: every
-/// logit finite, the export's tokens the training's, and its own verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct QuestionExportCheck {
-    pub finite: bool,
-    pub tokens_match: bool,
-    pub passed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -356,13 +138,11 @@ pub struct TrainingResult {
     /// Taken from the run admission, not the connector's own report.
     pub teachers: Value,
     pub service_units: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalibrationResult {
-    pub temperature: f64,
-    pub brier_score: f64,
-    pub calibration_error: f64,
+    /// Where the run changed its data mixture or restarted from an earlier
+    /// checkpoint (ARCH-0053 #training-timeline), as the trainer's receipt
+    /// reported it; none from a run that did neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<DataTimeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

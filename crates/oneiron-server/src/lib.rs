@@ -64,11 +64,14 @@ mod feedback_redaction;
 mod files_intake;
 mod handler;
 mod home_candidacy;
+mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod hook_verdict;
 mod http_listener;
 mod idempotency;
 mod import_audience;
+/// The company host's inquiry transport (INQUIRE-1 PR 5).
+pub mod inquiry_delivery;
 mod invocation_claims;
 mod ladder_poll;
 mod lens_frames;
@@ -89,6 +92,7 @@ mod oauth_relay;
 mod oneironer;
 mod owner;
 mod pipe_proof;
+pub mod process_readiness;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
@@ -153,6 +157,12 @@ pub(crate) fn engine_thread(name: String) -> std::thread::Builder {
 /// runs blocking work in line (`server::blocking`) leaves the worker with
 /// `block_in_place`, which a `LocalSet` forbids; on a current-thread runtime
 /// it holds the only executor thread while that work runs.
+///
+/// Serve it with `into_make_service_with_connect_info::<SocketAddr>()`, as
+/// [`managed::BoundServeListener`] does. A server with
+/// `allow_unauthenticated` and no `auth_secret` answers only callers on this
+/// device, and a connection that recorded no peer is not on it: such an app
+/// refuses every request with 401 (ARCH-0028 #unauth-loopback-open).
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     let position = if server.managed_issuer.is_some() || server.vault().is_host_readable() {
         // A cloud node's provider requests skip gzip (ARCH-0081 §6, OF-603).
@@ -172,12 +182,9 @@ pub fn build_app_for_position(
     position: web_client::DeploymentPosition,
 ) -> Router {
     // This server's Responses state (FIX 9516): its vault keeps its stored
-    // chains, and its owner's `store` switch (OF-602) is read now;
+    // chains, and each turn reads its owner's `store` switch (OF-602) there;
     // unreadable leaves it off.
-    server.ai.models().responses_context().bind(
-        server.vault(),
-        server.vault().responses_store().unwrap_or(false),
-    );
+    server.ai.models().responses_context().bind(server.vault());
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {
@@ -185,10 +192,22 @@ pub fn build_app_for_position(
     };
     Router::new()
         .merge(handler::ws_routes(server.clone()))
-        .merge(api::api_routes(server))
+        .merge(api::api_routes(server.clone()))
         .merge(web_client::routes(web_client::EndpointDescriptor::engine(
             position, mode,
         )))
+        // A process whose watchdog sheds intake takes no new work while its
+        // event loop is hung or recovering (L8-11); ahead of auth, as it reads
+        // no vault.
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(server.process_readiness()),
+            process_readiness::refuse_new_work_while_not_ready,
+        ))
+        // Outermost, so a hatch server's off-device caller reaches no route.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            auth::refuse_off_device_hatch_callers,
+        ))
 }
 
 /// Builds the artifact-only app: `/a/` and nothing else, for a listener of
@@ -196,7 +215,10 @@ pub fn build_app_for_position(
 /// Serve it beside [`build_app`] over the same server, and record its port
 /// with [`SyncServer::with_artifact_listener`] before the server is shared.
 pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
-    api::artifact_app(server)
+    api::artifact_app(server.clone()).layer(axum::middleware::from_fn_with_state(
+        server,
+        auth::refuse_off_device_hatch_callers,
+    ))
 }
 
 #[cfg(test)]
