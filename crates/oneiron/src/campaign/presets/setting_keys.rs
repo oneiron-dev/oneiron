@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::validate::ratified_disposition;
 use crate::campaign::stage::{NO_SHOW_BUMP_AFTER_SECS, ReplyCode, ReplyDisposition};
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, higher_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The longest delay: about 285 million years, so never in practice, and a number every SDK
 /// carries exactly. An unreadable row reads as this.
@@ -100,7 +100,7 @@ crate::setting::setting_keys! {
         "campaign.no_show.bump_after_secs" {
         kind: Kind::new(ratified_bump_after)
             .strictest(never)
-            .tighter(higher_is_tighter::<NoShowBumpAfterSecs>),
+            .higher(),
     };
     /// What a referral reply does (default route_referral). Less future contact is tighter:
     /// suppress, exit, record_only, snooze, route_referral, promote. An unreadable row reads as
@@ -109,7 +109,7 @@ crate::setting::setting_keys! {
         "campaign.reply.referral_disposition" {
         kind: Kind::new(ratified_referral)
             .strictest(suppress)
-            .tighter(less_contact_is_tighter),
+            .custom(less_contact_is_tighter),
     };
     /// What an objection reply does (default record_only). Less future contact is tighter:
     /// suppress, exit, record_only, snooze, route_referral, promote. An unreadable row reads as
@@ -118,7 +118,7 @@ crate::setting::setting_keys! {
         "campaign.reply.objection_disposition" {
         kind: Kind::new(ratified_objection)
             .strictest(suppress)
-            .tighter(less_contact_is_tighter),
+            .custom(less_contact_is_tighter),
     };
     /// What a not-interested reply does (default exit). Less future contact is tighter:
     /// suppress, exit, record_only, snooze, route_referral, promote. An unreadable row reads as
@@ -127,7 +127,7 @@ crate::setting::setting_keys! {
         "campaign.reply.not_interested_disposition" {
         kind: Kind::new(ratified_not_interested)
             .strictest(suppress)
-            .tighter(less_contact_is_tighter),
+            .custom(less_contact_is_tighter),
     };
 }
 

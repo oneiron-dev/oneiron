@@ -10,7 +10,7 @@
 //! consent, and fails closed.
 
 use crate::error::Result;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 use crate::store::Store;
 
 const fn contact_without_recorded_objection() -> bool {
@@ -31,7 +31,7 @@ crate::setting::setting_keys! {
         "campaign.contact_without_recorded_objection" {
         kind: Kind::new(contact_without_recorded_objection)
             .strictest(recorded_consent_required)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }
 
