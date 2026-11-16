@@ -59,12 +59,7 @@ pub trait SealedBytesStore: Send + Sync + 'static {
 
 /// Refuses a value no home keeps: an empty one, and one longer than
 /// [`SEALED_BYTES_MAX`].
-#[cfg(any(
-    all(unix, not(target_vendor = "apple")),
-    test,
-    feature = "test-keystore",
-    oneiron_test_support
-))]
+#[cfg(any(unix, windows, test, feature = "test-keystore", oneiron_test_support))]
 pub(crate) fn check_sealed_len(sealed: &[u8]) -> Result<()> {
     if sealed.is_empty() {
         return Err(crate::KeystoreError::Unsupported(
