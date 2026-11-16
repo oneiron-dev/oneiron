@@ -125,6 +125,52 @@ pub(crate) fn locate_toml_root_key(raw: &str, key: &str) -> Option<usize> {
         .map(|line| line + 1)
 }
 
+/// The longest key path `raw`, the text of a config file, sets that `text`
+/// (a refusal) names as a whole word, and the one-based line of its key: what
+/// a refusal of a value set in that file names as the place it was set (FIX
+/// CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE). A path is dotted from the root,
+/// as refusals write it (`limits.git_scan_blob_bytes`, `house_role`); a table
+/// counts as a path, so a refusal that names only its table finds the
+/// table's line. `None` for a text that does not parse or names no key the
+/// file sets. Only the text's keys are compared, never its values.
+pub(crate) fn locate_named_key(raw: &str, text: &str) -> Option<(String, usize)> {
+    let table = toml::de::DeTable::parse(raw).ok()?;
+    let mut keys = Vec::new();
+    key_paths(table.get_ref(), "", &mut keys);
+    keys.into_iter()
+        .filter(|(path, _)| names_key(text, path))
+        .max_by_key(|(path, _)| path.len())
+        .and_then(|(path, offset)| line_and_column(raw, offset).map(|(line, _)| (path, line)))
+}
+
+/// Every key path `table` holds under `prefix`, with the byte offset of its
+/// key: a table's own path, then the paths inside it. An array's tables are
+/// not entered.
+fn key_paths(table: &toml::de::DeTable<'_>, prefix: &str, keys: &mut Vec<(String, usize)>) {
+    for (key, value) in table.iter() {
+        let path = if prefix.is_empty() {
+            key.get_ref().to_string()
+        } else {
+            format!("{prefix}.{}", key.get_ref())
+        };
+        keys.push((path.clone(), key.span().start));
+        if let toml::de::DeValue::Table(inner) = value.get_ref() {
+            key_paths(inner, &path, keys);
+        }
+    }
+}
+
+/// Whether `text` names `path` as a whole word: no key character just
+/// before it, and none just after but a `.` that goes on to a deeper key.
+fn names_key(text: &str, path: &str) -> bool {
+    let key_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-');
+    text.match_indices(path).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + path.len()..].chars().next();
+        !before.is_some_and(|c| key_char(c) || c == '.') && !after.is_some_and(key_char)
+    })
+}
+
 /// The one-based line and column in `raw` of the span `error` gives.
 fn located(raw: &str, error: &toml::de::Error) -> Option<(usize, usize)> {
     error

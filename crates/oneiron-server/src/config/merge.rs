@@ -38,6 +38,7 @@ use super::{
 };
 
 mod file_admission;
+mod refusal_origin;
 mod sections;
 mod validation;
 
@@ -110,10 +111,19 @@ pub fn resolve_serve_config_with_sources(
     env: EnvConfig,
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
-    let resolved = layer_serve_config(args, env, default_config_path)?;
+    let layers = read_layers(args, env, default_config_path)?;
+    let resolved = merge_layers(args, &layers)?;
     // Same-source or higher-precedence references remain for validation to
     // refuse rather than silently fixing a contradictory self-host request.
-    validate_serve_config(&resolved)?;
+    // A refusal names the layer that set what it refuses (FIX
+    // CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE).
+    validate_serve_config(&resolved).map_err(|refusal| {
+        let origins: Vec<_> = layers.iter().map(|layer| layer.origin.as_ref()).collect();
+        refusal_origin::locate_refusal(refusal, &origins, |count| {
+            let merged = merge_layers(args, &layers[..count]).ok()?;
+            validate_serve_config(&merged).err()
+        })
+    })?;
     Ok(resolved)
 }
 
@@ -125,6 +135,26 @@ pub(crate) fn layer_serve_config(
     env: EnvConfig,
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
+    let layers = read_layers(args, env, default_config_path)?;
+    merge_layers(args, &layers)
+}
+
+/// One layer of the merge: its place in the precedence order, where its
+/// values came from, and the values.
+struct Layer {
+    source: ConfigLayer,
+    /// `None` for a config file layer with no file to read.
+    origin: Option<refusal_origin::LayerOrigin>,
+    values: PartialServeConfig,
+}
+
+/// Every layer serve merges, lowest precedence first: the config file, the
+/// owner's settings file, the environment, the flags.
+fn read_layers(
+    args: &ServeArgs,
+    env: EnvConfig,
+    default_config_path: Option<PathBuf>,
+) -> anyhow::Result<Vec<Layer>> {
     let flag_values = PartialServeConfig::from(args);
     let config_path = args
         .config
@@ -135,56 +165,92 @@ pub(crate) fn layer_serve_config(
     // A config path whose existence cannot be checked (a parent this process
     // may not search) is not taken as absent, even the default one: its file
     // may set what the defaults do not, such as a manual `[runtime] clock`.
-    let file_values = match config_path {
+    let file_layer = match config_path {
         Some(path) => match path.try_exists() {
-            Ok(true) => load_file_config(&path)?,
+            Ok(true) => {
+                let (values, raw) = load_file_config(&path)?;
+                Layer {
+                    source: ConfigLayer::Vault,
+                    origin: Some(refusal_origin::LayerOrigin::ConfigFile { path, raw }),
+                    values,
+                }
+            }
             Ok(false) if explicit_config => {
                 anyhow::bail!("config file {} does not exist", path.display());
             }
-            Ok(false) => PartialServeConfig::default(),
+            Ok(false) => Layer::unread(),
             Err(error) => {
                 let path = path.display();
                 anyhow::bail!("config file {path} cannot be checked: {error}");
             }
         },
-        None => PartialServeConfig::default(),
+        None => Layer::unread(),
     };
+    let mut layers = vec![file_layer];
     // The owner's settings file (`--settings-file`, FIX 5016), in the config
     // file's schema as a managed vault reads it: one more vault file layer,
     // over the config file and under the environment and the flags.
-    let settings_values = args
-        .settings_file
-        .as_deref()
-        .map(load_file_config)
-        .transpose()?;
+    if let Some(path) = args.settings_file.as_deref() {
+        let (values, raw) = load_file_config(path)?;
+        layers.push(Layer {
+            source: ConfigLayer::Vault,
+            origin: Some(refusal_origin::LayerOrigin::SettingsFile {
+                path: path.to_path_buf(),
+                raw,
+            }),
+            values,
+        });
+    }
+    layers.push(Layer {
+        source: ConfigLayer::Environment,
+        origin: Some(refusal_origin::LayerOrigin::Environment),
+        values: env.values,
+    });
+    layers.push(Layer {
+        source: ConfigLayer::Holder,
+        origin: Some(refusal_origin::LayerOrigin::CommandLine),
+        values: flag_values,
+    });
+    Ok(layers)
+}
 
-    let space_naming = super::embedder_space::SpaceNaming::of([
-        file_values.embedder.as_ref(),
-        settings_values
-            .as_ref()
-            .and_then(|values| values.embedder.as_ref()),
-        env.values.embedder.as_ref(),
-        flag_values.embedder.as_ref(),
-    ]);
+impl Layer {
+    /// The config file's layer when there is no file to read.
+    fn unread() -> Self {
+        Self {
+            source: ConfigLayer::Vault,
+            origin: None,
+            values: PartialServeConfig::default(),
+        }
+    }
+}
+
+/// `layers` merged over the defaults in order, then the settings only argv
+/// gives. A layer's value refused as it is applied names that layer.
+fn merge_layers(args: &ServeArgs, layers: &[Layer]) -> anyhow::Result<ServeConfig> {
+    let mut embedders = [None; 4];
+    for (slot, layer) in embedders.iter_mut().zip(layers) {
+        *slot = layer.values.embedder.as_ref();
+    }
+    let space_naming = super::embedder_space::SpaceNaming::of(embedders);
     let mut resolved = ServeConfig::default();
     let mut posture_source = None;
     let mut key_ref_source = None;
-    for (source, values) in [
-        (ConfigLayer::Vault, Some(file_values)),
-        (ConfigLayer::Vault, settings_values),
-        (ConfigLayer::Environment, Some(env.values)),
-        (ConfigLayer::Holder, Some(flag_values)),
-    ] {
-        let Some(values) = values else {
-            continue;
-        };
+    for layer in layers {
+        let source = layer.source;
+        let values = layer.values.clone();
         if values.privacy_posture.is_some() {
             posture_source = Some(source);
         }
         if values.hosted_kms_key_ref.is_some() {
             key_ref_source = Some(source);
         }
-        values.apply_to(&mut resolved, source)?;
+        values
+            .apply_to(&mut resolved, source)
+            .map_err(|refusal| match &layer.origin {
+                Some(origin) => origin.attach(refusal),
+                None => refusal,
+            })?;
     }
     // Only the final posture may discard inherited custody, and only a blind
     // relay, which holds no key: a self-hosted vault keeps an inherited KMS
@@ -294,10 +360,10 @@ fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverrid
     Ok(file.backup)
 }
 
-/// The config file's layer. A file that is not admitted is not read
-/// (`file_admission`), and one that does not parse names only itself and
-/// the place it failed (FIX 9477).
-fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
+/// The config file's layer, and the text it was read from. A file that is
+/// not admitted is not read (`file_admission`), and one that does not parse
+/// names only itself and the place it failed (FIX 9477).
+fn load_file_config(path: &Path) -> anyhow::Result<(PartialServeConfig, String)> {
     let raw = read_config_file(path)?;
     let mut config: FileServeConfig = super::parse_toml(path, &raw)?;
     let models = config
@@ -308,7 +374,7 @@ fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
         .with_context(|| format!("config file {}", path.display()))?;
     let mut values = PartialServeConfig::from(config);
     values.models = models;
-    Ok(values)
+    Ok((values, raw))
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
