@@ -15,13 +15,14 @@
 //! - [`DrafterBinding`], one target's active pointer, stock or a version,
 //!   with its generation and the version it replaced;
 //! - [`DrafterEvent`], the content-free history;
-//! - [`DrafterPolicy`], the owner's switch, excluded worlds and recipe.
+//! - [`DrafterPolicy`], the owner's switch, excluded worlds and recipe: the
+//!   catalogue key `drafter.policy`, set through `vault.settings.set`.
 //!
-//! The doors list versions, read the status, set the policy and revert a
-//! binding. A source erase reaches every version whose ancestry names the
-//! source at both delete doors and at an actor's erase, in the erase's own
-//! transaction ([`erase_drafters_for_source_in_txn`]). Each version's sealed
-//! artifact sits under its own erasable key ([`DrafterSealing`]).
+//! The doors list versions, read the status and revert a binding. A source
+//! erase reaches every version whose ancestry names the source at both
+//! delete doors and at an actor's erase, in the erase's own transaction
+//! ([`erase_drafters_for_source_in_txn`]). Each version's sealed artifact
+//! sits under its own erasable key ([`DrafterSealing`]).
 //!
 //! The drafter trains on the vault's whole chat traffic (FIX 15128, FIX
 //! 15129, `traffic`): the host hands every answered reply over once it is
@@ -73,6 +74,7 @@ mod nightly;
 mod policy;
 mod report;
 mod serving;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 mod traffic;
 mod training;
@@ -108,7 +110,8 @@ pub use evaluation::{
 };
 pub use load_set::{SEALED_CHUNK_BYTES, drafter_file_name_is_plain, drafter_load_set_blake3};
 pub use nightly::DrafterNightStep;
-pub use policy::{DrafterPolicy, DrafterPolicySetRequest, set_drafter_policy_as_owner};
+use policy::policy_in_txn;
+pub use policy::{DrafterPolicy, DrafterPolicyValue};
 pub(crate) use report::unseen_drafter_line_in_txn;
 pub use report::{DRAFTER_GROUP, DRAFTER_VIEW, DigestDrafter, DigestDrafterItem};
 pub use serving::{
@@ -133,7 +136,6 @@ const VERSIONS: SideTable<EntityId, DrafterVersion, Named> =
 const BINDINGS: SideTable<[u8; 32], DrafterBinding, Named> =
     SideTable::new(&side_table::DRAFTER_BINDING);
 const EVENTS: SideTable<EntityId, DrafterEvent, Named> = SideTable::new(&side_table::DRAFTER_EVENT);
-const POLICY: SideTable<(), DrafterPolicy, Named> = SideTable::new(&side_table::DRAFTER_POLICY);
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
@@ -143,11 +145,6 @@ fn hash_json(value: &impl Serialize) -> Result<[u8; 32]> {
     let bytes = crate::llm::canonical_json_bytes(value)
         .map_err(|_| invalid("drafter pin encoding failed"))?;
     Ok(*blake3::hash(&bytes).as_bytes())
-}
-
-/// The owner's policy in `txn`: the shipped default, on, when none is set.
-fn policy_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<DrafterPolicy> {
-    Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
 }
 
 /// Every version in `txn`, by id.

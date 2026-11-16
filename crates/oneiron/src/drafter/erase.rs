@@ -36,8 +36,8 @@ use super::evaluation::erase_evaluations_in_txn;
 use super::traffic::erase_drafter_examples_for_source_in_txn;
 use super::{
     BINDINGS, BindingMove, DrafterActor, DrafterBinding, DrafterDependencies, DrafterEventKind,
-    DrafterServing, DrafterVersion, DrafterVersionState, EVENTS, POLICY, VERSIONS,
-    move_binding_in_txn, record_event_in_txn,
+    DrafterServing, DrafterVersion, DrafterVersionState, EVENTS, VERSIONS, move_binding_in_txn,
+    record_event_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -230,9 +230,9 @@ pub(crate) fn erase_drafters_for_source_in_txn(
 /// The version table's declared scrub, for every drafter family: an erased
 /// id's versions go as [`erase_drafters_for_source_in_txn`] takes them, the
 /// training examples that name it go (FIX 15128), and an erased actor is
-/// forgotten in the policy and the events that name it.
-/// An event row that does not decode goes. One-way, in the erase's own
-/// transaction.
+/// forgotten in the events that name it (the setting tables' own scrub
+/// forgets it in the policy, the key `drafter.policy`). An event row that
+/// does not decode goes. One-way, in the erase's own transaction.
 ///
 /// # Errors
 ///
@@ -249,11 +249,6 @@ pub(crate) fn erase_drafter_actor_in_txn(
         id,
     )?;
     erase_drafters_for_source_in_txn(store, wtxn, id)?;
-    if let Some(mut policy) = POLICY.get_lenient(store, wtxn, &())?
-        && policy.set_by.as_mut().is_some_and(|by| by.forget(id))
-    {
-        POLICY.put(store, wtxn, &(), &policy)?;
-    }
     let mut rows = Vec::new();
     for row in EVENTS.iter_raw_from(store, &*wtxn, &[])? {
         rows.push(row?);

@@ -180,7 +180,8 @@ pub enum DrafterEventKind {
         versions: Vec<EntityId>,
         jobs: Vec<AttemptId>,
     },
-    /// The owner's policy at a new revision.
+    /// The owner's policy at this revision (the setting change that wrote
+    /// it) returned the event's binding to stock.
     Policy { revision: u64 },
     /// A new worker incarnation proved it serves `target`'s binding at
     /// `generation`: stock, or a version, with the draft identity its
