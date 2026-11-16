@@ -552,7 +552,9 @@ impl Vault {
     /// shared vault `vault_id` releases (FIX 12555): the one selection policy
     /// over the owner's local binding, unchanged shared property bytes. Every
     /// grant is read; one whose body does not decode is no bound grant here.
-    fn live_bound_connect_grants_in_txn(
+    /// The inquiry edge's join reads the same selection as the seat's edges
+    /// (FIX INQUIRY-EDGE-ONE-PER-SEAT).
+    pub(crate) fn live_bound_connect_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,

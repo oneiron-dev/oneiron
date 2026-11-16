@@ -36,7 +36,10 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::authority::{AuthorityVaultId, ConnectOffer, ConnectOfferTerms, HostSlipIssuer};
+use crate::authority::{
+    AuthorityVaultId, ConnectOffer, ConnectOfferTerms, FederationGrantActivation, HostSlipIssuer,
+    federation_grant_activation,
+};
 use crate::batch::BatchOp;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -189,7 +192,7 @@ pub struct InquiryEdgeReciprocalGrant {
 }
 
 /// A member's inquiry edge offered to a company at joining: the member's
-/// name for the company's WORLD of the edge, and the member host's signed
+/// own name for the edge, and the member host's signed
 /// half of the Connect that binds the edge to the company's reciprocal
 /// grant. The Connect names that WORLD before the company writes it: the
 /// pact's id fixes it (`derived_domains::INQUIRY_JOIN_WORLD`). It carries
@@ -197,7 +200,9 @@ pub struct InquiryEdgeReciprocalGrant {
 /// never logged.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InquiryJoinOffer {
-    /// The member's name, as the company's WORLD of the edge reads it.
+    /// The member's name, as the member's offer gives it. The company names
+    /// the edge's WORLD for the seat's PERSON as it holds it, never for this
+    /// (FIX INQUIRY-EDGE-ONE-PER-SEAT).
     pub member_name: String,
     /// The member host's half of the Connect.
     pub connect: ConnectOffer,
@@ -757,12 +762,36 @@ impl Vault {
             }
             return Ok(self.accept_connect_in_txn(txn, issuer, grant, connect)?.1);
         }
-        let member_name = join.member_name.trim();
-        if member_name.is_empty() {
+        if join.member_name.trim().is_empty() {
             return Err(refused(
                 "an inquiry edge offered at joining names its member",
             ));
         }
+        // One edge per seat (ARCH-0043 #inquiry-edge: "Every member seat
+        // carries an inquiry edge"; FIX INQUIRY-EDGE-ONE-PER-SEAT). The exact
+        // repeat was answered above, so a seat grant that still stands here
+        // belongs to another pact: a second edge, refused before any WORLD,
+        // grant or pact is written.
+        let seat_edges = self.live_bound_connect_grants_in_txn(txn, shared_vault_id, member)?;
+        if seat_edges.iter().any(|grant| {
+            !matches!(
+                federation_grant_activation(&fold, grant),
+                FederationGrantActivation::Inactive(status) if status.is_terminal()
+            )
+        }) {
+            return Err(refused("this member seat already carries an inquiry edge"));
+        }
+        // The WORLD is named for the seat's PERSON as this vault holds it,
+        // never for the name the member's offer gives, which could be another
+        // member's; a PERSON with no stored name reads as its id's prefix. Its
+        // first 48 characters keep the WORLD's name inside its 256 bytes.
+        let member_name: String = crate::reaction::person_name_in(self, txn, member)?
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| member.to_hex()[..8].to_owned())
+            .trim()
+            .chars()
+            .take(48)
+            .collect();
         let local = fold
             .vault_id
             .ok_or_else(|| refused("this vault has no authority root yet"))?;
