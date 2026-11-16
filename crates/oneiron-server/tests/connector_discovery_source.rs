@@ -143,6 +143,26 @@ fn answer(stream: TcpStream, seen: &Mutex<Vec<Seen>>) {
     );
 }
 
+/// The tool [`add_comments_get`] adds.
+const COMMENTS_GET: &str = "documents.comments.get";
+
+/// Adds a method shaped as Google's `{+name}` methods are (Chat
+/// `spaces.messages.get`, `GET v1/{+name}`): its one path parameter takes a
+/// resource name with `/` in it, and its `pattern` names the one kind of
+/// resource the method reads. Docs v1 has none.
+fn add_comments_get(document: &mut Value) {
+    document["resources"]["documents"]["resources"] = json!({"comments": {"methods": {"get": {
+        "id": "docs.documents.comments.get",
+        "path": "v1/{+name}",
+        "flatPath": "v1/documents/{documentsId}/comments/{commentsId}",
+        "httpMethod": "GET",
+        "description": "Reads one comment.",
+        "parameters": {"name": {"type": "string", "required": true, "location": "path",
+                                "pattern": "^documents/[^/]+/comments/[^/]+$"}},
+        "parameterOrder": ["name"]
+    }}}});
+}
+
 /// Google's Docs v1 Discovery document, its root moved to `endpoint`.
 fn docs_document(endpoint: &str) -> Value {
     let mut document: Value =
@@ -401,6 +421,12 @@ impl Fixture {
     /// Registers the connector, stamps `documents.get` always allowed,
     /// attests it, pairs an agent and consents the tool to it.
     async fn admitted(&self) -> Agent {
+        self.admitted_for("documents.get").await
+    }
+
+    /// Registers the connector, stamps `tool` always allowed, attests it,
+    /// pairs an agent and consents that one tool to it.
+    async fn admitted_for(&self, tool: &str) -> Agent {
         let (status, registered) = self
             .owner(
                 "register",
@@ -415,7 +441,7 @@ impl Fixture {
             .owner(
                 "slate/accept",
                 &json!({"connector": CONNECTOR, "revision": revision,
-                        "rows": {"documents.get": "always_allow"}}),
+                        "rows": {tool: "always_allow"}}),
             )
             .await;
         assert_eq!(status, StatusCode::OK, "slate accept: {accepted}");
@@ -430,7 +456,7 @@ impl Fixture {
                     "actor": agent.principal.to_hex(),
                     "endpoint": self.api.endpoint,
                     "rows": [
-                        {"tool": "documents.get", "ceiling": "personal", "headers": false}
+                        {"tool": tool, "ceiling": "personal", "headers": false}
                     ]
                 }),
             )
@@ -612,6 +638,102 @@ fn a_media_upload_method_is_no_tool() {
             registered["skipped"],
             json!(["documents.upload: uploads media only, and code mode carries no binary body"]),
             "{registered}"
+        );
+    });
+}
+
+#[test]
+fn a_reserved_place_is_a_tool_only_with_its_pattern_stamped() {
+    run_on_engine_stack("discovery-reserved-place-pattern-stamped", || async {
+        let fixture = Fixture::new(add_comments_get);
+        let (status, registered) = register(&fixture).await;
+        assert_eq!(status, StatusCode::OK, "register: {registered}");
+        let get = slate_row(&registered, COMMENTS_GET);
+        assert_eq!(get["http"]["path"], "/v1/{+name}");
+        // The owner's stamp covers the pattern, as it covers the path.
+        assert_eq!(
+            get["http"]["reserved_patterns"],
+            json!({"name": "^documents/[^/]+/comments/[^/]+$"}),
+            "{get}"
+        );
+
+        // With no pattern, a value could name any resource under the API:
+        // the method is no tool.
+        let fixture = Fixture::new(|document| {
+            add_comments_get(document);
+            document["resources"]["documents"]["resources"]["comments"]["methods"]["get"]
+                ["parameters"]["name"]
+                .as_object_mut()
+                .expect("the name parameter")
+                .remove("pattern");
+        });
+        let (status, registered) = register(&fixture).await;
+        assert_eq!(status, StatusCode::OK, "register: {registered}");
+        let rows = registered["slate"]["manifest"]
+            .as_array()
+            .expect("slate manifest");
+        assert!(
+            rows.iter().all(|row| row["name"] != COMMENTS_GET),
+            "{registered}"
+        );
+        assert_eq!(
+            registered["skipped"],
+            json!([
+                "documents.comments.get: its path place {+name} takes a value with `/` in it, \
+                 and it has no pattern, so a call could name any resource under the API"
+            ]),
+            "{registered}"
+        );
+    });
+}
+
+/// REVIEW2 #7981 P1-1: the owner stamps and consents only
+/// `documents.comments.get`; a call with `{"name": "documents/d1"}` would
+/// read the document itself (`GET /v1/documents/d1`, the `documents.get`
+/// method), which no stamp covers. Nothing is sent; a name the pattern
+/// matches goes as stamped.
+#[test]
+fn a_reserved_value_outside_its_pattern_is_never_sent() {
+    run_on_engine_stack("discovery-reserved-value-outside-pattern", || async {
+        let fixture = Fixture::new(add_comments_get);
+        let agent = fixture.admitted_for(COMMENTS_GET).await;
+        let call = |name: &str| {
+            json!({"name": CONNECTOR, "source": "catalog", "tool": COMMENTS_GET,
+                   "arguments": {"name": name}, "mutation": "preview"})
+        };
+        for (key, name) in [
+            ("comments-get-document", "documents/d1"),
+            ("comments-get-reply", "documents/d1/comments/c1/replies/r1"),
+        ] {
+            let (status, answer) = fixture.call(&agent, key, call(name)).await;
+            let seen = fixture.api.seen();
+            assert!(
+                seen.is_empty(),
+                "{name} is outside the pattern, yet the API received {seen:?} \
+                 (connector.call {status}: {answer})"
+            );
+        }
+
+        let (status, answer) = fixture
+            .call(
+                &agent,
+                "comments-get-comment",
+                call("documents/d1/comments/c1"),
+            )
+            .await;
+        let seen = fixture.api.seen();
+        assert_eq!(
+            seen.len(),
+            1,
+            "one request (connector.call {status}: {answer}): {seen:?}"
+        );
+        assert_eq!(
+            (seen[0].method.as_str(), seen[0].target.as_str()),
+            ("GET", "/v1/documents/d1/comments/c1")
+        );
+        assert_eq!(
+            seen[0].headers.get("authorization").map(String::as_str),
+            Some(format!("Bearer {SECRET_VALUE}").as_str())
         );
     });
 }
