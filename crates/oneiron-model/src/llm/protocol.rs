@@ -8,6 +8,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use super::{CallEnvelope, ModelId, ReplyAssertions, SegmentManifest};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmRequest {
@@ -46,9 +47,14 @@ impl LlmRequest {
         canonical_json_bytes(self)
     }
 
+    /// The request key: plain BLAKE3 of [`Self::canonical_bytes`]. Steps
+    /// memoize on it, and replies and decisions name it, so it keeps its
+    /// bytes (K, PLAN-UC-04 stage 6.4).
     pub fn canonical_hash(&self) -> std::result::Result<[u8; 32], serde_json::Error> {
         let bytes = self.canonical_bytes()?;
-        Ok(*blake3::hash(&bytes).as_bytes())
+        Ok(LegacyDigest::new(purposes::llm::REQUEST)
+            .raw(&bytes)
+            .finish())
     }
 
     pub fn canonical_hash_hex(&self) -> std::result::Result<String, serde_json::Error> {
