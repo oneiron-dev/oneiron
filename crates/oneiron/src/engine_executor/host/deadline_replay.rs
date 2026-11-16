@@ -16,6 +16,10 @@ use super::resume_preflight::{
 };
 use super::*;
 
+/// One recorded program call popped from a pending step's rows: its row and the rows a
+/// callable it called made (L8-23).
+type PoppedProgramCall = (CodeRunBridgeCall, Vec<CodeRunBridgeCall>);
+
 /// What a resumed step's guest reads once its replay holds: the call ran
 /// nowhere, and the step commits nothing.
 const PENDING_STEP_HELD: &str = "pending_step_held";
@@ -482,7 +486,7 @@ impl DeadlineReplay {
             self.walk_ended = true;
             return PreflightTake::Held(PreflightHeld::Preflight);
         }
-        let mut tail: Vec<(CodeRunBridgeCall, Vec<CodeRunBridgeCall>)> = Vec::new();
+        let mut tail: Vec<PoppedProgramCall> = Vec::new();
         while self.guest_calls.front().is_some() {
             let Some(popped) = self.pop_front_call() else {
                 self.restore_tail(tail);
@@ -546,7 +550,7 @@ impl DeadlineReplay {
     }
 
     /// Puts a drained tail back where the walk left it, in order (L8-23).
-    fn restore_tail(&mut self, tail: Vec<(CodeRunBridgeCall, Vec<CodeRunBridgeCall>)>) {
+    fn restore_tail(&mut self, tail: Vec<PoppedProgramCall>) {
         for (row, nested) in tail.into_iter().rev() {
             for made in nested.into_iter().rev() {
                 self.rows.push_front(made);
@@ -559,7 +563,7 @@ impl DeadlineReplay {
 
     /// Pops the front recorded program call: its row and the rows a callable it called made
     /// (L8-23). `None` when the rows and the program calls disagree.
-    fn pop_front_call(&mut self) -> Option<(CodeRunBridgeCall, Vec<CodeRunBridgeCall>)> {
+    fn pop_front_call(&mut self) -> Option<PoppedProgramCall> {
         let guest = self.guest_calls.front().copied()?;
         if self.rows.front()?.seq != guest {
             return None;
@@ -592,14 +596,7 @@ impl DeadlineReplay {
     /// is an effect step, and the drained tail in order, for a park that keeps it. The rows stay
     /// drained; a pure tail's step commits without them, so its seqs go to the next step's calls,
     /// and a row that still owns a kept output counts as an effect step.
-    #[allow(
-        clippy::type_complexity,
-        reason = "the drained tail is the replay's own popped shape, kept for the park"
-    )]
-    fn finalize_tail(
-        &mut self,
-        results: &[CodeRunRawOutput],
-    ) -> (bool, Vec<(CodeRunBridgeCall, Vec<CodeRunBridgeCall>)>) {
+    fn finalize_tail(&mut self, results: &[CodeRunRawOutput]) -> (bool, Vec<PoppedProgramCall>) {
         let mut holds_effect = false;
         let mut tail = Vec::new();
         while self.guest_calls.front().is_some() {

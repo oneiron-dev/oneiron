@@ -112,7 +112,7 @@ impl ResumePreflightReport {
                 .collect(),
         };
         let bytes = serde_json::to_vec(&drift).unwrap_or_default();
-        crate::entity_id::bytes_to_hex_lower(blake3::hash(&bytes).as_bytes())
+        oneiron_contracts::fingerprint::ContentHash::of(&bytes).to_hex()
     }
 }
 
