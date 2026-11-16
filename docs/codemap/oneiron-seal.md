@@ -78,7 +78,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
 | `src/organ.rs` | src | L | 1 struct · 12 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect` and `seal.prepare` (schema 1), run… |
 | `src/organ/report.rs` | src | s | 2 crate-vis | — | A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision… |
-| `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
+| `tests/esign_host_e2e.rs` | test | XL | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |

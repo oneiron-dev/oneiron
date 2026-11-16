@@ -197,8 +197,9 @@ pub(super) fn remove_secret_file(target_path: &Path, registered: FileIdentity) -
 }
 
 #[cfg(unix)]
-mod written {
-    //! Descriptor-relative access to a T2 target.
+pub(crate) mod written {
+    //! Descriptor-relative access to a T2 target, and to a withheld
+    //! repository file a snapshot restore writes anew (FIX 2230).
 
     use std::ffi::{CString, OsStr};
     use std::fs::File;
@@ -211,14 +212,14 @@ mod written {
     use crate::error::Result;
 
     /// A T2 target held by descriptor: its directory, and the file's name in it.
-    pub(super) struct Target {
+    pub(crate) struct Target {
         dir: File,
         leaf: CString,
     }
 
     /// How many names the file may have when [`Target::remove`] unlinks it.
     #[derive(Clone, Copy)]
-    pub(super) enum Links {
+    pub(crate) enum Links {
         /// Only the target's: another name would keep the plaintext after the
         /// unlink, so the file stays and its row keeps covering it.
         Sole,
@@ -233,7 +234,7 @@ mod written {
         /// symlink later moves nothing the vault writes; a symlink met during
         /// the walk is refused. A `..` component is refused too: it asks the
         /// held directory for its current parent, which a rename can change.
-        pub(super) fn open(target_path: &Path) -> Result<Self> {
+        pub(crate) fn open(target_path: &Path) -> Result<Self> {
             // The leaf as spelled: `Path` drops a trailing `/` or `/.`, which
             // ask for a directory, so a target ending in one names no file.
             let spelled = target_path.as_os_str().as_bytes();
@@ -270,7 +271,7 @@ mod written {
 
         /// Whether a fresh walk of `target_path` still reaches the directory
         /// this target holds. A directory gone from the path is not.
-        pub(super) fn still_named_by(&self, target_path: &Path) -> Result<bool> {
+        pub(crate) fn still_named_by(&self, target_path: &Path) -> Result<bool> {
             let again = match Self::open(target_path) {
                 Ok(again) => again,
                 Err(crate::error::Error::Io(error))
@@ -284,7 +285,7 @@ mod written {
         }
 
         /// Creates the file, never through or over an occupant.
-        pub(super) fn create(&self) -> std::io::Result<File> {
+        pub(crate) fn create(&self) -> std::io::Result<File> {
             self.open_leaf(libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL)
         }
 
@@ -300,7 +301,7 @@ mod written {
         /// place. The leaf is checked through the held directory and unlinked
         /// from it, so only a process that swaps the leaf itself between the
         /// check and the unlink is outside this check.
-        pub(super) fn remove(
+        pub(crate) fn remove(
             &self,
             identity: FileIdentity,
             links: Links,
