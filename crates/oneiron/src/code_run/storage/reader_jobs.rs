@@ -27,7 +27,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use super::reader_folds::{MEMOS, SummaryMemo};
-use super::records::REPLAY_RECORDS;
+use super::replay_rows::REPLAY_RECORDS;
 use super::wait_delivery::deliver_wait_listing_in_txn;
 use crate::agent_def::AgentPowerTarget;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
