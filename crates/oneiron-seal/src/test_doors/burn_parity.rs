@@ -1,9 +1,6 @@
-//! Doors for this crate's integration tests to crate-private items, as the
-//! engine's `test_doors`. Compiled only under `--cfg oneiron_test_support`,
-//! which only the test command sets (`RUSTFLAGS="--cfg oneiron_test_support"
-//! cargo test ... --test <stem>`); never behind a cargo feature, so no
-//! `--all-features` build and no organ binary a host runs reaches them.
-//! Hidden; never API.
+//! The door for `tests/burn_parity.rs`, under the parent's
+//! `--cfg oneiron_test_support`: no `--all-features` build and no organ
+//! binary a host runs reaches it.
 //!
 //! `burn_page_fields` serves `tests/burn_parity.rs`: it burns one page's
 //! fields through the organ's ported burn-in (`work_burn::burn_fields`) into

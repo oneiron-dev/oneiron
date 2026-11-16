@@ -161,6 +161,11 @@ name = "esign_host_e2e"
 path = "tests/esign_host_e2e.rs"
 required-features = ["native"]
 
+[[test]]
+name = "seal_delta_crl_oid"
+path = "tests/seal_delta_crl_oid.rs"
+required-features = ["native"]
+
 # Both e-sign field burn-in ports, the engine's and this organ's, draw one
 # field set byte for byte alike (FIX [ESIGN-BURN-TWO-PORTS]). Its doors
 # compile only under `--cfg oneiron_test_support`.
