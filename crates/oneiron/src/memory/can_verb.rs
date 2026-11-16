@@ -124,6 +124,15 @@ impl Memory<'_> {
                 self.rooms_speak_admission(&verb_input::<WitnessTurn>(name, params)?),
                 false,
             ),
+            // RESTRICTION-WAVE-10 C43: an agent the owner's key and Grant admit decides itself;
+            // any other non-person needs a person, as the owner-proof door answered before.
+            "vault.cleanup.decide" if !person => {
+                return Ok(if self.agent_decides_cleanup()? {
+                    (CanVerbGate::Auto, Vec::new())
+                } else {
+                    (CanVerbGate::Person, vec![PERSON_PROOF.to_owned()])
+                });
+            }
             "tasks.answer" => {
                 let input = verb_input::<TaskAnswerRequest>(name, params)?;
                 match self.tasks_answer_admission(&input.handle, &input.word) {
