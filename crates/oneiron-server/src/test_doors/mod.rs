@@ -25,6 +25,7 @@ pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;
 pub mod replay_admission;
+pub mod residence_connection;
 pub mod resident_pump;
 pub mod signing_session;
 pub mod siwc_seat;
