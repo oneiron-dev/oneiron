@@ -4,16 +4,12 @@
 use std::collections::HashSet;
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
-};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, fold_up_status, task_is_acked,
     task_is_cancelled,
 };
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::memory::{MemoryError, MemoryResult};
@@ -111,7 +107,7 @@ pub(super) fn task_presence_with_limits(
         device_admitted_task_page(vault, &dest, &mut index_after, limit, &mut index_rows_read)
     })?;
 
-    // Read-time clock: a consult past its deadline surfaces as expired from the
+    // Read-time clock: a consult at or past its deadline surfaces as expired from the
     // persisted deadline alone, so the failed row is never hidden behind
     // outbound (or reconciliation) availability.
     let now = vault.store.clock.now_recorded_at();
@@ -404,7 +400,7 @@ fn task_page_slot_in(
             // whether or not the reconciliation sweep has run yet. A settled
             // ladder is an ANSWER, so there is nothing for the deadline to
             // derive — the same reading the expiry sweep takes of that row.
-            (None, Some(ttl)) if ttl.deadline_at < now && settled_ladder.is_none() => (
+            (None, Some(ttl)) if ttl.deadline_at <= now && settled_ladder.is_none() => (
                 TaskBoardStatus::Failed,
                 Some(TaskTerminalDisposition::Expired),
             ),
@@ -609,21 +605,11 @@ pub(super) fn cancel_target_state(
             let child = queue
                 .get(attempt_ref)?
                 .ok_or_else(|| MemoryError::from(Error::EntityNotFound))?;
-            let child_payload = if child.kind == DREAMER_RUNNER_ATTEMPT_KIND {
-                decode_dreamer_attempt_payload(&child.payload).ok()
-            } else {
-                None
-            };
-            let owned = child_payload
-                .filter(|child| child.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
-                .and_then(|child| child.parent_attempt)
-                .and_then(|parent_ref| queue.get(parent_ref).ok().flatten())
-                .and_then(|parent| decode_dreamer_attempt_payload(&parent.payload).ok())
-                .filter(|parent| parent.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
-                .and_then(|parent| decode_agent_dispatch_input(&parent.input).ok())
-                .is_some_and(|parent| {
-                    agent_dispatch_actor(&parent).is_ok_and(|writer| writer.entity_ref() == actor)
-                });
+            // The caller's own spawn, or a run anywhere below one it spawned
+            // (ARCH-0082 #children). A row that does not read is not owned.
+            let owned = super::run_cancel::started_by(actor, &child, |id| {
+                Ok(queue.get(id).ok().flatten())
+            })?;
             Ok(CancelTargetState {
                 owned,
                 task_ref: None,
@@ -636,12 +622,7 @@ pub(super) fn cancel_target_state(
 }
 
 pub(super) fn attempt_hex(attempt_id: AttemptId) -> String {
-    let mut out = String::with_capacity(32);
-    for byte in attempt_id.as_bytes() {
-        use std::fmt::Write as _;
-        write!(&mut out, "{byte:02x}").expect("fmt::Write for String is infallible");
-    }
-    out
+    oneiron_hex::encode(attempt_id.as_bytes())
 }
 
 /// Attempt ids replaced by a later try.
