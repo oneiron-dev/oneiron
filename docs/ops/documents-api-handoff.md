@@ -267,8 +267,9 @@ number, and there is no compatibility path. Two nested grammars carry their own 
 deck transaction (`schema: 2`, `crates/oneiron-docedit/src/edit/transaction.rs`) and the stemma
 tracked-change transaction (`crates/oneiron-docedit/vendor/stemma-engine`).
 
-Source: `crates/oneiron-docedit/src/contract/mod.rs` (the types and the op table) and
-`contract/run.rs` (the handlers and the refusal mapping). The recalculation port is
+Source: `crates/oneiron-docedit/src/contract/mod.rs` (the op table, the reply types and the
+errors), `contract/args.rs` (the args types), `contract/description.rs` (what `contract.describe`
+answers) and `contract/run.rs` (the handlers and the refusal mapping). The recalculation port is
 `crates/oneiron-xlsx-formula/src/contract_port.rs`.
 
 
