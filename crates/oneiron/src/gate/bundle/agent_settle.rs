@@ -314,42 +314,41 @@ pub fn resolve_gate_consent_bundle_as_agent(
     input: GateConsentBundleResolveRequest,
 ) -> MemoryResult<GateConsentBundleResolution> {
     let agent = bundle_agent(memory, RESOLVE_AS_VERB)?;
-    require_gate_consent_bundle_run_id(&input.dreamer_run_id)?;
     let expected = parse_bundle_id(&input.bundle_id)?;
     let vault = memory.vault();
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let now = vault.now_recorded_at();
-    let (receipt, recorded_decisions) = memory.with_verified_actor_write_txn(|wtxn| {
-        memory.prove_read_authority_in_txn(wtxn)?;
-        let grant = admit_bundle_agent_in_txn(vault, wtxn, agent, RESOLVE_AS_VERB)?;
-        let Some(members) =
-            agent_bundle_members_in_txn(vault, &lane, wtxn, &input.dreamer_run_id)?
-        else {
-            return Err(Error::EntityNotFound.into());
-        };
-        if members
-            .iter()
-            .any(|entry| entry.body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE)
-        {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                format!(
-                    "{RESOLVE_AS_VERB} never settles a bundle that holds a proactivity policy request: it waits for the owner"
-                ),
-                &["Ask the owner to settle this bundle."],
-            ));
-        }
-        refuse_opener_lineage_in_txn(vault, wtxn, agent, &input.dreamer_run_id, &members)?;
-        Ok(vault.settle_gate_consent_bundle_in_txn(
-            wtxn,
-            BundleSettler::Agent { agent, grant },
-            expected,
-            &input.dreamer_run_id,
-            input.action,
-            now,
-        )?)
-    })?;
-    vault.finish_gate_consent_bundle(&receipt, recorded_decisions, now)?;
+    let receipt = vault.settle_gate_consent_bundle(
+        BundleSettler::Agent(agent),
+        expected,
+        &input.dreamer_run_id,
+        input.action,
+        now,
+        |wtxn| {
+            memory.verify_actor_write_in_txn(wtxn)?;
+            memory.prove_read_authority_in_txn(wtxn)?;
+            let grant = admit_bundle_agent_in_txn(vault, wtxn, agent, RESOLVE_AS_VERB)?;
+            let Some(members) =
+                agent_bundle_members_in_txn(vault, &lane, wtxn, &input.dreamer_run_id)?
+            else {
+                return Err(Error::EntityNotFound.into());
+            };
+            if members
+                .iter()
+                .any(|entry| entry.body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE)
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    format!(
+                        "{RESOLVE_AS_VERB} never settles a bundle that holds a proactivity policy request: it waits for the owner"
+                    ),
+                    &["Ask the owner to settle this bundle."],
+                ));
+            }
+            refuse_opener_lineage_in_txn(vault, wtxn, agent, &input.dreamer_run_id, &members)?;
+            Ok(Some(grant))
+        },
+    )?;
     // An approved curator rung applies now, after the approval committed,
     // not at the next nightly pass (FIX 470), as at the owner's route.
     if receipt.action == GateConsentBundleAction::Approve {
