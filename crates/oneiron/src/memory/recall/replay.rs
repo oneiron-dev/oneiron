@@ -81,6 +81,17 @@ impl Memory<'_> {
                 return Ok(None);
             };
             item.embedding_matches.clone_from(&pin.embedding_matches);
+            // A stale world's age counts to the read's time: under the same
+            // stamp (its reason and pact epoch) the first answer's stamp
+            // replays. Any other change of it (a world stamped stale since,
+            // or stamped again) is a changed answer, which the items digest
+            // refuses.
+            if let (Some(stale), Some(first)) = (&mut item.stale, &pin.stale)
+                && stale.reason == first.reason
+                && stale.pact_epoch == first.pact_epoch
+            {
+                stale.clone_from(first);
+            }
             items.push(item);
         }
         // The first census's world names are a disclosure: each must still

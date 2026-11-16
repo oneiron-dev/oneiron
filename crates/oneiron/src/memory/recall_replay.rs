@@ -28,7 +28,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{
     MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryItem, MemoryPack,
-    MemoryResult, RecallEffort, RecallRequest, RetrievalMeta, ScopeHonesty,
+    MemoryResult, MemoryStaleStamp, RecallEffort, RecallRequest, RetrievalMeta, ScopeHonesty,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::embedding::EmbeddingMatchEvidence;
@@ -53,6 +53,10 @@ pub(crate) struct RecallReplayPin {
     pub(crate) cited: Vec<EntityId>,
     /// The item's raw embedding evidence, scores only.
     pub(crate) embedding_matches: Vec<EmbeddingMatchEvidence>,
+    /// The first answer's stale stamp of the item's world: its age counts
+    /// to the time it was served, so a replay serves it again while the
+    /// world's stamp is the same one.
+    pub(crate) stale: Option<MemoryStaleStamp>,
 }
 
 /// The first answer's retrieval accounting, kept as the wire spells it.
@@ -231,6 +235,7 @@ fn pins_of(items: &[MemoryItem]) -> MemoryResult<Vec<RecallReplayPin>> {
                     .map(|message| record_id(message.record.as_ref()))
                     .collect::<MemoryResult<_>>()?,
                 embedding_matches: item.embedding_matches.clone(),
+                stale: item.stale.clone(),
             })
         })
         .collect()
