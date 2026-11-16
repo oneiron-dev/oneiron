@@ -509,6 +509,10 @@ const ER_FRONTIER: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
 const ER_IDENTITY: SideTable<[u8; 16], EntityId, Raw> =
     SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
 
+/// Memory timeline rows, as `entity_revision/timeline` declares them.
+const ER_TIMELINE: SideTable<(EntityId, u64), [u8; 16], Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_TIMELINE);
+
 /// Vector refill markers, as `entity_revision/vector_refill` declares them.
 const ER_REFILL: SideTable<EntityId, (), Raw> =
     SideTable::new(&side_table::ENTITY_REVISION_VECTOR_REFILL);
@@ -623,6 +627,7 @@ pub fn clear_four(vault: &Vault) -> Result<()> {
     ER_DOC.delete_from(&vault.store, &mut txn, &[])?;
     ER_FRONTIER.delete_from(&vault.store, &mut txn, &[])?;
     ER_IDENTITY.delete_from(&vault.store, &mut txn, &[])?;
+    ER_TIMELINE.delete_from(&vault.store, &mut txn, &[])?;
     ER_REFILL.delete_from(&vault.store, &mut txn, &[])?;
     ER_PENDING_INDEX.delete_from(&vault.store, &mut txn, &[])?;
     ER_PENDING_PHONETIC.delete_from(&vault.store, &mut txn, &[])?;
@@ -2052,9 +2057,9 @@ fn seed_entity_doc(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
     Ok(())
 }
 
-/// A revision state, document, frontier and identity of one entity, its
-/// refill marker and staged index and phonetic rows, an unclassified
-/// document, and a carrier's actor-keyed rows.
+/// A revision state, document, frontier, identity and timeline row of one
+/// entity, its refill marker and staged index and phonetic rows, an
+/// unclassified document, and a carrier's actor-keyed rows.
 fn seed_entity_revision(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
     let at = 1_700_000_000_014;
     let entity = id(0x40)?;
@@ -2084,6 +2089,7 @@ fn seed_entity_revision(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
         &pins_frontier_document_value(&frontiers),
     )?;
     ER_IDENTITY.put(vault, txn, &revision, &entity)?;
+    ER_TIMELINE.put(vault, txn, &(entity, 1), &revision)?;
     ER_REFILL.put(vault, txn, &entity, &())?;
     put_pins_pending_index_in_txn(
         &vault.store,
@@ -2121,6 +2127,7 @@ fn seed_entity_revision(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
         &pins_frontier_document_value(&frontiers),
     )?;
     ER_IDENTITY.put(vault, txn, &held, &carrier)?;
+    ER_TIMELINE.put(vault, txn, &(carrier, 2), &held)?;
     Ok(())
 }
 
@@ -2532,6 +2539,7 @@ fn four_rows_into(
     raw_rows_into(vault, "entity_revision", ER_DOC, into)?;
     raw_rows_into(vault, "entity_revision", ER_FRONTIER, into)?;
     raw_rows_into(vault, "entity_revision", ER_IDENTITY, into)?;
+    raw_rows_into(vault, "entity_revision", ER_TIMELINE, into)?;
     raw_rows_into(vault, "entity_revision", ER_REFILL, into)?;
     raw_rows_into(vault, "entity_revision", ER_PENDING_INDEX, into)?;
     raw_rows_into(vault, "entity_revision", ER_PENDING_PHONETIC, into)?;
