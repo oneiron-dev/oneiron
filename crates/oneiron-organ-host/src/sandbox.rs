@@ -9,10 +9,10 @@
 //! machine's descriptor floor: a call or reply carries any number of
 //! regions across its frames (protocol 2.0, FIX 6190), and the runtime
 //! closes each input's descriptor once it has mapped it. On Linux every
-//! organ then starts under a seccomp deny-list (`syscall_filter`, census
-//! L4-09): ptrace, mount, bpf, kexec, module load, perf_event_open, the
-//! keyring, userfaultfd and process_vm_* kill it. Not built: the canon's
-//! syscall allow-list (FIX [ORGAN-SECCOMP-ALLOW-LIST]). No parent-death
+//! organ then starts under a seccomp allow-list (`syscall_filter`, FIX
+//! [ORGAN-SECCOMP-ALLOW-LIST]): the image and seal organs and the probe
+//! under their own traced lists, every other organ under the fixed tier
+//! list; any other call kills it. No parent-death
 //! signal: Linux ties it to the spawning thread, which may be a short-lived
 //! worker; the organ runtime exits at EOF on its socket.
 //!
@@ -86,8 +86,8 @@ struct Plan {
     /// itself to before exec (FIX 7885).
     #[cfg(target_os = "linux")]
     landlock: Option<std::os::fd::OwnedFd>,
-    /// Every organ's syscall filter, which the child installs after
-    /// `no_new_privs` (census L4-09).
+    /// The organ's syscall allow-list, which the child installs after
+    /// `no_new_privs`, last before exec (FIX [ORGAN-SECCOMP-ALLOW-LIST]).
     #[cfg(target_os = "linux")]
     syscalls: syscall_filter::SyscallFilter,
 }
@@ -153,7 +153,7 @@ fn confine(
         .map(|scratch| landlock::ruleset(spec, scratch.path()))
         .transpose()?;
     #[cfg(target_os = "linux")]
-    let syscalls = syscall_filter::SyscallFilter::deny_list()?;
+    let syscalls = syscall_filter::SyscallFilter::for_organ(spec)?;
     // A trace run records the organ's calls in place of filtering them.
     #[cfg(all(target_os = "linux", oneiron_test_support))]
     let (syscalls, trace_bootstrap) = match syscall_trace::trace_file() {
@@ -314,9 +314,9 @@ impl Plan {
             }
         }
         // The syscall filter, after `no_new_privs` and once the namespaces
-        // are made: nothing the child still does before exec is a denied
-        // call. An error fails the start, so the organ never runs
-        // unfiltered (census L4-09).
+        // are made: what the child still does before exec (setpriority,
+        // then the exec) is on every organ's list. An error fails the
+        // start, so the organ never runs unfiltered.
         self.syscalls.install()
     }
 }

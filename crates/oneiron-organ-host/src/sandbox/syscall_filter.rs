@@ -1,23 +1,37 @@
-//! The syscall filter on Linux (census L4-09, ARCH-0075 "Syscalls"): a
-//! seccomp deny-list that every organ starts under. Calls no document organ
-//! makes, each of which reaches past the organ's own process and
-//! namespaces, kill the whole organ (`SECCOMP_RET_KILL_PROCESS`, which its
-//! parent sees as SIGSYS): ptrace and process_vm_*; the mount family (the
-//! organ holds a user namespace of its own, so the new mount API too); bpf;
-//! kexec; module load; perf_event_open; the kernel keyring; userfaultfd. A
-//! call made through another syscall table (another audit arch, or x32 on
-//! x86_64) kills it too, so no second table gets around the list. Every
-//! other call is allowed: the canon's traced allow-list is FIX
-//! [ORGAN-SECCOMP-ALLOW-LIST].
+//! The syscall filter on Linux (ARCH-0075 "Syscalls", FIX
+//! [ORGAN-SECCOMP-ALLOW-LIST]): a seccomp allow-list that every organ starts
+//! under. The image and seal organs, and the host's own probe, each run
+//! under the calls their traced list names (`lists`); every other organ, a
+//! third-party one or a pack build its operator trusts as first party, runs
+//! under one fixed tier list the engine ships (RULING
+//! ORGAN-SECCOMP-THIRD-PARTY-LIST = A). No spec field adds a call. Any other
+//! call kills the whole organ (`SECCOMP_RET_KILL_PROCESS`, which its parent
+//! sees as SIGSYS), as does a call made through another syscall table
+//! (another audit arch, or x32 on x86_64). `clone3`, whose flags the filter
+//! cannot read, answers ENOSYS, so the C library starts a thread with
+//! `clone`; `clone` is allowed for a thread, and for any process only on the
+//! probe's list. The calls the deny-list of census L4-09 named ([`DENIED`]),
+//! and an organ's ways to a network or another process (`lists::NEVER`), are
+//! on no list: the crate does not compile if one is.
 //!
 //! The program is built before the fork. The child installs it after
-//! `no_new_privs`, which an unprivileged filter needs; it holds across exec
-//! and for every process the organ starts. A filter the kernel refuses
-//! fails the start, so the organ never runs unfiltered.
+//! `no_new_privs`, which an unprivileged filter needs, as its last step
+//! before exec, so each list holds the exec, the loader and the C and Rust
+//! runtime start; it holds across exec and for every process the organ
+//! starts. A filter the kernel refuses fails the start, so the organ never
+//! runs unfiltered.
 
 use std::io;
 
-/// The calls that kill an organ.
+mod lists;
+
+use crate::spec::{OrganSpec, OrganTier};
+
+/// The calls census L4-09's deny-list named, each of which reaches past the
+/// organ's own process and namespaces: ptrace and process_vm_*; the mount
+/// family (the organ holds a user namespace of its own, so the new mount
+/// API too); bpf; kexec; module load; perf_event_open; the kernel keyring;
+/// userfaultfd. No list names one; a trace run still kills them.
 const DENIED: &[libc::c_long] = &[
     libc::SYS_ptrace,
     libc::SYS_process_vm_readv,
@@ -69,7 +83,6 @@ const RETURN: u16 = (libc::BPF_RET | libc::BPF_K) as u16;
 
 /// Where `struct seccomp_data` holds the low word of the call's first
 /// argument (both tables here are little-endian).
-#[cfg(oneiron_test_support)]
 const FIRST_ARGUMENT_OFFSET: u32 = std::mem::offset_of!(libc::seccomp_data, args) as u32;
 
 /// A seccomp program, built before the fork.
@@ -105,18 +118,41 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
 }
 
 impl SyscallFilter {
-    /// The deny-list as a seccomp program for this build's syscall table:
-    /// a call under another audit arch, an x32 call, or a denied call kills
-    /// the process; every other call is allowed.
+    /// `spec`'s allow-list as a seccomp program for this build's syscall
+    /// table: a first-party image or seal organ, or the probe, under its own
+    /// list; every other organ under the fixed tier list. A call under
+    /// another audit arch, an x32 call, a `clone` that starts no thread
+    /// (save the probe's), or a call its list does not name kills the
+    /// process; `clone3` answers ENOSYS.
     ///
     /// # Errors
     /// This build's architecture has no audit arch here, so no program can
     /// tell its calls apart: the start fails rather than run the organ
     /// unfiltered.
-    pub(super) fn deny_list() -> io::Result<Self> {
+    pub(super) fn for_organ(spec: &OrganSpec) -> io::Result<Self> {
+        let first_party = spec.tier == OrganTier::FirstParty;
+        let (own, own_x86_64, forks): (&[libc::c_long], &[libc::c_long], bool) =
+            match spec.name.as_str() {
+                PROBE_ORGAN if first_party => (lists::PROBE, lists::PROBE_X86_64, true),
+                crate::image::IMAGE_ORGAN if first_party => (lists::IMAGE, &[], false),
+                crate::seal::SEAL_ORGAN if first_party => (lists::SEAL, &[], false),
+                _ => (lists::FENCED_FILES, lists::FENCED_FILES_X86_64, false),
+            };
         let mut program = native_table_only()?;
-        program.extend(kill_denied());
-        program.push(statement(RETURN, libc::SECCOMP_RET_ALLOW));
+        program.extend(clone_rows(forks));
+        let allow = statement(RETURN, libc::SECCOMP_RET_ALLOW);
+        let mut allowed: Vec<libc::c_long> = Vec::new();
+        for &number in [lists::RUNTIME, lists::RUNTIME_X86_64, own, own_x86_64]
+            .into_iter()
+            .flatten()
+        {
+            if !allowed.contains(&number) {
+                allowed.push(number);
+                // Each is a small positive index into the native table.
+                program.extend([jump(JUMP_IF_EQUAL, number as u32, 0, 1), allow]);
+            }
+        }
+        program.push(statement(RETURN, libc::SECCOMP_RET_KILL_PROCESS));
         Self::of(program)
     }
 
@@ -127,7 +163,7 @@ impl SyscallFilter {
     /// for the recorder (`SECCOMP_RET_USER_NOTIF`).
     ///
     /// # Errors
-    /// As [`Self::deny_list`].
+    /// As [`Self::for_organ`].
     #[cfg(oneiron_test_support)]
     pub(super) fn recording(bootstrap: std::os::fd::RawFd) -> io::Result<Self> {
         let mut program = native_table_only()?;
@@ -222,7 +258,80 @@ fn native_table_only() -> io::Result<Vec<libc::sock_filter>> {
     Ok(program)
 }
 
+/// The rows for `clone3` and `clone`, before the list's: `clone3`, whose
+/// flags sit behind a pointer the filter cannot read, answers ENOSYS, and
+/// the C library then starts a thread with `clone`. `clone` is allowed for
+/// a thread (`CLONE_THREAD` in its flags) and, where `forks`, for any
+/// process; any other kills.
+fn clone_rows(forks: bool) -> Vec<libc::sock_filter> {
+    let allow = statement(RETURN, libc::SECCOMP_RET_ALLOW);
+    let mut rows = vec![
+        jump(JUMP_IF_EQUAL, libc::SYS_clone3 as u32, 0, 1),
+        statement(
+            RETURN,
+            libc::SECCOMP_RET_ERRNO | (libc::ENOSYS as u32 & libc::SECCOMP_RET_DATA),
+        ),
+    ];
+    if forks {
+        rows.extend([jump(JUMP_IF_EQUAL, libc::SYS_clone as u32, 0, 1), allow]);
+    } else {
+        // The flags replace the number in the accumulator, so both
+        // outcomes return here.
+        rows.extend([
+            jump(JUMP_IF_EQUAL, libc::SYS_clone as u32, 0, 4),
+            statement(LOAD_WORD, FIRST_ARGUMENT_OFFSET),
+            jump(JUMP_IF_BITS, libc::CLONE_THREAD as u32, 0, 1),
+            allow,
+            statement(RETURN, libc::SECCOMP_RET_KILL_PROCESS),
+        ]);
+    }
+    rows
+}
+
+/// The probe's name: the host's diagnostics organ, which only tests install.
+const PROBE_ORGAN: &str = "probe";
+
+/// Whether `list` names any call of `calls`.
+const fn names_any(list: &[libc::c_long], calls: &[libc::c_long]) -> bool {
+    let mut i = 0;
+    while i < list.len() {
+        let mut j = 0;
+        while j < calls.len() {
+            if list[i] == calls[j] {
+                return true;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    false
+}
+
+// No list names a denied call, a way to a network or another process, or
+// `clone`, which `clone_rows` checks first.
+const _: () = {
+    let all = [
+        lists::RUNTIME,
+        lists::RUNTIME_X86_64,
+        lists::PROBE,
+        lists::PROBE_X86_64,
+        lists::IMAGE,
+        lists::SEAL,
+        lists::FENCED_FILES,
+        lists::FENCED_FILES_X86_64,
+    ];
+    let mut i = 0;
+    while i < all.len() {
+        assert!(
+            !names_any(all[i], DENIED) && !names_any(all[i], lists::NEVER),
+            "an organ's syscall list names a call no list may name"
+        );
+        i += 1;
+    }
+};
+
 /// One kill per denied call, over the loaded number.
+#[cfg(oneiron_test_support)]
 fn kill_denied() -> impl Iterator<Item = libc::sock_filter> {
     let kill = statement(RETURN, libc::SECCOMP_RET_KILL_PROCESS);
     // Each is a small positive index into the native table.
