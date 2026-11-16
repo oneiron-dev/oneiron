@@ -128,6 +128,11 @@ jobs:
       - name: oneiron-dreamer dependency boundary
         if: ${{ !cancelled() }}
         run: bash scripts/ci/check_dreamer_crate_deps.sh
+      # ARCH-0036 #adapters (MED-1 = A): each wire protocol is a module of its family crate (oneiron-llm), and no
+      # split adapter crate stands apart. Reads the manifests and the tree; no cargo.
+      - name: adapter family crate layout
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/check_adapter_families.sh
       # Untangle slice 4.3 (S4-6 = a): the generated SDK files are not in git, so every PR prints the SDK's public
       # surface against its base instead (facade verbs, their input and output types, the SDK majors). It never
       # fails before the first `v*` tag; after it, a removed verb or a changed input type with no SDK major fails.

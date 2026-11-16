@@ -63,14 +63,21 @@ impl SideKey for IngestCheckKey {
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let (peer_id, start_hex) = text.split_once(':')?;
-        if peer_id.len() != 64 || start_hex.len() != 16 {
+        if peer_id.len() != 64 {
             return None;
         }
         Some(Self {
             peer_id: peer_id.to_owned(),
-            start: u64::from_str_radix(start_hex, 16).ok()?,
+            start: u64::from_be_bytes(oneiron_hex::decode::<8>(start_hex)?),
         })
     }
+}
+
+/// The peer id and window start an [`IngestCheckKey`] reads from the bytes after its table
+/// prefix, or `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_ingest_check_key_for_test(bytes: &[u8]) -> Option<(String, u64)> {
+    IngestCheckKey::decode_key(bytes).map(|key| (key.peer_id, key.start))
 }
 
 /// One raised check's window start, admitted count, and threshold: 24 raw bytes, three

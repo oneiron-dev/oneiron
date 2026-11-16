@@ -282,7 +282,7 @@ fn verb_act_classes(generator: &Generator) -> Result<String, GenerateError> {
         .into_iter()
         .map(|row| Ok((concat(item(row, "name")?)?, row)))
         .collect::<Result<_, GenerateError>>()?;
-    rows.sort_by(|(left, _), (right, _)| left.cmp(right));
+    rows.sort_by_key(|(left, _)| *left);
     let mut text = "/// Every verb row's `act_class` (ARCH-0082 #act-table), in verb-name order: `crate::check_in::verb_act_class`\n".to_owned();
     text += "/// looks a verb up here.\n";
     text += &format!(

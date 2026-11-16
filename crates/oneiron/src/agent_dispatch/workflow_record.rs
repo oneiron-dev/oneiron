@@ -34,16 +34,8 @@ pub(super) const DEDUPE: SideTable<[u8; 32], AttemptId, Raw> =
 
 pub(super) const WORKFLOW_ATTEMPT_TYPE: &str = "agent.workflow";
 
-/// A completed step's stable provenance, independent of queue dedupe retention.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowStepResult {
-    pub ordinal: usize,
-    pub requested_agent: String,
-    pub dispatched_agent: String,
-    pub attempt_id: AttemptId,
-    pub result_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::agent_dispatch::workflow_record::WorkflowStepResult;
 
 /// Host pump result. A stopped step never releases its successor.
 #[derive(Debug, Clone, PartialEq, Eq)]
