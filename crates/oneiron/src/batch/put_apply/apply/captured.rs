@@ -41,6 +41,7 @@ impl CapturedPut<'_> {
         } = self;
         let data = owners.normalized_policy.as_deref().unwrap_or(original_data);
         let data = owners.project.as_deref().unwrap_or(data);
+        let data = owners.kept_taint.as_deref().unwrap_or(data);
         let data = owners.escalated_skill_body.as_deref().unwrap_or(data);
         let data = owners.task_body_without_streaks.as_deref().unwrap_or(data);
         let data = owners.pad_stored_body.as_deref().unwrap_or(data);

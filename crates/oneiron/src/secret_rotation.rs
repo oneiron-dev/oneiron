@@ -385,6 +385,54 @@ fn blob_artifact_taint_refs(row: &EntityRecord) -> Result<Vec<SecretTaintRef>> {
     Ok(decode_blob_artifact_body(&row.body)?.secret_taint_refs)
 }
 
+/// The body a put of `data` over the stored row `id` stores, when both are
+/// BLOB_ARTIFACT rows (census L6-32): `data` with the stored
+/// `secret_taint.refs` unioned in, each secret at its LOWEST generation and
+/// the refs sorted by name. A host mark or a capture's own refs thus leave
+/// an artifact only with its erasure: a metadata re-put, local or
+/// replicated, keeps them, and export still nulls the artifact.
+///
+/// `None` when `data` already names every stored ref at or below its
+/// generation, when `data` is empty (an erase shell keeps no words), when
+/// no artifact with refs is stored at `id`, and when `data` does not decode
+/// (the type check refuses it as before).
+///
+/// # Errors
+///
+/// A stored artifact body that does not decode, a union the body codec
+/// refuses (the ref count bound), and storage failures.
+pub(crate) fn body_keeping_stored_taint_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    data: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    if entity_type != ENTITY_TYPE_BLOB_ARTIFACT || data.is_empty() {
+        return Ok(None);
+    }
+    let Some(stored) = store
+        .port_entity_record(txn, id)?
+        .filter(|row| !row.body.is_empty())
+    else {
+        return Ok(None);
+    };
+    let held = blob_artifact_taint_refs(&stored)?;
+    if held.is_empty() {
+        return Ok(None);
+    }
+    let Ok(incoming) = decode_blob_artifact_body(data) else {
+        return Ok(None);
+    };
+    let mut kept = incoming.secret_taint_refs.clone();
+    union_refs(&mut kept, held);
+    if kept == incoming.secret_taint_refs {
+        return Ok(None);
+    }
+    kept.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
+    body_with_secret_taint_refs(data, &kept).map(Some)
+}
+
 fn union_refs(into: &mut Vec<SecretTaintRef>, refs: Vec<SecretTaintRef>) {
     for r in refs {
         match into.iter_mut().find(|held| held.secret_ref == r.secret_ref) {
@@ -517,6 +565,9 @@ impl Vault {
     /// capture's own refs do. A secret the body already names keeps its
     /// LOWEST generation, the fail-closed direction; every other key of the
     /// stored body keeps its value. A mark that adds nothing writes nothing.
+    /// It writes through the stored-stamp door, so a mail attachment a
+    /// source landing stamped keeps its stamp and takes the mark; a later
+    /// put of the artifact keeps the refs (`body_keeping_stored_taint_in_txn`).
     ///
     /// # Errors
     ///
@@ -541,7 +592,7 @@ impl Vault {
             marked.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
             let body = body_with_secret_taint_refs(&row.body, &marked)?;
             self.batch_in()
-                .put(
+                .put_keeping_stored_stamp(
                     id,
                     ENTITY_TYPE_BLOB_ARTIFACT,
                     row.occurred,

@@ -87,6 +87,7 @@ fn prepare_put_beside<'a>(
     } = admission::admit_put(store, wtxn, request, authority_beside, own_device)?;
     let data = owners.normalized_policy.as_deref().unwrap_or(data);
     let data = owners.project.as_deref().unwrap_or(data);
+    let data = owners.kept_taint.as_deref().unwrap_or(data);
     let dispatch::DispatchCarry {
         task_body_without_streaks,
         pad_stored_body,
