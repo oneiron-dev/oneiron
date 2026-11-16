@@ -118,3 +118,16 @@ pub fn captured_request(vault: &Vault, capsule: &StepReplayCapsule) -> Result<Op
 pub fn stored_request_bytes(vault: &Vault, capsule: &StepReplayCapsule) -> Result<Option<Vec<u8>>> {
     crate::code_run::capsule_stored_request_bytes(vault, capsule)
 }
+
+/// Whether a step's replay context keeps the guest's response to `call`
+/// when the guest read `view` in place of the call's outcome (FIX 6351): the
+/// one response a fresh capture is handed, at bridge position 0.
+#[must_use]
+pub fn step_context_keeps_response(
+    call: &crate::code_run::SelfCall,
+    view: Option<&serde_json::Value>,
+) -> bool {
+    let mut capture = crate::code_run::StepContextCapture::new(None);
+    capture.guest_responses.keep(call, Some(0), view, None);
+    capture.guest_responses.at(0).is_some()
+}
