@@ -80,8 +80,11 @@ async fn execute(
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
     let (public_authority, listed) = if transport.requires_publication {
-        let (page_ref, publication, rows) =
-            public::resolve_public_booking_page_listing(server, page_token)?;
+        let (page_ref, publication, rows) = public::resolve_public_booking_page_listing(
+            server,
+            page_token,
+            &transport.destination,
+        )?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {
             page_ref,
             publication,
@@ -234,8 +237,16 @@ async fn execute(
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
             // The hold's write holds its place in the line until it returns.
             let place = turn.take_place();
-            let (response, sources) =
-                execute_hold(server, page_ref, input, now, public_authority, place).await?;
+            let (response, sources) = execute_hold(
+                server,
+                page_ref,
+                input,
+                now,
+                public_authority,
+                transport.owner_verified,
+                place,
+            )
+            .await?;
             let listed = listed.map(|mut rows| {
                 rows.extend(sources);
                 rows

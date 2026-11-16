@@ -47,6 +47,7 @@ pub use self::control_commands::{
 use self::doctor::doctor_report;
 pub use self::pack_commands::{packs, subscriptions};
 pub use self::recovery_commands::{backup, recover_clock, recover_window, restore};
+pub(super) use self::recovery_kit::open_material as open_kit_material;
 pub use self::recovery_kit::recovery_kit;
 pub use self::reminder_route::reminder_route;
 #[cfg(test)]
