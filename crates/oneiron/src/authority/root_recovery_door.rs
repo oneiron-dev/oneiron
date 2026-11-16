@@ -239,18 +239,16 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
-        actor: EntityId,
+        _actor: EntityId,
         (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
         lost: &[AuthorityKey],
     ) -> Result<BTreeSet<AuthorityKey>> {
         let enrolled = self.enrolled_owner_keys_in_txn(txn)?;
         let named: BTreeSet<AuthorityKey> = lost.iter().cloned().collect();
         for key in &named {
-            let enrolled_live = enrolled.iter().any(|listed| {
-                listed.live
-                    && listed.owner == actor
-                    && AuthorityKey::Ed25519(listed.public_key) == *key
-            });
+            let enrolled_live = enrolled
+                .iter()
+                .any(|listed| listed.live && AuthorityKey::Ed25519(listed.public_key) == *key);
             if key == root_key
                 || Some(key) == new_key
                 || !enrolled_live
