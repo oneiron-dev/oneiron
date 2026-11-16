@@ -118394,7 +118394,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinuxTpmKeystore"
@@ -118404,6 +118404,34 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linux_tpm/command_client.rs",
+     "purpose": "The TPM tier's own TPM 2.0 command client: one connection to the TPM, the commands the tier sends over it…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linux_tpm/device_pin_key.rs",
+     "purpose": "The device PIN key of the TPM tier (row OCS-OWNER-PIN): one sealed object under an auth value that the TPM…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linux_tpm/wire.rs",
+     "purpose": "The byte layout of TPM 2.0 commands and responses: big-endian fields and sized buffers (`TPM2B`), written…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -118450,7 +118478,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ManualPresenceClock",
@@ -118458,25 +118486,50 @@
       "PendingPresenceConfirm",
       "PresenceCapability",
       "PresenceClock",
-      "PresenceConfirmation",
       "PresenceError",
-      "PresenceGate",
       "PresenceInstant",
       "PresenceWindow",
       "ScriptedPresence",
       "SystemPresenceClock",
-      "UserPresence",
-      "WindowsScreenSession"
+      "UserPresence"
      ],
      "path": "src/user_presence.rs",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…",
      "surface": {
       "const": 5,
-      "enum": 4,
-      "fn": 37,
-      "re-export": 1,
-      "struct": 8,
+      "enum": 2,
+      "fn": 22,
+      "re-export": 3,
+      "struct": 7,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PresenceConfirmation",
+      "PresenceGate"
+     ],
+     "path": "src/user_presence/gate.rs",
+     "purpose": "One process's presence check: [`PresenceGate`] joins a device's prompt with the window one confirm opens…",
+     "surface": {
+      "enum": 1,
+      "fn": 11,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowsScreenSession"
+     ],
+     "path": "src/user_presence/platform_codes.rs",
+     "purpose": "What each platform's result codes stand for: Apple's `LAError` codes, Windows' user consent values and…",
+     "surface": {
+      "enum": 1,
+      "fn": 4
      }
     },
     {
@@ -118574,10 +118627,10 @@
      "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own"
     },
     "linux_tpm": {
-     "files": 1,
+     "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)"
     },
     "macos_presence": {
@@ -118602,10 +118655,10 @@
      "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)"
     },
     "user_presence": {
-     "files": 1,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…"
     },
     "windows": {
@@ -118623,9 +118676,9 @@
      "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…"
     }
    },
-   "over_bar": 2,
+   "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 15,
+   "source_files": 20,
    "test_files": 3
   },
   "oneiron-lens-wire": {
