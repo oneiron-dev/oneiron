@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use oneiron_base::msgpack_shape::{ShapeBudget, over_budget};
-use oneiron_contracts::fingerprint::{Fingerprint, purposes};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_store::diagnostic_record::untrusted_text::is_forbidden_text_scalar;
 use rmpv::Value;
 
@@ -291,17 +291,14 @@ impl OwnerKeyVouchRequest {
         Self::from_bytes(&bytes)
     }
 
-    /// The request's digest: its fingerprint under
-    /// [`purposes::authority::OWNER_KEY_VOUCH_REQUEST`], one part, the bytes
-    /// of [`Self::to_bytes`], the same on every device. An ask names the act
-    /// by it, so a changed request is another ask.
+    /// The request's digest: the [`ContentHash`] of [`Self::to_bytes`], which
+    /// names those bytes and nothing else, the same on every device. An ask
+    /// names the act by it, so a changed request is another ask.
     ///
     /// # Errors
     /// The encoder's own refusal.
     pub fn digest(&self) -> Result<[u8; 32]> {
-        let bytes = self.to_bytes()?;
-        let digest = Fingerprint::of_parts(purposes::authority::OWNER_KEY_VOUCH_REQUEST, &[&bytes]);
-        Ok(digest.into_bytes())
+        Ok(ContentHash::of(&self.to_bytes()?).into_bytes())
     }
 }
 
