@@ -196,6 +196,11 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// The text-index stamp this handle's analyzer writes. Text reads and
+    /// rebuild pages refuse once the stored stamp differs: another process
+    /// restamped the index under another analyzer
+    /// ([`Vault::ensure_text_index_stamp_matches`]).
+    text_index_stamp: doctor_manifest::TextIndexStamp,
     /// The owed claim VAD count at which the write door's last drain tried
     /// debts and settled none, `0` when none stalled (FIX 11923): while the
     /// count stands, writes skip that drain.

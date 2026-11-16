@@ -107,6 +107,11 @@ impl PipelineBuilder<'_> {
     ) -> Result<RetrievalTxnOutput> {
         let _ppr_work = self.admit_ppr_work()?;
         let rtxn = self.vault.store.env.read_txn()?;
+        if self.text_search.is_some() {
+            // The text arm scores in this read under this handle's analyzer
+            // (FIX TEXT-READ-HANDLE-ANALYZER-MISMATCH).
+            self.vault.ensure_text_index_stamp_matches(&rtxn)?;
+        }
         let inputs = SnapshotInputs {
             occurred_range,
             bm25_config,

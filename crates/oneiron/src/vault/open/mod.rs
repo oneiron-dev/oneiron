@@ -631,6 +631,7 @@ impl Vault {
             .or_else(|| directory_identity(store.env.path()));
         // One pin table per store, shared with its writers (FIX 22101).
         let result_body_pins = store.result_body_pins.clone();
+        let text_index_stamp = super::doctor_manifest::TextIndexStamp::of(&analyzer)?;
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             admitted_model_packs: Default::default(),
@@ -652,6 +653,7 @@ impl Vault {
             page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            text_index_stamp,
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             claim_vad_payment: Default::default(),
             cloud_registration_erase_revokes: Default::default(),

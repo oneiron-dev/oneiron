@@ -440,6 +440,50 @@ pub(super) enum TextIndexHandshake {
     Stale,
 }
 
+/// The text-index stamp a handle's analyzer writes: its analyzer manifest hash
+/// and this build's BM25F field-schema hash (FIX
+/// TEXT-READ-HANDLE-ANALYZER-MISMATCH). Computed once at open; each text read
+/// and each rebuild page compares it with the stored stamp in its own
+/// transaction, because another process's open can restamp the index under
+/// another analyzer while this handle stays open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TextIndexStamp {
+    manifest_hash: [u8; 32],
+    field_schema_hash: [u8; 32],
+}
+
+impl TextIndexStamp {
+    pub(super) fn of(analyzer: &MultilingualAnalyzer) -> Result<Self> {
+        let manifest_hash = analyzer
+            .manifest()
+            .canonical_hash()
+            .map_err(|e| Error::Store(StoreError::AnalyzerError(format!("manifest hash: {e}"))))?;
+        Ok(Self {
+            manifest_hash,
+            field_schema_hash: bm25_field_schema_hash(),
+        })
+    }
+
+    /// Whether `txn`'s snapshot holds this stamp: two gets. An absent hash
+    /// matches only an empty text index (an unstamped vault behind the
+    /// read-only door), since every first text write stamps the index in its
+    /// own transaction.
+    pub(crate) fn stored_in(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        match (
+            read_analyzer_manifest_hash(store, txn)?,
+            read_bm25_field_schema_hash(store, txn)?,
+        ) {
+            (Some(manifest_hash), Some(field_schema_hash)) => Ok(manifest_hash
+                == self.manifest_hash
+                && field_schema_hash == self.field_schema_hash),
+            (manifest_hash, field_schema_hash) => Ok(manifest_hash
+                .is_none_or(|hash| hash == self.manifest_hash)
+                && field_schema_hash.is_none_or(|hash| hash == self.field_schema_hash)
+                && text_index_is_empty(store, txn)?),
+        }
+    }
+}
+
 /// Validate the on-disk analyzer manifest against the in-memory one. Runs
 /// once at `Vault::open`. States are handled per plan ONE-317 §4.2, with
 /// the mismatch states since FIX ANALYZER-BUMP-AUTO-REINDEX:

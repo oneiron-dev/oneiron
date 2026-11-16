@@ -93,6 +93,23 @@ impl Vault {
         }
     }
 
+    /// [`Self::ensure_text_index_trusted`], and the index in `txn`'s snapshot
+    /// is still stamped with this handle's analyzer (FIX
+    /// TEXT-READ-HANDLE-ANALYZER-MISMATCH). Another process's open restamps
+    /// it when its analyzer differs, and this handle's queries would then
+    /// tokenize under one analyzer against postings built under another.
+    /// Call it in the transaction that scores or indexes.
+    pub(crate) fn ensure_text_index_stamp_matches(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        self.ensure_text_index_trusted()?;
+        if self.text_index_stamp.stored_in(&self.store, txn)? {
+            Ok(())
+        } else {
+            Err(Error::CorruptedIndex(
+                "text index stamped under another analyzer since this handle opened; reopen the vault",
+            ))
+        }
+    }
+
     /// Current text-index status. `analyzer_manifest` reflects the analyzer
     /// this vault was opened with; `schema_version` and `total_docs` reflect
     /// what was persisted by prior writes; `rebuild` is the rebuild in
@@ -360,6 +377,7 @@ impl Vault {
         let (scores, text_index_rebuilding) = {
             let rtxn = self.store.env.read_txn()?;
             admit(&rtxn)?;
+            self.ensure_text_index_stamp_matches(&rtxn)?;
             let scores = crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
                 &crate::ports::text_index(target, &self.analyzer),
                 &rtxn,
