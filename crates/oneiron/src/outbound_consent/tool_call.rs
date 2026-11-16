@@ -16,13 +16,11 @@ use self::headers::{canonical_header, declared_headers, dynamic_header};
 
 pub use crate::consent::tool_scope::ToolGrantDataClass;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HeaderGrantRequirement {
-    pub parameter: String,
-    pub header: String,
-    pub data_class: ToolGrantDataClass,
-}
+#[doc(hidden)]
+pub use oneiron_records::outbound_consent::tool_call::HeaderGrantRequirement;
+#[doc(hidden)]
+pub(super) use oneiron_records::outbound_consent::tool_call::invalid_schema;
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::outbound_consent::tool_call::MutationIntent;
 
@@ -616,10 +614,6 @@ impl crate::Vault {
             ConnectorToolCallPreparation::Ready(prepared)
         })
     }
-}
-
-pub(super) fn invalid_schema() -> Error {
-    Error::InvalidConfig("tool schema or resolved header parameters are invalid".into())
 }
 
 /// The class `content` shows by itself (FIX 8807): `Secret` when the shared

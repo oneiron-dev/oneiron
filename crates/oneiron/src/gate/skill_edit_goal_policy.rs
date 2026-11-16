@@ -15,16 +15,8 @@ pub(crate) struct SkillEditGoalPolicy {
     pub(crate) axes: Vec<GoalAxisSpec>,
 }
 
-fn unique_field<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    if entries.iter().any(|(name, _)| name.as_str().is_none()) {
-        return None;
-    }
-    let mut matches = entries
-        .iter()
-        .filter(|(name, _)| name.as_str() == Some(key));
-    let value = &matches.next()?.1;
-    matches.next().is_none().then_some(value)
-}
+#[doc(hidden)]
+use oneiron_records::gate::skill_edit_goal_policy::unique_field;
 
 impl SkillEditGoalPolicy {
     pub(crate) fn decode(value: Value) -> Option<Self> {
