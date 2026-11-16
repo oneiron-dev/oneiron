@@ -319,9 +319,11 @@ impl Vault {
     /// door's own carrier check judges it. Then the new generation carries
     /// the approvals the old one signed, chosen before the revoke
     /// ([`Self::recovery_authority_carry_in_txn`],
-    /// [`Self::carry_recovery_authority_approvals_in_txn`]). Returns the new
-    /// live generation with its enrol receipt and the old generation's
-    /// revocation.
+    /// [`Self::carry_recovery_authority_approvals_in_txn`]), and on a
+    /// self-hosted vault binds the owner when the old one held their only
+    /// `human` binding ([`Self::bind_unbound_owner_on_self_host_in_txn`]).
+    /// Returns the new live generation with its enrol receipt and the old
+    /// generation's revocation.
     ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`], and the revoke's
@@ -374,6 +376,18 @@ impl Vault {
             live_key.clone(),
         )?;
         self.carry_recovery_authority_approvals_in_txn(txn, carry, &next_signer)?;
+        // On a self-hosted vault a revoked generation that held the owner's
+        // `human` binding ended it with itself, and the carry never binds a
+        // revoked key again: the next generation binds the owner, by the
+        // enrolment's rule, under itself (Sol carry-fix D3).
+        let next_key = next_signer.authority_key();
+        let mut sign_next = |transcript: &[u8]| next_signer.sign_authority_transcript(transcript);
+        self.bind_unbound_owner_on_self_host_in_txn(
+            txn,
+            actor,
+            next_key.clone(),
+            (next_key, &mut sign_next),
+        )?;
         Ok((next, receipt, revoked))
     }
 
@@ -441,6 +455,37 @@ impl Vault {
         key: AuthorityKey,
         predecessor: &ActivationPredecessor,
     ) -> Result<()> {
+        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
+        self.bind_unbound_owner_on_self_host_in_txn(
+            txn,
+            actor,
+            key,
+            (predecessor.predecessor_key(), &mut sign),
+        )
+    }
+
+    /// Binds `actor` to `key` as `human`, signed by `signer` behind `sign`,
+    /// on a self-hosted vault where `actor` holds no active `human` binding
+    /// once a kit change revoked the R keys it replaces and carried what
+    /// those signed: the enrolment's own rule
+    /// ([`Self::enrol_owner_signing_key_in_txn`]), judged after the
+    /// revocation. A kit activation signs by its predecessor
+    /// ([`Self::bind_owner_to_recovery_authority_key_in_txn`]); the kit-only
+    /// rotation by the next generation itself, the one live key of that act
+    /// once the revoked generation's binding ended with it (Sol carry-fix D3).
+    ///
+    /// # Errors
+    /// The binding's `BINDING_NOT_COUNTED`, as at the enrolment.
+    fn bind_unbound_owner_on_self_host_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        key: AuthorityKey,
+        (signer, sign): (AuthorityKey, &mut S),
+    ) -> Result<()>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
         if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
             return Ok(());
         }
@@ -452,12 +497,11 @@ impl Vault {
         let bind = EnrolledKeyBinding {
             fold: &fold,
             vault_id,
-            predecessor: predecessor.predecessor_key(),
+            predecessor: signer,
             key,
             owner: actor,
         };
-        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
-        self.bind_enrolled_owner_key_in_txn(txn, bind, &mut sign)
+        self.bind_enrolled_owner_key_in_txn(txn, bind, sign)
     }
 
     /// Chooses, in the caller's write transaction and BEFORE any key in
@@ -488,8 +532,11 @@ impl Vault {
     ///
     /// A head at the last revision, or a binding at the last epoch, has no
     /// next row, so it is not carried: no row the revoked key signed can
-    /// refuse the kit change that revokes the key (Sol carry F2, F3). The
-    /// history is read once (Sol carry F4).
+    /// refuse the kit change that revokes the key (Sol carry F2, F3). Only a
+    /// live R's holder can sign such a row, and the standing goes stale as
+    /// it did before the carry (FIX [KIT-CHANGE-CARRY-SKIPS-LAST-COUNTER]).
+    /// The history is read once (Sol carry F4): the stored rows and the
+    /// bodies an adopted checkpoint image carries (Sol carry-fix F2).
     ///
     /// # Errors
     /// A fold or history read's.
@@ -530,8 +577,25 @@ impl Vault {
             })
             .map(|(bound, binding)| (bound, (binding, CarrySupport::default())))
             .collect();
+        // The approvals the stale-roster window reads: each stored row, and
+        // each body an adopted checkpoint image carries that this vault does
+        // not store (the adopted fold expires those too), a stored row
+        // winning over the image's copy, as the enrolled-key reader reads
+        // them (Sol carry-fix F2).
         let history = crate::authority::history_transfer::history_in_txn(self, txn)?;
-        for (hash, (_, entry)) in &history {
+        let stored: std::collections::BTreeSet<AuthorityEntryHash> =
+            history.keys().copied().collect();
+        let evidence =
+            crate::authority::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?;
+        let stored = &stored;
+        let carried_past = evidence
+            .iter()
+            .flat_map(move |evidence| evidence.carried_past(stored));
+        let approvals = history
+            .iter()
+            .map(|(hash, (_, entry))| (hash, entry))
+            .chain(carried_past);
+        for (hash, entry) in approvals {
             if !fold.valid_entries.contains(hash) {
                 continue;
             }
