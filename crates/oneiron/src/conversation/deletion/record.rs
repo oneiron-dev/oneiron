@@ -134,8 +134,11 @@ impl Vault {
     /// the code run that asks the delete, `None` outside any run: each
     /// gated delete this commits, the record's MESSAGEs included, joins that
     /// run's change journal in its own write (ARCH-0040 #revert-run; design
-    /// RUNCHANGES-3 row D). The reaction claims it removes first go through
-    /// no deletion gate and join none, as a gated delete's own claims do not.
+    /// RUNCHANGES-3 row D). The reaction claims it erases first take no
+    /// deletion gate and join no journal: they go with the record, whose
+    /// journaled delete names the act (FIX
+    /// THREAD-DELETE-REACTION-ERASE-NOT-JOURNALED: a root refused after
+    /// them leaves their erase unjournaled).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn delete_room_record_as(
         &self,
