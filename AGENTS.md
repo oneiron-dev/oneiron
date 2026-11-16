@@ -136,12 +136,24 @@ unchanged.
 
 ## Ratchets
 
-`scripts/ratchet/check.sh` counts six metrics over non-test code against
+`scripts/ratchet/check.sh` counts eight metrics over non-test code against
 `scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
-process-global mutable statics, the keyspace census and raw core writes. It skips `tests/`
-directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. `scripts/ratchet/root-surface-check.sh`
-pins the `oneiron` crate root to the names in `scripts/ratchet/root-surface.txt`. Both run in
-`ratchet.yml` after a push to `main`; neither blocks a merge.
+process-global mutable statics, the keyspace census, raw core writes, hand-started hashes
+(`raw_hasher_starts`) and lists of names spelled by hand (`hand_name_tables`; a new list of names
+is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). It skips
+`tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
+`scripts/ratchet/root-surface-check.sh` pins the `oneiron` crate root to the names in
+`scripts/ratchet/root-surface.txt`. Both run in `ratchet.yml` after a push to `main`; neither
+blocks a merge. The merge pipeline also counts both for each change before it lands. When a
+change raises a metric to a count over its baseline, or turns the root-surface pin from passing to
+failing, the pipeline reports it to the change's author with the metric, the counts and the
+files, and holds nothing: the author lowers the count in a follow-up PR, or, for a reviewed change
+of the root surface, runs `scripts/ratchet/root-surface-check.sh --regen` there and says why.
+`raw_hasher_starts` counts the `blake3::` and `Sha256` starts outside
+`scripts/ratchet/raw_hasher_allowlist.txt`. A new hash goes through
+`oneiron_contracts::fingerprint`: a purpose from the registry in
+`crates/oneiron-fingerprint/src/purposes/`, or `ContentHash` for the bytes of a body. A path joins
+the allowlist only with its reason on the same line.
 
 ## Vendored and forked code
 
