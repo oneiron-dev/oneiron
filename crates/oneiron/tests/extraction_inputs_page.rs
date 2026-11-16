@@ -4,7 +4,7 @@
 #![cfg(oneiron_test_support)]
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::define_agent;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
@@ -398,6 +398,101 @@ fn a_reader_without_a_live_steward_read_is_refused_and_the_owner_reads()
     assert_eq!(turns[0]["turn"], witnessed.turns[0].to_hex());
     assert_eq!(turns[1]["turn"], witnessed.turns[1].to_hex());
     assert!(page["next"].is_null());
+    Ok(())
+}
+
+/// A base agent whose MACHINE is provisioned and that has no standing Steward
+/// row is refused on the public page: its manifest rows never stand in for
+/// the grant here. Once its grant stands, the same call serves the TURNs.
+#[test]
+fn a_base_agent_without_a_standing_steward_row_is_refused_until_its_grant_stands()
+-> ExtractionInputsPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_inputs_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let witnessed = witness_extraction_turns(&vault, &["call me owen", "yuki likes tea"])?;
+    let id = enqueue_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let attempt = extraction_attempt_hex(id);
+    let Err(refused) = read_public_extraction_page(&vault, actor, EdgeActorClass::System, &attempt)
+    else {
+        panic!("a base agent with no standing Steward row is refused");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains("live Steward reader"),
+        "the page's own refusal: {}",
+        refused.message
+    );
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let page = read_public_extraction_page(&vault, actor, EdgeActorClass::System, &attempt)?;
+    let turns = page["turns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("turns is an array"));
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0]["turn"], witnessed.turns[0].to_hex());
+    assert_eq!(turns[1]["turn"], witnessed.turns[1].to_hex());
+    Ok(())
+}
+
+/// A cursor naming a queued TURN outside the caller's grant is refused exactly
+/// as one naming a TURN the attempt does not hold, so a cursor never tells
+/// membership. A cursor at a served TURN still walks past the unread one.
+#[test]
+fn a_cursor_at_an_unread_turn_is_refused_as_one_the_attempt_does_not_hold()
+-> ExtractionInputsPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_inputs_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let witnessed = witness_extraction_turns(
+        &vault,
+        &[
+            "call me owen",
+            "yuki likes tea",
+            "reach owen at owen@example.com",
+        ],
+    )?;
+    let outside = witnessed.turns[1];
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(&vault, &[outside, witnessed.messages[1]], project)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
+    let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let attempt = extraction_attempt_hex(id);
+    let Err(unread) = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        Some(format!("extraction-turns:{}", outside.to_hex())),
+        None,
+    ) else {
+        panic!("a cursor at a TURN outside the grant is refused");
+    };
+    let Err(absent) = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        Some(format!("extraction-turns:{}", EntityId::now().to_hex())),
+        None,
+    ) else {
+        panic!("a cursor at a TURN the attempt does not hold is refused");
+    };
+    assert_eq!(absent.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        unread, absent,
+        "the unread anchor answers as the absent one"
+    );
+    let resumed = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        Some(format!("extraction-turns:{}", witnessed.turns[0].to_hex())),
+        None,
+    )?;
+    let turns = resumed["turns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("turns is an array"));
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["turn"], witnessed.turns[2].to_hex());
+    assert!(!resumed.to_string().contains(&outside.to_hex()));
+    assert!(resumed["next"].is_null());
     Ok(())
 }
 
