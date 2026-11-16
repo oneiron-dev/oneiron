@@ -57,7 +57,9 @@ pub(crate) fn person_role_in(
     }
     if (fold.vault_id.is_none()
         && (creator.as_deref() == Some(id.as_bytes().as_slice())
-            || (human && id == crate::vault::embedded_owner_actor_id()?)))
+            || (human
+                && id == crate::vault::embedded_owner_actor_id()?
+                && crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn)?)))
         || (fold.vault_id.is_some()
             && human
             && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, id).is_ok())
