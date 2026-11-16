@@ -17,17 +17,19 @@ pub enum BookingAgentOperation {
     Book,
     Reschedule,
     Cancel,
+    Waitlist,
 }
 
 impl BookingAgentOperation {
-    /// Canonical order: availability, book, reschedule, cancel. A block that
-    /// listed them in any other order would hash differently for the same
-    /// page, so the order is data, not presentation.
-    pub const CANONICAL: [Self; 4] = [
+    /// Canonical order: availability, book, reschedule, cancel, waitlist. A
+    /// block that listed them in any other order would hash differently for
+    /// the same page, so the order is data, not presentation.
+    pub const CANONICAL: [Self; 5] = [
         Self::Availability,
         Self::Book,
         Self::Reschedule,
         Self::Cancel,
+        Self::Waitlist,
     ];
 
     /// Stable machine identifier. It is the same string the `op`
@@ -39,6 +41,7 @@ impl BookingAgentOperation {
             Self::Book => "book",
             Self::Reschedule => "reschedule",
             Self::Cancel => "cancel",
+            Self::Waitlist => "waitlist",
         }
     }
 }
@@ -92,6 +95,28 @@ pub struct BookingCancelInput {
     pub idempotency_key: String,
 }
 
+/// Leave a waitlist, proving the entry with the token its join answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingWaitlistLeaveInput {
+    pub entry_token: String,
+    /// Replay hygiene only.
+    pub idempotency_key: String,
+}
+
+/// Book the slot a waitlist offer holds. The entry token proves the waiter,
+/// not the browser session: an offered waiter may come back in a new one, so
+/// this stage carries no session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingWaitlistClaimInput {
+    pub entry_token: String,
+    pub booker_email: String,
+    pub intake: Vec<BookingIntakeAnswer>,
+    /// Replay hygiene only.
+    pub idempotency_key: String,
+}
+
 // -------------------------------------------------------------------------
 // Operation results
 // -------------------------------------------------------------------------
@@ -111,6 +136,35 @@ pub enum BookingBookResult {
         expires_at: u64,
     },
     Confirmed {
+        reschedule_token: String,
+        cancel_token: String,
+    },
+    SlotTaken {
+        alternatives: Vec<RankedSlot>,
+    },
+}
+
+/// What one waitlist stage decided.
+///
+/// A join answers `Open` with the window's slots when it offers any, and
+/// writes nothing; otherwise `Joined`, whatever closed the window. The entry
+/// token appears in `Joined` and never again. `SlotTaken` is a claim's
+/// answer when something else took the offered slot first; the entry keeps
+/// its place in the line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "stage", content = "result", rename_all = "snake_case")]
+pub enum BookingWaitlistResult {
+    Joined {
+        entry_token: String,
+        /// The live entries whose windows overlap this one, this one
+        /// included.
+        position: u32,
+    },
+    Open {
+        alternatives: Vec<RankedSlot>,
+    },
+    Left,
+    Claimed {
         reschedule_token: String,
         cancel_token: String,
     },
@@ -146,6 +200,7 @@ pub enum BookingOperationResponse {
     Cancel {
         cancel_token: String,
     },
+    Waitlist(BookingWaitlistResult),
 }
 
 impl BookingOperationResponse {
@@ -157,6 +212,7 @@ impl BookingOperationResponse {
             Self::Book(_) => BookingAgentOperation::Book,
             Self::Reschedule { .. } => BookingAgentOperation::Reschedule,
             Self::Cancel { .. } => BookingAgentOperation::Cancel,
+            Self::Waitlist(_) => BookingAgentOperation::Waitlist,
         }
     }
 }

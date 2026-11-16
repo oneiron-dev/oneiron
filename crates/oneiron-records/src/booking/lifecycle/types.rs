@@ -11,11 +11,12 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// The closed verb table, sorted so the wire spellings live in one place.
-pub const BOOKING_VERBS: [&str; 4] = [
+pub const BOOKING_VERBS: [&str; 5] = [
     "booking.cancel",
     "booking.confirm",
     "booking.hold",
     "booking.reschedule",
+    "booking.waitlist",
 ];
 
 /// The closed booking verb enum, mirroring `task_verb.rs`'s typed verb shape.
@@ -25,6 +26,7 @@ pub enum BookingVerb {
     Confirm,
     Hold,
     Reschedule,
+    Waitlist,
 }
 
 impl BookingVerb {
@@ -37,6 +39,7 @@ impl BookingVerb {
             Self::Confirm => BOOKING_VERBS[1],
             Self::Hold => BOOKING_VERBS[2],
             Self::Reschedule => BOOKING_VERBS[3],
+            Self::Waitlist => BOOKING_VERBS[4],
         }
     }
 
@@ -48,6 +51,7 @@ impl BookingVerb {
             "booking.confirm" => Some(Self::Confirm),
             "booking.hold" => Some(Self::Hold),
             "booking.reschedule" => Some(Self::Reschedule),
+            "booking.waitlist" => Some(Self::Waitlist),
             _ => None,
         }
     }

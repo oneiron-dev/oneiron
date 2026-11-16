@@ -13,10 +13,12 @@ pub(super) const BOOKING_PAYER_DOORS: &[&str] = &[
     "/api/booking/{page_token}/book",
     "/api/booking/{page_token}/reschedule",
     "/api/booking/{page_token}/cancel",
+    "/api/booking/{page_token}/waitlist",
     "/v1/core/facade/vault.booking.availability",
     "/v1/core/facade/vault.booking.book",
     "/v1/core/facade/vault.booking.reschedule",
     "/v1/core/facade/vault.booking.cancel",
+    "/v1/core/facade/vault.booking.waitlist",
     "/v1/core/facade/vault.booking.constraint_turn",
 ];
 

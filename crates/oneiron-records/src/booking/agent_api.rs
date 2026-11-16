@@ -46,7 +46,7 @@ pub struct BookingAgentInstructionsBlock {
 
 impl BookingAgentInstructionsBlock {
     /// Fails closed on an unsupported version, a blank page token, an
-    /// operation list that is not the canonical four in canonical order, or a
+    /// operation list that is not the canonical five in canonical order, or a
     /// path that is not relative and same-origin.
     ///
     /// # Errors
@@ -98,7 +98,7 @@ impl BookingAgentInstructionsDefect {
             Self::UnsupportedVersion => "booking agent instructions version is unsupported",
             Self::BlankPageToken => "booking agent instructions page token must not be blank",
             Self::NonCanonicalOperations => {
-                "booking agent instructions must list availability, book, reschedule, cancel in that order"
+                "booking agent instructions must list availability, book, reschedule, cancel, waitlist in that order"
             }
             Self::BlankMethod => "booking agent instructions method must not be blank",
             Self::NonRelativePath => {

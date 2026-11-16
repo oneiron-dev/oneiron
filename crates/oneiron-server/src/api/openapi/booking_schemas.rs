@@ -64,10 +64,10 @@ pub(super) fn booking_instructions_block_schema() -> Value {
                 "items": { "type": "string" },
             },
             "operations": {
-                "description": "Advertised operations in canonical order: availability, book, reschedule, cancel. Paths are relative and same-origin.",
+                "description": "Advertised operations in canonical order: availability, book, reschedule, cancel, waitlist. Paths are relative and same-origin.",
                 "type": "array",
-                "minItems": 4,
-                "maxItems": 4,
+                "minItems": 5,
+                "maxItems": 5,
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -238,6 +238,69 @@ pub(super) fn booking_operation_response_schema() -> Value {
                     },
                 },
             },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "result"],
+                "properties": {
+                    "op": { "const": "waitlist" },
+                    "result": booking_waitlist_result_schema(&ranked_slot, &action_token),
+                },
+            },
+        ],
+    })
+}
+
+/// One waitlist stage's answer, tagged by `stage` inside the `op`/`result`
+/// envelope, as a book stage's is. `left` alone carries no result.
+fn booking_waitlist_result_schema(ranked_slot: &Value, action_token: &Value) -> Value {
+    let alternatives = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["alternatives"],
+        "properties": {
+            "alternatives": { "type": "array", "items": ranked_slot },
+        },
+    });
+    let staged = |stage: &str, result: Value| {
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stage", "result"],
+            "properties": {
+                "stage": { "const": stage },
+                "result": result,
+            },
+        })
+    };
+    json!({
+        "oneOf": [
+            staged("joined", json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["entry_token", "position"],
+                "properties": {
+                    "entry_token": action_token,
+                    "position": { "description": "Live entries whose windows overlap this one, this one included.", "type": "integer", "minimum": 1 },
+                },
+            })),
+            staged("open", alternatives.clone()),
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["stage"],
+                "properties": { "stage": { "const": "left" } },
+            },
+            staged("claimed", json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["reschedule_token", "cancel_token"],
+                "properties": {
+                    "reschedule_token": action_token,
+                    "cancel_token": action_token,
+                },
+            })),
+            staged("slot_taken", alternatives),
         ],
     })
 }

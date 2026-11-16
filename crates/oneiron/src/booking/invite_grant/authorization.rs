@@ -327,11 +327,19 @@ pub(crate) fn booker_identity_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_ref: &EntityId,
 ) -> Result<Option<String>, BookingError> {
-    let Some(raw) = vault
-        .store
-        .port_entity_record(rtxn, contact_ref)
-        .map(|row| row.map(|row| row.encode()))
-        .map_err(|error| engine_failure("booker contact read", error))?
+    person_identity_in_txn(&vault.store, rtxn, contact_ref)
+        .map_err(|error| engine_failure("booker contact read", error))
+}
+
+/// [`booker_identity_in_txn`] on the store alone, for the Gate's snapshot.
+pub(crate) fn person_identity_in_txn(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    contact_ref: &EntityId,
+) -> crate::Result<Option<String>> {
+    let Some(raw) = store
+        .port_entity_record(rtxn, contact_ref)?
+        .map(|row| row.encode())
     else {
         return Ok(None);
     };

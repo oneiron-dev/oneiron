@@ -64,6 +64,7 @@ mod storage;
 mod token;
 mod transition;
 mod types;
+mod waitlist;
 
 #[cfg(test)]
 mod tests;
@@ -102,6 +103,19 @@ pub use self::types::{
     BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec,
     ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
     MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
+    WAITLIST_OFFER_TTL_SECS, WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt,
+    WaitlistSpec,
+};
+pub(crate) use self::waitlist::erase_waitlist_contact_in_txn;
+pub use self::waitlist::{
+    WAITLIST_OFFER_CONTENT_PREFIX, WAITLIST_OFFER_LINK_QUERY_KEY, WaitlistOfferView,
+    parse_waitlist_offer_link, waitlist_entry_event_type, waitlist_offer_for_claim_link,
+    waitlist_offer_text,
+};
+pub(in crate::booking) use self::waitlist::{WaitlistOfferMade, waitlist_offer_content_ref};
+pub(crate) use self::waitlist::{
+    offer_token_digest, offered_waitlist_contacts_in_txn, parse_waitlist_offer_content_ref,
+    standing_waitlist_offer_in_txn,
 };
 
 pub(crate) use self::confirmation_state::{

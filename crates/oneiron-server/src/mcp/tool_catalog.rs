@@ -15,8 +15,9 @@ pub(super) const ENTITY_ID_PATTERN: &str = "^[0-9a-f]{32}$";
 
 /// Closed operation set of the booking agent API (BK-08), in the instructions
 /// block's canonical order, so discovery and the OpenAPI operation index
-/// advertise the four ops identically.
-pub const MCP_BOOK_OPERATIONS: &[&str] = &["availability", "book", "reschedule", "cancel"];
+/// advertise the five ops identically.
+pub const MCP_BOOK_OPERATIONS: &[&str] =
+    &["availability", "book", "reschedule", "cancel", "waitlist"];
 
 /// The MCP server name this daemon announces.
 ///
