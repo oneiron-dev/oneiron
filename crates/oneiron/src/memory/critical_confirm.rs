@@ -19,29 +19,11 @@ use crate::store::{GateDecisionId, PendingGateConsentRecord};
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticalWriteConfirmPendingRequest {
-    /// The candidate's gate decision ref (gate:<32-hex>).
-    pub pending_operation: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticalWriteConfirmRequest {
-    pub pending_operation: String,
-    /// The 32-hex nonce the pending read returned.
-    pub nonce: String,
-    /// The 64-hex policy frontier the pending read returned.
-    pub read_frontier_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CriticalWriteConfirmReceiptRequest {
-    /// The 64-hex confirmation id the pending read or settlement returned.
-    pub confirm_id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CriticalWriteConfirmPending {
@@ -54,13 +36,6 @@ pub struct CriticalWriteConfirmPending {
     pub expires_at: u64,
     /// Replicated and reopened owner-answer obligations have no deadline.
     pub has_deadline: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CriticalWriteConfirmAnswer {
-    Clear,
-    Decline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -343,14 +318,7 @@ fn require_readable(
 
 fn parse_hex<const N: usize>(value: &str, field: &str) -> MemoryResult<[u8; N]> {
     let refused = || MemoryError::bad_request(format!("{field} must be {} hex characters", N * 2));
-    if value.len() != N * 2 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(refused());
-    }
-    let mut bytes = [0; N];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).map_err(|_| refused())?;
-    }
-    Ok(bytes)
+    oneiron_hex::decode_any_case::<N>(value).ok_or_else(refused)
 }
 
 fn no_pending() -> MemoryError {

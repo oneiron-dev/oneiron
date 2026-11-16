@@ -142,8 +142,12 @@ fn judge_counterparty_policy(
     message_once: bool,
 ) -> Result<ExternalEffectJudgment> {
     let mutation_recorded_at = recorded_at;
-    let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
-        hydrate_external_effect_contact_at(store, txn, effect, policy, override_now)?;
+    let CounterpartyHydration {
+        effect: mut hydrated_effect,
+        send_override: counterparty_send_override,
+        revoked: counterparty_contact_revoked,
+        hold_classes: counterparty_hold_classes,
+    } = hydrate_external_effect_contact_at(store, txn, effect, policy, override_now)?;
     // Send eligibility is checked with the Gate's writer snapshot. A sender
     // released after dispatch preparation cannot authorize even a known
     // contact through an ordinary policy grant. Terminal replay never enters
@@ -458,6 +462,7 @@ fn judge_counterparty_policy(
         // override it resolved is written on here, once, before evaluation.
         effect.counterparty_send_override = counterparty_send_override;
         effect.counterparty_contact_revoked = counterparty_contact_revoked;
+        effect.counterparty_hold_classes = counterparty_hold_classes;
     }
     let mut decision = policy.evaluate_gate_with_delegation_chain(store, txn, &input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
@@ -596,12 +601,14 @@ fn judge_counterparty_policy(
             if connector_key::charter_block_drifted(block)? {
                 charter_wall = Some(
                     GateDecision::pending(vec![GateReasonCode::PendingCharterDrift])
-                        .with_receipt_reasons(["charter_drift"]),
+                        .with_receipt_reasons(["charter_drift"])
+                        .with_charter_stamp(block.approval_id),
                 );
             } else if never_list_matches() {
                 charter_wall = Some(
                     GateDecision::deny(GateReasonCode::DenyCharterNeverList)
-                        .with_receipt_reasons(["charter_never_list"]),
+                        .with_receipt_reasons(["charter_never_list"])
+                        .with_charter_stamp(block.approval_id),
                 );
             }
         }

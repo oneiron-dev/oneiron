@@ -374,16 +374,8 @@ impl Memory<'_> {
     }
 }
 
-/// What one pack put did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PackPutOutcome {
-    Installed,
-    /// Its code waits for its sandbox to qualify it.
-    Candidate,
-    /// The vault's install rules refused it; `reason` says why.
-    Blocked,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::hook_regen_doors::PackPutOutcome;
 
 /// `vault.packs.put`'s answer: the outcome, and the install receipt unless
 /// the put was blocked.

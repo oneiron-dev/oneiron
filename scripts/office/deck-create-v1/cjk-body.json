@@ -1,0 +1,71 @@
+{
+  "communication": {
+    "audience": "取締役会",
+    "outcome": "予算を承認する",
+    "main_message": "業績は計画通りに推移した"
+  },
+  "language": "ja-JP",
+  "accessibility": [
+    "Describe every figure"
+  ],
+  "pages": [
+    {
+      "id": "main",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "j-title",
+          "kind": "title",
+          "text": "第4四半期の業績概要報告"
+        },
+        {
+          "id": "j-one",
+          "kind": "claim",
+          "text": "売上は前四半期と比べてほぼ横ばいで推移し、利益率は着実に改善して目標を上回った。",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "利益率は着実に改善",
+              "quote_hash": "9ded422eb24c3c94f2c75e92108fe50f54b37f10b44cce2a6bdbec483e5c64e2"
+            }
+          ]
+        },
+        {
+          "id": "j-two",
+          "kind": "claim",
+          "text": "販売管理費は地域ごとの見直しにより前期比で削減され、予算内に収まった。",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "予算内に収まった",
+              "quote_hash": "3055866fd29e14c26dfb94862fc76af5cdf19236d70f3f6c20049a2b13dd2478"
+            }
+          ]
+        },
+        {
+          "id": "j-three",
+          "kind": "claim",
+          "text": "解約率は新規施策の効果で低下し、既存顧客の継続利用が着実に伸びている。",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "解約率は低下",
+              "quote_hash": "9c76e5a37bcd41e3d74d98ec9ff1ca7fa6de53d932353a1326baf39f2e9d3411"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "datasets": []
+}
