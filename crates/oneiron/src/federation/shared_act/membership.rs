@@ -757,9 +757,10 @@ impl Vault {
             None => None,
         };
         // An admin power's change is told to every live Owner, Admin and
-        // Deputy; any other change to the live Owners.
+        // Deputy, a seated house mind among them; any other change to the
+        // live Owners.
         let recipients = match power {
-            Some(_) => admin_act_recipients(&holders),
+            Some(_) => admin_act_recipients(&self.live_notice_holders(&txn, vault_id, now)?),
             None => live_owners(&holders, None),
         };
         let id = self.store.clock.entity_id()?.to_hex();

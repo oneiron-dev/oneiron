@@ -549,9 +549,11 @@ fn live_owners(holders: &[LiveActHolder], verb: Option<&str>) -> BTreeSet<Entity
         .map(|holder| holder.member)
         .collect()
 }
-/// Who hears of an admin act: every live Owner, Admin and Deputy (canon
-/// identity.md #cloud-agent-recovery, ORG-1 A: "The vault logs each admin act
-/// and notifies the other admins"; UNBUILT06-SHAPE Q3 = A).
+/// Who hears of an admin act: every live Owner, Admin and Deputy of
+/// `holders`, read by `Vault::live_notice_holders`, so a house mind its org
+/// link seats at one of those roles too (canon identity.md
+/// #cloud-agent-recovery, ORG-1 A: "The vault logs each admin act and
+/// notifies the other admins"; UNBUILT06-SHAPE Q3 = A).
 fn admin_act_recipients(holders: &[LiveActHolder]) -> BTreeSet<EntityId> {
     holders
         .iter()
@@ -927,8 +929,8 @@ impl Vault {
 
     /// Logs admin act `change` by `actor` in shared vault `vault_id`, in the
     /// act's own writer at `now`: one receipt, and one outcome notice to the
-    /// actor and to each live Owner, Admin and Deputy
-    /// (`admin_act_recipients`). For the admin doors that change no
+    /// actor and to each live Owner, Admin and Deputy, a seated house mind
+    /// among them (`admin_act_recipients`). For the admin doors that change no
     /// membership row (the membership writer tells the same people itself):
     /// a project access reset, an onboarding, a house role, a workspace
     /// setting, the conversation-learning setting and a delegate mint.
@@ -950,7 +952,7 @@ impl Vault {
         {
             return Ok(None);
         }
-        let holders = self.live_act_holders(txn, vault_id, now)?;
+        let holders = self.live_notice_holders(txn, vault_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let effect = Effect {
             change,
