@@ -51,9 +51,28 @@ pub(super) struct ChatLogPlan {
     pub(super) suffix: Vec<ReadTurn>,
     /// The standing summaries with their words, in SUMMARY order.
     pub(super) standing: Vec<(ConversationLandingReceipt, String)>,
+    /// The turns listed for the plan, which its summaries were judged for.
+    listed: Vec<EntityId>,
 }
 
 impl ChatLogPlan {
+    /// Whether the summaries that stand for the plan's listed turns, judged
+    /// again in `txn` as `scoped` reads them, are exactly the plan's: none
+    /// lost its standing and none newly stands (FIX 5032). The caller
+    /// persisted grant time before opening `txn` (FIX 6188).
+    ///
+    /// # Errors
+    ///
+    /// A corrupted receipt index, and storage errors.
+    pub(super) fn stands_in(
+        &self,
+        scoped: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+    ) -> MemoryResult<bool> {
+        Ok(coverage(scoped, txn, conversation, &self.listed)?.standing == self.standing)
+    }
+
     /// The last turn the reader reads.
     pub(super) fn last_turn(&self) -> Option<EntityId> {
         if let Some(turn) = self.suffix.last() {
@@ -77,7 +96,9 @@ struct Coverage {
 
 /// Plans `conversation`'s chat log as `memory`'s reader, with `scoped` its
 /// whole key, cut at `cut` when an action reads it, and hydrates the turns
-/// no summary covers (FIX 5032).
+/// no summary covers (FIX 5032). No snapshot is held across the plan: the
+/// transcript's readers open their own, and a second read snapshot on one
+/// thread is refused (MDB_BAD_RSLOT).
 ///
 /// # Errors
 ///
@@ -87,12 +108,11 @@ struct Coverage {
 pub(super) fn plan_chat_log(
     memory: &Memory<'_>,
     scoped: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     cut: Option<ChatLogCut>,
 ) -> MemoryResult<ChatLogPlan> {
     for _ in 0..TRANSCRIPT_READ_ATTEMPTS {
-        if let Some(plan) = plan_once(memory, scoped, txn, conversation, cut)? {
+        if let Some(plan) = plan_once(memory, scoped, conversation, cut)? {
             return Ok(plan);
         }
     }
@@ -108,7 +128,6 @@ pub(super) fn plan_chat_log(
 fn plan_once(
     memory: &Memory<'_>,
     scoped: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     cut: Option<ChatLogCut>,
 ) -> MemoryResult<Option<ChatLogPlan>> {
@@ -128,6 +147,7 @@ fn plan_once(
             prefix: Vec::new(),
             suffix: Vec::new(),
             standing: Vec::new(),
+            listed: Vec::new(),
         }));
     }
     let mut listed = memory.transcript_turn_keys(&conversation, branch.as_ref())?;
@@ -145,7 +165,13 @@ fn plan_once(
         }
     }
     let ids: Vec<EntityId> = listed.iter().map(|(_, turn)| *turn).collect();
-    let Coverage { standing, covering } = coverage(scoped, txn, conversation, &ids)?;
+    // The plan's own snapshot, closed before the turns are hydrated. FIX
+    // 6188: grant time is persisted before it.
+    let Coverage { standing, covering } = {
+        scoped.persist_grant_clock()?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        coverage(scoped, &txn, conversation, &ids)?
+    };
     let last_covered = ids.iter().rposition(|turn| covering.contains_key(turn));
     let mut selected: Vec<(u64, EntityId)> = listed
         .iter()
@@ -189,15 +215,17 @@ fn plan_once(
         prefix,
         suffix,
         standing,
+        listed: ids,
     }))
 }
 
 /// The summaries of `conversation` that stand for `listed` turns as `scoped`
 /// reads them, in SUMMARY order: each one whose evidence names only listed
 /// turns, none covered by an earlier one, while [`standing_words_in`] holds.
-/// Read in `txn`, the log's one governing snapshot, which its raw pins, its
-/// window and its SESSION are read in too (FIX 5032): its caller persisted
-/// grant time before opening it (FIX 6188).
+/// Read in `txn`: the plan's own snapshot, then the log's one governing
+/// snapshot, which its raw pins, its window and its SESSION are read in too
+/// ([`ChatLogPlan::stands_in`], FIX 5032). Its caller persisted grant time
+/// before opening it (FIX 6188).
 fn coverage(
     scoped: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
