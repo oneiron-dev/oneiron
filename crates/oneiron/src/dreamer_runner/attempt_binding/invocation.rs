@@ -48,8 +48,9 @@ impl DreamerAttemptBinding {
     /// settlement admits its conflicts page, typed verdicts on the host's
     /// lent ladder and Settle commits. Extraction admits its inputs and observations pages,
     /// evidence spans, checked verdict packs and bound generation steps with their
-    /// receipts, and no commit. A step input that names a `resolution` is a
-    /// merged-value step; any other is an extraction step. A commit takes the batch itself,
+    /// receipts, and Candidate, ConflictResolution or Conflict commits. A step input
+    /// that names a `resolution` is a merged-value step; any other is an extraction
+    /// step. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -81,6 +82,7 @@ impl DreamerAttemptBinding {
                         | AI_VERDICT_VERB
                         | EXTRACTION_STEP_SUBMIT_VERB
                         | EXTRACTION_STEP_RECEIPT_VERB
+                        | DERIVE_COMMIT_VERB
                 )
             }
         };
@@ -166,7 +168,7 @@ impl DreamerAttemptBinding {
                 let validate = match self.facet {
                     BoundFacet::Strength => validate_strength_commit,
                     BoundFacet::ConflictSettle => validate_conflict_settle_commit,
-                    BoundFacet::Extraction => return Err(facet_refused(self.facet)),
+                    BoundFacet::Extraction => validate_extraction_commit,
                 };
                 encode(&typed_row_validated(
                     &memory,
@@ -199,6 +201,11 @@ fn validate_strength_commit(verb: &str, value: &Value) -> MemoryResult<()> {
 /// The check a hook's rewrite of a conflict-settlement commit must pass.
 fn validate_conflict_settle_commit(verb: &str, value: &Value) -> MemoryResult<()> {
     facet_batch(decode(verb, value.clone())?, BoundFacet::ConflictSettle).map(drop)
+}
+
+/// The check a hook's rewrite of an extraction commit must pass.
+fn validate_extraction_commit(verb: &str, value: &Value) -> MemoryResult<()> {
+    facet_batch(decode(verb, value.clone())?, BoundFacet::Extraction).map(drop)
 }
 
 fn decode<T: DeserializeOwned>(verb: &str, value: Value) -> MemoryResult<T> {

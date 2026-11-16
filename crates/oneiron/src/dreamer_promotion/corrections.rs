@@ -311,8 +311,8 @@ pub(crate) struct CloseConflictsRequest<'a> {
 /// never its text, and the loop goes on; a store error aborts the commit.
 ///
 /// What `promote_one` does around the preparation and the landing: the blank
-/// run guard is left out (the stager's run id is never blank: the stamp's run
-/// or the attempt's hex); the `reviewed_output` early-Proposed check is left
+/// run guard is left out (the replacement's landing before these closes
+/// refuses a blank run); the `reviewed_output` early-Proposed check is left
 /// out (the scan's resolved filter already skips answered markers, and a
 /// derive batch commits once); the own read for the preparation is replaced
 /// by the caller's transaction; the checker admission is left out (no

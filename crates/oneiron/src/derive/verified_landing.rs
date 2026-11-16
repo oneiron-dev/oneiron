@@ -57,26 +57,43 @@ pub(super) enum LandingError {
     Abort(Error),
 }
 
+/// The caller's landing purpose and provenance, beside its evidence and fence.
+pub(super) struct VerifiedLandingOptions {
+    /// The caller's provenance, replacing native's when present.
+    pub(super) provenance: Option<rmpv::Value>,
+    /// Whether this claim is a committed output of the bound attempt.
+    pub(super) record_output: bool,
+}
+
 /// Lands one verified `candidate` with `evidence` under `fence` in the
 /// caller's savepoint `txn`: native's preparation with the caller's
 /// `provenance`, the imported check, the shared landing and the read back
 /// with the landed check. Takes `supersedes` as the candidate carries it.
+/// A blank run is refused first, as `promote_one_answering` refuses it.
 ///
 /// # Errors
 ///
-/// Returns `LandingError::Refusal` for the gate's codes, imported evidence
-/// or a refused landing, and `LandingError::Abort` for the store's error.
+/// Returns `LandingError::Refusal` for a blank run, the gate's codes,
+/// imported evidence or a refused landing, and `LandingError::Abort` for the
+/// store's error.
 pub(super) fn land_verified_candidate(
     vault: &Vault,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     evidence: Option<&VerifiedEvidenceSet>,
     fence: Option<&ConsolidationFence>,
-    provenance: Option<rmpv::Value>,
+    options: VerifiedLandingOptions,
     txn: &mut heed::RwTxn<'_>,
 ) -> std::result::Result<ClaimApprovalStatus, LandingError> {
     use LandingError::{Abort, Refusal};
     use LandingRefusal::{Gate, Imported, LandingRefused};
+    // A blank run would hide the write from every Dreamer-run reader: the
+    // gate's imported floor and the owner's review grouping among them. A
+    // stamp carries its attempt's recorded run, and the queue admits one
+    // that is only whitespace.
+    if run.run_id.trim().is_empty() {
+        return Err(Refusal(LandingRefused));
+    }
     let (prepared, claim_candidate) = {
         let read_txn: &heed::RoTxn<'_> = txn;
         match crate::dreamer_promotion::prepare_promotion(
@@ -86,7 +103,7 @@ pub(super) fn land_verified_candidate(
             candidate,
             evidence,
             &[],
-            provenance,
+            options.provenance,
         ) {
             Ok(prepared) => prepared,
             Err(rejection) => {
@@ -114,7 +131,7 @@ pub(super) fn land_verified_candidate(
         &prepared,
         claim_candidate,
         fence,
-        false,
+        options.record_output,
         txn,
     ) {
         match error {
@@ -181,8 +198,9 @@ pub(super) fn refuse(
     Ok(ItemOutcome::Refused { reasons, receipt })
 }
 
-/// The stamp's run id for a promotion's run: the stamp's run, or the
-/// attempt's hex when it names none. Never blank.
+/// The stamp's run id for a promotion's run: the stamp's run as it is, or
+/// the attempt's hex when it names none. A stamp's run may be blank;
+/// `land_verified_candidate` refuses that landing.
 pub(super) fn promotion_run_id(stamp: &DerivationStamp, attempt: AttemptId) -> String {
     stamp
         .run
