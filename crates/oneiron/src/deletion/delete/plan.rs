@@ -60,10 +60,13 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
-        let mut gate_decision = gate.as_ref().map(|gate| {
-            gate.context
-                .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
-        });
+        let mut gate_decision = gate
+            .as_ref()
+            .map(|gate| {
+                gate.context
+                    .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
+            })
+            .transpose()?;
         // FIX 5736: a purge names the turn-program rows it removes whole
         // because they do not decode. FIX 5775: the count rides the returned
         // outcome too, so a delete with no gate decision carries it.

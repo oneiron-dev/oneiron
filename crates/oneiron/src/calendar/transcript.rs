@@ -9,7 +9,6 @@ use crate::ingest::{
 };
 use crate::note::TakeTarget;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod door;
@@ -72,20 +71,9 @@ fn parse_time_prefix(line: &str) -> (Option<u64>, &str) {
     (stamp.trim().parse().ok(), rest.trim())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ParsedTranscriptTurn {
-    pub ordinal: u32,
-    pub speaker_label: Option<String>,
-    pub claimed_start_ms: Option<u64>,
-    pub claimed_end_ms: Option<u64>,
-    pub text: String,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ParsedTranscript {
-    pub claimed_started_ms: Option<u64>,
-    pub claimed_ended_ms: Option<u64>,
-    pub turns: Vec<ParsedTranscriptTurn>,
-}
+#[doc(hidden)]
+pub use oneiron_records::calendar::transcript::{ParsedTranscript, ParsedTranscriptTurn};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptParse {
     Turns(ParsedTranscript),

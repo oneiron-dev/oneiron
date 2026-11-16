@@ -64,12 +64,12 @@ async fn public_availability_serves_each_card_and_changed_timezone_window_constr
     publication.value["event_config_hashes"]["second"] =
         json!(oneiron::booking::booking_config_hash(&value.config).expect("hash"));
     let receipt = vault
-        .memory(id(0x77), EdgeActorClass::Human)
+        .memory(fixture.owner_actor(), EdgeActorClass::Human)
         .claim_upsert(&publication)
         .expect("owner authorizes both");
     assert_eq!(receipt.approval, "proposed");
     vault
-        .memory(id(0x77), EdgeActorClass::Human)
+        .memory(fixture.owner_actor(), EdgeActorClass::Human)
         .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
         .expect("owner confirms second-card revision");
     for key in ["intro", "second"] {
