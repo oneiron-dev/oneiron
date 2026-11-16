@@ -2,7 +2,8 @@
 //! `expires_at` is dead from that second on, an entry due at `due_at` is due from that second
 //! on, and each deadline helper keeps its overflow rule.
 //!
-//! `cargo test --locked -p oneiron-store --all-features --test expiry_rule`.
+//! `cargo test --locked -p oneiron-store --test expiry_rule` (default features: a store-alone
+//! `--all-features` build fails on main, FIX STORE-ALONE-NEEDS-BASE-SYNC).
 
 use oneiron_store::expiry::{expires_at_checked, expires_at_saturating, is_due, is_expired};
 
