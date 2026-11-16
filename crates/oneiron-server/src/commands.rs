@@ -34,11 +34,14 @@ use crate::skills_pack::{self, OutputMode};
 pub(crate) mod api;
 pub(crate) mod credential_file;
 mod credential_helper;
+pub(crate) mod oauth_sign_in;
 pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
 pub use self::host_re_root::host_re_root;
+mod host_recover_root;
+pub use self::host_recover_root::host_recover_root;
 mod host_recover_owner;
 pub use self::host_recover_owner::host_recover_shared_owner;
 mod token_operator;
@@ -55,6 +58,12 @@ mod hook;
 mod local_servers;
 #[cfg(unix)]
 pub use self::hook::{hook, hosted};
+// The user service runs the local vault the hook binds through its runtime
+// file, so it is Unix-only too.
+#[cfg(unix)]
+pub(crate) mod user_service;
+#[cfg(unix)]
+pub use self::user_service::user_service;
 
 /// `oneiron hook` binds through runtime files and queues through the import
 /// queue, both Unix-only: elsewhere it does nothing, and exits 0.
@@ -66,6 +75,13 @@ pub fn hook(_: crate::cli::HookArgs) {}
 #[cfg(not(unix))]
 pub fn hosted(_: crate::cli::HostedCommand) -> anyhow::Result<()> {
     anyhow::bail!("`oneiron hosted` publishes what `oneiron hook` binds, on Unix alone")
+}
+
+/// `oneiron user-service` keeps running the local vault `oneiron hook`
+/// binds, and the hook runs on Unix alone.
+#[cfg(not(unix))]
+pub fn user_service(_: crate::cli::UserServiceCommand) -> anyhow::Result<()> {
+    anyhow::bail!("`oneiron user-service` runs the vault `oneiron hook` binds, on Unix alone")
 }
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
