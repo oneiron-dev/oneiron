@@ -43,6 +43,7 @@ use oneiron::connector_key::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::skill_hub::pack_catalog::{ConnectorToolScreen, SkippedConnectorTool};
 pub(crate) use oneiron::task_verb::sdk::{
     ConnectorKeyView as KeyView, ConnectorSlateView as SlateView,
 };
@@ -169,6 +170,10 @@ struct Refreshed {
     /// 11677): the key stays as it was until the owner stamps the new slate
     /// (`/slate/staged/accept`) and a fresh `/qualify` passes on it.
     staged: bool,
+    /// Listed tools the pack install rules kept out, each with the rule it
+    /// tripped (FIX SCREENING-PER-TOOL-SKIP). A slate tool kept out is also
+    /// in `dropped`.
+    skipped: Vec<SkippedConnectorTool>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -182,6 +187,10 @@ struct Registered {
     /// What registration took on the connector's word and could not check
     /// (TP4, FIX 2607); empty when it took nothing.
     warnings: Vec<String>,
+    /// Listed tools the pack install rules kept out, each with the rule it
+    /// tripped; every other listed tool registered (FIX
+    /// SCREENING-PER-TOOL-SKIP).
+    skipped: Vec<SkippedConnectorTool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,6 +242,8 @@ pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(St
 
 /// The catalog key registered under a name.
 struct Catalog {
+    /// The normalized name it is registered under.
+    name: String,
     key: EntityId,
     record: ConnectorKeyRecord,
     summary: String,
@@ -246,6 +257,7 @@ fn catalog(vault: &Vault, name: &str) -> OwnerResult<Catalog> {
         .get_connector_key(&description.key_ref)?
         .ok_or_else(|| OwnerError::NotFound("connector key", description.key_ref.to_hex()))?;
     Ok(Catalog {
+        name: name.to_owned(),
         key: description.key_ref,
         record,
         summary: description.entry.summary,
@@ -343,11 +355,12 @@ fn register_connector(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let discovery = host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
-        host::discover(&host::client()?, &endpoint, auth, None)
-    })
-    .map_err(engine)?
-    .map_err(engine)?;
+    let mut discovery =
+        host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
+            host::discover(&host::client()?, &endpoint, auth, None)
+        })
+        .map_err(engine)?
+        .map_err(engine)?;
     if let Some(unknown) = request
         .tools
         .keys()
@@ -357,16 +370,7 @@ fn register_connector(
             "the connector lists no tool {unknown}"
         )));
     }
-    let screened: Vec<_> = discovery
-        .tools
-        .iter()
-        .map(host::ListedTool::screened)
-        .collect();
-    if let Some(reason) = vault.screen_connector_tools(&screened, &name)? {
-        return Err(OwnerError::Refused(format!(
-            "the connector's tools failed screening: {reason}"
-        )));
-    }
+    let screen = screened(vault, &name, &mut discovery, &request.tools)?;
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let manifest = host::slate_manifest(&resolved, &discovery.tools, &request.tools);
     let slate_id = with_slate_drafter(server, owner, |drafter| {
@@ -410,7 +414,37 @@ fn register_connector(
         warnings: host::self_declared_hints_warning(&discovery.tools)
             .into_iter()
             .collect(),
+        skipped: screen.skipped,
     })
+}
+
+/// Keeps only the listed tools the pack install rules pass (FIX
+/// SCREENING-PER-TOOL-SKIP) and answers which it kept out. Refused when the
+/// listing as a whole fails, when every listed tool is kept out, or when the
+/// owner classes a tool that is kept out.
+fn screened(
+    vault: &Vault,
+    name: &str,
+    discovery: &mut host::Discovery,
+    classes: &BTreeMap<String, ToolClass>,
+) -> OwnerResult<ConnectorToolScreen> {
+    let screen = discovery.screen(vault, name, &BTreeSet::new())?;
+    if let Some(reason) = host::screen_refusal(&screen, discovery.tools.len()) {
+        return Err(OwnerError::Refused(format!(
+            "the connector's tools failed screening: {reason}"
+        )));
+    }
+    if let Some(skip) = screen
+        .skipped
+        .iter()
+        .find(|skip| classes.contains_key(&skip.tool))
+    {
+        return Err(OwnerError::Refused(format!(
+            "the connector's tool {} failed screening: {}",
+            skip.tool, skip.reason
+        )));
+    }
+    Ok(screen)
 }
 
 /// `GET /v1/owner/connectors/setup?connector=`: the connector's key, its
