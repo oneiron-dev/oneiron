@@ -55,7 +55,7 @@ impl Vault {
                     "queue conflict resolution claim id was reused",
                 )));
             }
-            supersede_repo_conflict_claim(self, id, open.claim_id, now_secs())?;
+            supersede_repo_conflict_claim(self, id, open.claim_id, crate::unix_seconds_now())?;
             return Ok((saved.resolved_paths, false));
         }
         // A typed member can close the native claim before its batch reaches
@@ -78,7 +78,7 @@ impl Vault {
             resolved_paths: paths.clone(),
         };
         put_repo_conflict_resolution_claim(self, id, open.subject, value)?;
-        supersede_repo_conflict_claim(self, id, open.claim_id, now_secs())?;
+        supersede_repo_conflict_claim(self, id, open.claim_id, crate::unix_seconds_now())?;
         Ok((paths, true))
     }
 }

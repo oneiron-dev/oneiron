@@ -72,7 +72,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
@@ -80,8 +79,9 @@ use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, SchedulingReceipt,
     SegmentManifest, WorkerFailure,
 };
+use oneiron_base::unix_seconds_now;
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
     OpenAiCompatTransportError,
@@ -612,12 +612,6 @@ fn error_reply(last: &JsonValue) -> OpenAiCompatHttpResponse {
     }
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
 fn take(object: &mut JsonValue, key: &str) -> JsonValue {
     object.get_mut(key).map(JsonValue::take).unwrap_or_default()
 }
@@ -635,7 +629,7 @@ fn buffered_reply(
     let mut body = json!({
         "id": format!("chatcmpl-native-{}", transport::next_request_id()),
         "object": "chat.completion",
-        "created": now_secs(),
+        "created": unix_seconds_now(),
         "model": take(&mut last, "model"),
         "choices": [{
             "index": 0,
@@ -946,7 +940,7 @@ impl Live {
             model: target.clone().map_or(JsonValue::Null, JsonValue::String),
             target,
             id: format!("chatcmpl-native-{}", transport::next_request_id()),
-            created: now_secs(),
+            created: unix_seconds_now(),
             pending: VecDeque::new(),
             streamed: false,
             finished: false,

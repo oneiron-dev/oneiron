@@ -1,7 +1,7 @@
 # Oneiron — agent instructions
 
-Start with `AGENTS.md`. It states the vibe build rules (the merge bar, no tests, no backward
-compatibility, no review rounds, the fix list) and how to find your way around the repo. This
+Start with `AGENTS.md`. It states the vibe build rules (the merge bar, no tests, stored data, no
+review rounds, the fix list) and how to find your way around the repo. This
 file holds the consumer-boundary rule.
 
 Oneiron is a **general-purpose memory engine** (Rust workspace; core crate `crates/oneiron`,

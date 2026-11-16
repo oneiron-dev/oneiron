@@ -17,6 +17,7 @@ use super::Drafter;
 use super::sources::{DraftSources, SourcedDraft};
 use crate::models::ModelRuntime;
 use oneiron::dreamer_runner::maintenance::representation::DestinationContext;
+use oneiron_base::unix_seconds_now;
 
 /// The purpose a draft's call is metered and routed under.
 const DRAFT_PURPOSE: &str = "stewardship_follow_up";
@@ -159,7 +160,7 @@ async fn draft_one(
         .schedule_stewardship_draft(
             &served,
             &mut SourcedDraft::new(text, snapshot.context),
-            now(),
+            unix_seconds_now(),
         )
         .map_err(at(DraftStage::Schedule))
 }
@@ -255,10 +256,4 @@ async fn generate_draft(
         served,
         snapshot,
     })
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
