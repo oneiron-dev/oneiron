@@ -56,8 +56,8 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
-use crate::config::ConnectorHostConfig;
-use crate::config::connectors::{ConnectorTransport, normalize_name};
+use crate::config::connectors::normalize_name;
+use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -259,6 +259,12 @@ pub(super) fn installed_config<'a>(
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
         .map(|(_, installed)| installed)
+}
+
+/// The endpoint this host installed under the connector's name: a URL, or
+/// a stdio connector's `stdio:` endpoint (row L8-27).
+fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+    installed_config(server, name).map(|installed| installed.installed_endpoint(name))
 }
 
 fn not_installed() -> OwnerError {
@@ -543,10 +549,9 @@ async fn setup(
         let staged_slate = staged_slate_of(server.vault(), &catalog.record)?
             .map(|(id, slate)| SlateView::new(server.vault(), id, &slate))
             .transpose()?;
-        let installed = installed_config(&server, &name);
         Ok(Setup {
-            endpoint: installed.map(|installed| installed.installed_endpoint(&name)),
-            stdio: installed.and_then(StdioInstalled::of),
+            endpoint: installed_endpoint(&server, &name),
+            stdio: installed_config(&server, &name).and_then(StdioInstalled::of),
             connector: name,
             summary: catalog.summary,
             key: KeyView::new(catalog.key, catalog.record)?,
