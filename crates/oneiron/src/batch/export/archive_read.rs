@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Seek};
 
+use oneiron_contracts::fingerprint::ContentHasher;
 use serde::de::DeserializeOwned;
 
 use super::archive_index::{ArchiveIndex, ArchiveSpool, IndexedArchive, Section};
@@ -86,7 +87,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
             .map_err(|_| invalid("archive file listed but absent"))?;
         let mut file = CheckedMember {
             member: member.take(bytes.saturating_add(1)),
-            hasher: blake3::Hasher::new(),
+            hasher: ContentHasher::new(),
             count: 0,
             failed: false,
         };
@@ -94,7 +95,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
         if std::io::copy(&mut file, &mut std::io::sink()).is_err() || file.failed {
             return Err(invalid("unreadable whole-vault archive member"));
         }
-        let digest = crate::entity_id::bytes_to_hex_lower(file.hasher.finalize().as_bytes());
+        let digest = crate::entity_id::bytes_to_hex_lower(file.hasher.finish().as_bytes());
         if file.count != bytes || digest != blake3 {
             return Err(invalid("archive file does not match its digest"));
         }
@@ -107,7 +108,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
 /// failed by any read error but an interrupted read's.
 struct CheckedMember<M> {
     member: M,
-    hasher: blake3::Hasher,
+    hasher: ContentHasher,
     count: u64,
     failed: bool,
 }
@@ -267,7 +268,7 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
         // does not bind.
         let mut lines = BufReader::new(CheckedMember {
             member: member.take(records.bytes.saturating_add(1)),
-            hasher: blake3::Hasher::new(),
+            hasher: ContentHasher::new(),
             count: 0,
             failed: false,
         });
@@ -302,7 +303,7 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
         let reread = lines.into_inner();
         if reread.failed
             || reread.count != records.bytes
-            || crate::entity_id::bytes_to_hex_lower(reread.hasher.finalize().as_bytes())
+            || crate::entity_id::bytes_to_hex_lower(reread.hasher.finish().as_bytes())
                 != records.blake3
         {
             return Err(invalid("archive record file does not match its digest"));
@@ -513,7 +514,7 @@ fn member_digest<R: Read + Seek>(
         .by_name(path)
         .map_err(|_| invalid("invalid whole-vault archive member"))?;
     let declared = member.size();
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = ContentHasher::new();
     let mut read = 0_u64;
     let mut chunk = vec![0_u8; 64 * 1024];
     loop {
@@ -531,7 +532,7 @@ fn member_digest<R: Read + Seek>(
     }
     Ok((
         read,
-        crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes()),
+        crate::entity_id::bytes_to_hex_lower(hasher.finish().as_bytes()),
     ))
 }
 

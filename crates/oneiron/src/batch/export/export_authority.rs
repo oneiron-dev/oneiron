@@ -109,10 +109,7 @@ pub(crate) fn classify_vault_archive_manifest_on_fold(
 ) -> Result<VaultImportReceipt> {
     let encoded = serde_json::to_vec(manifest)
         .map_err(|_| Error::InvariantViolation("archive manifest serialization failed"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(EXPORT_MANIFEST_RECEIPT_DOMAIN);
-    hasher.update(&encoded);
-    let manifest_digest = *hasher.finalize().as_bytes();
+    let manifest_digest = manifest_receipt_digest(&encoded);
     classify_manifest(
         vault,
         fold,
@@ -276,8 +273,17 @@ fn authority_identity_of_fold(fold: &AuthorityFold) -> Option<AuthorityChainIden
 /// commits to what was PARSED, so whitespace or key-order noise in the artifact
 /// cannot make two identical manifests receipt differently.
 pub(super) fn canonical_manifest_digest(manifest: &ExportManifest) -> Result<[u8; 32]> {
+    Ok(manifest_receipt_digest(&manifest.to_json_pretty()?))
+}
+
+/// A receipt's manifest digest over the manifest's encoded bytes: BLAKE3 over
+/// the receipt domain, then those bytes. Both manifest forms take this one
+/// recipe, the export manifest's pretty JSON and the whole-vault archive
+/// manifest's compact JSON, so a receipt's digest names one transcript. Its
+/// one raw start is a PLAN-UC-04 stage 7 site.
+fn manifest_receipt_digest(encoded: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(EXPORT_MANIFEST_RECEIPT_DOMAIN);
-    hasher.update(&manifest.to_json_pretty()?);
-    Ok(*hasher.finalize().as_bytes())
+    hasher.update(encoded);
+    *hasher.finalize().as_bytes()
 }
