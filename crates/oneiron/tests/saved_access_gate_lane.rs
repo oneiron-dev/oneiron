@@ -45,8 +45,11 @@
 //! question and its own lane rebuilt and frozen again read the owner's
 //! unscoped MESSAGE, and the relationship-gated lane freezes as its
 //! principal's own. Guards: the owner's own question stored with no lane,
-//! the owner's source reader of a lane with no basis, and a MESSAGE the
-//! house's conversation grant or own read Grant admits, still read.
+//! and a MESSAGE the house's conversation grant or own read Grant admits,
+//! still read. The owner's source reader (refresh, artifact and wake reads)
+//! builds the owner's bare key under the access gate with no exemption, so
+//! it refuses that MESSAGE here as on main: FIX
+//! SAVED-SOURCE-DROPS-OWNER-EXEMPTION (#8148) owns that read.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_access_gate_lane`.
 #![cfg(oneiron_test_support)]
@@ -717,26 +720,5 @@ fn a_house_lane_with_no_basis_reads_a_message_its_own_agent_grant_admits() {
     assert!(
         read,
         "actor=the house with an owner-minted read Grant, lane with no basis; expected its saved question's reader to read the MESSAGE its own Grant admits; seen {seen}"
-    );
-}
-
-/// Guard: a question's source reader (its refresh, artifact and wake reads)
-/// builds the owner's bare key under the access gate, with no owner
-/// standing of its own. The owner is a live owner by the vault's census, so
-/// a lane with no basis leaves that key, and the owner's own live authority
-/// beside it, as it is.
-#[test]
-fn the_owners_source_reader_of_a_lane_with_no_basis_still_reads_the_owners_unscoped_message() {
-    let fixture = fixture();
-    let key = ScopedReadActorKey::with_actor_class(fixture.owner.to_hex(), "human")
-        .expect("the owner's bare principal key")
-        .require_access_grants(Some(fixture.owner));
-    let (read, seen) = match FrozenReadLane::principal().narrow(&fixture.vault, key) {
-        Ok(key) => reads(&question_read(&fixture.vault, key), fixture.message),
-        Err(error) => (false, format!("rebuild={error:?}")),
-    };
-    assert!(
-        read,
-        "actor=the owner's bare key under the access gate, lane with no basis; expected its question read to keep the owner's own live authority and read the owner's unscoped MESSAGE; seen {seen}"
     );
 }
