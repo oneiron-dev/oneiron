@@ -188,7 +188,8 @@ fn the_pipeline_takes_a_learned_query() {
 }
 
 /// Canon `#test-regression`: exact text still ranks first; the sound-alike
-/// follows it.
+/// follows it. The vault's own owner PERSON may come after them: the learned
+/// list ranks every name its model embedded.
 #[test]
 fn exact_text_match_still_ranks_first() {
     let fixture = fixture();
@@ -199,7 +200,11 @@ fn exact_text_match_still_ranks_first() {
     let found = fixture
         .hybrid(&fixture.request(Some("Shivon"), MODEL, fixture_vector("Shivon")))
         .expect("hybrid search");
-    assert_eq!(found, [shivon.to_hex(), siobhan.to_hex()]);
+    assert_eq!(
+        found.get(..2),
+        Some(&[shivon.to_hex(), siobhan.to_hex()][..]),
+        "{found:?}"
+    );
 }
 
 /// A vector of another width than the model's stored vectors is a typed bad
@@ -246,6 +251,10 @@ fn an_erased_entity_is_not_served() {
         Some(&xiaoming.to_hex())
     );
 
+    // A delete signs with the install's keystore, as a host installs it.
+    fixture.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     assert!(fixture.vault.delete_entity(&xiaoming).expect("delete"));
     let found = fixture.learned("Showming");
     assert!(!found.contains(&xiaoming.to_hex()), "{found:?}");

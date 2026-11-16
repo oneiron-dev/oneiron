@@ -6,7 +6,7 @@
 //! Every door here is new, so at the base the file does not build.
 
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use oneiron::embed::{EgressDecision, EgressPredicate, EmbedderLocality, MediaEmbeddingInput};
 use oneiron::phonetic_learned::{PhoneticEmbedReport, PhoneticEmbedder};
@@ -107,12 +107,48 @@ impl EgressPredicate for NameGate {
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
+    seed: Seed,
 }
 
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
-    Fixture { _dir: dir, vault }
+    Fixture {
+        _dir: dir,
+        vault,
+        seed: Seed::of_a_fresh_vault(),
+    }
+}
+
+/// What a pass over a fresh vault counts before any test write. The bootstrap
+/// writes the owner's PERSON (named "Vault owner") and each system agent's
+/// model PERSON (a `display_name` body, so no name a pass reads): a pass scans
+/// them all and embeds the owner's one name.
+struct Seed {
+    scanned: usize,
+    names: Vec<String>,
+}
+
+impl Seed {
+    /// Counted on a vault of its own, so the test's vault holds no vector
+    /// before the test's first pass.
+    fn of_a_fresh_vault() -> Self {
+        let dir = tempfile::tempdir().expect("temporary vault");
+        let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        let probe = NameModel::new("seed-probe");
+        let report = vault
+            .reconcile_phonetic_embeddings(&probe, 100)
+            .expect("reconcile the fresh vault");
+        Self {
+            scanned: report.scanned,
+            names: probe.names_sent(),
+        }
+    }
+
+    /// The fresh vault's names plus the test's `written`.
+    fn plus(&self, written: usize) -> usize {
+        self.names.len() + written
+    }
 }
 
 impl Fixture {
@@ -152,6 +188,16 @@ impl Fixture {
             .reconcile_phonetic_embeddings(model, 100)
             .expect("reconcile")
     }
+
+    /// The names `model` was sent that the test wrote: all but the fresh
+    /// vault's own.
+    fn sent_by_test(&self, model: &NameModel) -> Vec<String> {
+        model
+            .names_sent()
+            .into_iter()
+            .filter(|name| !self.seed.names.contains(name))
+            .collect()
+    }
 }
 
 /// Canon `#v2-stack`: each name gets one vector of the bound model; a second
@@ -163,13 +209,16 @@ fn reconcile_embeds_each_name_once() {
     let model = NameModel::new("m1");
 
     let first = fixture.reconcile(&model);
-    assert_eq!((first.scanned, first.embedded, first.unchanged), (1, 2, 0));
-    assert_eq!(model.names_sent(), ["小明", "Xiao Ming"]);
+    assert_eq!(
+        (first.scanned, first.embedded, first.unchanged),
+        (fixture.seed.scanned + 1, fixture.seed.plus(2), 0)
+    );
+    assert_eq!(fixture.sent_by_test(&model), ["小明", "Xiao Ming"]);
 
     let second = fixture.reconcile(&model);
     assert_eq!(
         (second.embedded, second.unchanged, second.removed),
-        (0, 2, 0)
+        (0, fixture.seed.plus(2), 0)
     );
     assert_eq!(model.calls(), 1, "a pass with nothing owed sends nothing");
 }
@@ -181,7 +230,7 @@ fn an_edited_alias_is_embedded_again() {
     let fixture = fixture();
     let id = fixture.person("小明", &["Xiao Ming"]);
     let model = NameModel::new("m1");
-    assert_eq!(fixture.reconcile(&model).embedded, 2);
+    assert_eq!(fixture.reconcile(&model).embedded, fixture.seed.plus(2));
 
     fixture.put_person(&id, "小明", &["Showming"]);
     fixture.publish_edits();
@@ -204,7 +253,7 @@ fn an_edited_alias_is_embedded_again() {
     let settled = fixture.reconcile(&model);
     assert_eq!(
         (settled.embedded, settled.unchanged, settled.removed),
-        (0, 2, 0)
+        (0, fixture.seed.plus(2), 0)
     );
 }
 
@@ -214,13 +263,20 @@ fn an_edited_alias_is_embedded_again() {
 fn a_new_model_embeds_every_name_again() {
     let fixture = fixture();
     fixture.person("小明", &["Xiao Ming"]);
-    assert_eq!(fixture.reconcile(&NameModel::new("m1")).embedded, 2);
+    let every_name = fixture.seed.plus(2);
+    assert_eq!(
+        fixture.reconcile(&NameModel::new("m1")).embedded,
+        every_name
+    );
 
     let second = NameModel::new("m2");
     let moved = fixture.reconcile(&second);
-    assert_eq!((moved.embedded, moved.removed, moved.unchanged), (2, 2, 0));
+    assert_eq!(
+        (moved.embedded, moved.removed, moved.unchanged),
+        (every_name, every_name, 0)
+    );
     let settled = fixture.reconcile(&second);
-    assert_eq!((settled.embedded, settled.unchanged), (0, 2));
+    assert_eq!((settled.embedded, settled.unchanged), (0, every_name));
 }
 
 /// Canon `#open` Q5: an erased entity keeps no vector. The delete drops
@@ -231,13 +287,17 @@ fn an_erased_entity_keeps_no_phonetic_vector() {
     let fixture = fixture();
     let id = fixture.person("小明", &["Xiao Ming"]);
     let model = NameModel::new("m1");
-    assert_eq!(fixture.reconcile(&model).embedded, 2);
+    assert_eq!(fixture.reconcile(&model).embedded, fixture.seed.plus(2));
 
+    // A delete signs with the install's keystore, as a host installs it.
+    fixture
+        .vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     assert!(fixture.vault.delete_entity(&id).expect("delete"));
     let after = fixture.reconcile(&model);
     assert_eq!(
         (after.embedded, after.unchanged, after.removed),
-        (0, 0, 0),
+        (0, fixture.seed.names.len(), 0),
         "{after:?}"
     );
     assert_eq!(model.calls(), 1);
@@ -265,14 +325,19 @@ fn a_third_party_embedder_without_a_gate_is_refused() {
             Some(&NameGate(EgressDecision::NoVerdict)),
         )
         .expect("gated pass");
-    assert_eq!((held.withheld, held.embedded), (2, 0));
+    assert_eq!((held.withheld, held.embedded), (fixture.seed.plus(2), 0));
     assert_eq!(model.calls(), 0, "a withheld name is never sent");
 
     let allowed = fixture
         .vault
         .reconcile_phonetic_embeddings_admitted(&model, 100, Some(&NameGate(EgressDecision::Allow)))
         .expect("allowed pass");
-    assert_eq!((allowed.withheld, allowed.embedded), (0, 2));
+    assert_eq!(fixture.sent_by_test(&model), ["小明", "Xiao Ming"]);
+    assert_eq!(
+        allowed.withheld + allowed.embedded,
+        fixture.seed.plus(2),
+        "{allowed:?}"
+    );
 }
 
 /// At most sixteen names an entity are embedded; the rest are counted.
@@ -284,7 +349,10 @@ fn more_than_sixteen_names_are_counted_not_embedded() {
     fixture.person("Main Name", &aliases);
 
     let report = fixture.reconcile(&NameModel::new("m1"));
-    assert_eq!((report.embedded, report.over_name_cap), (16, 4));
+    assert_eq!(
+        (report.embedded, report.over_name_cap),
+        (fixture.seed.plus(16), 4)
+    );
 }
 
 /// A model answer of another width stores nothing; a later good pass embeds
@@ -307,5 +375,8 @@ fn an_answer_of_another_width_stores_nothing() {
         ),
         "{refused:?}"
     );
-    assert_eq!(fixture.reconcile(&NameModel::new("m1")).embedded, 2);
+    assert_eq!(
+        fixture.reconcile(&NameModel::new("m1")).embedded,
+        fixture.seed.plus(2)
+    );
 }

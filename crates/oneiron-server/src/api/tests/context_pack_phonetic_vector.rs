@@ -41,6 +41,12 @@ impl PhoneticEmbedder for FixtureModel {
 #[tokio::test]
 async fn context_pack_phonetic_vector_reaches_the_learned_rung() {
     let (_dir, server) = auth_test_server();
+    // The fresh vault's own names first (the owner's PERSON), so the pass
+    // after the writes counts only this test's two.
+    server
+        .vault
+        .reconcile_phonetic_embeddings(&FixtureModel, 64)
+        .expect("reconcile the fresh vault");
     let person = |name: &str| {
         let id = oneiron::EntityId::now();
         server
