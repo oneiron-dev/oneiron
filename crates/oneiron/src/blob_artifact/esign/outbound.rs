@@ -593,6 +593,9 @@ impl Vault {
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         request.intent.content_ref =
             Some(self.esign_command_binding(&request, command, &reminder)?);
+        // A test's write between the binding and the act's writer.
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::esign_send_binding::after_command_binding(self);
         let actor = EsignAuditActor {
             actor: request.intent.actor.clone(),
             ip,
