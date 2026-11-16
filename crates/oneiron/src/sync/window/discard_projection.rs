@@ -21,8 +21,10 @@
 //! window's floor (`SYNC_BASE_WINDOW_DISCARD`), and a send to a home below
 //! it waits. A shared value stays whole; what the projection cannot place
 //! (a NOTE carrier that does not decode, a root outside the window's maps,
-//! a parted row whose parts join to a row its key does not name) defers
-//! the window, never counts as erased.
+//! a parted row whose parts join to a row its key does not name, a whole
+//! row filed under a key it does not name) defers the window, never counts
+//! as erased. Bytes that read as no row prove no other row: they place by
+//! their key, as before.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,7 +35,8 @@ use loro::{LoroDoc, LoroValue, VersionVector};
 use super::super::bridge::parse_edge_key;
 use super::super::carrier_parts::part_key;
 use super::super::checkpoint_payload::{
-    Holder, KindPlacement, PartedRows, Placement, SyncPayloadOwners, WINDOW_ROOTS, root_entry,
+    Holder, KindPlacement, PartedRows, Placement, SyncPayloadOwners, SyncUnclassified,
+    WINDOW_ROOTS, root_entry,
 };
 use super::super::loro_support::{doc_from_snapshot, import_doc};
 use super::super::note::discard::{NoteAtom, is_note_carrier_map, project_atom, project_current};
@@ -62,6 +65,11 @@ const BASE_WINDOW_DISCARD: SideTable<String, Vec<u8>, Raw> =
 /// placed by the key's holder, so only the joined row shows whose they are
 /// (UC-10 PR 1).
 const UNBOUND_PARTED_ROW: &str = "a parted row whose parts join to a row its key does not name";
+
+/// A whole row filed under another row's key: the key's holder is not the
+/// row's, and the row names a holder the projection cannot trust either
+/// (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+const UNBOUND_WHOLE_ROW: &str = "a whole row filed under a key it does not name";
 
 /// A part: its root map and its digest key. A manifest lists parts of its
 /// own map only, as the checkpoint capture's part holders read it.
@@ -205,6 +213,13 @@ impl<'a> DiscardClassifier<'a> {
             }
             Placement::Structure { dependencies } => {
                 erase(dependencies.iter().any(|on| self.owners.contains(on)))
+            }
+            Placement::Unclassified {
+                reason: SyncUnclassified::KeyMismatch,
+                ..
+            } => {
+                self.unknown = Some(UNBOUND_WHOLE_ROW);
+                KEEP
             }
             Placement::Unclassified { owner, .. } => {
                 erase(owner.is_some_and(|owner| self.owners.contains(&owner)))

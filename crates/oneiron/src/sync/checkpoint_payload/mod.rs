@@ -141,6 +141,11 @@ pub(crate) enum SyncUnclassified {
     PendingLoroProjection,
     /// Its key or value does not read with its family's own codec.
     Undecodable,
+    /// Its value reads as a whole row of its family, filed under a key that
+    /// row does not name: the key's holder is not the row's, and the row's
+    /// own holder is not the key's (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+    /// A receipt names it as [`Self::Undecodable`].
+    KeyMismatch,
     /// A window root map no adapter here reads.
     UnknownRoot,
     /// An entity kind the registry does not hold.

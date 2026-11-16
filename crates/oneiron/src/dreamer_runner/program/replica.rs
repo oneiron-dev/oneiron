@@ -672,16 +672,21 @@ pub(crate) enum RowPlacement {
     },
     /// Ids alone, dropped with each entity it names.
     Structure { dependencies: Vec<EntityId> },
+    /// A row filed under another row's key, which admit refuses and no
+    /// writer files: its key's holder is not the row's (FIX
+    /// SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+    KeyMismatch,
 }
 
 /// Where the arming row `bytes`, filed under `map_key`, goes: its actor's,
-/// held while the conversation it listens to is. `None` for bytes that read
-/// as no arming, or one filed under another registration, which admit
-/// refuses and no writer files (FIX SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED).
+/// held while the conversation it listens to is. A key mismatch for an
+/// arming filed under another registration (FIX
+/// SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED). `None` for bytes that read as
+/// no arming.
 pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
     let row = decode_arming(bytes).ok()?;
     if arming_key(row.registration()) != map_key {
-        return None;
+        return Some(RowPlacement::KeyMismatch);
     }
     Some(match row {
         ArmingRow::Armed(arming) => RowPlacement::Owned {
@@ -697,13 +702,12 @@ pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPla
 
 /// Where the wake row `bytes`, filed under `map_key`, goes: an `Owed` row is
 /// its actor's, held while its turn and conversation are; an `Admitted` row
-/// is ids alone, held while its turn is. `None` for bytes that read as no
-/// wake, or one filed under another wake, which admit refuses and no writer
-/// files.
+/// is ids alone, held while its turn is. A key mismatch for a wake filed
+/// under another wake's key. `None` for bytes that read as no wake.
 pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
     let row = decode_wake(bytes).ok()?;
     if wake_key(row.key()) != map_key {
-        return None;
+        return Some(RowPlacement::KeyMismatch);
     }
     Some(match row {
         WakeRow::Owed(wake) => RowPlacement::Owned {
