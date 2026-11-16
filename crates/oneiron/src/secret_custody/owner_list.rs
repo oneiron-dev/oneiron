@@ -11,7 +11,11 @@
 //! Duplicates (RULING SECRETS-LIST-DUP-GROUPING = A, Engine 16 Nov 01:32):
 //! two records become one item only when this install holds both and the
 //! known-value index's entries for their current generations match (length
-//! and keyed fingerprint of the whole value). Nothing else merges them. An
+//! and keyed fingerprint of the whole value), or when a same-value statement
+//! this install opened names them at the generations listed here: another
+//! machine of the owner's proved the same there (FIX
+//! [SECRETS-SAME-VALUE-FACT], [`super::same_value`]). Nothing else merges
+//! them. An
 //! item whose origin (source record, scan kind and place) matches exactly
 //! one other item, the two not proven different, carries that item as a
 //! "maybe the same" hint, and stays its own item: an act on an item never
@@ -245,8 +249,9 @@ impl Vault {
                 None,
             )?);
         }
+        let pairs = super::same_value::same_value_pairs_in_txn(self, txn, &fold);
         Ok(SecretCustodyList {
-            items: group(reads, &fold, this),
+            items: group(reads, &pairs, &fold, this),
         })
     }
 
@@ -341,14 +346,17 @@ impl Vault {
 
 /// Whether two known-value entries name one value: same length, same keyed
 /// fingerprint under this install's one index key.
-fn same_value(a: &KnownEntry, b: &KnownEntry) -> bool {
+pub(super) fn same_value(a: &KnownEntry, b: &KnownEntry) -> bool {
     a.len == b.len && a.fingerprint == b.fingerprint
 }
 
-/// The list's items from its records: grouped on proven equality alone,
-/// each item's primary chosen, its holders joined, hints set, newest first.
+/// The list's items from its records: grouped on proven equality alone
+/// (this install's prints, then the pairs another machine of the owner's
+/// proved at the generations read here), each item's primary chosen, its
+/// holders joined, hints set, newest first.
 fn group(
     reads: Vec<Read>,
+    pairs: &[super::same_value::SameValuePair],
     fold: &AuthorityFold,
     this: Option<EntityId>,
 ) -> Vec<SecretCustodyListItem> {
@@ -367,6 +375,18 @@ fn group(
             None => groups.push(vec![read]),
         }
     }
+    for pair in pairs {
+        let (Some(first), Some(second)) = (
+            group_of(&groups, pair.a, pair.a_generation),
+            group_of(&groups, pair.b, pair.b_generation),
+        ) else {
+            continue;
+        };
+        if first != second {
+            let joined = groups.remove(first.max(second));
+            groups[first.min(second)].extend(joined);
+        }
+    }
     let mut built: Vec<(u64, bool, SecretCustodyListItem)> = groups
         .into_iter()
         .map(|group| item(group, fold, this))
@@ -374,6 +394,15 @@ fn group(
     hint(&mut built);
     built.sort_by_key(|(newest, _, item)| (Reverse(*newest), item.primary));
     built.into_iter().map(|(_, _, item)| item).collect()
+}
+
+/// The group holding record `id` as read at `generation`, if one does.
+fn group_of(groups: &[Vec<Read>], id: EntityId, generation: u32) -> Option<usize> {
+    groups.iter().position(|group| {
+        group
+            .iter()
+            .any(|read| read.record.id == id && read.record.generation == generation)
+    })
 }
 
 /// One item from one group: its primary first, every holder once, its
