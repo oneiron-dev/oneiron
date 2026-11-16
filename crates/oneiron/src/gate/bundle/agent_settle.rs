@@ -13,7 +13,9 @@
 //!   each member's writer and every try of the run open it, and two lineages
 //!   that share an actor are one ([`settling_lineage_in_txn`]);
 //! - a bundle that holds a proactivity policy request waits for the owner,
-//!   whose own policy it asks to change;
+//!   whose own policy it asks to change, and so does one that holds a
+//!   commitment wake proposal, whose approval schedules an outbound reminder
+//!   (ARCH-0046 O2) on wording the agent's review never shows;
 //! - an agent's answer is never the owner's, so every member's owner-answer
 //!   obligation stays open and the owner is shown a fresh item for it, as
 //!   for a narrowed owner proof; and a Coach heal it answers is not counted
@@ -32,6 +34,7 @@ use super::{
 use crate::agent_dispatch::{LineageStart, settling_lineage_in_txn};
 use crate::attempt_queue::AttemptQueue;
 use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::commitment_wake::PREDICATE_COMMITMENT_WAKE_PROPOSAL;
 use crate::consent::bundle_projection::{GateConsentBundleAction, GateConsentBundleReceipt};
 use crate::dreamer_runner::maintenance::digest::PROACTIVITY_POLICY_REQUEST_PREDICATE;
 use crate::edge::EdgeActorClass;
@@ -46,6 +49,15 @@ const REVIEW_AS_VERB: &str = "vault.gate.consent_bundle.review_as";
 /// `vault.gate.consent_bundle.resolve_as`, the name a Grant lists to name an
 /// agent's bundle settlement.
 const RESOLVE_AS_VERB: &str = "vault.gate.consent_bundle.resolve_as";
+
+/// Members whose settlement is the owner's own answer whatever the key says:
+/// a proactivity policy request asks to change the owner's own policy, and a
+/// commitment wake proposal's approval schedules an outbound reminder
+/// (ARCH-0046 O2) on wording the agent's review never shows.
+const OWNER_ANSWERED_PREDICATES: [&str; 2] = [
+    PROACTIVITY_POLICY_REQUEST_PREDICATE,
+    PREDICATE_COMMITMENT_WAKE_PROPOSAL,
+];
 
 /// `vault.gate.consent_bundle.review_as`'s input: the run whose bundle the
 /// agent reviews.
@@ -300,13 +312,15 @@ pub fn review_gate_consent_bundle_as_agent(
 /// [`review_gate_consent_bundle_as_agent`] admits, in the settlement's own
 /// write: the bundle must read whole to the agent's lane and still hash to
 /// `bundle_id`. The opener's lineage is refused, and a bundle holding a
-/// proactivity policy request waits for the owner, whatever the key says.
+/// proactivity policy request or a commitment wake proposal waits for the
+/// owner, whatever the key says.
 /// No member's owner-answer obligation closes. An approval's curator
 /// findings apply after the commit, as at the owner's route.
 ///
 /// # Errors
 /// As [`review_gate_consent_bundle_as_agent`]; `FORBIDDEN` for the opener's
-/// lineage and for a proactivity policy request; the owner door's
+/// lineage and for a proactivity policy request or a commitment wake
+/// proposal; the owner door's
 /// refusals: a stale bundle id, a member the live gate refuses for this
 /// agent's write, a malformed member.
 pub fn resolve_gate_consent_bundle_as_agent(
@@ -335,12 +349,12 @@ pub fn resolve_gate_consent_bundle_as_agent(
             };
             if members
                 .iter()
-                .any(|entry| entry.body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE)
+                .any(|entry| OWNER_ANSWERED_PREDICATES.contains(&entry.body.predicate.as_str()))
             {
                 return Err(MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
                     format!(
-                        "{RESOLVE_AS_VERB} never settles a bundle that holds a proactivity policy request: it waits for the owner"
+                        "{RESOLVE_AS_VERB} never settles a bundle that holds a proactivity policy request or a commitment wake proposal: it waits for the owner"
                     ),
                     &["Ask the owner to settle this bundle."],
                 ));
