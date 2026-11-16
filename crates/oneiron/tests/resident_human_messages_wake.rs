@@ -22,8 +22,9 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::AttemptQueue;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::clustering::ClusterMergeRequest;
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::ConsultPayloadRef;
 use oneiron::test_doors::resident_wake_hold::{
@@ -301,5 +302,60 @@ fn a_human_messages_resident_sleeps_through_an_unknown_sender() -> TestResult {
         "an unknown sender's message wakes no human-messages resident: {pass:?}"
     );
     assert_eq!(wakes(&vault, fixture.yuki)?, 0);
+    Ok(())
+}
+
+/// A PERSON merged into a named agent's principal is that agent: its
+/// message wakes no human-messages resident, as the principal's own does not
+/// (REVIEW-9173 P1). The principal (`ensure_agent_principal`) carries no
+/// substrate; the alias, an ordinary PERSON with none either, is merged into
+/// it through the owner's cluster merge. Red on the round-1 head 2b5b1c2d08:
+/// the named-agent check read the alias's own body, not its canonical
+/// PERSON's, so the alias's message woke the resident.
+#[test]
+fn a_human_messages_resident_sleeps_through_a_person_merged_into_a_named_agent() -> TestResult {
+    let clock = test_clock()?;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), config(&clock))?;
+    let fixture = bind_resident(&vault)?;
+    let proof = owner_proof(&vault, fixture.owen)?;
+    let bot = vault.ensure_agent_principal("bot")?;
+    let alias = EntityId::now();
+    let now = vault.now_recorded_at();
+    vault.put_entity(
+        &alias,
+        ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &rmp_serde::to_vec_named(&serde_json::json!({ "name": "bot alias" }))?,
+    )?;
+    let merge: ClusterMergeRequest = serde_json::from_value(serde_json::json!({
+        "merge": {
+            "sources": [alias.to_hex()],
+            "survivor": bot.to_hex(),
+            "evidence": { "refs": [], "rationale": "the bot, written twice" },
+        },
+    }))?;
+    vault
+        .memory(fixture.owen, EdgeActorClass::Human)
+        .cluster_merge(Some(&proof), &merge)
+        .map_err(|error| format!("the owner merges the alias into the bot: {error:?}"))?;
+    assert_eq!(
+        vault.resolve_entity(&alias)?,
+        vec![bot],
+        "the alias resolves to the named agent's principal"
+    );
+
+    admit_person_message(&vault, fixture.inbox, fixture.yuki, alias, "from-alias")?;
+    clock.advance(u64::from(HOLD_SECS) + 1);
+    let pass = inbox_pass(&vault, fixture.yuki, clock.now())?;
+    assert!(
+        pass.outcomes.is_empty(),
+        "a message from a PERSON merged into a named agent wakes no human-messages resident: {pass:?}"
+    );
+    assert_eq!(wakes(&vault, fixture.yuki)?, 0, "no wake on its run");
     Ok(())
 }
