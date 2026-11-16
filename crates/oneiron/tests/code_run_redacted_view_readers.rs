@@ -8,6 +8,11 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::secret_custody::{
+    CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
+};
+use oneiron::secret_lease::SecretTaintRef;
 use oneiron::test_doors::code_run_result_body as doors;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_store::file_secret_marks::FILLER;
@@ -15,9 +20,12 @@ use oneiron_store::file_secret_marks::FILLER;
 // The public BIP39 vector already marked by batch/secret_scan/tests.rs.
 const PHRASE: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const CUSTODY_NAME: &str = "redacted-view-readers-fixture";
+const CUSTODY_VALUE: &str = "Q7m2R9v4L6n8C3x5B1z0D4f6H8j2K9p3";
 
 struct Fixture {
     vault: Vault,
+    owner: AuthenticatedOwner,
     run_id: EntityId,
     occurrence: EntityId,
     body: Vec<u8>,
@@ -31,11 +39,13 @@ impl Fixture {
             .expect("open a fresh device vault");
         oneiron::test_doors::provenance_body_checkpoint::install_memory_keystore(&vault);
         vault.ensure_vault_key().expect("mint the vault data key");
+        let owner = oneiron::test_doors::steward::owner(&vault).expect("authenticate owner");
         let run_id = EntityId::now();
         let occurrence = doors::store_code_run_result_body(&vault, run_id, "log", &body)
             .expect("publish a result through its scanning sink");
         Self {
             vault,
+            owner,
             run_id,
             occurrence,
             body,
@@ -174,4 +184,54 @@ fn a_clean_body_reads_as_stored_through_both_readers() {
         Ok(fixture.body.as_slice())
     );
     assert_eq!(fixture.member(len, len + 1), Err("member_gone".to_owned()));
+}
+
+#[test]
+fn a_lease_tainted_body_blanks_the_known_value_in_a_chunk_and_a_member() {
+    let head = clean_lines();
+    let body = format!("{head}{CUSTODY_VALUE}\n{}", clean_lines()).into_bytes();
+    let secret = head.len()..head.len() + CUSTODY_VALUE.len();
+    let fixture = Fixture::new(body);
+    assert!(fixture.mark().is_none(), "the token matches no text rule");
+    let registered = fixture
+        .vault
+        .register_secret_as_owner(
+            &fixture.owner,
+            &OwnerSecretRegistration {
+                name: CUSTODY_NAME,
+                class: CustodyClass::CustodyPortable,
+                device_only: true,
+                rung: CustodyTier::T1Leased,
+                bindings: vec![RequestedBinding {
+                    effector: "deploy".to_owned(),
+                    tier_ceiling: None,
+                    scopes: vec!["read".to_owned()],
+                }],
+                manifest: None,
+                value: CUSTODY_VALUE.as_bytes(),
+            },
+            fixture.vault.now_recorded_at() / 1_000,
+        )
+        .expect("register custody only after the plaintext body was stored");
+    doors::mark_result_body_with_lease_refs(
+        &fixture.vault,
+        fixture.run_id,
+        fixture.occurrence,
+        &[SecretTaintRef {
+            secret_ref: registered.name,
+            generation: registered.rotation_generation,
+        }],
+    )
+    .expect("attach the registered secret's lease taint");
+    let expected = masked(&fixture.body, &secret);
+    let len = fixture.body.len();
+    let chunk = fixture
+        .chunk(0, len)
+        .expect("a lease-tainted body's chunk reads through its view");
+    assert_eq!(chunk, expected);
+    assert!(!String::from_utf8_lossy(&chunk).contains(CUSTODY_VALUE));
+    let member = fixture
+        .member(0, len)
+        .expect("a lease-tainted member reads through its view");
+    assert_eq!(member.as_bytes(), expected.as_slice());
 }
