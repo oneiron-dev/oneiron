@@ -14,6 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/act_rule.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 const | Admitted, Direction, Permitted | The authority rule: what an act may do to the row it moves |
 | `src/authority/agent_grant_act.rs` | src | m | 1 struct · 1 enum · 2 fn · 2 const · 2 crate-vis | AgentGrantActRecord, AgentGrantChange | The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its… |
 | `src/authority/agent_grant_act/git_push.rs` | src | s | 6 crate-vis | — | The owner's mint of a `git_push` Grant in his one signed Grant act (FIX 6867, G1-PUSH): the same… |
+| `src/authority/carrier_signature.rs` | src | s | 1 struct · 2 fn · 1 const | CarrierSignature | The carrier signature of an act that is stored on its own row, not on the AUTHORITY_LOG (Fable pass 28… |
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 2 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
 | `src/authority/comm_reach.rs` | src | s | 1 enum · 3 fn | CommReach | FIX 1380 / FIX 3899: the comm reach, whom an agent may address |
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 6 fn · 2 const | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
@@ -27,6 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/federation_pact.rs` | src | m | 4 struct · 5 enum · 7 fn · 1 re-export | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationNarrowing, FederationPactGesture, FederationPactState, FederationPactStatus +1 | Federation lifecycle and pact types |
 | `src/authority/federation_pact/scope_key.rs` | src | s | 1 struct · 3 fn | ScopeOpeningAad | The keyed federation scope commitment and its per-grant opening key |
 | `src/authority/frontier_join.rs` | src | s | 1 struct · 2 enum · 1 const · 3 crate-vis | FrontierJoin, FrontierJoinFamily, FrontierJoinScope | A frontier join (FIX 7908, Phase2 B; CALLS "Phase2 frontier join"): one signed main-log row whose parents… |
+| `src/authority/full_copy_mark.rs` | src | s | 1 struct · 1 const · 3 crate-vis | FullCopyMark | One machine's own declaration that it holds a full copy (L7-47; ARCH-0023b `#peer-fetch`; CROSS-ARCH-0024… |
 | `src/authority/grant_travel.rs` | src | s | 1 struct · 2 fn · 2 const · 2 crate-vis | GrantTravelSet | The owner's choice of the born-with text one federation grant's windows carry to another vault (OF-491, FIX… |
 | `src/authority/home_candidacy.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | HomeCandidacy | A machine's own declaration of itself as a MACRO home candidate (FIX 4898; ARCH-0026: "Election order is… |
 | `src/authority/home_pick.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | HomeNodePick | The owner's pick of his vault's home node (DOOR-101 PR2a; ARCH-0026: "The owner picks the home node in… |
@@ -34,7 +36,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 8 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
 | `src/authority/membership_execution.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | MembershipExecution, MembershipExecutionCause, MembershipHandover | A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)… |
-| `src/authority/mod.rs` | src | s | 40 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 42 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `src/authority/origin_cut.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | OriginCut | The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: "Refs are… |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 3 enum · 7 fn · 1 const · 2 crate-vis | ActBy, ActSurface, OwnerAct, OwnerActKind | The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner addition or handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043… |
@@ -81,4 +83,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 9 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
 | `src/share_travel.rs` | src | s | 1 struct · 2 enum · 6 fn · 1 type | BornWithField, TravelChoice, TravelKind | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
 | `tests/act_rule.rs` | test | s | — | — | The authority rule's table (`oneiron_authority::authority::Permitted`): what each reading admits, the lesser… |
+| `tests/carrier_signature.rs` | test | s | — | — | The carrier signature of a row act (`oneiron_authority::authority::CarrierSignature`, Fable pass 28 DESIGN… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |

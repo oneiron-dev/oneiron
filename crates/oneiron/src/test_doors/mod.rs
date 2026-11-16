@@ -8,6 +8,7 @@ pub mod advisory_rate_window;
 pub mod agent_definition_scans;
 pub mod approval_target_round_trip;
 pub mod archive_import;
+pub mod archive_provenance;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
@@ -51,6 +52,8 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+#[cfg(feature = "sync")]
+pub mod full_copy_mark;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
