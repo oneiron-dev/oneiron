@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { connector, feedback, note, phone_line, skill_optimize, task, testing }
+areas! { broker, cluster, connector, engine_executor, feedback, git_wire, note, phone_line, policy_model, restore, retrieval, runtime_hooks, setting, skill, skill_attribution, skill_optimize, task, testing, vault_import, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
