@@ -126,7 +126,9 @@ pub struct SyncServer {
     pub(crate) retrieval_buffer: RetrievalMeterBuffer,
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
-    pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// Shared with the counts each call hands to the blocking pool
+    /// (`record_on_blocking_pool`), which outlive the call's borrow.
+    pub(crate) wire_telemetry: Arc<crate::wire_telemetry::WireTelemetry>,
     /// The mesh listener's sync streams in their own pressure check (FIX 7737).
     pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
     /// The line app-tier state kept between frames is charged to, sized by

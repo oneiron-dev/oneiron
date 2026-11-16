@@ -141,7 +141,7 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        let wire_telemetry = Arc::new(crate::wire_telemetry::WireTelemetry::new(vault.clone()));
         live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
         payment_credential_release(&vault, config.release_payment_credentials_unfenced);
         let retained = Arc::new(crate::byte_line::ByteLine::new(

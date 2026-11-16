@@ -7,6 +7,7 @@
 
 use crate::mcp::{McpResolvedActor, McpSurfaceMode};
 use crate::server::SyncServer;
+use crate::wire_telemetry::record_on_blocking_pool;
 
 /// The logical key a `tools/call` counts under, before the tool's registered
 /// name: one key on either endpoint.
@@ -33,34 +34,34 @@ const UNKNOWN_TOOL: &str = "unknown_tool";
 /// names, resolved against the registration validation reads, which admits
 /// nothing here. An anonymous off-record session's call counts under its
 /// caller and names no tool (OF-063); a name no tool is registered under
-/// counts as an envelope error, under no caller.
-pub(super) fn observe_tool_call(
+/// counts as an envelope error, under no caller. Each count waits on the
+/// blocking pool, never on a runtime worker (FIX
+/// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+pub(super) async fn observe_tool_call(
     server: &SyncServer,
     mode: McpSurfaceMode,
     actor: &McpResolvedActor,
     name: &str,
     anonymous: bool,
 ) {
-    let telemetry = &server.wire_telemetry;
-    let now = oneiron_vault_contract::now_ts();
     let caller = actor.actor_ref.to_hex();
-    let resolved = server
+    let tool = server
         .mcp_surface(mode)
         .ok()
-        .and_then(|surface| surface.resolve(name));
-    let _ = match resolved {
+        .and_then(|surface| surface.resolve(name))
+        .map(|tool| format!("{TOOL_CALL}:{}", tool.name()));
+    record_on_blocking_pool(server, move |telemetry, now| match tool {
         None => telemetry.record_mcp_error(UNKNOWN_TOOL, now),
         Some(_) if anonymous => telemetry.record(TOOL_CALL, &caller, now),
-        Some(tool) => {
-            telemetry.record_mcp_call(&format!("{TOOL_CALL}:{}", tool.name()), &caller, now)
-        }
-    };
+        Some(tool) => telemetry.record_mcp_call(&tool, &caller, now),
+    })
+    .await;
 }
 
 /// Counts one reply refused with no tool call's receipt over it, under the
 /// fixed category its refusal and method fall in: never a method or tool
 /// name a request sent, nor the refusal's message.
-pub(super) fn observe_envelope_error(server: &SyncServer, method: &str, kind: &str) {
+pub(super) async fn observe_envelope_error(server: &SyncServer, method: &str, kind: &str) {
     let category = match kind {
         "parse_error" => PARSE_ERROR,
         "invalid_request" => INVALID_REQUEST,
@@ -71,7 +72,8 @@ pub(super) fn observe_envelope_error(server: &SyncServer, method: &str, kind: &s
         _ if method == "tools/call" => CALLER_REFUSED,
         _ => METHOD_REFUSED,
     };
-    let _ = server
-        .wire_telemetry
-        .record_mcp_error(category, oneiron_vault_contract::now_ts());
+    record_on_blocking_pool(server, move |telemetry, now| {
+        telemetry.record_mcp_error(category, now)
+    })
+    .await;
 }
