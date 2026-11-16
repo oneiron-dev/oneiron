@@ -154,6 +154,31 @@ pub(super) struct Served<D> {
     pub(super) latency: Duration,
 }
 
+/// A call refused after it went out (FIX 7745): the model it was admitted
+/// on, its durable-step identity and what the host wore it with, so a
+/// self-written pass keeps the call's receipt though it answered nothing.
+pub(super) struct Dispatched<D> {
+    pub(super) model: ModelId,
+    pub(super) step_hash: Option<[u8; 32]>,
+    pub(super) worn: D,
+}
+
+/// Why a call was not served: the refusal, and what had gone out when the
+/// refusal came after the call was sent.
+pub(super) struct Unserved<D> {
+    pub(super) refusal: CompactionRefusal,
+    pub(super) dispatched: Option<Dispatched<D>>,
+}
+
+impl<D> From<CompactionRefusal> for Unserved<D> {
+    fn from(refusal: CompactionRefusal) -> Self {
+        Self {
+            refusal,
+            dispatched: None,
+        }
+    }
+}
+
 impl ServedCompactionBackend {
     /// One pass's call: admitted by `admit`, held to the admitted model's
     /// context, then `dress`ed in the room it leaves (a self-written call's
@@ -168,7 +193,7 @@ impl ServedCompactionBackend {
             &mut LlmRequest,
             CallRoom,
         ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
-    ) -> Result<Served<D>, CompactionRefusal> {
+    ) -> Result<Served<D>, Unserved<D>> {
         let started = Instant::now();
         let mut llm = self.llm_request(request, retry);
         let admitted = match admit {
@@ -197,6 +222,7 @@ impl ServedCompactionBackend {
                 CompactionSuppression::TurnScoped { check: None },
                 "the call was not sent".to_owned(),
             )
+            .into()
         })
     }
 
@@ -218,14 +244,14 @@ impl ServedCompactionBackend {
             &mut LlmRequest,
             CallRoom,
         ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
-    ) -> Result<Option<Served<D>>, CompactionRefusal> {
+    ) -> Result<Option<Served<D>>, Unserved<D>> {
         let (worn, home_rows, guard, payer) =
             match self.ready(&mut call, &dispatch, summary_token_budget, dress) {
                 Ok(ready) => ready,
                 // Under `auto` nothing has gone out yet: the flight's cheap
                 // writer runs instead (FIX 6029).
                 Err(_) if dispatch.while_warm() => return Ok(None),
-                Err(refusal) => return Err(refusal),
+                Err(refusal) => return Err(refusal.into()),
             };
         // Admit on the original generation before sending. The owned ticket
         // also settles zero if unwinding drops this call before a response.
@@ -353,7 +379,21 @@ impl ServedCompactionBackend {
                     LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
                     _ => CompactionSuppression::TurnScoped { check: None },
                 };
-                Err(refused(suppression, error.to_string()))
+                // A call that went out keeps what it was sent as beside the
+                // refusal, for its writer's receipt (FIX 7745). Whether one
+                // did is the run's own dispatch record: an attempt stopped
+                // before its send (a worker or device stop, a meter denial,
+                // a transport fault proved unsent) records none.
+                let went_out = !run.teacher_report().called.is_empty();
+                let dispatched = went_out.then_some(Dispatched {
+                    model,
+                    step_hash,
+                    worn,
+                });
+                Err(Unserved {
+                    refusal: refused(suppression, error.to_string()),
+                    dispatched,
+                })
             }
         }
     }
@@ -459,14 +499,14 @@ impl ServedCompactionBackend {
             .saturating_sub(self.prompt_tokens)
     }
 
-    /// The model the role's live route admits now, else its seat's.
-    pub(super) fn house_model(&self) -> Option<ModelId> {
-        let seat = self.models.seat(self.role)?;
-        Some(
-            self.models
-                .route_role(&self.vault, self.role, seat)
-                .map_or_else(|_| seat.model.clone(), |route| route.model),
-        )
+    /// The one model a pass on this route sends now as exactly that model,
+    /// and where it is served: the role's live route's model, or, where that
+    /// route walks the seat's ladder, its first rung served within it
+    /// (`ModelRuntime::exact_route_role`). A seat id is never sent as one
+    /// model: `generate_exact` refuses every seat's ladder.
+    pub(super) fn exact_model(&self) -> Result<(ModelId, ModelLocality), RoleRefusal> {
+        let seat = self.models.seat(self.role).ok_or(RoleRefusal::NoSeat)?;
+        self.models.exact_route_role(&self.vault, self.role, seat)
     }
 }
 
@@ -497,14 +537,13 @@ impl CompactionBackend for ServedCompactionBackend {
     }
 
     /// Read on the vault's live route, as a pass is admitted: what its
-    /// context holds beside the reply and the prompt, as [`Self::compact`]
-    /// counts it.
+    /// context holds beside the reply and the prompt on the model
+    /// [`Self::compact`] sends, as it counts it.
     fn input_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
         let context = self
-            .models
-            .seat(self.role)
-            .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok())
-            .and_then(|route| self.allowances.get(&route.model).copied())
+            .exact_model()
+            .ok()
+            .and_then(|(model, _)| self.allowances.get(&model).copied())
             .unwrap_or(0);
         Some(
             context
@@ -518,18 +557,20 @@ impl CompactionBackend for ServedCompactionBackend {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> Result<CompactionProduct, CompactionRefusal> {
-        // The seat resolved at bind is the exact model: admit it directly,
-        // with no role-route rewrite or fallback (FIX 4541).
-        let admit = Admit::Exact {
-            model: self.model.clone(),
-            locality: self.locality,
-        };
+        // The live route's one model is the exact model: admit it directly,
+        // with no role-route rewrite or fallback (FIX 4541). A route on the
+        // seat's own ladder sends its first served rung, never the seat id
+        // (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED).
+        let (model, locality) = self.exact_model().map_err(admission_refused)?;
+        let admit = Admit::Exact { model, locality };
         let sources = request
             .window_read_from_sources
             .then_some(request.sources.clone());
-        let served = self.serve(request, retry, sources, &admit, |_, _| {
-            Ok(((), Some(Vec::new())))
-        })?;
+        let served = self
+            .serve(request, retry, sources, &admit, |_, _| {
+                Ok(((), Some(Vec::new())))
+            })
+            .map_err(|unserved| unserved.refusal)?;
         Ok(product_of(&served.response, served.latency))
     }
 }

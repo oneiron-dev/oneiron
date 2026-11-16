@@ -49,6 +49,8 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 mod chat;
 mod chat_flights;
 mod live_fork;
+#[cfg(oneiron_test_support)]
+pub(crate) mod pass_door;
 mod profiled;
 mod self_writer;
 mod serve;
