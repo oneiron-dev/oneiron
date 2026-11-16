@@ -87,6 +87,7 @@ mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
 mod frontier_join;
+mod full_copy_mark;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
@@ -149,6 +150,8 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod root_appointment_door;
+mod root_appointment_judge;
 mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
@@ -230,6 +233,15 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The owner anchor's appointment of a successor root key, and the fold's
+// verdict on it (OWNER-ANCHOR-ROOT-RECOVERY).
+pub use oneiron_authority::authority::{
+    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
+    root_appointment_challenge,
+};
+pub use root_appointment_door::RootAppointmentReceipt;
+pub(crate) use root_appointment_door::refuse_unneeded_appointment;
+pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -304,11 +316,14 @@ pub use clock_repair::{
 pub use conversation_training::{ConversationTrainingView, PersonProofSubject};
 pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use fold_resume::whole_and_resumed_folds_for_test;
 pub use fold_state::*;
 pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
     VerifiedForwardedCaller, forwarded_request_transcript,
 };
+pub(crate) use full_copy_mark::append_install_signed_in_txn;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
@@ -334,6 +349,8 @@ pub use host_action::{HostActionAuthority, HostActionIdentity};
 #[cfg(oneiron_test_support)]
 pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
+#[cfg(oneiron_test_support)]
+pub(crate) use ingest_observation::decode_ingest_check_key_for_test;
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
 pub use leave_notice_continuity::LeaveNoticeContinuity;
@@ -369,14 +386,15 @@ pub use oauth_server::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
     OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR, OAUTH_CIMD_TTL_SECS,
     OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX, OAUTH_CODE_TTL_SECS,
-    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR,
-    OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR, OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES,
-    OAUTH_URI_MAX_BYTES, OAuthAccess, OAuthAuthorizationAllowed, OAuthAuthorizationPending,
-    OAuthAuthorizationStart, OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration,
-    OAuthClientSource, OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal,
-    OAuthTokenRefusal, OAuthTokens, oauth_client_id_is_metadata_url, oauth_code_challenge_admitted,
-    oauth_redirect_uri_admitted, oauth_requested_tier, oauth_scopes_supported,
+    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_NAMED_CLIENT_REDIRECT_URIS,
+    OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX,
+    OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR, OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
@@ -408,6 +426,8 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use slip_replay::decode_nonce_key_for_test;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
@@ -485,7 +505,7 @@ pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
 pub(crate) use past_grant_standing::past_standing_history_loads_for_test;

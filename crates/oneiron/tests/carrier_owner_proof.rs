@@ -2007,6 +2007,23 @@ impl ServedVault {
         .expect("bind the repository's CODE anchor");
     }
 
+    /// This install serves one repository that no CODE anchor binds: it
+    /// stands under no portable id, so the owner's cutover signs no cut.
+    fn serve_an_unbound_repo(&self) {
+        self.vault
+            .register_served_origin_as_owner(&self.owner, SERVED_REPO, "main")
+            .expect("register the served repository");
+    }
+
+    /// This install becomes the owner's machine and then holds no owner key:
+    /// he enrols its key, answers with that proof that it is his, and the
+    /// handle lets the key go. The vault still asks for an owner key.
+    fn becomes_the_owners_machine_without_his_key(&self) {
+        self.enrol_owner_key();
+        self.answer_this_install_is_mine();
+        release_owner_keys(&self.vault);
+    }
+
     /// The owner cuts the served repository's authority over to this install
     /// from the epoch `expected_epoch`.
     fn cut_origin(&self, expected_epoch: Option<u64>) -> oneiron::Result<OriginAuthority> {
@@ -2432,6 +2449,83 @@ fn the_origin_cutover_door_lands_with_the_owners_key_on_this_install() {
         served.stored_rows() > rows,
         "the cutover signs the owner's cut of the repository"
     );
+}
+
+/// The cutover of a repository under no portable id signs no cut, so the
+/// fold has no entry to judge and the door asks for itself (FIX
+/// ORIGIN-CUTOVER-UNBOUND-REPO-NO-OWNER-PROOF): beside an owner key this
+/// install does not hold it refuses as the bound repository's cutover does,
+/// and the host's authority row is not written.
+#[test]
+fn the_origin_cutover_door_refuses_an_unbound_repo_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served.serve_an_unbound_repo();
+    served.owner_key_held_on_another_install();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    let rows = served.stored_rows();
+    assert_owner_key_refusal(served.cut_origin(None));
+    served.assert_nothing_stored_since(rows);
+    assert_eq!(served.origin_row(), None, "no authority row is written");
+}
+
+/// The unbound repository's cutover under the first guard: no owner key in
+/// the vault, so it lands from an install that is not his machine, as it
+/// does today, and signs nothing.
+#[test]
+fn the_origin_cutover_door_takes_an_unbound_repo_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    served.serve_an_unbound_repo();
+    let rows = served.stored_rows();
+    let row = served
+        .cut_origin(None)
+        .expect("the cutover lands as it does today");
+    assert_eq!(row.epoch, 1);
+    assert_eq!(
+        served.stored_rows(),
+        rows,
+        "a repository under no portable id has no cut to sign"
+    );
+}
+
+/// The same cutover from an install that holds the owner's key lands: the
+/// key that would have proven a cut is here.
+#[test]
+fn the_origin_cutover_door_takes_an_unbound_repo_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.serve_an_unbound_repo();
+    served.enrol_owner_key();
+    let row = served.cut_origin(None).expect("the cutover lands");
+    assert_eq!(row.epoch, 1);
+}
+
+/// The door asks what the fold asks of a cut. From the owner's own machine
+/// that holds no owner key, the bound repository's cut lands unproven, so
+/// the unbound repository's cutover lands there too.
+#[test]
+fn the_origin_cutover_door_takes_both_repos_from_the_owners_machine_without_his_key() {
+    let bound = ServedVault::hosted();
+    bound.serve_a_repo();
+    bound.becomes_the_owners_machine_without_his_key();
+    assert!(bound.install_is_mine(), "guard: the owner's machine");
+    let rows = bound.stored_rows();
+    let row = bound
+        .cut_origin(None)
+        .expect("the owner's machine carries his cut of the bound repository");
+    assert_eq!(row.epoch, 1);
+    assert!(
+        bound.stored_rows() > rows,
+        "the cutover signs the owner's cut of the repository"
+    );
+
+    let unbound = ServedVault::hosted();
+    unbound.serve_an_unbound_repo();
+    unbound.becomes_the_owners_machine_without_his_key();
+    assert!(unbound.install_is_mine(), "guard: the owner's machine");
+    let row = unbound
+        .cut_origin(None)
+        .expect("the owner's machine cuts the unbound repository over as it cuts the bound one");
+    assert_eq!(row.epoch, 1);
 }
 
 /// The device succession door under the first guard: no owner key in the

@@ -66,6 +66,12 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
         let Ok(entry) = decode_authority_log_entry_body(body) else {
             return false;
         };
+        // A counted appointment's line folds under its building pin alone, so
+        // an image over an appointment stands under that pin only
+        // (OWNER-ANCHOR-ROOT-RECOVERY, round-1 finding 7).
+        if pin_moved && matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+            return false;
+        }
         let reads = (pin_moved && reads_pin(&entry.op))
             || matches!(&entry.op, AuthorityOp::FederationLifecycle(action)
                 if moved_peers.contains(&action.peer_vault_id));
@@ -75,9 +81,10 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
 
 /// Whether `op`'s transition reads the install's pin: every owner act, a
 /// membership execution record (FIX 12335), a machine's revision or answer, a frontier join, a world key record, a home
-/// candidacy and an owner key enrollment judge their carrier or signer
-/// through this install's trusted admitter, and a kit request through the
-/// pinned root itself.
+/// candidacy, a full-copy mark and an owner key enrollment judge their carrier or signer
+/// through this install's trusted admitter, a kit request through the
+/// pinned root itself, and a root appointment's verdict through the pinned
+/// root's anchor.
 pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -102,7 +109,9 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::CustodyPermitPiece(_)
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::HomeCandidacy(_)
+            | AuthorityOp::FullCopyMark(_)
             | AuthorityOp::OwnerKeyEnroll(_)
+            | AuthorityOp::RootAppointment(_)
     )
 }
 
@@ -114,8 +123,8 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
 ///
 /// A row the image's fold holds no state at, though its own transition
 /// admits it there under the image's inputs, fell to the fold's settlement
-/// (FIX 11263): a retired signer's fence, a confirmation collision or an
-/// unsettled handoff on it or beneath it, or a causal sequence floor. None
+/// (FIX 11263): a retired signer's fence or an unsettled handoff on it or
+/// beneath it, or a causal sequence floor. None
 /// of those reads the pin or the peers, so under this install's inputs it
 /// falls the same way, whether its transition admits it there or not. A row
 /// the world refold folds again ([`refolded_kind`]) is judged by that
@@ -175,6 +184,7 @@ fn judged_alike(
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin,
+            appointments: None,
         };
         match fold_entry_state(entry, hash, &parents, context) {
             EntryFold::Ready(state) => Some(Some(state)),

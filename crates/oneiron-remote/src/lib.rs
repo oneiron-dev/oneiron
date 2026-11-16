@@ -44,6 +44,8 @@
 mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
+// UC-02 B0: the one language boundary, verb input and output as the engine's JSON text.
+mod call_json;
 mod caps;
 mod embedded;
 mod error;
@@ -63,6 +65,7 @@ use std::path::Path;
 use oneiron::authority::MachineDeviceClass;
 use oneiron::memory::{MemoryError, RecallEffort};
 
+pub use crate::call_json::error_json;
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_CODEBASE_FILES, MAX_ENTITY_PAYLOAD_BYTES, MAX_REMOTE_REQUEST_BYTES,
     MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number,

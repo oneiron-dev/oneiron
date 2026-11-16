@@ -142,31 +142,18 @@ fn person_proof(
     let signature = key.sign(&statement).to_bytes();
     Ok(Some(serde_json::json!({
         "slip": reply.slip,
-        "signature": super::pairing::lower_hex(&signature),
+        "signature": oneiron_hex::encode(&signature),
     })))
 }
 
 /// The 32 bytes a 64 lower-case hex field names; a malformed one is the
 /// server's, naming the field, since the client signs what it named.
 fn field_bytes(field: &str, value: &str) -> Result<[u8; 32], MemoryError> {
-    let malformed = || {
+    oneiron_hex::decode::<32>(value).ok_or_else(|| {
         transport_error(format!(
             "the server named a malformed {field} for the person proof"
         ))
-    };
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(malformed());
-    }
-    let mut out = [0; 32];
-    for (slot, pair) in out.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-        let pair = std::str::from_utf8(pair).map_err(|_| malformed())?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| malformed())?;
-    }
-    Ok(out)
+    })
 }
 
 /// An embedded handle's answer: a person's own choice is set over a served
