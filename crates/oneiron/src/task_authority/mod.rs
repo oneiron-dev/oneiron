@@ -20,13 +20,16 @@
 //! (`habit::reject_public_streak_fields`), so no caller can mint the proof of
 //! its own ownership.
 //!
-//! A fact proves itself to another machine (Fable pass 28 R5). The replay door
-//! still admits role 6 like any other TASK row, but a row is not a fact because
-//! it arrived: the fold counts a fact this install's own door wrote, and any
-//! other only when its carrier's signature verifies and the fold admitted the
-//! carrier ([`fact_proof`]). A row that proves nothing is skipped, never an
-//! error, so a sender that proves nothing cannot cancel a task, make itself its
-//! owner, or fail its read.
+//! A fact proves itself to another machine (Fable pass 28 R5). The own-device
+//! replication/replay door still admits role 6 like any other TASK row, but a
+//! row is not a fact because it arrived: the fold counts a fact this install's
+//! own door wrote, and any other only when its carrier's signature verifies and
+//! the fold admitted the carrier ([`fact_proof`]). A row that proves nothing is
+//! skipped, never an error, so a sender that proves nothing cannot cancel a
+//! task, make itself its owner, or fail its read. A federation peer's fact is
+//! refused at admission, and an export to another vault withholds every fact
+//! (FIX TASK-FACT-FROM-FEDERATION-PEER). The ask records share role 6 under
+//! their own subkinds and proofs, and still cross.
 //!
 //! A proved fact counts only when its actor may make it
 //! ([`TaskAuthorityFacts::admits`], Fable pass 28 DESIGN 2.2). The mint door

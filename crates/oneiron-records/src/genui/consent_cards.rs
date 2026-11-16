@@ -3,6 +3,7 @@
 
 use crate::genui::consent_eval::non_empty;
 use oneiron_base::error::Result;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -39,8 +40,9 @@ impl BundleSendItem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("consent.scope.escalator")]
 pub enum ConsentScopeEscalator {
     JustOnce,
     AlwaysThisContact,
@@ -60,16 +62,6 @@ impl ConsentScopeEscalator {
     }
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::JustOnce => "just_once",
-            Self::AlwaysThisContact => "always_this_contact",
-            Self::AlwaysThisVerbClass => "always_this_verb_class",
-            Self::AlwaysThisChannel => "always_this_channel",
-        }
-    }
-
-    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::JustOnce => "Just this once",
@@ -80,22 +72,15 @@ impl ConsentScopeEscalator {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("bundle.approval.scope")]
 pub enum BundleApprovalScope {
     ExactEnumeratedSends,
     BriefVerbClass,
 }
 
 impl BundleApprovalScope {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ExactEnumeratedSends => "exact_enumerated_sends",
-            Self::BriefVerbClass => "brief_verb_class",
-        }
-    }
-
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {

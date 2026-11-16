@@ -296,8 +296,7 @@ impl Vault {
         if let Some(reason) = RAW_OUTPUT_SECRETS.get(room, wtxn, &producer)? {
             RAW_OUTPUT_SECRETS.put(&self.store, wtxn, &key, &reason)?;
         }
-        let served_rows = REPLAY_RECORDS
-            .get(room, wtxn, &attachment.source.run_id)?
+        let served_rows = replay_rows::get(room, wtxn, &attachment.source.run_id)?
             .and_then(|record| record.agent_verb_rows());
         let mut held = owned_body(message, &output, &stored)?;
         held.result = Some(crate::provenance::body::RetainedResultProvenance {
