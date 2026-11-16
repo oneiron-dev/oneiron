@@ -6,10 +6,11 @@
 //! type, tells a human, as it does for a busy resident's message classes.
 //!
 //! Fixture: the vault's owner (`owen`) and a custom agent (`yuki`), bound as
-//! a resident with a 3 s hold under `HumanMessages`, on a fake store clock,
-//! as in `agent_message_classes.rs`. A second custom agent (`kai`) sends as
-//! its model PERSON. Messages are admitted through the test doors
-//! `resident_wake_hold::admit_inbox_message` and `admit_person_message`.
+//! a resident with a 3 s hold under `HumanMessages`, on a fake store clock
+//! an hour ahead of the wall clock, as in `agent_message_classes.rs`. A
+//! second custom agent (`kai`) sends as its model PERSON. Messages are
+//! admitted through the test doors `resident_wake_hold::admit_inbox_message`
+//! and `admit_person_message`.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test resident_human_messages_wake`.
@@ -30,7 +31,7 @@ use oneiron::test_doors::resident_wake_hold::{
 };
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_testkit::FakeClock;
+use oneiron_testkit::{FAKE_EPOCH, FakeClock};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -42,6 +43,18 @@ struct Fixture {
     owen: EntityId,
     yuki: EntityId,
     inbox: EntityId,
+}
+
+/// A fake store clock an hour ahead of the wall clock, and no earlier than
+/// the testkit's epoch. An agent's PERSON takes its model substrate at the
+/// wall-clock time the agent is created (`create_agent_definition_as`), and
+/// a substrate reads only from then on, so every fake instant must come
+/// after it.
+fn test_clock() -> TestResult<FakeClock> {
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    Ok(FakeClock::at(wall.saturating_add(3_600).max(FAKE_EPOCH)))
 }
 
 fn config(clock: &FakeClock) -> VaultConfig {
@@ -218,7 +231,7 @@ fn message_key(fixture: &Fixture, correlation_id: &str) -> String {
 /// PERSON has entity type PERSON, so its message woke the resident.
 #[test]
 fn a_human_messages_resident_sleeps_through_an_agents_message() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open_owned(dir.path(), config(&clock))?;
     let fixture = bind_resident(&vault)?;
@@ -248,7 +261,7 @@ fn a_human_messages_resident_sleeps_through_an_agents_message() -> TestResult {
 /// filters agents, not people.
 #[test]
 fn a_human_messages_resident_wakes_on_a_persons_message() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open_owned(dir.path(), config(&clock))?;
     let fixture = bind_resident(&vault)?;
@@ -275,7 +288,7 @@ fn a_human_messages_resident_wakes_on_a_persons_message() -> TestResult {
 /// resident sleeps through its message. Green on main and on the head.
 #[test]
 fn a_human_messages_resident_sleeps_through_an_unknown_sender() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open_owned(dir.path(), config(&clock))?;
     let fixture = bind_resident(&vault)?;
