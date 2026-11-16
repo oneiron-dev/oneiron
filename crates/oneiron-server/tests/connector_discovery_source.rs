@@ -220,8 +220,12 @@ impl Fixture {
             CONNECTOR.to_owned(),
             ConnectorHostConfig {
                 transport: ConnectorTransport::HttpApi,
-                endpoint: api.endpoint.clone(),
+                endpoint: Some(api.endpoint.clone()),
                 document: Some(document_path.to_string_lossy().into_owned()),
+                command: Vec::new(),
+                env: BTreeMap::new(),
+                cwd: None,
+                upstream: None,
             },
         );
         let server = Arc::new(

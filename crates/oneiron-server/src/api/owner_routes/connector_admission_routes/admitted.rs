@@ -96,7 +96,7 @@ fn refresh_connector(
         // routing on this slate, and qualify/attest must not target an
         // obsolete one.
         vault
-            .drop_staged_connector_slate(&catalog.key, unix_seconds_now())
+            .drop_staged_connector_slate(&catalog.key)
             .map_err(engine)?;
         return Ok(Refreshed {
             connector: name,

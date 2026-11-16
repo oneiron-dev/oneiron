@@ -11,9 +11,10 @@ use super::{Discovery, ListedTool, discover, refused};
 use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_translate::{self, MAX_DOCUMENT_BYTES};
 
-/// Lists the tools of the connector installed as `installed`: an MCP
-/// connector's at `pinned` once its key pinned a revision (see
-/// [`discover`]), an HTTP API's from its document. The document is read
+/// Lists the tools of the connector installed as `installed` over HTTP: an
+/// MCP connector's at `pinned` once its key pinned a revision (see
+/// [`discover`]), an HTTP API's from its document. A stdio connector is
+/// refused: its tools come from `discover_stdio`. The document is read
 /// with no credential: it may live on another host than the API, and the
 /// connector's secret goes to its endpoint alone, at a call. Its revision
 /// is the document's format and version (`openapi-3.1`, `discovery-v1`); a
@@ -24,15 +25,23 @@ pub(crate) fn list_tools(
     auth: Option<&HeaderValue>,
     pinned: Option<&str>,
 ) -> oneiron::Result<Discovery> {
+    let endpoint = installed
+        .endpoint
+        .as_deref()
+        .ok_or_else(|| refused("the connector's section names no endpoint"))?;
     match installed.transport {
-        ConnectorTransport::McpHttp => discover(client, &installed.endpoint, auth, pinned),
+        ConnectorTransport::McpHttp => discover(client, endpoint, auth, pinned),
+        // A stdio connector lists from a child it starts (row L8-27).
+        ConnectorTransport::McpStdio => Err(refused(
+            "a stdio connector lists its tools from its child, not over HTTP",
+        )),
         ConnectorTransport::HttpApi => {
             let document = installed
                 .document
                 .as_deref()
                 .ok_or_else(|| refused("the connector's section names no API document"))?;
             let bytes = read_document(client, document)?;
-            let translation = connector_translate::translate(&bytes, &installed.endpoint)?;
+            let translation = connector_translate::translate(&bytes, endpoint)?;
             if let Some(pinned) = pinned
                 && pinned != translation.revision
             {

@@ -26,7 +26,7 @@ use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallOutcome,
     ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema, PendingConnectorCall,
-    SettledConnectorCall, UntrustedToolResult, now_ms,
+    SettledConnectorCall, UntrustedToolResult,
 };
 use super::connector_call_dispatch::{escalation_code, step_from_host};
 use super::connector_call_erase::put_pending_call_in_txn;
@@ -338,7 +338,9 @@ impl Vault {
     ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
         // A custody record a host presented for an earlier send is never
         // this pass's; the record and grant this call names are its own.
+        // Nor is the session manifest of a runner an earlier send went to.
         drop(host.take_sent_custody());
+        drop(host.take_session_manifest());
         // A pass ends a call's budget wait; this pass's step names any new
         // one (FIX 8686).
         let was_paced = pending.paced_until.take().is_some();
@@ -465,6 +467,7 @@ impl Vault {
                     result,
                     result_absence,
                     budget_steering,
+                    session_manifest: host.take_session_manifest(),
                 };
                 settle(
                     call_ref,
@@ -554,7 +557,7 @@ impl Vault {
                 super::approval::retain_held_ask(&mut row, ask.as_ref());
                 // A call a budget window paced is held from now on.
                 if was_paced {
-                    row.held_at_ms = now_ms();
+                    row.held_at_ms = crate::unix_millis_now();
                 }
                 // A hold for consent alone binds a code consent wait in the
                 // same writer, when the call came from a code run.
@@ -630,7 +633,7 @@ impl Vault {
                     self,
                     intent,
                     IntentEscalationReason::BindingInvalid,
-                    now_ms(),
+                    crate::unix_millis_now(),
                 )?;
                 let settled = SettledConnectorCall::Refused {
                     decision_ref: None,
@@ -729,7 +732,7 @@ impl Vault {
                 &pending.principal_ref,
                 pending.attempt_id,
                 pending.call_seq,
-                now_ms(),
+                crate::unix_millis_now(),
                 &mut *host,
             )?;
         // FIX 4747 slice 5: the run that made the call no longer runs here;
