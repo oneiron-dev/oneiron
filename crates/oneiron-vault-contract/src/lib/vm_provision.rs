@@ -111,7 +111,7 @@ impl VmProvisionBinding {
 }
 
 fn lower_hex(text: &str, len: usize) -> bool {
-    text.len() == len && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    oneiron_hex::is_lower_hex(text, Some(len))
 }
 
 fn uuid_form(text: &str) -> bool {

@@ -90,6 +90,7 @@ pub(super) fn materialize_tombstones_from_delta(
                             );
                         }
                     }
+                    TombstoneStep::Skip => {}
                     TombstoneStep::Replay { id, hard } => {
                         let residence: Result<crate::sync::types::TombstoneResidence> = (|| {
                             let txn = vault.store.env.read_txn()?;
@@ -582,6 +583,7 @@ pub(in crate::sync) fn stage_tombstones_in_txn(
                 )?;
                 continue;
             }
+            TombstoneStep::Skip => continue,
             TombstoneStep::Replay { id, hard } => (id, hard),
         };
         let mut residence =
