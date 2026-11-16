@@ -7890,7 +7890,7 @@
      "purpose": "Validating archive import through ordinary admission doors, never sync replay",
      "surface": {
       "crate-vis": 6,
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -7937,6 +7937,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArchiveSpeakers",
       "ExportDerivationEnvelope",
       "ExportEntity",
       "ExportLedger",
@@ -7953,7 +7954,7 @@
      "purpose": "The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 2,
       "fn": 10,
       "re-export": 1,
       "struct": 10
@@ -8002,7 +8003,7 @@
      "path": "src/batch/export/evidence_import.rs",
      "purpose": "FIX 7777: the whole-vault import's MESSAGE orchestration",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55452,7 +55453,7 @@
      "path": "src/memory/witness/archive.rs",
      "purpose": "Archive restore of witnessed MESSAGE rows (FIX 7777)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 13
      }
     },
     {
@@ -89970,6 +89971,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/imported_evidence.rs",
+     "purpose": "Doors for `tests/foreign_archive_speakers.rs` (fix list row 15412, review of #7544 round 1): whether…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/inquiry.rs",
      "purpose": "Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's…",
      "surface": {
@@ -90146,7 +90157,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 122,
+      "mod": 123,
       "re-export": 1
      }
     },
@@ -99759,6 +99770,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/foreign_archive_speakers.rs",
+     "purpose": "Fix list row 15412, slice 3b (archive half): the import door names whose words a whole-vault archive's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104306,7 +104325,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 125,
+     "files": 126,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104483,8 +104502,8 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7613,
-   "test_files": 1359
+   "source_files": 7614,
+   "test_files": 1360
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -148496,6 +148515,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "ArchiveSpeakers",
       "BackupArgs",
       "DoctorArgs",
       "EmbeddingKind",
@@ -148567,7 +148587,7 @@
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 17,
+      "enum": 18,
       "struct": 50
      }
     },
@@ -149422,7 +149442,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/transfer_commands.rs",
