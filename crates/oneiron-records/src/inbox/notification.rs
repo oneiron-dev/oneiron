@@ -60,6 +60,14 @@ pub enum NotificationKind {
     /// run, is its revert, the owner's own act
     /// (`Vault::revert_model_pack_change_as_owner`).
     ModelPackChanged,
+    /// An agent logged a counterparty's spoken withdrawal of
+    /// voice-recognition consent on a call, under its Grant that lets it log
+    /// that consent (VOICE-WITHDRAW-AGENT-ON-CALL): told to each live owner.
+    /// The person's voiceprint and samples are deleted and the withdrawal
+    /// stays in the consent log. `source.result` names the withdrawal's
+    /// event id and `source.detail` who asked, which consent it was, and
+    /// the agent and Grant that logged it.
+    VoiceRecognitionWithdrawn,
 }
 
 impl NotificationKind {

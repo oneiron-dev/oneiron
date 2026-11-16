@@ -7,6 +7,7 @@ use crate::authority::EffectiveRead;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 
 use super::math_keys::{
     digest16, invalid_voice, require_non_empty, require_sha256_hex, validate_voice_vector,
@@ -44,6 +45,10 @@ enum WithdrawalReach {
     /// Those, and every render-bank row the subject owns.
     WholeVoice,
 }
+
+/// The producer of the owner's notice that an agent logged a person's
+/// spoken withdrawal of voice-recognition consent.
+const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
 
 /// Both consent doors compare inside the transaction that holds the event
 /// write and any hard deletion.
@@ -577,7 +582,12 @@ impl Vault {
         &self,
         request: &VoiceWithdrawalRequest,
     ) -> Result<VoiceWithdrawalReceipt> {
-        self.withdraw_voice_consent_admitted(request, WithdrawalReach::WholeVoice, |_| Ok(()))
+        self.withdraw_voice_consent_admitted(
+            request,
+            WithdrawalReach::WholeVoice,
+            |_| Ok(()),
+            |_, ()| Ok(()),
+        )
     }
 
     /// Withdraws voice-recognition consent at a door, under the acting
@@ -618,24 +628,111 @@ impl Vault {
             ],
             basis,
         };
-        self.withdraw_voice_consent_admitted(&request, WithdrawalReach::Recognition, |txn| {
-            if subject == actor {
-                proof.revalidate_person_in_txn(self, txn).map(drop)
-            } else {
-                proof.revalidate_in_txn(self, txn).map(drop)
-            }
-        })
+        self.withdraw_voice_consent_admitted(
+            &request,
+            WithdrawalReach::Recognition,
+            |txn| {
+                if subject == actor {
+                    proof.revalidate_person_in_txn(self, txn).map(drop)
+                } else {
+                    proof.revalidate_in_txn(self, txn).map(drop)
+                }
+            },
+            |_, ()| Ok(()),
+        )
+    }
+
+    /// Logs a person's spoken withdrawal of voice-recognition consent for
+    /// `agent`, on a call (VOICE-WITHDRAW-AGENT-ON-CALL; lead: "the way out
+    /// must never be harder than the way in"): the event append and the
+    /// recognition-only deletion [`Self::withdraw_voice_consent_as`] makes,
+    /// recorded by the agent. `admit_agent` runs first inside the write
+    /// transaction and answers the Grant the agent acts under, so a refusal,
+    /// or a Grant revoked while the request waited, appends and deletes
+    /// nothing. On the first insertion each live owner is told in the same
+    /// transaction, naming who asked, which consent it was, and the agent and
+    /// Grant that logged it; a replay tells no one again.
+    pub(crate) fn withdraw_voice_consent_logged_by_agent<E: From<Error>>(
+        &self,
+        agent: EntityId,
+        subject: EntityId,
+        event_id: String,
+        occurred_at: u64,
+        basis: VoiceConsentBasis,
+        admit_agent: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<EntityId, E>,
+    ) -> std::result::Result<VoiceWithdrawalReceipt, E> {
+        let request = VoiceWithdrawalRequest {
+            event_id,
+            subject_ref: subject,
+            recorded_by_ref: agent,
+            occurred_at,
+            purposes: vec![
+                VoicePrintPurpose::MeetingAttribution,
+                VoicePrintPurpose::LiveInterlocutor,
+            ],
+            basis,
+        };
+        self.withdraw_voice_consent_admitted(
+            &request,
+            WithdrawalReach::Recognition,
+            admit_agent,
+            |wtxn, grant| self.tell_owners_of_logged_withdrawal_in_txn(wtxn, &request, grant),
+        )
+    }
+
+    /// One notice per live owner that `request.recorded_by_ref`, an agent
+    /// under `grant`, logged `request`'s spoken withdrawal of
+    /// voice-recognition consent. Told again under the same event, a row is
+    /// found, not written twice.
+    fn tell_owners_of_logged_withdrawal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        request: &VoiceWithdrawalRequest,
+        grant: EntityId,
+    ) -> Result<()> {
+        let subject = request.subject_ref.to_hex();
+        let name = crate::reaction::person_name_in(self, wtxn, request.subject_ref)?
+            .unwrap_or_else(|| format!("person {}", &subject[..8]));
+        let detail = format!(
+            "{name} asked to stop voice recognition on a call (recognition consent withdrawn; \
+             logged by agent {} under Grant {})",
+            request.recorded_by_ref.to_hex(),
+            grant.to_hex()
+        );
+        let now = self.instant_in_txn(wtxn)?.secs();
+        for owner in crate::policy_model::owners_in_txn(self, wtxn)? {
+            self.record_notification_in_txn(
+                wtxn,
+                &NotificationEvent {
+                    kind: NotificationKind::VoiceRecognitionWithdrawn,
+                    source: NotificationSource {
+                        producer: VOICE_RECOGNITION_NOTIFICATION_PRODUCER.to_owned(),
+                        event: format!("{subject}:{}:{}", request.event_id, owner.to_hex()),
+                        result: Some(request.event_id.clone()),
+                        detail: Some(detail.clone()),
+                        ..NotificationSource::default()
+                    },
+                    subject_refs: Vec::new(),
+                    recipient: Some(owner),
+                    created_at: now,
+                    origin_conversation: None,
+                },
+            )?;
+        }
+        Ok(())
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a
     /// refusal appends and deletes nothing, then the event append, and only
-    /// on its first insertion the hard deletion `reach` names.
-    fn withdraw_voice_consent_admitted(
+    /// on its first insertion the hard deletion `reach` names and
+    /// `on_insert`, handed what `admit` answered.
+    fn withdraw_voice_consent_admitted<A, E: From<Error>>(
         &self,
         request: &VoiceWithdrawalRequest,
         reach: WithdrawalReach,
-        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
-    ) -> Result<VoiceWithdrawalReceipt> {
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<A, E>,
+        on_insert: impl FnOnce(&mut heed::RwTxn<'_>, A) -> Result<()>,
+    ) -> std::result::Result<VoiceWithdrawalReceipt, E> {
         let event = VoiceConsentEventV1 {
             event_id: request.event_id.clone(),
             subject_ref: request.subject_ref,
@@ -653,8 +750,8 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
-        let (tally, replayed) = self.with_write_txn_grouped(|wtxn| {
-            admit(wtxn)?;
+        let (tally, replayed) = self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
+            let admitted = admit(wtxn)?;
             if put_consent_event_once(store, wtxn, &event)? == ConsentEventWrite::Replayed {
                 return Ok((VoiceDeletionTally::default(), true));
             }
@@ -662,6 +759,7 @@ impl Vault {
             if reach == WithdrawalReach::WholeVoice {
                 tally.owner_ref_rows = super::ref_bank::delete_owner_refs(store, wtxn, &subject)?;
             }
+            on_insert(wtxn, admitted)?;
             Ok((tally, false))
         })?;
 
