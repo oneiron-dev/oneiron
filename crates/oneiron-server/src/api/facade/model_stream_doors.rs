@@ -16,10 +16,10 @@ use oneiron::llm::model_stream::{
 };
 use oneiron::llm::{LlmEventBus, StreamSubscription};
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
-    MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::{EntityId, LlmStreamEvent};
+use oneiron_base::request_limits::page_limit_zero_as_one;
 use tokio::sync::Notify;
 
 use super::host_doors::support::{internal, owner_proof};
@@ -286,12 +286,10 @@ async fn open(
     // Identical owner, inference policy, route-selector refusal, model
     // binding and run meter as the raw `/v1/llm/stream` sibling.
     let admitted = crate::api::llm::admit(server, auth, &mut input.request).map_err(|response| {
-        let code = match response.status().as_u16() {
-            401 | 403 => MEMORY_CODE_FORBIDDEN,
-            503 => MEMORY_CODE_MODEL_UNAVAILABLE,
-            _ => MEMORY_CODE_BAD_REQUEST,
-        };
-        MemoryError::new(code, "the inference door refused this model stream", &[])
+        super::model_step_doors::inference_door_refusal(
+            &response,
+            "the inference door refused this model stream",
+        )
     });
     let (ladder, run) = match admitted {
         Ok(admitted) => admitted,
@@ -444,8 +442,8 @@ pub(crate) async fn ai_streams_events(
     const VERB: &str = "ai.streams.events";
     owner_proof(auth, server, VERB)?;
     let entry = server.model_streams.get(auth, &input.stream_key)?;
-    let limit =
-        usize::try_from(input.limit.unwrap_or(64).clamp(1, 512)).map_err(|_| internal(VERB))?;
+    let limit = usize::try_from(page_limit_zero_as_one(input.limit, 64, 512).rows)
+        .map_err(|_| internal(VERB))?;
     let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
     let subscription = state
         .subs

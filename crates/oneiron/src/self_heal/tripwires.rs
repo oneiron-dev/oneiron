@@ -5,6 +5,7 @@ use super::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::retrieval_quality::RetrievalQuality;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{
     EntityId, Result, Vault,
     receipt::{CallOutcome, CallReceipt, CallTransport, ReceiptKind, ReceiptQuery, ReceiptRecord},
@@ -381,8 +382,25 @@ impl DiagnosticObservation {
         observation(id, "mcp_rejected", receipt.at, receipt)
     }
     pub fn from_consolidation_receipt(receipt: &ReceiptRecord) -> Option<Self> {
+        let refused = match receipt.gate_outcome() {
+            Some(GateReceiptOutcome::Deny) => true,
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::Rejected
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => false,
+        };
         if receipt.receipt_kind != ReceiptKind::Gate
-            || receipt.outcome != "deny"
+            || !refused
             || receipt.fields.get("content_kind").map(String::as_str) != Some("claim")
             || !receipt
                 .policy_trace
@@ -540,8 +558,23 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut seen = std::collections::BTreeSet::new();
         for receipt in receipts {
-            if receipt.receipt_kind != ReceiptKind::Gate || receipt.outcome != "pending" {
-                continue;
+            // `None` for a receipt of another family.
+            match receipt.gate_outcome() {
+                Some(GateReceiptOutcome::Pending) => {}
+                Some(
+                    GateReceiptOutcome::Allow
+                    | GateReceiptOutcome::Deny
+                    | GateReceiptOutcome::Approved
+                    | GateReceiptOutcome::ApprovedAmended
+                    | GateReceiptOutcome::Rejected
+                    | GateReceiptOutcome::LetGo
+                    | GateReceiptOutcome::Superseded
+                    | GateReceiptOutcome::Retracted
+                    | GateReceiptOutcome::Invalidated
+                    | GateReceiptOutcome::Revoked
+                    | GateReceiptOutcome::Noted,
+                )
+                | None => continue,
             }
             let Some(claim) = receipt
                 .trigger_ref
@@ -593,11 +626,24 @@ impl Vault {
             let Some(predicate) = receipt.fields.get("predicate") else {
                 continue;
             };
-            if receipt.receipt_kind != ReceiptKind::Gate
-                || !matches!(
-                    receipt.outcome.as_str(),
-                    "allow" | "auto" | "proposed" | "pending"
+            let allowed_or_pending = match receipt.gate_outcome() {
+                Some(GateReceiptOutcome::Allow | GateReceiptOutcome::Pending) => true,
+                Some(
+                    GateReceiptOutcome::Deny
+                    | GateReceiptOutcome::Approved
+                    | GateReceiptOutcome::ApprovedAmended
+                    | GateReceiptOutcome::Rejected
+                    | GateReceiptOutcome::LetGo
+                    | GateReceiptOutcome::Superseded
+                    | GateReceiptOutcome::Retracted
+                    | GateReceiptOutcome::Invalidated
+                    | GateReceiptOutcome::Revoked
+                    | GateReceiptOutcome::Noted,
                 )
+                | None => false,
+            };
+            if receipt.receipt_kind != ReceiptKind::Gate
+                || !allowed_or_pending
                 || receipt.fields.get("criticality").map(String::as_str) != Some("normal")
                 || manifest.criticality_for_predicate(predicate)
                     != crate::gate::PolicyCriticality::Critical

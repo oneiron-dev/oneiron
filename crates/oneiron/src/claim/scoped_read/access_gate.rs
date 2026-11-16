@@ -458,7 +458,9 @@ impl ScopedRead<'_> {
 }
 
 /// What a relationship read decides one stored row on, before it knows who
-/// reads it.
+/// reads it. A deleted row's captured scope keeps it (`DeletedRecordScope`),
+/// so this shape is also a stored row format.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) enum RelationshipRead {
     /// The row decides alone: a kind relationship reads do not gate
     /// (`true`), or one whose scope fields or record position do not resolve
