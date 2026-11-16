@@ -26,6 +26,7 @@ pub mod media_job_spend;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
 pub mod native_board;
+pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;

@@ -87,6 +87,10 @@ pub(crate) use self::owner_call::resolve_mcp_caller;
 pub(crate) use self::read_result::execute_mcp_read_result;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
+// The integration tests' door to the envelope-error count (FIX
+// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wire::count_parse_error_for_test;
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
 // but no production path does, so a plain `pub(crate)` re-export would warn as
 // unused in non-test builds.
