@@ -182,7 +182,7 @@ async fn start_generation(
         let authority = ActAuthority::Owner(owner, surface);
         let outcome = vault
             .start_data_key_generation_as(&authority, DataKeyGenerationCause::OwnerRequest, &ways)
-            .map_err(unconfirmed_as_refused)?;
+            .map_err(world_key_refusal_as_refused)?;
         Ok(DataKeyGenerationView::of(
             &vault.vault_key_vault_id(),
             outcome,
@@ -202,15 +202,15 @@ fn recipient_key(recipient: &str) -> OwnerResult<HybridPublicKey> {
     HybridPublicKey::from_bytes(&bytes).map_err(|_| refused())
 }
 
-/// The act's refusal of a way neither presented nor confirmed, in the
-/// owner's words: `ErrorKind::WorldKeyRefused` has no owner mapping, so the
-/// engine's error would answer 500 and drop which way it was; as a refusal
-/// it answers 409 naming the way to present or confirm.
-fn unconfirmed_as_refused(error: oneiron::Error) -> OwnerError {
-    if matches!(
-        error,
-        oneiron::Error::Secret(oneiron::error::SecretError::DataKeyGenerationWayUnconfirmed { .. })
-    ) {
+/// The act's refusals in the owner's words: `ErrorKind::WorldKeyRefused`
+/// has no owner mapping, so the engine's error would answer 500 and drop
+/// what to do. Every such refusal is a fixed sentence or names a wrap id,
+/// never a secret: a way neither presented nor confirmed, a presented secret
+/// that does not open its wrap, a way the vault does not carry, a recovery
+/// preset other than standard, a page-sealed or keyless vault. As a refusal
+/// it answers 409 with those words.
+fn world_key_refusal_as_refused(error: oneiron::Error) -> OwnerError {
+    if error.kind() == oneiron::ErrorKind::WorldKeyRefused {
         OwnerError::Refused(error.to_string())
     } else {
         OwnerError::Engine(Box::new(error))

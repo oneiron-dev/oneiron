@@ -366,7 +366,7 @@ fn kept_escrow(text: &str) -> Result<KeptEscrowArg, String> {
 
 /// `NAME=FILE` split at the first `=`, neither side empty; `what` words any
 /// other text.
-fn kept_way(text: &str, what: &str) -> Result<(&str, &str), String> {
+fn kept_way<'t>(text: &'t str, what: &str) -> Result<(&'t str, &'t str), String> {
     let refused = || what.to_owned();
     let (name, file) = text.split_once('=').ok_or_else(refused)?;
     if name.is_empty() || file.is_empty() {
