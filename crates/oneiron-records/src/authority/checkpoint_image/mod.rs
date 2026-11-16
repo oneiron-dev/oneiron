@@ -58,10 +58,12 @@ use serde::Serialize;
 /// spent evidence, and settlement removes neither nor any row above it (FIX
 /// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is unused: it was an open PR's number when the
 /// train assigned this one.
-/// 40: a carried machine answer that needed an owner key's proof and carried none is held
+/// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+/// 41: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 40;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 41;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
