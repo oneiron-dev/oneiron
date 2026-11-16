@@ -162,25 +162,10 @@ impl From<MemoryError> for FacadeApiError {
             // to correct, and a missing record and an unreadable one are this
             // same status.
             oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
-            // A credential call settlement refused before it ran (ARCH-0080
-            // §3 Ask): the caller's credential no longer admits it, or this
-            // host could not run it again. Either way a new invocation.
-            code if VerbAskRefusal::from_code(code)
-                .is_some_and(VerbAskRefusal::names_credential) =>
-            {
-                StatusCode::FORBIDDEN
-            }
-            code if VerbAskRefusal::from_code(code).is_some() => StatusCode::CONFLICT,
             // OF-580: the call ran once its ask settled, and only its result
             // was not kept. A conflict with the call's own record, not this
             // server's failure, and no retry runs it again.
             HOOK_RESULT_NOT_RETAINED => StatusCode::CONFLICT,
-            // FIX 7664: a typed browser refusal (a press the owner owes, a page
-            // that timed out, a refused destination) is not this server's fault.
-            code if browser_doors::browser_refusal_status(code).is_some() => {
-                browser_doors::browser_refusal_status(code)
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
-            }
             // FIX 7653: a render that ran past its deadline or met a machine
             // floor is not the caller's fault, and can be asked again.
             crate::slide_render::RENDER_DEADLINE
@@ -190,39 +175,10 @@ impl From<MemoryError> for FacadeApiError {
             // served writes answer (K18): temporary, and lifted by the reap's
             // abort or the vault's wake, never this server's failure.
             crate::managed::WRITES_FROZEN_TAG => StatusCode::SERVICE_UNAVAILABLE,
-            // FIX 679: `ai.ask_image`'s door refuses under its route's own
-            // code, and answers with the route's status.
-            code if host_doors::ask_image_refusal_status(code).is_some() => {
-                host_doors::ask_image_refusal_status(code)
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            // L4-15: `vault.artifacts.image.edit`'s own refusals, each with
-            // its status: the caller's request, or no node to run it now.
-            code if super::image_edit_doors::image_edit_refusal_status(code).is_some() => {
-                super::image_edit_doors::image_edit_refusal_status(code)
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            // A facade door that holds a live run (live_run_doors.rs) refuses
-            // under the live-run guard's own codes. They take the status the
-            // guard's direct route answers (LiveRunRefusal::status): 400 for
-            // a missing or malformed handle, 403 for a run this credential may
-            // not act for, 409 for a stale, busy or attached run. They are the
-            // caller's refusal, never this server's failure.
-            code if crate::server::LiveRunRefusal::from_code(code).is_some() => {
-                crate::server::LiveRunRefusal::from_code(code)
-                    .map_or(StatusCode::INTERNAL_SERVER_ERROR, |refusal| {
-                        refusal.status()
-                    })
-            }
-            // A repo door's typed refusal or hold (NO-DOOR
-            // REPO-MEMBER-SNAPSHOT-SYMBOL-READ): 403 where the Grant or the
-            // run's lane does not admit the act, 409 where a lease or a hold
-            // is the cause (`repo_doors::repo_refusal_status`).
-            code if repo_doors::repo_refusal_status(code).is_some() => {
-                repo_doors::repo_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
-            }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+            // Every other code: the first door table that names it, after
+            // every engine arm above (UC-11).
+            code => door_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         };
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(code = %error.code, error = %error.message, "facade verb failed");
@@ -265,6 +221,60 @@ impl From<MemoryError> for FacadeApiError {
             },
         }
     }
+}
+
+/// The status of a refusal `code` that no engine arm of
+/// `From<MemoryError>` names: the first table in [`DOOR_REFUSAL_STATUSES`]
+/// that names it. `None` for a code no table names.
+fn door_refusal_status(code: &str) -> Option<StatusCode> {
+    DOOR_REFUSAL_STATUSES.iter().find_map(|table| table(code))
+}
+
+/// Each refusal vocabulary beside the engine's own, in the order the facade
+/// asks them (UC-11). The engine's arms are asked before all of them, so a
+/// code that an engine arm also names takes the engine arm's status
+/// (`host_doors::ask_image_refusal_status` marks its shadowed codes). Each
+/// door lane keeps its table in its own door file, so a change to a door's
+/// codes stays in that file.
+const DOOR_REFUSAL_STATUSES: [fn(&str) -> Option<StatusCode>; 6] = [
+    verb_ask_refusal_status,
+    // FIX 7664: a typed browser refusal (a press the owner owes, a page
+    // that timed out, a refused destination) is not this server's fault.
+    browser_doors::browser_refusal_status,
+    // FIX 679: `ai.ask_image`'s door refuses under its route's own code,
+    // and answers with the route's status.
+    host_doors::ask_image_refusal_status,
+    // L4-15: `vault.artifacts.image.edit`'s own refusals, each with its
+    // status: the caller's request, or no node to run it now.
+    super::image_edit_doors::image_edit_refusal_status,
+    live_run_refusal_status,
+    // A repo door's typed refusal or hold (NO-DOOR
+    // REPO-MEMBER-SNAPSHOT-SYMBOL-READ): 403 where the Grant or the run's
+    // lane does not admit the act, 409 where a lease or a hold is the cause.
+    repo_doors::repo_refusal_status,
+];
+
+/// A credential call settlement refused before it ran (ARCH-0080 §3 Ask):
+/// `403` when the caller's credential no longer admits it, `409` when this
+/// host could not run it again. Either way a new invocation.
+fn verb_ask_refusal_status(code: &str) -> Option<StatusCode> {
+    VerbAskRefusal::from_code(code).map(|refusal| {
+        if refusal.names_credential() {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::CONFLICT
+        }
+    })
+}
+
+/// A facade door that holds a live run (live_run_doors.rs) refuses under the
+/// live-run guard's own codes, with the status the guard's direct route
+/// answers (`LiveRunRefusal::status`): 400 for a missing or malformed
+/// handle, 403 for a run this credential may not act for, 409 for a stale,
+/// busy or attached run. They are the caller's refusal, never this server's
+/// failure.
+fn live_run_refusal_status(code: &str) -> Option<StatusCode> {
+    crate::server::LiveRunRefusal::from_code(code).map(crate::server::LiveRunRefusal::status)
 }
 
 /// Scope refusals keep coming from the shared `CoreAuth::require`, so the one
