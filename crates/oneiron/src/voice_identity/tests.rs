@@ -990,7 +990,7 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
 }
 
 #[test]
-fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Result<()> {
+fn print_enrollment_pruning_and_withdrawal_preserve_render_refs() -> Result<()> {
     use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
 
     let (_tmp, vault) = temp_ref_vault();
@@ -1090,13 +1090,9 @@ fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Resul
         purposes: vec![VoicePrintPurpose::MeetingAttribution],
         basis: notice_basis(),
     })?;
-    assert!(vault.voice_identity("stable-voice")?.is_none());
-    assert!(vault.voice_ref_pack("designed")?.is_none());
-    assert!(
-        vault
-            .voice_target_clone("stable-voice", "render", true, ModelLocality::OwnServer)?
-            .is_none()
-    );
+    // The print's withdrawal withdraws recognition only: the render bank
+    // keeps its own consent (VOICE-WITHDRAW-ENGINE-WIPE-RENDER-GAPS).
+    assert_refs()?;
     Ok(())
 }
 

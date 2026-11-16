@@ -1,12 +1,13 @@
 //! One-shot structured-output policy. No shim is applied to agent-loop calls.
 use super::super::{
-    BudgetGuard, BudgetLease, ContentPart, LlmBackend, LlmCapability, LlmMessage, LlmMessageRole,
-    LlmRequest, LlmResponse, LlmUsage, ResponseFormat,
+    BudgetGuard, BudgetLease, ContentPart, LlmBackend, LlmCapability, LlmError, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ResponseFormat, RetryableLlmError,
 };
 use super::schema_runtime::{self, SchemaValidationOutcome, SchemaValidationRequest};
 use super::types::ReplyCheck;
 use super::{DurableStepError, DurableStepResult};
 use crate::dreamer_wake::{StepCalls, WakePassDeadline};
+use crate::store::model_step_submission::CorrectionPoint;
 
 /// The shared validator also serves hosts implementing self.json.validate.
 pub fn validate_json_schema(
@@ -58,6 +59,10 @@ pub(super) fn validate_fallback(
 /// `request` through the backend, its schema met natively or by corrective
 /// calls. `capture` keeps each corrective call's wire under its own call index
 /// before it is sent (FIX 6145), best effort, as the step's own call is kept.
+/// Where the step keeps its corrections, each one's point is kept with its
+/// sends, a correction its offer's rest holds past the step's wait parks the
+/// step as its first call does, and the pass that resumes it continues that
+/// correction (STEP-CORRECTION-HEALTH-PARK).
 #[expect(
     clippy::too_many_arguments,
     reason = "the step's call, its budget, observation and capture join the reply check"
@@ -133,12 +138,34 @@ pub(super) async fn generate(
         crate::code_run::shift_cache_boundaries(&mut wire);
     }
     let max_attempts = if native { 1 } else { 3 };
+    // The step's own messages: a correction's point keeps the ones after.
+    let asked = wire.messages.len();
     let mut usage = LlmUsage::zero();
-    for attempt in 1..=max_attempts {
+    // The correction an earlier pass parked in resumes where it stood, with
+    // what the calls before it spent: no paid call is asked twice. A point
+    // the step's wire no longer fits starts the step over.
+    let resumed = retries
+        .resume_point()
+        .filter(|point| (2..=max_attempts).contains(&point.attempt));
+    let first = match resumed {
+        Some(point) => {
+            wire.messages.extend(point.tail.iter().cloned());
+            usage = point.usage.clone();
+            point.attempt
+        }
+        None => 1,
+    };
+    for attempt in first..=max_attempts {
         // Declared first, a correction's observation closes after its lease.
         let _correction_call;
         let correction;
-        let active_lease = if attempt == 1 {
+        let active_lease = if attempt == first {
+            // The step's admission lease, bound as its call by the caller
+            // (DOOR-144): the first call's, or the correction's a resume
+            // continues, whose wire is kept under its own call.
+            if attempt > 1 {
+                capture(&wire, u32::from(attempt - 1));
+            }
             lease
         } else {
             // A correction is a new paid call with a new lease, not a retry
@@ -169,13 +196,33 @@ pub(super) async fn generate(
             capture(&wire, call);
             &correction.lease
         };
-        // Each correction is its own call with its own retries.
+        // Each correction is its own call with its own retries, its sends
+        // kept with its point where the step keeps corrections.
+        let point = (attempt > 1).then(|| CorrectionPoint {
+            attempt,
+            tail: wire.messages[asked..].to_vec(),
+            usage: usage.clone(),
+            sends: resumed
+                .filter(|_| attempt == first)
+                .map_or(0, |point| point.sends),
+        });
+        let keep_point = |sends: usize| {
+            point.as_ref().is_none_or(|point| {
+                retries.keep_correction(&CorrectionPoint {
+                    sends: u8::try_from(sends).unwrap_or(u8::MAX),
+                    ..point.clone()
+                })
+            })
+        };
         let correction_retries;
-        let call_retries = if attempt == 1 {
-            retries
-        } else {
-            correction_retries = retries.for_another_call();
-            &correction_retries
+        let call_retries = match &point {
+            None => retries,
+            Some(point) => {
+                correction_retries = retries
+                    .for_another_call(usize::from(point.sends))
+                    .keeping(&keep_point);
+                &correction_retries
+            }
         };
         let mut response =
             match super::retry::generate_with_retry(backend, &wire, active_lease, call_retries)
@@ -184,7 +231,20 @@ pub(super) async fn generate(
                 Ok(response) => response,
                 // The first call failed: nothing was answered, nothing spent.
                 Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
+                // Its offer rests past the step's wait, and its point is
+                // kept: the step parks unfailed, as its first call does.
+                Err(source @ LlmError::Retryable(RetryableLlmError::HealthRest { .. }))
+                    if retries.keeps_corrections() =>
+                {
+                    return Err(DurableStepError::Llm(source));
+                }
                 Err(source) => {
+                    // A resumed correction that failed unanswered closes the
+                    // step's admission lease at nothing: the spend it carries
+                    // is its earlier passes', each settled in its own pass.
+                    if attempt == first {
+                        let _closed = guard.settle_per_call(lease, &LlmUsage::zero());
+                    }
                     return Err(DurableStepError::SpentLlm {
                         source,
                         usage: Box::new(usage.clone()),
