@@ -233,17 +233,8 @@ pub fn inference_defaults_replace_embedded(
 // one live beside the signed op that carries them (FIX 4624).
 pub use oneiron_authority::authority::{PolicySetting, owner_act_target};
 
-/// One owner act on a vault-wide setting, as this install recorded it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicySettingActReceipt {
-    pub setting: PolicySetting,
-    pub act: OwnerAct,
-    /// BLAKE3 over the setting as it stood, as JSON.
-    pub prior: [u8; 32],
-    /// Vault clock seconds.
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_setting_doors::PolicySettingActReceipt;
 
 const ACTS: SideTable<u64, PolicySettingActReceipt, Named> =
     SideTable::new(&side_table::POLICY_SETTING_ACT);
