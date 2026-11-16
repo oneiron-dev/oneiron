@@ -1401,19 +1401,21 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
             Some(&json!({ "sourceRevisionIds": ids })),
         )
     };
-    // oneiron's MAX_PSYCH_PROFILE_SOURCE_REVISIONS.
+    // Rule 5 (FIX 10054, #4040; the engine twin collection_bounds
+    // a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_every_door
+    // since 5dced0a082): 4096 is a codec page and a source-work batch, never
+    // a refusal. A refresh naming one id past it is read whole, as stale; the
+    // name keeps "refused" as the engine twin's does.
     let bound = 4096;
-
-    let (status, _) = route_json(server.clone(), refresh(bound + 1)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    let (status, body) = route_json(server.clone(), refresh(bound)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["state"], Value::from("stale"));
-    assert_eq!(
-        body["stale_reason"]["expectedSourceRevisionIds"]
-            .as_array()
-            .map(Vec::len),
-        Some(bound)
-    );
+    for count in [bound, bound + 1] {
+        let (status, body) = route_json(server.clone(), refresh(count)).await;
+        assert_eq!(status, StatusCode::OK, "{count}: {body}");
+        assert_eq!(body["state"], Value::from("stale"), "{count}");
+        assert_eq!(
+            body["stale_reason"]["expectedSourceRevisionIds"]
+                .as_array()
+                .map(Vec::len),
+            Some(count)
+        );
+    }
 }
