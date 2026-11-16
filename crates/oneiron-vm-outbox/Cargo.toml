@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "A vault VM's root outbox companion"
 repository.workspace = true
-homepage.workspace = true
 publish = false
 
 # A vault VM's root outbox companion (FIX 5235): oneiron-vm-init starts it

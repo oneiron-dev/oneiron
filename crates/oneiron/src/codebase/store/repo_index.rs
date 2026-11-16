@@ -139,7 +139,7 @@ impl Vault {
             let mut graph = prepare_code_symbol_graph(
                 snapshot.repo_ref.clone(),
                 identity,
-                snapshot.commit_hash.clone(),
+                snapshot.commit_hash,
                 sources,
             )?;
             graph.fill_producing_operations_in_txn(&self.store, read)?;

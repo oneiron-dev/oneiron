@@ -15,7 +15,7 @@ use std::{collections::VecDeque, sync::Arc};
 use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 use crate::{
     EntityId, Vault,
-    error::{Error, Result},
+    error::Result,
     limit_ask::EngineLimit,
     llm::{
         CacheEpoch, CacheIdentity, InferenceCallReceipt, ModelId, ModelLocality,
@@ -25,11 +25,10 @@ use crate::{
 };
 
 const TARGET: &str = "voxcpm2";
-pub const MODEL: &str = "VoxCPM2";
-
-fn invalid(message: &str) -> Error {
-    Error::InvalidConfig(format!("VoxCPM2: {message}"))
-}
+#[doc(hidden)]
+pub use oneiron_records::voice_cascade::voxcpm2::MODEL;
+#[doc(hidden)]
+use oneiron_records::voice_cascade::voxcpm2::invalid;
 
 /// Host-reported pins from a *loaded*, ready worker, not a request to cold-start.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

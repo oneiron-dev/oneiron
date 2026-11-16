@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Consent state below the oneiron engine: grants, markers, bypass, the code-wait state and voice consent"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false
