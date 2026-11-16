@@ -5,7 +5,9 @@
 //! is a new lane on a newly minted slip.
 //!
 //! A read opens no writer: the records it served wait for the vault's next write, whose door
-//! keeps them. The doors to the kept rows build only under the test cfg:
+//! keeps them. A read inside an off-record room keeps no row naming a record the room holds
+//! (ARCH-0052): base records it served count as any other. The doors to the kept rows and to
+//! a read in a room build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test actor_read_exposure`.
 #![cfg(oneiron_test_support)]
 
@@ -18,7 +20,8 @@ use oneiron::deletion::DeleteReason;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::ScopeAxis;
 use oneiron::limit_ask::{EngineLimit, LimitAsk};
-use oneiron::test_doors::read_exposure::exposed_records;
+use oneiron::off_record::OffRecordBackendClass;
+use oneiron::test_doors::read_exposure::{exposed_records, read_in_room};
 use oneiron::{ClaimInput, EntityId, Vault, VaultConfig};
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -380,5 +383,51 @@ fn a_row_an_as_of_read_drops_is_not_counted() -> TestResult {
         "both rows stand at the latest instant"
     );
     assert_eq!(fx.house_exposure()?.distinct_records, 2);
+    Ok(())
+}
+
+/// FIX [READ-EXPOSURE-OFF-RECORD-SESSION-TRACE] (second review of #8028, P2-1; ARCH-0052: "No
+/// durable trace of unsaved content", and base "never receives session data"): the house reads
+/// inside an off-record room a record the room holds of its own and a base record. The next
+/// write keeps the base record alone: no kept row names the room's record, before the room
+/// closes or after, and the house's count is one.
+#[test]
+fn a_read_in_an_off_record_room_keeps_no_row_naming_the_rooms_record() -> TestResult {
+    let fx = open(VaultConfig::default())?;
+    let [r1, _, _] = fx.three_records()?;
+    let room = fx
+        .vault
+        .off_record_session_vault()
+        .enter("actor-read-exposure-room", OffRecordBackendClass::Local)?;
+    let (staged, served) = read_in_room(&fx.vault, &room, fx.house_key(0xd1)?, &r1, &[r1])?;
+    assert_eq!(
+        served.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([staged, r1]),
+        "the house's lane in the room serves the room's record and the base one"
+    );
+    assert!(
+        fx.wake(0xd2, &[staged])?.is_empty(),
+        "base holds no row under the room's id"
+    );
+    fx.next_write()?;
+    assert_eq!(
+        exposed_records(&fx.vault, &fx.house)?,
+        BTreeSet::from([r1]),
+        "a kept row names the room's record {}",
+        staged.to_hex()
+    );
+    assert_eq!(
+        fx.house_exposure()?.distinct_records,
+        1,
+        "the room's record counts"
+    );
+    room.close()?;
+    fx.next_write()?;
+    assert_eq!(
+        exposed_records(&fx.vault, &fx.house)?,
+        BTreeSet::from([r1]),
+        "the room's close leaves a row naming its record"
+    );
+    assert_eq!(fx.house_exposure()?.distinct_records, 1);
     Ok(())
 }
