@@ -51,8 +51,8 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
-    FoldedOwnerChoice, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices, owner_choice_landing,
-    refused_owner_choices,
+    FoldedOwnerChoice, OwnerChoiceLanding, OwnerChoiceOp, OwnerChoiceState, folded_owner_choices,
+    owner_choice_landing, refused_owner_choices,
 };
 use super::*;
 
@@ -124,6 +124,7 @@ pub(super) fn apply_policy_setting(
             machine: set.machine,
             choice: value.as_ref(),
             context: POLICY_SETTING_REVISION_CONTEXT,
+            persons_own_narrowing: false,
         };
         landings.push(owner_choice_landing(
             state,
@@ -135,10 +136,16 @@ pub(super) fn apply_policy_setting(
             restriction_only,
         )?);
     }
+    // A waiting act is no agent's act in force: the owner's confirm is his
+    // own act (row CARRIER-OWNER-PROOF). The proof and the carrier are the
+    // entry's, so every row of a batch waits or none does.
+    let waits = landings
+        .iter()
+        .any(|landing| matches!(landing, OwnerChoiceLanding::Waiting { .. }));
     for landing in landings {
         state.policy_settings.land(landing);
     }
-    if let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
+    if !waits && let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
         state.agent_carried_acts.insert(hash, agent);
     }
     Ok(())
