@@ -8,7 +8,8 @@
 //! `owner_send_without_transport_fails_not_started` proves the same terminal
 //! no-wire settlement for an ordinary owner-authorized `gap_queue` send.
 //! Both inspect the source bridge attempt, connector-send TASK, durable Outbound
-//! receipt and logical intent ledger after exactly one real server pass. Neither
+//! receipt and logical intent ledger after exactly one pass of the server's own
+//! connector-send drain (`test_doors::connector_sends`). Neither
 //! supplies a stub transport failure, starts a worker, or makes a provider call.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --features oneiron/test-support,oneiron/test-hooks,oneiron-broker/test-support,tokio/test-util --test connector_send_no_transport`
@@ -59,6 +60,9 @@ use oneiron::{
     Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use oneiron_keystore::MemoryKeystore;
+use oneiron_server::config::SyncServerConfig;
+use oneiron_server::server::SyncServer;
+use oneiron_server::test_doors::connector_sends::connector_send_pass;
 use rmpv::Value;
 
 const LEAD_SECONDS: u64 = 100;
@@ -68,8 +72,10 @@ const TARGET: &str = "+15551234567";
 const BUDGET_ID: &str = "commitment-send-no-transport";
 
 struct Fixture {
-    // Drop the owned vault (and its writer lease) before its directory.
-    vault: Vault,
+    // Drop the server and the owned vault (with its writer lease) before the
+    // vault's directory.
+    server: SyncServer,
+    vault: Arc<Vault>,
     owner: EntityId,
     proof: AuthenticatedOwner,
     _dir: tempfile::TempDir,
@@ -84,7 +90,14 @@ impl Fixture {
         let _issuer = oneiron::test_support::provision_engine_machines(&vault);
         let (owner, proof) = oneiron::test_doors::label_writers::embedded_owner(&vault)
             .expect("the fixture has its real embedded owner and live owner proof");
+        let vault = Arc::new(vault);
+        // A server over this vault, built only: no listener binds and no
+        // worker starts (no async runtime runs here), so the drain pass a
+        // test runs is the only one. It holds no transport for voice.
+        let server = SyncServer::new(Arc::clone(&vault), SyncServerConfig::default())
+            .expect("a plain server builds over the fixture vault");
         Self {
+            server,
             vault,
             owner,
             proof,
@@ -444,7 +457,7 @@ fn assert_failed_not_started(vault: &Vault, source_id: AttemptId, task_ref: Enti
 #[test]
 fn approved_commitment_reminder_without_transport_fails_not_started() {
     let fixture = Fixture::new();
-    let vault = &fixture.vault;
+    let vault: &Vault = &fixture.vault;
     let now = now_seconds();
     let instance = project_once_instance(&fixture, now);
     let entry = vault
@@ -633,9 +646,9 @@ fn approved_commitment_reminder_without_transport_fails_not_started() {
     );
     assert_eq!(task.intent.job_ref, None, "a phase key is not a job id");
 
-    // Plain #[test], after the scoped runtime was dropped: blocking reqwest
-    // clients are constructed and dropped outside an async runtime worker.
-    oneiron_server::test_doors::connector_sends::pass(&fixture.vault, 0)
+    // Plain #[test], after the scoped runtime was dropped: the pass builds
+    // and drops its blocking reqwest clients outside any async runtime.
+    connector_send_pass(&fixture.server)
         .expect("one real served drain pass reaches the unsupported voice transport");
     assert_failed_not_started(vault, source_id, task_ref);
 }
@@ -643,7 +656,7 @@ fn approved_commitment_reminder_without_transport_fails_not_started() {
 #[test]
 fn owner_send_without_transport_fails_not_started() {
     let fixture = Fixture::new();
-    let vault = &fixture.vault;
+    let vault: &Vault = &fixture.vault;
     fixture.grant_voice_call(WriteActor::new(fixture.owner, EdgeActorClass::Human));
     let receipt = vault
         .memory(fixture.owner, EdgeActorClass::Human)
@@ -663,7 +676,7 @@ fn owner_send_without_transport_fails_not_started() {
         })
         .expect("the owner's ordinary voice call passes schedule admission");
     let (source_id, task_ref) = admitted_send(vault, &receipt);
-    oneiron_server::test_doors::connector_sends::pass(&fixture.vault, 0)
+    connector_send_pass(&fixture.server)
         .expect("one real served drain pass reaches the owner's unsupported voice transport");
     assert_failed_not_started(vault, source_id, task_ref);
 }

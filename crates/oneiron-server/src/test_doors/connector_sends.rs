@@ -1,18 +1,18 @@
-//! The served connector-send drain's pass (`crate::server::connector_sends`),
-//! for an integration test that proves what one pass does to a send that
-//! waits in the `bridge.outbound.schedule` queue.
+//! Door for `tests/inquiry_federation.rs`: one pass of the served
+//! connector-send drain (`server::connector_sends`), run now instead of on
+//! its commit signal or timer, with the sink the drain builds, so a test
+//! sees which channel's sends the host's own executor carries (the
+//! member's told statements among them).
 
-use oneiron::Vault;
+use crate::server::SyncServer;
 
-/// One pass of the served drain over `vault`: every claimable send runs
-/// through the engine's served sink, which holds the transports this engine
-/// drives, then the instant the next send is ready. The pass builds fresh
-/// send clients, so call it on a blocking thread, never on an async worker.
-/// `line_push_allowance` is the account plan's monthly LINE push allowance.
+/// Runs every claimable connector send once, on the drain's sink, and
+/// answers the second the next one is ready. Blocking: call it off the
+/// async runtime, since the pass's HTTP clients are blocking ones.
 ///
 /// # Errors
 ///
-/// The pass's failure, as the drain logs it.
-pub fn pass(vault: &Vault, line_push_allowance: u32) -> oneiron::Result<Option<u64>> {
-    crate::server::send_pass_once(vault, line_push_allowance)
+/// What the pass returns.
+pub fn connector_send_pass(server: &SyncServer) -> oneiron::Result<Option<u64>> {
+    server.run_connector_send_pass()
 }

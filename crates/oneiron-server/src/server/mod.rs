@@ -60,8 +60,6 @@ pub(crate) use self::artifact_previews::ArtifactPreviews;
 pub(crate) use self::board_publisher::ServeBackground;
 pub(crate) use self::booking_turn_lines::LinePlace;
 pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
-#[cfg(oneiron_test_support)]
-pub(crate) use self::connector_sends::send_pass_once;
 pub(crate) use self::core::BroadcastPayload;
 pub(crate) use self::core::ManagedIssuer;
 pub use self::core::{SyncServer, TaskWorkTurn};
