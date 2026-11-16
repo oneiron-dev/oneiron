@@ -88,7 +88,7 @@ impl Memory<'_> {
             let revert = self.vault.revert_dreamer_maintenance(
                 owner,
                 MaintenanceTarget::Finding(change),
-                now / 1_000,
+                oneiron_contracts::RecordedSeconds::from_millis(now).secs(),
             )?;
             let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Maintenance);
             reverted.retracted = std::iter::once(change).chain(revert.closed).collect();
