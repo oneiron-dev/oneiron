@@ -3,6 +3,7 @@
 //! Defines its own items.
 
 use super::*;
+use crate::claim::ClaimApprovalStatus;
 use crate::ports::EntityStoreRead;
 
 /// The generic projector write. `evidence` is the audit anchor the outcome
