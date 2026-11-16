@@ -17,9 +17,9 @@ use super::codec::{
 };
 use super::consent::HydratedConsentFacts;
 use super::evaluate::{
-    ComplianceBinding, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,
-    HydratedListProvenance, compliance_binding, evaluate_dispatch_compliance,
-    normalize_jurisdiction,
+    ComplianceBinding, ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts,
+    HydratedJpPublicationFacts, HydratedListProvenance, compliance_binding,
+    evaluate_dispatch_compliance, normalize_jurisdiction,
 };
 use super::pack_store::active_compliance_pack_in_txn;
 use super::rules::{
@@ -27,6 +27,7 @@ use super::rules::{
     PREDICATE_CRM_COMPLIANCE_EVIDENCE, PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION,
     PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
 };
+use super::setting_keys::recorded_consent_required_in_txn;
 
 // ---------------------------------------------------------------------------
 // Hydration
@@ -44,6 +45,12 @@ use super::rules::{
 /// (FIX 9658), and the first block in PERSON-id order is the verdict: a twin
 /// that carries the same key cannot lend its consent to, or withdraw its rows
 /// from, another.
+///
+/// The owner's `campaign.contact_without_recorded_objection`, read in `txn`,
+/// is applied after the pack's verdict and can only add a block: with it
+/// false, a PERSON the pack allows is held until it has a recorded consent
+/// that opts in (`recorded_consent_block`). With it true (the default) the
+/// verdict is the pack's alone.
 pub(crate) fn campaign_compliance_gate(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -53,20 +60,51 @@ pub(crate) fn campaign_compliance_gate(
     let Some((pack, governed)) = governed_dispatches_in_txn(store, txn, effect, now_utc)? else {
         return Ok(None);
     };
+    let consent_required = recorded_consent_required_in_txn(store, txn)?;
     Ok(Some(
         governed
             .iter()
-            .map(|facts| evaluate_dispatch_compliance(&pack, facts))
+            .map(|facts| match evaluate_dispatch_compliance(&pack, facts) {
+                ComplianceVerdict::Allow if consent_required => {
+                    recorded_consent_block(facts).unwrap_or(ComplianceVerdict::Allow)
+                }
+                verdict => verdict,
+            })
             .find(|verdict| *verdict != ComplianceVerdict::Allow)
             .unwrap_or(ComplianceVerdict::Allow),
     ))
+}
+
+/// The block a dispatch meets when the owner requires a recorded consent
+/// (`campaign.contact_without_recorded_objection` = false), whatever the pack
+/// allows: `None` when the PERSON's resolved consent record opts in on the
+/// dispatch's channel and from its sender. As the pack's own consent rows
+/// read it: no resolved record is missing consent evidence, and a record that
+/// does not opt in here is a missing lawful basis. No row governs the block,
+/// so it names no jurisdiction and no row kind.
+fn recorded_consent_block(facts: &DispatchComplianceFacts) -> Option<ComplianceVerdict> {
+    if facts.consent.explicit_opt_in {
+        return None;
+    }
+    let reason = if facts.consent.record_ref.is_none() {
+        ComplianceBlockReason::ConsentEvidenceMissing
+    } else {
+        ComplianceBlockReason::MissingLawfulBasis
+    };
+    Some(ComplianceVerdict::Block {
+        reason,
+        jurisdiction: None,
+        rule_kind: None,
+    })
 }
 
 /// The rows the gate's compliance leg binds `effect` to and which of them
 /// block it, before its verdict keeps only the first block and the stale-row
 /// wall reads the clock; `None` where compliance does not govern the effect.
 /// Every governed PERSON's binding folds into one, so the checkpoint restore
-/// compares the same law the live gate applies.
+/// compares the same law the live gate applies, the owner's recorded-consent
+/// requirement included. A restore keeps the live vault's setting rows
+/// (`restore: live`), so both vaults read the key at the live value.
 pub(crate) fn campaign_compliance_binding(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -76,13 +114,18 @@ pub(crate) fn campaign_compliance_binding(
     let Some((pack, governed)) = governed_dispatches_in_txn(store, txn, effect, 0)? else {
         return Ok(None);
     };
+    let consent_required = recorded_consent_required_in_txn(store, txn)?;
     Ok(governed
         .iter()
-        .map(|facts| compliance_binding(&pack, facts))
+        .map(|facts| ComplianceBinding {
+            recorded_consent_missing: consent_required && recorded_consent_block(facts).is_some(),
+            ..compliance_binding(&pack, facts)
+        })
         .reduce(|mut folded, binding| {
             folded.rows.extend(binding.rows);
             folded.uncovered |= binding.uncovered;
             folded.failed.extend(binding.failed);
+            folded.recorded_consent_missing |= binding.recorded_consent_missing;
             folded
         }))
 }

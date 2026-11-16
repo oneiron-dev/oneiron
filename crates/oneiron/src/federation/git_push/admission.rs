@@ -175,7 +175,7 @@ impl Vault {
         if !self.git_push_grantee_stands_in_txn(txn, caller.principal)? {
             return Ok(Err(NO_GRANT));
         }
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let Some(owners) = owners_or_logged(self, txn) else {
             return Ok(Err(NO_GRANT));
         };
@@ -493,7 +493,7 @@ impl Vault {
         let Some(standing) = self.git_push_grant_in_txn(txn, grant)? else {
             return Ok(false);
         };
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let Some(owners) = owners_or_logged(self, txn) else {
             return Ok(false);
         };

@@ -341,6 +341,14 @@ impl Vault {
                 "expression preference lifecycle is owned by set_expression_preference",
             ));
         }
+        // The room row keeps the writer that staged it, so a save lands a
+        // grant only of a live owner's writing and only a readable row.
+        crate::claim::world_access::admit_world_access_write(
+            &self.store,
+            txn,
+            crate::claim::session_claim_producer(body),
+            body,
+        )?;
         if let ClaimSubject::Edge { .. } = body.subject
             && !self.owner_reads_edge_subject_in(txn, &body.subject)?
         {
