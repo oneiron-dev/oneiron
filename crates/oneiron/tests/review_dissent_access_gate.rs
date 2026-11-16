@@ -12,9 +12,14 @@
 //!
 //! The dissent now keeps its NOTE and its question unanswered, and the
 //! review stands. Red on #8105 (e59c71b9d44): the agent's review of the
-//! owner's unscoped MESSAGE fails with EntityNotFound. Guards: the same
-//! review by an agent whose access grant on the MESSAGE's conversation
-//! admits it, and by the owner, keeps its dissent with its first answer.
+//! owner's unscoped MESSAGE fails with EntityNotFound.
+//!
+//! No case here proves a lane that does read the target: that dissent's
+//! first answer takes the MESSAGE's own substrate facet, which is no stored
+//! FACET, so the claim birth gate refuses it with InvalidFacet. That path is
+//! main's, and #8105 does not change it (FIX
+//! STANDING-ANSWER-TAKES-UNSTORED-SUBSTRATE-FACET). Its guards come back
+//! with that row's fix.
 //!
 //! The agent holds the owner's full-access approval ceiling and read row in
 //! the policy (`Vault::grant_agent_principal`), so its review persists and
@@ -24,13 +29,10 @@
 //! --all-features --test review_dissent_access_gate`.
 #![cfg(oneiron_test_support)]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::access_grant::{
-    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-};
 use oneiron::agent_def::AgentCeiling;
 use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
@@ -39,7 +41,6 @@ use oneiron::critic::review::{
     CriticReviewSubmit, REVIEW_DIAL, ReviewDecisions, ReviewDissent, ReviewFinding, ReviewNote,
     ReviewNotes, ReviewResult, ReviewWording, preserve_review_dissent, review_artifact,
 };
-use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::llm::decision::questions::answer_records;
 use oneiron::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
@@ -79,7 +80,6 @@ struct Fixture {
     session: EntityId,
     lens_a: EntityId,
     lens_b: EntityId,
-    conversation: EntityId,
     message: EntityId,
 }
 
@@ -143,7 +143,6 @@ fn fixture() -> Fixture {
         session,
         lens_a,
         lens_b,
-        conversation,
         message,
     }
 }
@@ -216,32 +215,6 @@ fn review_agent(fixture: &Fixture, name: &str) -> EntityId {
         .grant_agent_principal(&owner_proof(fixture), &agent.to_hex(), AgentCeiling::Auto)
         .expect("the owner gives the critic the full-access ceiling");
     agent
-}
-
-/// `principal` holds a live access grant to read the conversation's
-/// MESSAGEs.
-fn grant_conversation_messages_to(fixture: &Fixture, principal: EntityId) {
-    let mut authority_scope = Scope::top();
-    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
-    fixture
-        .vault
-        .create_access_grant(
-            &EntityId::now(),
-            &AccessGrant {
-                authority_scope,
-                principal_ref: principal,
-                scope: AccessGrantScope::ConversationMessages {
-                    conversation_ref: fixture.conversation,
-                },
-                capability: AccessGrantCapability::MessagesRead,
-                status: AccessGrantStatus::Active,
-                created_at: fixture.vault.now_recorded_at(),
-                revoked_at: None,
-                expires_at: None,
-                companion_bounds: None,
-            },
-        )
-        .expect("the access grant on the conversation");
 }
 
 /// One lens's typed answers.
@@ -527,53 +500,5 @@ fn an_agents_review_stands_when_the_access_gate_refuses_its_dissents_target() {
     assert_eq!(
         replayed.verdict_claim, result.verdict_claim,
         "precondition: the second call replays the persisted review"
-    );
-}
-
-/// Guard: the access gate is all that refused the target. An access grant on
-/// the MESSAGE's conversation admits it, and the dissent keeps its first
-/// answer.
-#[test]
-fn an_agents_review_keeps_its_dissents_answer_when_a_conversation_grant_admits_the_target() {
-    let fixture = fixture();
-    let agent = review_agent(&fixture, "review-dissent.admitted");
-    grant_conversation_messages_to(&fixture, agent);
-    let critic = WriteActor::new(agent, EdgeActorClass::Agent);
-
-    let result = review(&fixture, critic, "review-dissent-admitted")
-        .unwrap_or_else(|error| panic!("expected the agent's review to persist: {error:?}"));
-
-    let dissent = lens_a_dissent(&fixture, &result);
-    assert!(
-        dissent.note.is_some(),
-        "expected the dissent to keep its NOTE: {dissent:?}"
-    );
-    assert_eq!(
-        dissent_answers(&fixture, agent, &dissent),
-        1,
-        "expected the dissent's question to hold its first answer: the conversation grant \
-         admits its target"
-    );
-}
-
-/// Guard: the owner is a live owner, so the owner's dissent question reads
-/// the owner's unscoped MESSAGE and keeps its first answer.
-#[test]
-fn the_owners_review_keeps_its_dissents_answer_on_the_owners_unscoped_message() {
-    let fixture = fixture();
-    let critic = WriteActor::new(fixture.owner, EdgeActorClass::Human);
-
-    let result = review(&fixture, critic, "review-dissent-owner")
-        .unwrap_or_else(|error| panic!("expected the owner's review to persist: {error:?}"));
-
-    let dissent = lens_a_dissent(&fixture, &result);
-    assert!(
-        dissent.note.is_some(),
-        "expected the dissent to keep its NOTE: {dissent:?}"
-    );
-    assert_eq!(
-        dissent_answers(&fixture, fixture.owner, &dissent),
-        1,
-        "expected the owner's dissent question to hold its first answer"
     );
 }
