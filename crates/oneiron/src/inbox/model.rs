@@ -8,6 +8,7 @@ use crate::error::Error;
 use crate::side_table::{CodecError, RawValue};
 use crate::store::PendingGateConsentRecord;
 use crate::store::receipt_row::{ReceiptRecord, ReceiptView};
+use oneiron_contracts::cursor_text::parse_hex_cursor;
 use serde::{Deserialize, Serialize};
 
 /// Query for the inbox group projection.
@@ -91,13 +92,7 @@ impl InboxGroupCursor {
     /// Reads a token [`Self::to_token`] wrote; `None` for anything else.
     #[must_use]
     pub fn parse(token: &str) -> Option<Self> {
-        if token.len() != Self::TOKEN_LEN || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return None;
-        }
-        let bytes: Vec<u8> = (0..token.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
-            .collect::<Option<_>>()?;
+        let bytes = parse_hex_cursor::<40>(token)?;
         Some(Self {
             created_at: u64::from_be_bytes(bytes[..8].try_into().ok()?),
             decision_id: bytes[8..24].try_into().ok()?,
