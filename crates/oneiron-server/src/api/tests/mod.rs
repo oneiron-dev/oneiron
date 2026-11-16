@@ -30,6 +30,7 @@ mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
 mod chat_retrieval_turn;
+mod chat_witness_ask_resume;
 mod companion;
 mod context_board_history;
 mod context_board_standing;
