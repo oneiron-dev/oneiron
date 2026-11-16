@@ -114,9 +114,7 @@ use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::secret_custody::RunSecretSeat;
-use oneiron::task_verb::sdk::{
-    AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
-};
+use oneiron::task_verb::sdk::{AgentVerb, AiVerdict, AiVerdictRequest, RunVerb};
 use oneiron_browser::{
     Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
     BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
