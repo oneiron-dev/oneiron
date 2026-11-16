@@ -24,6 +24,9 @@ use crate::store::housekeeping_schedule::HousekeepingBudget;
 /// the next pass.
 const RUNS_PER_PASS: usize = 1_000;
 
+/// What a run's first write decides: the job and its arming to run, or why nothing runs.
+type Start = std::result::Result<(&'static JobSpec, Armed), JobOutcome>;
+
 /// What one pass of [`Vault::run_due`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScheduleRunReport {
@@ -265,7 +268,10 @@ impl Vault {
             let Some((due_at, key)) = due else {
                 break;
             };
-            let run = self.run_one(&key, due_at, pass)?;
+            // `None`: the row was armed again for later, and nothing ran.
+            let Some(run) = self.run_one(&key, due_at, pass)? else {
+                continue;
+            };
             // Only a run that started takes a once-a-pass job's start: an interrupted run's
             // cleared marker, a lapsed occurrence or a withdrawn arming ran nothing, and the job
             // runs in this pass when it is due.
@@ -321,7 +327,10 @@ impl Vault {
         let Some(due_at) = due else {
             return Ok(None);
         };
-        let run = self.run_one(&key, due_at, pass)?;
+        // `None`: another write armed the job again for later between the two writes.
+        let Some(run) = self.run_one(&key, due_at, pass)? else {
+            return Ok(None);
+        };
         if run.outcome != JobOutcome::Interrupted {
             return Ok(Some(run));
         }
@@ -331,7 +340,7 @@ impl Vault {
             ROWS.get(&self.store, &txn, &key)?.map(|row| row.due_at())
         };
         match due_at {
-            Some(due_at) => self.run_one(&key, due_at, pass).map(Some),
+            Some(due_at) => Ok(self.run_one(&key, due_at, pass)?.or(Some(run))),
             None => Ok(Some(run)),
         }
     }
@@ -363,25 +372,28 @@ impl Vault {
     /// One due job: checked and marked started in one write, run, and its result written in
     /// another. The result lands only on the row the run started on: a row armed again while the
     /// run ran keeps its new arming.
-    fn run_one(&self, key: &[u8], due_at: u64, pass: &JobPass<'_>) -> Result<JobRun> {
+    ///
+    /// The run's first write reads the row again and goes by the row's due time, not by the
+    /// index entry `indexed_due` the pass read before it: another write may have armed the job
+    /// again in between. A row armed for later is not due yet: nothing runs, nothing is
+    /// reported (`None`), and the index entry the pass read, no longer the row's own, goes
+    /// (review round 2 of #8026, P1 on this file).
+    fn run_one(&self, key: &[u8], indexed_due: u64, pass: &JobPass<'_>) -> Result<Option<JobRun>> {
         let (job, subject) = parse_row_key(key).unwrap_or_default();
-        let mut run = JobRun {
-            job: job.clone(),
-            subject: subject.map(|subject| subject.to_hex()),
-            due_at,
-            outcome: JobOutcome::Done,
-            sweep_work: None,
-            error_kind: None,
-        };
         let started = self.with_write_txn_grouped(|txn| {
             let row = ROWS.get(&self.store, txn, &key.to_vec())?;
             let Some(row) = row else {
                 // A stale index entry: its row went in a write that missed it.
-                DUE.delete(&self.store, txn, &due_key(due_at, key))?;
-                return Ok(Err(JobOutcome::UnknownJob));
+                DUE.delete(&self.store, txn, &due_key(indexed_due, key))?;
+                return Ok(Some((indexed_due, Err(JobOutcome::UnknownJob))));
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            match job_named(&job) {
+            let due_at = row.due_at();
+            if due_at > now {
+                DUE.delete(&self.store, txn, &due_key(indexed_due, key))?;
+                return Ok(None);
+            }
+            let started = match job_named(&job) {
                 None => {
                     // Parked until a build that knows the job: due again in a day through
                     // `resume_at`, which stands in for the occurrence's due time (the park also
@@ -394,16 +406,28 @@ impl Vault {
                         ..row.clone()
                     };
                     store_row_in_txn(&self.store, txn, key, Some(&row), Some(&parked))?;
-                    Ok(Err(JobOutcome::UnknownJob))
+                    Err(JobOutcome::UnknownJob)
                 }
-                Some(spec) => self.start_in_txn(txn, spec, key, row, due_at, now),
-            }
+                Some(spec) => self.start_in_txn(txn, spec, key, row, due_at, now)?,
+            };
+            Ok(Some((due_at, started)))
         })?;
+        let Some((due_at, started)) = started else {
+            return Ok(None);
+        };
+        let mut run = JobRun {
+            job,
+            subject: subject.map(|subject| subject.to_hex()),
+            due_at,
+            outcome: JobOutcome::Done,
+            sweep_work: None,
+            error_kind: None,
+        };
         let (spec, armed) = match started {
             Ok(started) => started,
             Err(outcome) => {
                 run.outcome = outcome;
-                return Ok(run);
+                return Ok(Some(run));
             }
         };
         let ran = catch_unwind(AssertUnwindSafe(|| (spec.run)(self, &armed, pass)));
@@ -452,13 +476,12 @@ impl Vault {
             };
             store_row_in_txn(&self.store, txn, key, Some(&row), next.as_ref())
         })?;
-        Ok(run)
+        Ok(Some(run))
     }
 
     /// The checks before a run, and its start marker, in the run's first write: an interrupted
     /// run counts as a failure; a lapsed occurrence is dropped; an agent's arming is judged
     /// again. `Err` names why nothing runs.
-    #[allow(clippy::type_complexity)]
     fn start_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -467,7 +490,7 @@ impl Vault {
         row: ScheduleRow,
         due_at: u64,
         now: u64,
-    ) -> Result<std::result::Result<(&'static JobSpec, Armed), JobOutcome>> {
+    ) -> Result<Start> {
         if let Some(started) = row.started_at {
             let failures = row.failures.saturating_add(1);
             let retry = retry_after(
