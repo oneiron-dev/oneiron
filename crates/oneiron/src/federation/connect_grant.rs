@@ -291,8 +291,11 @@ pub(crate) fn pact_admits_grant(
 
 /// Refuses unless `grant_ref` is a live Connect guest grant here for
 /// `peer_vault_id`, unexpired now, whose scope projects exactly to
-/// `outbound`, the pact half this vault shares. Liveness asks no verb, so a
-/// propose-only grant binds (FIX 8734). Ask, membership, own-device and
+/// `outbound`, the pact half this vault shares, and which its owner's counted
+/// mint gives (pass 28 R3c): a row no counted act gives, one put back after
+/// its end and one widened in place bind no pact (FIX
+/// [CONNECT-PROPOSE-AND-CARRY-READ-GRANT-ROW-ALONE]). Liveness asks no verb,
+/// so a propose-only grant binds (FIX 8734). Ask, membership, own-device and
 /// Delegate rows all refuse.
 pub(crate) fn require_connect_grant_in_txn(
     vault: &Vault,
@@ -318,6 +321,12 @@ pub(crate) fn require_connect_grant_in_txn(
     {
         return Err(refused(
             "the grant is not a live Connect grant for that peer vault",
+        ));
+    }
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    if !super::grant_standing::guest_grant_given_in_fold(&fold, *grant_ref, &body) {
+        return Err(refused(
+            "no counted act gives the Connect grant as its row states it",
         ));
     }
     if connect_direction_projection(&grant.authority_scope).as_ref() != Some(outbound) {
