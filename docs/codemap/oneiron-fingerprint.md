@@ -15,18 +15,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 5 struct · 20 fn · 1 const · 1 mod · 3 re-export · 1 crate-vis | ContentHash, ContentHasher, Fingerprint, Fingerprinter, Purpose | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
+| `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`) |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `src/purposes/outbound_intent_ledger.rs` | src | s | — | — | Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`) |
 | `src/purposes/policy_model.rs` | src | s | — | — | Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`) |
 | `src/purposes/restore.rs` | src | s | — | — | Purposes of the managed restore contract (`oneiron-vault-contract` `restore`) |
 | `src/purposes/retrieval.rs` | src | s | — | — | Purposes of the retrieval crate (`oneiron-retrieval`) |
 | `src/purposes/runtime_hooks.rs` | src | s | — | — | Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`) |
+| `src/purposes/saved_query.rs` | src | s | — | — | Purposes of saved queries (`crates/oneiron/src/saved_query` and `oneiron-store`'s `query_memo_codec`) |
 | `src/purposes/setting.rs` | src | s | — | — | Purposes of the Setting primitive (`crates/oneiron/src/setting/`) |
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/skill_attribution.rs` | src | s | — | — | Purposes of skill attribution (`crates/oneiron/src/skill_attribution`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
+| `src/purposes/vault_shape.rs` | src | s | — | — | Purposes of the vault shape (`crates/oneiron/src/vault_shape`) |
 | `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |
 | `src/record.rs` | src | s | 1 enum · 2 fn | CanonicalBytesError | The one canonical byte form of a structured value (DESIGN section 1.5) |
 | `tests/fingerprint_rules.rs` | test | m | — | — | PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts |
