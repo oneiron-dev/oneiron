@@ -4,8 +4,10 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod access_request_seed;
 pub mod advisory_rate_window;
 pub mod agent_definition_scans;
+pub mod agent_health;
 pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_provenance;
@@ -36,6 +38,7 @@ pub mod code_run_answer;
 pub mod code_run_result_body;
 pub mod code_run_write_identity;
 pub mod code_view_fork;
+pub mod comm_claim_rows;
 pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
 pub mod companion_grant_index;
@@ -93,8 +96,8 @@ pub mod home_pick_fold;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
-pub mod host_root_row_signature;
 pub mod host_root_loss;
+pub mod host_root_row_signature;
 #[cfg(feature = "sync")]
 pub mod host_taint_replica;
 pub mod house_link;
@@ -109,17 +112,20 @@ pub mod label_writers;
 pub mod learning_claim_value;
 pub mod learning_setting_sourced;
 pub mod lifted_text;
+pub mod linkedin_seat_settings;
 pub mod live_run_claim_put;
 #[cfg(feature = "sync")]
 pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
+pub mod merge_queue_check;
 pub mod mesh_machine_endpoint_index;
 pub mod meso_extraction_width;
 pub mod microsoft_token;
@@ -131,6 +137,7 @@ pub mod off_record_shell;
 pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;
 pub mod own_device_message_replay;
+pub mod owner_device_answer;
 pub mod owner_key_release;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
@@ -155,7 +162,9 @@ pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
+pub mod schedule;
 pub mod scope_summary;
+pub mod scoped_read_liveness;
 pub mod scratchpad_wake;
 pub mod seat_park_model_step;
 pub mod setting;
@@ -167,6 +176,7 @@ pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
+pub mod sound_match_birth;
 pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
@@ -181,7 +191,9 @@ pub mod sync_parted_row_binding;
 pub mod task_ask_role_routing;
 pub mod tray_answered_removal;
 pub mod turn_programs;
+pub mod turn_sitting;
 pub mod turn_words;
+pub mod typed_reply_handle;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
