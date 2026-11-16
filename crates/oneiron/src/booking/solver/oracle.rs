@@ -91,7 +91,7 @@ impl SlotOracle for BookingSolver<'_> {
     }
 
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, None, None)
+        self.solve_excluding(req, None, None, MeetingCaps::Bind)
     }
 
     fn solve_moving(
@@ -99,8 +99,21 @@ impl SlotOracle for BookingSolver<'_> {
         req: &SolveRequest,
         moving: EntityId,
     ) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, Some(moving), None)
+        self.solve_excluding(req, Some(moving), None, MeetingCaps::Bind)
     }
+
+    fn solve_past_caps(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, None, None, MeetingCaps::Lift)
+    }
+}
+
+/// Whether a solve binds the event type's daily and weekly meeting caps, or
+/// lifts them for the owner's own booking past a full day (RULING
+/// BK-CAP-OVERRIDE-WHO = B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MeetingCaps {
+    Bind,
+    Lift,
 }
 
 impl BookingSolver<'_> {
@@ -120,17 +133,35 @@ impl BookingSolver<'_> {
         moving: Option<EntityId>,
         producers: &ProducerRows,
     ) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, moving, Some(producers))
+        self.solve_excluding(req, moving, Some(producers), MeetingCaps::Bind)
+    }
+
+    /// [`SlotOracle::solve_past_caps`], listing in `producers`, when given,
+    /// every row the solve derived its slots from, as
+    /// [`Self::solve_listing`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`SlotOracle::solve`].
+    pub fn solve_past_caps_listing(
+        &self,
+        req: &SolveRequest,
+        producers: Option<&ProducerRows>,
+    ) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, None, producers, MeetingCaps::Lift)
     }
 
     /// The pipeline. `moving` is a booking being moved: its own place does
     /// not count against the caps its move is solved under. `producers`,
-    /// when given, lists the rows it reads.
+    /// when given, lists the rows it reads. `caps` lifted solves as if the
+    /// event type had no daily or weekly cap: no booking is counted, and no
+    /// day is full.
     fn solve_excluding(
         &self,
         req: &SolveRequest,
         moving: Option<EntityId>,
         producers: Option<&ProducerRows>,
+        caps: MeetingCaps,
     ) -> Result<SolveResult, BookingError> {
         // The visitor zone is validated at the calendar border, not guessed:
         // a malformed zone fails typed here rather than falling back to UTC.
@@ -175,6 +206,10 @@ impl BookingSolver<'_> {
             }
         }
         config.validate()?;
+        if caps == MeetingCaps::Lift {
+            config.daily_cap = None;
+            config.weekly_cap = None;
+        }
         if config.key != req.event_type {
             return Err(BookingError::InvalidConfig(format!(
                 "configuration is for event type {}, not {}",
