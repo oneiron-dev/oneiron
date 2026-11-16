@@ -144,6 +144,18 @@ pub const OWNER_KEY_MOVE_ENROL_TEXT: &str = "This move ends a member's owner key
 pub const OWNER_KEY_MOVE_ENROL_SUGGESTION: &str =
     "Add an owner key on one of your devices, then confirm this there; the move waits until then.";
 
+/// The words the Owner's device shows before it signs a move's owner-key
+/// revokes (Engine ANSWER OWNERKEY-TWO-PHASE-MEMBER-CONFIRM = A). The client
+/// fills `{member}` with the member's name from the device's own copy, never
+/// from the server's plan, and passes that member to
+/// `vault.shared.owner_key_move_sign`.
+pub const OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT: &str =
+    "End {member}'s owner keys on this vault? They will no longer be an Owner.";
+
+/// [`OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT`] for an Owner's own leave.
+pub const OWNER_KEY_MOVE_DEVICE_CONFIRM_OWN_TEXT: &str =
+    "End your own owner keys on this vault? You will no longer be an Owner.";
+
 /// What a client offers after [`RecordError::OwnerKeyMoveRefused`]: its
 /// next step, each with one constant for its code, its words and its
 /// suggestion.

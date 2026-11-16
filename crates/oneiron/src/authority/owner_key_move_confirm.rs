@@ -267,7 +267,9 @@ impl Vault {
     /// The act lives on the host, so the device cannot check that the plan's
     /// member is the act's. The Owner's confirm of `member`, shown from this
     /// device's own copy and never filled from the plan, is what binds the
-    /// revokes to the move they chose (REVIEW2 #9093 P1-1).
+    /// revokes to the move they chose (REVIEW2 #9093 P1-1; Engine ANSWER
+    /// OWNERKEY-TWO-PHASE-MEMBER-CONFIRM = A). The device's words are
+    /// `oneiron_contracts::error::OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT`.
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act or a person who
