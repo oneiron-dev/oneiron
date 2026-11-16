@@ -11,8 +11,9 @@
 //! RELATIONSHIP scope ids are not record refs and get no existence check (a
 //! claim may name one before its row exists). Invented, missing, malformed
 //! and unreadable are one unresolved result; a read that fails is an error.
-//! One subject resolves unread: the OpenAI proxy's own exchange names its
-//! writer's own principal (PROXY-EXCHANGE-SUBJECT = A).
+//! One subject resolves unread: the OpenAI proxy's exchange names its
+//! writer's own principal (PROXY-EXCHANGE-SUBJECT = A), recognised by its
+//! content and its writer's standing, not by the door it came through.
 
 use rmpv::Value;
 
@@ -73,11 +74,14 @@ pub(crate) fn unresolved_claim_reference(
     Ok(unresolved.map(str::to_owned))
 }
 
-/// Whether `body` is the OpenAI proxy's own exchange (PROXY-EXCHANGE-SUBJECT
-/// = A): an `integration.exchange` tool output whose subject is the
-/// committing credential's own principal, while that principal's proxy
-/// registration is live in `txn` with both legs of its exchange open, as the
-/// proxy's writer requires ([`crate::Vault::proxy_exchange_open_in_txn`]).
+/// Whether `body` is the OpenAI proxy's exchange (PROXY-EXCHANGE-SUBJECT =
+/// A), recognised by content and standing: an `integration.exchange` tool
+/// output whose subject is the committing credential's own principal, while
+/// that principal's proxy registration is live in `txn` with both legs of
+/// its exchange open, as the proxy's writer requires
+/// ([`crate::Vault::proxy_exchange_open_in_txn`]). Another claim door that
+/// writes the same content as the same principal resolves too; it names
+/// only the writer's own id.
 fn proxy_own_exchange_in_txn(
     reader: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,

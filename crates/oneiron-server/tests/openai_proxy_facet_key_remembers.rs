@@ -3,11 +3,14 @@
 //! "the loop is full, not read-only"; PROXY-EXCHANGE-SUBJECT = A).
 //!
 //! The exchange names the paired actor's own PERSON as its subject. A key
-//! the owner narrowed to one facet never reads a PERSON, so the OF-063
-//! writer-read check refused `/subject` and the reply said `Refused`. The
-//! subject now resolves for the proxy's own exchange only: the exchange
-//! lands Proposed, born in the key's facet, and the same key's ordinary
-//! proposal about itself through `POST /v1/core/propose` is still refused.
+//! the owner narrowed to one facet does not read that PERSON (a PERSON is
+//! never placed in a facet), so the OF-063 writer-read check refused
+//! `/subject` and the reply said `Refused`. The subject now resolves for an
+//! exchange recognised by its content and its writer's standing (an
+//! `integration.exchange` tool output about the writer itself, while the
+//! writer's proxy registration is live): the exchange lands Proposed, born
+//! in the key's facet, and the same key's proposal about itself through
+//! `POST /v1/core/propose` is still refused by that door's own subject read.
 //!
 //! Run: `cargo test --locked -p oneiron-server --all-features --test
 //! openai_proxy_facet_key_remembers`.
@@ -309,8 +312,9 @@ fn a_facet_narrowed_proxy_key_saves_its_exchange() {
 async fn facet_narrowed_key_saves_its_exchange() {
     let paired = paired_on_one_facet().await;
     let answer = chat(&paired.router, &paired.vault, &paired.slip, &paired.key).await;
-    // On main: Refused, FORBIDDEN gate.deny.unresolved_record_reference on
-    // `/subject` (the key cannot read its own PERSON).
+    // On main: Refused with code FORBIDDEN; the cause is the OF-063 denial
+    // gate.deny.unresolved_record_reference at `/subject` (the key cannot
+    // read its own PERSON), which the server log and the gate receipt name.
     let (claim, approval) = match answer.oneiron.remembered {
         ChatCompletionRemembered::Saved { claim, approval } => (claim, approval),
         refused => panic!("the facet-narrowed key's exchange was not saved: {refused:?}"),
@@ -335,9 +339,10 @@ async fn facet_narrowed_key_saves_its_exchange() {
     paired.host.shutdown().await;
 }
 
-/// The exemption is the proxy's exchange only: the same key's own proposal
-/// about itself through the core door is refused as before (the door's own
-/// subject read, then the OF-063 check). Green on main and on the fix.
+/// The exemption does not open the core door: the same key's proposal
+/// about itself through `POST /v1/core/propose` is refused by that door's
+/// own subject read (`subject_admitted`), before any claim write. Green on
+/// main and on the fix.
 #[test]
 fn a_facet_narrowed_key_still_cannot_propose_about_itself_through_the_core_door() {
     run_on_engine_stack(
