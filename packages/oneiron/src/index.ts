@@ -337,6 +337,21 @@ export class Oneiron {
   }
 
   /**
+   * Returns a NEW handle that answers asks as this install's owner device.
+   *
+   * Each ask word it gives (`tasks.answer`) carries the proof the owner key
+   * this install holds mints for that word, so a code consent or
+   * communication widen ask admits the owner's answer. The key is the device
+   * owner key the owner enrolled here, or the host root an open with
+   * `holdCheckpointRootSigner` keeps; where this install holds neither, each
+   * word fails with `owner_key_required`. No other handle or verb changes. On
+   * a connected handle this fails with `FORBIDDEN`.
+   */
+  asOwnerDevice(): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.asOwnerDevice()))
+  }
+
+  /**
    * Returns a NEW handle whose every verb runs as a turn in a room.
    *
    * It names only the room. Each verb reads the room's roster as it stands at

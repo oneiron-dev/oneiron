@@ -3,10 +3,12 @@
 
 use super::code::{draw_code, pairing_row_key};
 use super::*;
+use crate::authority::setting_keys::PAIRING_CODE_TTL;
 use crate::authority::slip_vault::require_host;
 
 impl Vault {
-    /// Owner/host API: issue a one-hour enrollment link, scoped at creation.
+    /// Owner/host API: issue an enrollment link, scoped at creation, live for
+    /// the owner's pairing code life (`pairing.code.ttl_secs`, one hour by default).
     pub fn issue_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
@@ -70,7 +72,10 @@ impl Vault {
     /// verbs `read` and `scope`'s other axes, with no expiry, wallet, repo
     /// bounds or verb classes, as an OAuth sign-in's Grant. A mint that fails
     /// refuses the link. Any other holder, and a link naming none, mints
-    /// nothing.
+    /// nothing. A published app's backend mints nothing, and a link that
+    /// names verbs for one no Grant row names is refused
+    /// ([`crate::error::RecordError::AppBackendGrantRequired`],
+    /// APP-BACKEND-LINK-GRANT = A).
     pub fn issue_owner_pairing_link_from_surface(
         &self,
         issuer: &HostSlipIssuer,
@@ -134,7 +139,35 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
-            Some((owner, surface, ownership)),
+            Some((owner, surface, Some(ownership))),
+            None,
+            None,
+        )
+    }
+    /// The owner links a hosted node (L10-16): the cloud's machine of this
+    /// vault, the always-on peer `oneiron link` adds. The single-use link
+    /// keeps his approval and his act as [`Self::issue_machine_pairing_link`]
+    /// does, and redeeming it enrols the machine as a
+    /// [`MachineRole::HostedNode`] in the same transaction as its slip. A
+    /// hosted node is no answer to whose a machine is: it starts not-mine
+    /// (DEC-0005), so its link takes none of his three answers, and it is
+    /// never mine and never a wrap recipient.
+    pub fn issue_hosted_node_pairing_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        surface: ActSurface,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+    ) -> Result<PairingLink> {
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            Some(owner),
+            Some((owner, surface, None)),
             None,
             None,
         )
@@ -187,7 +220,7 @@ impl Vault {
         answer: Option<(
             &crate::consent::AuthenticatedOwner,
             ActSurface,
-            MachineOwnership,
+            Option<MachineOwnership>,
         )>,
         share: Option<(
             crate::EntityId,
@@ -231,7 +264,7 @@ impl Vault {
                         owner: actor,
                         by: ActBy::Owner,
                         surface,
-                        kind: OwnerActKind::Pairing,
+                        kind: pairing_act_kind(ownership),
                         ownership,
                     })
                 }
@@ -240,6 +273,11 @@ impl Vault {
             let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, txn)?;
             let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
             self.validate_pairing_principal_in_txn(txn, &principal, &scope)?;
+            self.validate_pairing_backend_verbs_in_txn(
+                txn,
+                &scope,
+                principal.holder_ref.as_deref(),
+            )?;
             self.validate_pairing_facets_in_txn(
                 txn,
                 &principal,
@@ -248,7 +286,12 @@ impl Vault {
             )?;
             let now = self.instant_in_txn(txn)?.secs();
             let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
-            let expires_at = now.saturating_add(CODE_TTL_SECS);
+            // The owner's pairing code life (`pairing.code.ttl_secs`, one hour by default).
+            let code_ttl = PAIRING_CODE_TTL
+                .read_in_txn(self, txn, &[], None)?
+                .value
+                .secs();
+            let expires_at = now.saturating_add(code_ttl);
             // A vault with an attested checkpoint pins it for the joining device,
             // bound to this single-use link's fresh challenge (OF-469).
             let mut challenge = [0; 32];
@@ -308,9 +351,10 @@ impl Vault {
         }
     }
     /// Stores, in the writer of `owner`'s act, an invitation pairing code
-    /// (FIX 8745): a one-hour single-use link for `invitation`'s invitee,
-    /// whose redemption binds that invitation to the redeeming key and mints
-    /// the invitee's slip for it (`Vault::redeem_invitation_link_in_txn`).
+    /// (FIX 8745): a single-use link for `invitation`'s invitee, live for the
+    /// owner's pairing code life (one hour by default) and never past the
+    /// invitation, whose redemption binds that invitation to the redeeming key
+    /// and mints the invitee's slip for it (`Vault::redeem_invitation_link_in_txn`).
     /// The owner passes the code on by any channel, as an invite link; it
     /// carries no verb and pairs no ordinary credential. The caller has
     /// checked `owner` and that the invitation is pending.
@@ -325,7 +369,13 @@ impl Vault {
         require_host(&self.authority_fold_readonly_in_txn(txn)?, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
-        let expires_at = now.saturating_add(CODE_TTL_SECS).min(invitation_expires_at);
+        // The owner's pairing code life (`pairing.code.ttl_secs`, one hour by default), and never
+        // past the invitation.
+        let code_ttl = PAIRING_CODE_TTL
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .secs();
+        let expires_at = now.saturating_add(code_ttl).min(invitation_expires_at);
         if expires_at <= now {
             return Err(invalid_authority());
         }

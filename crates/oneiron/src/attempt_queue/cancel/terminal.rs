@@ -24,7 +24,7 @@ use crate::limit_ask::LimitWatch;
 use super::ops::SoftRequestAuthorship;
 use super::types::{
     ATTEMPT_RUNTIME_ACTOR, AttemptCancelReceiptKind, AttemptCancellation, CancelMode,
-    ForceCancelAuthority, ForceCancelGrounds, LEASE_LANDING_WARNING_PERCENT, LandingTrigger,
+    ForceCancelAuthority, ForceCancelGrounds, LandingTrigger,
 };
 use super::verbs::{
     AttemptLeaseWarningReport, FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel,
@@ -370,6 +370,8 @@ impl AttemptQueue<'_> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
+        let warning_percent =
+            crate::attempt_queue::setting_keys::lease_warning_percent_in_txn(self.store, &wtxn)?;
         for id in candidates {
             let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
                 continue;
@@ -380,7 +382,13 @@ impl AttemptQueue<'_> {
             }
             report.scanned += 1;
             let parked = self.parked_in_txn(&wtxn, id)?;
-            match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+            match lease_warning_step(
+                &record,
+                parked,
+                input.now,
+                input.lease_timeout_secs,
+                warning_percent,
+            ) {
                 LeaseWarningStep::Parked => report.parked += 1,
                 LeaseWarningStep::Expired => report.expired += 1,
                 LeaseWarningStep::NotDue => report.not_due += 1,
@@ -428,7 +436,15 @@ impl AttemptQueue<'_> {
             state => return Err(invalid_transition("lease_warning", state.as_str())),
         }
         let parked = self.parked_in_txn(&wtxn, input.id)?;
-        match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+        let warning_percent =
+            crate::attempt_queue::setting_keys::lease_warning_percent_in_txn(self.store, &wtxn)?;
+        match lease_warning_step(
+            &record,
+            parked,
+            input.now,
+            input.lease_timeout_secs,
+            warning_percent,
+        ) {
             LeaseWarningStep::Parked => return Ok(LeaseWarningOutcome::Parked(record)),
             LeaseWarningStep::Expired => return Ok(LeaseWarningOutcome::Expired(record)),
             LeaseWarningStep::NotDue => return Ok(LeaseWarningOutcome::NotDue(record)),
@@ -483,6 +499,7 @@ fn lease_warning_step(
     parked: bool,
     now: u64,
     lease_timeout_secs: u64,
+    warning_percent: u64,
 ) -> LeaseWarningStep {
     if parked {
         return LeaseWarningStep::Parked;
@@ -490,7 +507,9 @@ fn lease_warning_step(
     if lease_expired(record, now, lease_timeout_secs) {
         return LeaseWarningStep::Expired;
     }
-    if now.saturating_sub(record.updated_at) < lease_warning_after_secs(lease_timeout_secs) {
+    if now.saturating_sub(record.updated_at)
+        < lease_warning_after_secs(lease_timeout_secs, warning_percent)
+    {
         return LeaseWarningStep::NotDue;
     }
     if record.cancel_state.pressure.pending > 0 {
@@ -499,10 +518,12 @@ fn lease_warning_step(
     LeaseWarningStep::Warn
 }
 
-/// Instant, as an age against the lease clock, at which the runtime may warn.
-fn lease_warning_after_secs(lease_timeout_secs: u64) -> u64 {
+/// Instant, as an age against the lease clock, at which the runtime may warn:
+/// `warning_percent` of the lease timeout, the owner's
+/// `attempt_queue.lease.warning_percent`.
+fn lease_warning_after_secs(lease_timeout_secs: u64, warning_percent: u64) -> u64 {
     let warn_after =
-        ((u128::from(lease_timeout_secs) * u128::from(LEASE_LANDING_WARNING_PERCENT)) / 100) as u64;
+        ((u128::from(lease_timeout_secs) * u128::from(warning_percent.min(100))) / 100) as u64;
     // A one-second timeout must still leave a window where warning is possible
     // and expiry has not happened; without the clamp the warning instant and
     // the expiry instant coincide and the warning rung is unreachable.

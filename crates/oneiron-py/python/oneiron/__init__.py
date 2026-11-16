@@ -312,6 +312,19 @@ class Oneiron(_FacadeVerbs):
         """
         return Oneiron(_translate(lambda: self._client.as_actor(actor_key)))
 
+    def as_owner_device(self) -> "Oneiron":
+        """Returns a NEW handle that answers asks as this install's owner device.
+
+        Each ask word it gives (``tasks.answer``) carries the proof the owner
+        key this install holds mints for that word, so a code consent or
+        communication widen ask admits the owner's answer. The key is the
+        device owner key the owner enrolled here, or the host root an open with
+        ``hold_checkpoint_root_signer`` keeps; where this install holds
+        neither, each word raises ``owner_key_required``. No other handle or
+        verb changes. On a connected handle this raises ``FORBIDDEN``.
+        """
+        return Oneiron(_translate(lambda: self._client.as_owner_device()))
+
     def in_room_turn(self, room_ref: str) -> "Oneiron":
         """Returns a NEW handle whose every verb runs as a turn in a room.
 
