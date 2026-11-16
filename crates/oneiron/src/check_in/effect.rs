@@ -157,7 +157,7 @@ pub(crate) fn person_door_check_in_in_txn(
 }
 
 /// Spends the settled ask `id` for `act`, in the door's writer.
-fn spend_in_txn(
+pub(super) fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     act: &DoorAct<'_>,
@@ -166,10 +166,14 @@ fn spend_in_txn(
     now: u64,
 ) -> Result<DoorCheckIn> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
+    // An ask of a closed room's owners settles only the closed-room route
+    // (ARCH-0082 #closed-room): reopened, the room's add meets the asker's
+    // own ladder again, which the room's owners did not answer.
     if row.asker != act.person
         || row.verb != act.verb
         || row.act != act.act
         || row.scope != act.scope
+        || row.room.is_some()
     {
         return Err(refuse("the check-in is not this person's ask for this act"));
     }
