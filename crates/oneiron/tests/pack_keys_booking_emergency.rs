@@ -130,6 +130,7 @@ fn base_config(
         booking_window_secs,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: owner,
@@ -329,6 +330,7 @@ impl Fixture {
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             slot,
             NOW,
