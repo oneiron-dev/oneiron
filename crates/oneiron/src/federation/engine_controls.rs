@@ -208,7 +208,8 @@ impl Vault {
                 && if shared {
                     super::shared_grant_row_in_fold(&fold, id, &raw.body, now).is_some()
                 } else {
-                    super::owner_agent_mint_in_fold(&fold, id, &grant, terms_key.as_ref()).is_some()
+                    super::owner_agent_mint_in_fold(&fold, id, &grant, terms_key.as_ref(), &root)
+                        .is_some()
                 }
             {
                 return Ok(Some(id));
