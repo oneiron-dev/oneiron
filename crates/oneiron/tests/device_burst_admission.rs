@@ -5,7 +5,10 @@
 //! gets it back by itself once the device's rate is at its baseline again.
 //! A held burst whose device no longer stands as its connection proved it
 //! (its Write credential's slip expired or revoked since) ends
-//! `StaleAuthority` and is never handed back.
+//! `StaleAuthority` and is never handed back. So does one whose slip still
+//! stands but whose write authority changed since it was held: its grant
+//! narrowed in place, or a world kept off its device
+//! (BURST-REPLAY-SKIPS-ROW-ADMISSION).
 //!
 //! The last test reads a receipt stored before own devices had receipts
 //! through the ledger's door (the lead's M-1 STORED-CHANGE-RULE, Engine
@@ -13,20 +16,27 @@
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test device_burst_admission`.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc};
 use oneiron::authority::{HostSlipIssuer, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{
+    FederationGrant, FederationGrantPreset, FederationGrantRole, ScopeAxis, ScopeId,
+    own_device_residence_scope,
+};
+use oneiron::registry::ENTITY_TYPE_WORLD;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
-use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::{
     BurstPeer, DeviceBurstAdmission, DevicePeer, FederationBurstBaseline,
     FederationBurstBaselineState, FederationBurstDisposition, FederationBurstOutcome,
     FederationBurstPeerRef, FederationBurstPolicy, FederationBurstReceipt,
     FederationBurstWorkState, admit_device_window_update, ready_device_work,
 };
+use oneiron::sync::{WindowKey, put_selector_test_federation_grant};
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::burst_receipt_stored_shape::decode_burst_receipt_row;
 use oneiron::{EntityId, Vault, VaultConfig};
 use tempfile::TempDir;
@@ -101,6 +111,17 @@ impl Home {
     /// Mints the slip `slip_id` for the owner from the host root, live for
     /// `ttl_secs` from now, and answers the issuer that can revoke it.
     fn mint_slip(&self, slip_id: [u8; 32], ttl_secs: u64) -> TestResult<HostSlipIssuer> {
+        self.mint_slip_under(slip_id, ttl_secs, None)
+    }
+
+    /// [`Self::mint_slip`] naming `grant` as the grant it was minted under,
+    /// as a paired device's slip names its owner's own-device grant.
+    fn mint_slip_under(
+        &self,
+        slip_id: [u8; 32],
+        ttl_secs: u64,
+        grant: Option<EntityId>,
+    ) -> TestResult<HostSlipIssuer> {
         let owner = self.vault.ensure_embedded_owner_actor()?;
         let issuer =
             HostSlipIssuer::from_secret(b"device-burst-test-host-secret").expect("host issuer");
@@ -113,6 +134,7 @@ impl Home {
         claims.issued_at = issued_at;
         claims.expires_at = issued_at + ttl_secs;
         claims.ttl_secs = ttl_secs;
+        claims.grant_ref = grant.map(|grant| grant.to_hex());
         self.vault.mint_capability_slip(&issuer, claims)?;
         Ok(issuer)
     }
@@ -138,6 +160,22 @@ impl Home {
             DeviceBurstAdmission::Defer { batch_ref } => Ok(batch_ref),
             other => panic!("a burst over the device's baseline is deferred: {other:?}"),
         }
+    }
+
+    /// A WORLD row of this home.
+    fn world(&self, seed: u8) -> TestResult<EntityId> {
+        let world = EntityId::from_bytes([seed; 16]).map_err(|_| "a world id")?;
+        self.vault.put_entity(
+            &world,
+            ENTITY_TYPE_WORLD,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+            b"world",
+        )?;
+        Ok(world)
     }
 
     /// One update from the device adding `rows` rows to the window.
@@ -362,6 +400,76 @@ fn a_held_burst_ends_stale_once_its_machines_slip_is_revoked() -> TestResult {
         Some(FederationBurstPeerRef::Machine {
             machine: home.machine
         })
+    );
+    Ok(())
+}
+
+#[test]
+fn a_held_burst_ends_stale_once_its_grant_narrows_in_place() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let owner = home.vault.ensure_embedded_owner_actor()?;
+    // The owner's own-device grant, as pairing provisions it: the grant a
+    // paired device's residence selector names and its slip carries.
+    let grant_id = EntityId::now();
+    let grant = FederationGrant::new(
+        own_device_residence_scope(),
+        owner,
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+    );
+    put_selector_test_federation_grant(&home.vault, &grant_id, &grant, NOW)?;
+    let slip = [0x43; 32];
+    home.mint_slip_under(slip, 3_600, Some(grant_id))?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    let batch_ref = home.hold_burst(&device)?;
+
+    // The owner narrows that grant in place to one other world: the same
+    // id, still live and conferring, and the slip naming it still stands.
+    home.clock.set(NOW + 1);
+    let mut narrowed = grant.clone();
+    narrowed.authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(EntityId::now())]));
+    put_selector_test_federation_grant(&home.vault, &grant_id, &narrowed, NOW + 1)?;
+    home.clock.set(NOW + 2);
+    let due = ready_device_work(&home.vault)?;
+    assert!(
+        due.is_empty(),
+        "a burst held under a grant narrowed since is not handed back: {due:?}"
+    );
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::StaleAuthority
+    );
+    Ok(())
+}
+
+#[test]
+fn a_held_burst_ends_stale_once_a_world_is_kept_off_its_device() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let slip = [0x44; 32];
+    let issuer = home.mint_slip(slip, 3_600)?;
+    // One world the owner already keeps on the home, so the home stands
+    // enrolled and its owner bound before the burst is held: below, only
+    // the second world's read setting changes.
+    let kept = home.world(0x91)?;
+    let world = home.world(0x92)?;
+    home.vault
+        .keep_world_on_this_machine_under_for_test(&issuer, kept, true)?;
+    let device = home.device_with_slip(PeerMachine::Unknown, slip)?;
+    let batch_ref = home.hold_burst(&device)?;
+
+    // The owner keeps a second world on the home: no machine the device
+    // proved may read it now. The device's slip still stands.
+    home.vault
+        .keep_world_on_this_machine_under_for_test(&issuer, world, true)?;
+    home.clock.set(NOW + 2);
+    let due = ready_device_work(&home.vault)?;
+    assert!(
+        due.is_empty(),
+        "a burst held before a world was kept off its device is not handed back: {due:?}"
+    );
+    assert_eq!(
+        home.receipt_of(&device, &batch_ref)?.state,
+        FederationBurstWorkState::StaleAuthority
     );
     Ok(())
 }
