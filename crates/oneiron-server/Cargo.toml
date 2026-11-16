@@ -330,6 +330,12 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# The drafter doors (owner list/status/policy/revert, agent list_as/revert_as) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_drafters_doors"
+path = "tests/vault_drafters_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
 [[test]]
 name = "oauth_named_client_acceptance"
