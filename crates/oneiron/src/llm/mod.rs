@@ -25,7 +25,7 @@ mod role_defaults;
 mod solo;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
-    InferencePolicySnapshot,
+    InferencePolicySnapshot, InferenceRefusal,
 };
 #[doc(hidden)]
 pub(crate) use oneiron_consent_state::llm::entity_refs;
