@@ -320,9 +320,13 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             match job_named(&job) {
                 None => {
-                    // Parked until a build that knows the job: out of the due order for a day.
+                    // Parked until a build that knows the job: due again in a day through
+                    // `resume_at`, which stands in for the occurrence's due time (the park also
+                    // drops an asked-for run), so a row a newer build left in its backoff or its
+                    // paged run is not found again in this pass. Its occurrence stays for the
+                    // build that knows the job.
                     let parked = ScheduleRow {
-                        next_due_at: now.saturating_add(24 * 60 * 60),
+                        resume_at: Some(now.saturating_add(24 * 60 * 60)),
                         requested_at: None,
                         ..row.clone()
                     };
@@ -568,9 +572,14 @@ fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> O
 
 /// A row armed again while a run of its earlier arming ran, after that run ended at `end`: the
 /// new arming stands, due no sooner than the run's first retry after its end, so a job that arms
-/// itself again at once never runs in a loop. Its occurrence stays where the arming put it.
+/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, and
+/// its last run is the one that ended at `end`.
 fn armed_again(spec: &JobSpec, row: ScheduleRow, end: u64) -> ScheduleRow {
     let floor = end.saturating_add(spec.retry_first_secs);
+    let row = ScheduleRow {
+        finished_at: end,
+        ..row
+    };
     if row.resume_at.unwrap_or(row.next_due_at) >= floor {
         return row;
     }
