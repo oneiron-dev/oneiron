@@ -131,7 +131,7 @@ impl Memory<'_> {
         // A larger ask is served a page at a time through its cursor.
         let limit = super::history::served_room_page_size(self.vault(), request.room, limit)?;
         let mut start = match request.after.as_deref() {
-            Some(after) => Some(parse_cursor(after).ok_or_else(invalid)?),
+            Some(after) => Some(parse_cursor(after).ok_or_else(|| invalid())?),
             None => None,
         };
         let (room, branch, actor) = (request.room, request.branch, self.actor());

@@ -75,7 +75,7 @@ pub(crate) fn overlay_thread_binding_in(
             ("room_thread_of", &mut anchor),
         ] {
             if let Some(value) = metadata.and_then(|m| m.get(field)) {
-                let found = EntityId::from_hex(value.as_str().ok_or_else(invalid)?)?;
+                let found = EntityId::from_hex(value.as_str().ok_or_else(|| invalid())?)?;
                 if out.as_ref().is_some_and(|prior| *prior != found) {
                     return Err(invalid());
                 }
@@ -179,7 +179,7 @@ pub(crate) fn overlay_thread_binding_in(
     let seed = if held.root == id {
         held.audience.clone()
     } else {
-        let root = binding_of(held.root)?.ok_or_else(invalid)?;
+        let root = binding_of(held.root)?.ok_or_else(|| invalid())?;
         if (root.root, root.room, root.anchor) != (held.root, held.room, held.anchor) {
             return Err(invalid());
         }
@@ -198,11 +198,11 @@ pub(crate) fn overlay_thread_binding_in(
     }
     if let Some(audience) = &audience {
         for value in mentions {
-            for handle in value.as_array().ok_or_else(invalid)? {
-                let handle = handle.as_str().ok_or_else(invalid)?;
+            for handle in value.as_array().ok_or_else(|| invalid())? {
+                let handle = handle.as_str().ok_or_else(|| invalid())?;
                 let named = HANDLES
                     .get(&vault.store, txn, &(room, handle.to_owned()))?
-                    .ok_or_else(invalid)?;
+                    .ok_or_else(|| invalid())?;
                 if !names_actor_in(vault, txn, audience, named)? {
                     return Err(invalid());
                 }

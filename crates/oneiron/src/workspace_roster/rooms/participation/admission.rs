@@ -435,6 +435,6 @@ pub(in crate::workspace_roster::rooms) fn require_speaker_in_txn(
         }
         return Ok(());
     };
-    agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(invalid)?;
+    agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(|| invalid())?;
     Ok(())
 }

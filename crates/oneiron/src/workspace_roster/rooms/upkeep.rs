@@ -129,7 +129,7 @@ pub(super) fn room_upkeep_fold_in_txn(
     let mut threads = BTreeMap::new();
     for turn in turns.iter().filter(|turn| liveness::is_thread_root(turn)) {
         let handle = EntityId::from_hex(&turn.turn_id)?;
-        let trunk = EntityId::from_hex(turn.thread_of.as_deref().ok_or_else(invalid)?)?;
+        let trunk = EntityId::from_hex(turn.thread_of.as_deref().ok_or_else(|| invalid())?)?;
         threads.insert(
             handle,
             RoomUpkeepThread {

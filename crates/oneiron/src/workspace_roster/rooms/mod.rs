@@ -195,8 +195,14 @@ const RESPONSE: SideTable<EntityId, EntityId, Raw> = SideTable::new(&side_table:
 pub(super) const THREAD_CHILDREN: SideTable<(EntityId, EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::ROOMS_THREAD_CHILDREN);
 
+#[track_caller]
 fn invalid() -> Error {
-    Error::InvalidConfig("invalid room operation".into())
+    let at = std::panic::Location::caller();
+    Error::InvalidConfig(format!(
+        "invalid room operation (diagnosis: {}:{})",
+        at.file(),
+        at.line()
+    ))
 }
 /// The room as its project's signed history vouches for it: the stored room
 /// must match the stored project, and its members and claims scope are the
@@ -208,11 +214,11 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
         room,
         crate::registry::ENTITY_TYPE_CONVERSATION,
     )?
-    .ok_or_else(invalid)?;
+    .ok_or_else(|| invalid())?;
     let project_id = EntityId::from_hex(&room.project_id)?;
     let (project, effective) = vault
         .effective_project_in_txn(txn, project_id)?
-        .ok_or_else(invalid)?;
+        .ok_or_else(|| invalid())?;
     if project.roster != room.member_ids || project.claims_scope_ref != room.claims_scope_ref {
         return Err(invalid());
     }
@@ -242,7 +248,7 @@ pub(in crate::workspace_roster) fn turn_in(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<RoomTurn> {
-    TURNS.get(&vault.store, txn, &id)?.ok_or_else(invalid)
+    TURNS.get(&vault.store, txn, &id)?.ok_or_else(|| invalid())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,7 +349,7 @@ pub(crate) fn project_room_audience_in(
     else {
         return Ok(None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(|| invalid())?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
         return Ok(None);
     }
@@ -400,7 +406,7 @@ fn project_room_of(
     // stored body, not that auxiliary row, identifies the substrate.
     let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
         .ok_or(Error::EntityNotFound)?;
-    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(|| invalid())?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
         return Err(invalid());
     }
@@ -555,7 +561,7 @@ impl Memory<'_> {
                 room,
                 require_reader(self.vault(), &txn, room, self.actor())?
                     .home
-                    .ok_or_else(invalid)?,
+                    .ok_or_else(|| invalid())?,
             )]);
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;

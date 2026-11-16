@@ -93,7 +93,7 @@ pub(crate) fn room_thread_turns_in_txn(
     let folded: Vec<RoomTurn> = members.iter().cloned().chain(context).collect();
     let roots = thread_root_map(&folded)?;
     let root = match turn.thread_of {
-        Some(_) => Some(*roots.get(&handle).ok_or_else(invalid)?),
+        Some(_) => Some(*roots.get(&handle).ok_or_else(|| invalid())?),
         None => None,
     };
     let mut turns = Vec::new();

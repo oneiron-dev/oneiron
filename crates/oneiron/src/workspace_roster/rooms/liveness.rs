@@ -71,7 +71,7 @@ pub(in crate::workspace_roster) fn thread_root_map(
             return Err(invalid());
         }
         if is_thread_root(turn) {
-            let trunk = EntityId::from_hex(turn.thread_of.as_deref().ok_or_else(invalid)?)?;
+            let trunk = EntityId::from_hex(turn.thread_of.as_deref().ok_or_else(|| invalid())?)?;
             if trunk == id {
                 return Err(invalid());
             }
@@ -100,7 +100,7 @@ pub(in crate::workspace_roster) fn thread_root_map(
                 break *cached;
             }
             path.push(cursor);
-            let ancestor = by_id.get(&cursor).ok_or_else(invalid)?;
+            let ancestor = by_id.get(&cursor).ok_or_else(|| invalid())?;
             match ancestor
                 .reply_to
                 .as_deref()
@@ -419,7 +419,7 @@ fn project_inner(
         if !seen_tasks.insert(fact.task) {
             return Err(invalid());
         }
-        let root = roots.get_mut(&fact.thread).ok_or_else(invalid)?;
+        let root = roots.get_mut(&fact.thread).ok_or_else(|| invalid())?;
         if fact.open {
             root.open_tasks += 1;
             if let Some(wait) = &fact.wait {

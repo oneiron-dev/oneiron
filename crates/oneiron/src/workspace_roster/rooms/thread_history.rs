@@ -131,7 +131,7 @@ fn page_after(
         let at = rows
             .iter()
             .position(|turn| turn.turn_id == cursor)
-            .ok_or_else(invalid)?;
+            .ok_or_else(|| invalid())?;
         rows.drain(..=at);
     }
     let next_after = (rows.len() > limit).then(|| rows[limit - 1].turn_id.clone());

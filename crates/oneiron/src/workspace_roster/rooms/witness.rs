@@ -71,11 +71,11 @@ impl RoomRegenerationPermit {
                 return Err(invalid());
             }
         }
-        let parent = EntityId::from_hex(old.reply_to.as_deref().ok_or_else(invalid)?)?;
+        let parent = EntityId::from_hex(old.reply_to.as_deref().ok_or_else(|| invalid())?)?;
         let parent_row = turn_in(vault, txn, parent)?;
         let claim = CLAIMS
             .get(&vault.store, txn, &parent)?
-            .ok_or_else(invalid)?;
+            .ok_or_else(|| invalid())?;
         if parent_row.room_id != old.room_id
             || claim.room_id != old.room_id
             || claim.actor != old.actor
@@ -84,7 +84,7 @@ impl RoomRegenerationPermit {
         }
         let slot = RESPONSE
             .get(&vault.store, txn, &parent)?
-            .ok_or_else(invalid)?;
+            .ok_or_else(|| invalid())?;
         let edge = |message: &EntityId, kind: EdgeKind| {
             crate::memory::sole_edge_target(&vault.store, txn, message, kind, "message")
                 .map_err(|_| invalid())
@@ -109,7 +109,7 @@ impl RoomRegenerationPermit {
             {
                 return Err(invalid());
             }
-            let turn = edge(&cursor, EdgeKind::PartOf)?.ok_or_else(invalid)?;
+            let turn = edge(&cursor, EdgeKind::PartOf)?.ok_or_else(|| invalid())?;
             let row = turn_in(vault, txn, turn)?;
             if row.actor != old.actor
                 || row.room_id != old.room_id
@@ -122,7 +122,7 @@ impl RoomRegenerationPermit {
                 count.defer(&vault.store);
                 return Ok(Self { source: old, slot });
             }
-            cursor = edge(&cursor, EdgeKind::Regenerates)?.ok_or_else(invalid)?;
+            cursor = edge(&cursor, EdgeKind::Regenerates)?.ok_or_else(|| invalid())?;
         }
     }
 
@@ -210,7 +210,7 @@ pub(crate) fn admit_witness(
         // its own kept quote again; a stored TURN takes no new one.
         if quoting {
             let now = vault.store.clock.now_recorded_at();
-            let subject = participant_in_txn(vault, txn, actor, now)?.ok_or_else(invalid)?;
+            let subject = participant_in_txn(vault, txn, actor, now)?.ok_or_else(|| invalid())?;
             let members = vault.members_in_txn(txn, room)?;
             if !members.contains(&actor) && !members.contains(&subject.id()) {
                 super::participation::joined(
@@ -218,7 +218,7 @@ pub(crate) fn admit_witness(
                         vault, txn, room, None, &subject, None,
                     ),
                 )?
-                .ok_or_else(invalid)?;
+                .ok_or_else(|| invalid())?;
             }
         }
         let landing = stored
@@ -316,7 +316,7 @@ pub(crate) fn admit_witness(
             ("room_thread_of", &mut thread_of),
         ] {
             if let Some(value) = metadata.and_then(|m| m.get(field)) {
-                let id = EntityId::from_hex(value.as_str().ok_or_else(invalid)?)?;
+                let id = EntityId::from_hex(value.as_str().ok_or_else(|| invalid())?)?;
                 if out.as_ref().is_some_and(|prior| *prior != id) {
                     return Err(invalid());
                 }
@@ -328,7 +328,7 @@ pub(crate) fn admit_witness(
             }
         }
         if let Some(value) = metadata.and_then(|m| m.get("room_mentions")) {
-            let handles = value.as_array().ok_or_else(invalid)?;
+            let handles = value.as_array().ok_or_else(|| invalid())?;
             // Every mention is validated and kept, however many (rule 5).
             let mut count = crate::scan_check::ScanCount::start(
                 &vault.store,
@@ -339,12 +339,12 @@ pub(crate) fn admit_witness(
             count.rows(handles.len());
             count.defer(&vault.store);
             for handle in handles {
-                let handle = handle.as_str().ok_or_else(invalid)?;
+                let handle = handle.as_str().ok_or_else(|| invalid())?;
                 // Unknown mentions fail closed rather than opening the turn
                 // to every companion in the room.
                 let addressed = HANDLES
                     .get(&vault.store, txn, &(room, handle.to_owned()))?
-                    .ok_or_else(invalid)?;
+                    .ok_or_else(|| invalid())?;
                 // An agent may be named without a seat: naming enrolls no
                 // one and grants nothing (OF-529).
                 if !current_room.member_ids.contains(&addressed.to_hex())
@@ -475,7 +475,7 @@ pub(crate) fn admit_witness(
     }
     let standing = match speaker {
         Some(JoinSubject::Agent(agent)) => Some(
-            agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(invalid)?,
+            agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(|| invalid())?,
         ),
         _ => None,
     };
@@ -502,10 +502,10 @@ pub(crate) fn admit_witness(
         // Only a speaker who speaks as a persona answers; the claim door
         // checks the same, and upkeep never holds one.
         admit_speech_in(vault, txn, room, actor, standing.as_ref())?;
-        let parent = reply_to.ok_or_else(invalid)?;
+        let parent = reply_to.ok_or_else(|| invalid())?;
         let claim = CLAIMS
             .get(&vault.store, txn, &parent)?
-            .ok_or_else(invalid)?;
+            .ok_or_else(|| invalid())?;
         if claim.actor != actor.to_hex() || claim.room_id != room.to_hex() {
             return Err(invalid());
         }
@@ -657,7 +657,7 @@ fn quote_read_in_txn(
     quote: crate::conversation_dag::QuoteSpan,
     key: Option<&crate::claim::ScopedReadActorKey>,
 ) -> Result<()> {
-    let key = key.ok_or_else(invalid)?;
+    let key = key.ok_or_else(|| invalid())?;
     if key.room_turn().is_some_and(|held| held.room != room) {
         return Err(invalid());
     }
@@ -665,7 +665,7 @@ fn quote_read_in_txn(
         Some(thread) => crate::context_board::thread_ceiling_in(vault, txn, room, thread, actor)?,
         None => crate::context_board::room_ceiling_in(vault, txn, room, actor)?,
     }
-    .ok_or_else(invalid)?;
+    .ok_or_else(|| invalid())?;
     let mut ceiling = key
         .room_turn()
         .map_or_else(|| now.clone(), |held| held.narrowed_by(&now));

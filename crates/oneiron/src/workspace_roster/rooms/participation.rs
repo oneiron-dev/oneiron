@@ -608,7 +608,7 @@ impl Claimant {
         let agent = match participant_in_txn(vault, txn, actor, now)? {
             Some(JoinSubject::Agent(agent)) => Some(
                 agent_standing_in_txn(vault, txn, room, branch, agent, None)?
-                    .ok_or_else(invalid)?,
+                    .ok_or_else(|| invalid())?,
             ),
             subject => {
                 if !person_stands_in_txn(vault, txn, room, branch, actor, subject)? {

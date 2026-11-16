@@ -799,7 +799,7 @@ impl Memory<'_> {
         if turn.room_id != room.to_hex() || turn.thread_of.is_some() {
             return Err(MemoryError::from(invalid()));
         }
-        let turn = self.admitted_turns(vec![turn])?.pop().ok_or_else(invalid)?;
+        let turn = self.admitted_turns(vec![turn])?.pop().ok_or_else(|| invalid())?;
         let reach = self.room_turn_snapshot(room)?;
         let turns = reach.placed();
         let trunk_hex = trunk.to_hex();
