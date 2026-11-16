@@ -216,6 +216,7 @@ impl MergeQueue<'_> {
                     .resolution_batch
                     .or_else(|| existing.resolution_batch.clone());
                 linked.superseded |= existing.superseded;
+                linked.resolved_by = linked.resolved_by.or_else(|| existing.resolved_by.clone());
             }
             if unlanded {
                 drive.hold = Some(match &linked.held {
@@ -254,6 +255,7 @@ impl MergeQueue<'_> {
             {
                 existing.resolution_batch.clone_from(&link.resolution_batch);
                 existing.superseded = link.superseded;
+                existing.resolved_by.clone_from(&link.resolved_by);
                 if link.superseded {
                     drive.hold = None;
                 }
@@ -272,7 +274,21 @@ impl MergeQueue<'_> {
                 batches.push(batch);
             }
         }
-        self.save(&queue, &batches.iter().collect::<Vec<_>>())
+        let batches: Vec<_> = batches.iter().collect();
+        if !link.superseded {
+            return self.save(&queue, &batches);
+        }
+        // The green successor's supersession completes the reconciliation
+        // TASK in the same write, with the claim that closed the conflict
+        // as its result (FIX QUEUE-RECONCILIATION-TASK-COMPLETION). The
+        // engine settles it: no run is leased on that TASK.
+        let resolution = link.resolved_by.as_ref().and_then(|by| by.resolution);
+        let now = self.vault.now_recorded_at();
+        self.save_then(&queue, &batches, |txn| {
+            self.vault
+                .complete_queue_reconciliation_task_in_txn(txn, link.conflict, resolution, now)
+                .map(|_| ())
+        })
     }
 
     /// The driver's view of `batch`, joined from its drive record and the
@@ -354,11 +370,27 @@ impl MergeQueue<'_> {
             conflicts: drive
                 .overlap
                 .iter()
-                .map(|link| QueueConflictView {
-                    source_proposals: link.sources.iter().map(crate::EntityId::to_hex).collect(),
-                    conflict: link.conflict.to_hex(),
-                    task: link.task.map(|task| task.to_hex()),
-                    resolution_batch: link.resolution_batch.clone(),
+                .map(|link| {
+                    let resolved_by = link.resolved_by.as_ref();
+                    QueueConflictView {
+                        source_proposals: link
+                            .sources
+                            .iter()
+                            .map(crate::EntityId::to_hex)
+                            .collect(),
+                        conflict: link.conflict.to_hex(),
+                        task: link.task.map(|task| task.to_hex()),
+                        resolution_batch: link.resolution_batch.clone(),
+                        resolution_claim: resolved_by
+                            .and_then(|by| by.resolution)
+                            .map(|claim| claim.to_hex()),
+                        resolved_by_task: resolved_by
+                            .and_then(|by| by.task)
+                            .map(|task| task.to_hex()),
+                        resolved_by_work: resolved_by
+                            .and_then(|by| by.work)
+                            .map(|work| work.to_hex()),
+                    }
                 })
                 .collect(),
             survivor_batch: match drive.survivor {
