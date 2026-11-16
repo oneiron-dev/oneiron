@@ -179,6 +179,7 @@ pub mod task_ask_role_routing;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod turn_words;
+pub mod turn_sitting;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
