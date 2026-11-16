@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::register::Register;
 use rand::Rng;
 use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
@@ -26,8 +27,9 @@ const BOUND_Z: f64 = 1.645;
 const MIN_BETA_PARAMETER: f64 = 1e-6;
 
 /// The value shape an estimate carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("estimate.form")]
 pub enum EstimateForm {
     /// Success/failure uncertainty: `{alpha, beta}`.
     Beta,
@@ -35,18 +37,6 @@ pub enum EstimateForm {
     Mean,
     /// Named weighted outcome counts, such as untouched/amended/rejected.
     Counts,
-}
-
-impl EstimateForm {
-    /// The pinned wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Beta => "beta",
-            Self::Mean => "mean",
-            Self::Counts => "counts",
-        }
-    }
 }
 
 /// The measured answer, in its form's shape.
@@ -130,8 +120,11 @@ impl EstimateValue {
 }
 
 /// Where a prior came from (ARCH-0003 "The six prior origins").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("prior.origin")]
 pub enum PriorOrigin {
     /// The pack's default.
     Shipped,
@@ -145,21 +138,6 @@ pub enum PriorOrigin {
     Model,
     /// The owner's value and its weight in runs.
     Seed,
-}
-
-impl PriorOrigin {
-    /// The pinned wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Shipped => "shipped",
-            Self::Provenance => "provenance",
-            Self::Carried => "carried",
-            Self::Parent => "parent",
-            Self::Model => "model",
-            Self::Seed => "seed",
-        }
-    }
 }
 
 /// Everything that is not this cell's own evidence: an origin, a value in the

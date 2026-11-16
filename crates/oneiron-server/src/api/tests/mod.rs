@@ -347,6 +347,46 @@ pub(super) fn seed_companion_profile_access(
         .expect("seed companion profile grant");
 }
 
+/// Seeds a plain record whose exact words a psych-profile source cites, and
+/// returns the record-native source carrying them (FIX 11766): the row's live
+/// reference as its revision, its content hash as its words. A profile built
+/// from these sources passes the companion read's own source judgement, so it
+/// reads back instead of reading as withheld.
+pub(super) fn seed_profile_source_record(
+    server: &SyncServer,
+    id: oneiron::EntityId,
+) -> oneiron::psych_profile::PsychProfileSource {
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"profile source words",
+        )
+        .expect("seed profile source record");
+    let raw = server
+        .vault
+        .get_raw(&id)
+        .expect("read profile source row")
+        .expect("profile source row stored");
+    let body = &raw[oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN..];
+    let content = oneiron_store::consolidation_evidence::swarm_evidence_content_hash(body);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(id.as_bytes());
+    hasher.update(&raw);
+    let mut revision = [0u8; 16];
+    revision.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    oneiron::psych_profile::PsychProfileSource {
+        revision_ref: id,
+        document_ref: id,
+        world_ref: None,
+        document_revision: oneiron_store::revision_ref::RevisionRef(revision),
+        words: oneiron::psych_profile::PsychProfileSourceWords::Record { content },
+    }
+}
+
 pub(super) fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -803,6 +843,29 @@ fn seed_disclosure_claim_in_world(
     text: &str,
     world: oneiron::EntityId,
 ) -> oneiron::EntityId {
+    seed_claim_in_world(server, subject, text, world, Some("private"))
+}
+
+/// [`seed_disclosure_claim_in_world`] with no sensitivity stamp. An unstamped
+/// claim reads at the sensitive floor for the audience, and a reader homed in
+/// another vault still reads it (DEC-0006 `#home-clearance`): a reader that
+/// names no room of this vault reads no stamped claim.
+fn seed_unstamped_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+) -> oneiron::EntityId {
+    seed_claim_in_world(server, subject, text, world, None)
+}
+
+fn seed_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+    stamp: Option<&str>,
+) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     let mut claim = oneiron::ClaimBody::new(
         "event.diary",
@@ -817,12 +880,12 @@ fn seed_disclosure_claim_in_world(
     // A TURN subject has no stored FACET of its own, and a CLAIM birth needs
     // one: the claim takes the vault's default facet.
     claim.scope_facet = server.vault.default_facet().expect("default facet");
-    // Tier B is required here: otherwise the tier check rejects this claim
-    // before the test can exercise the contact's world clearance.
-    claim.scope = Some(rmpv::Value::Map(vec![(
-        rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("private"),
-    )]));
+    claim.scope = stamp.map(|stamp| {
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from(stamp),
+        )])
+    });
     server
         .vault
         .put_claim(
