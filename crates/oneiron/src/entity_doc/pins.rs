@@ -40,7 +40,7 @@ impl CitationPin {
         let anchor = &self.anchor;
         let whole = anchor.entity == self.entity
             && !anchor.quote.is_empty()
-            && blake3::hash(anchor.quote.as_bytes()).as_bytes() == &anchor.hash
+            && TextAnchor::quote_hash(&anchor.quote) == anchor.hash
             && decode_frontier(&anchor.frontier).is_ok()
             && loro::cursor::Cursor::decode(&anchor.start).is_ok()
             && loro::cursor::Cursor::decode(&anchor.end).is_ok();
@@ -209,7 +209,7 @@ impl Vault {
                 .skip(start)
                 .take(end - start)
                 .collect();
-            if quote != anchor.quote || blake3::hash(quote.as_bytes()).as_bytes() != &anchor.hash {
+            if quote != anchor.quote || TextAnchor::quote_hash(&quote) != anchor.hash {
                 return Err(invalid("citation quote does not match pinned version"));
             }
             let pin = CitationPin {
@@ -517,7 +517,7 @@ impl Vault {
         let quote: String = origin.text().chars().skip(from).take(to - from).collect();
         if quote.is_empty()
             || quote != anchor.quote
-            || blake3::hash(quote.as_bytes()).as_bytes() != &anchor.hash
+            || TextAnchor::quote_hash(&quote) != anchor.hash
         {
             return Err(invalid("citation quote does not match pinned version"));
         }
