@@ -58,11 +58,10 @@ use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
-use oneiron_server::models::{
-    QuotaAnswerRecord, QuotaAnswerer, QuotaChoice, QuotaFallback, QuotaQuestion,
-};
+use oneiron_server::models::{QuotaChoice, QuotaFallback, QuotaQuestion};
 use oneiron_server::{build_app, server::SyncServer};
 use rmpv::Value as RmpValue;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -807,8 +806,42 @@ fn a_quota_answer_the_owner_did_not_let_stays_refused() {
     });
 }
 
+// The answerer cases attach the AI host (`setup_ai`): only the attached
+// runtime keeps its quota questions on the fixture's vault. Without it the
+// runtime keeps its rests nowhere, and every answer is 404
+// `no_such_question`.
+
 /// The fallback model a planted `use_fallback` question offers.
 const FALLBACK_MODEL: &str = "other/fallback-model@1";
+
+/// A quota question's answer row as the vault keeps it
+/// (`models:offer-cooldown:v1:answer:<id>`), decoded by this test's own copy
+/// of its fields. The cases thus pin the stored form (stored change: keep),
+/// and they build on PR 1's base, where the row does not exist yet.
+#[derive(Debug, Deserialize)]
+struct AnswerRow {
+    question: String,
+    choice: QuotaChoice,
+    fallback: Option<String>,
+    answered_by: AnsweredBy,
+}
+
+/// Who gave an answer, as its answer row keeps it.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AnsweredBy {
+    Owner,
+    Agent(EntityId),
+}
+
+/// The answer row kept for question `id`, if one is kept.
+fn answer_row(fixture: &Fixture, id: &str) -> Option<AnswerRow> {
+    fixture
+        .vault
+        .sync_state_get(&format!("models:offer-cooldown:v1:answer:{id}"))
+        .expect("read the answer row")
+        .map(|bytes| rmp_serde::from_slice(&bytes).expect("decode the answer row"))
+}
 
 /// A question id in the form the runtime keeps: an offer's hex64 key.
 fn offer_question_id(seed: u8) -> String {
@@ -852,7 +885,7 @@ fn use_fallback_body() -> Value {
 #[test]
 fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
     run_on_engine_stack("wave11-quota-fallback-agent", || async {
-        let (fixture, a, _b) = setup().await;
+        let (fixture, a, _b) = setup_ai().await;
         set_quota_row(
             &fixture,
             "use_fallback",
@@ -885,13 +918,11 @@ fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
             "the standing fallback is set"
         );
 
-        let record = QuotaAnswerRecord::read(&fixture.vault, &id)
-            .expect("read the answer row")
-            .expect("the answer row is kept");
+        let record = answer_row(&fixture, &id).expect("the answer row is kept");
         assert_eq!(record.question, id);
         assert_eq!(record.choice, QuotaChoice::UseFallback);
         assert_eq!(record.fallback.as_deref(), Some(FALLBACK_MODEL));
-        assert_eq!(record.answered_by, QuotaAnswerer::Agent(a.principal));
+        assert_eq!(record.answered_by, AnsweredBy::Agent(a.principal));
 
         fixture.finish().await;
     });
@@ -903,7 +934,7 @@ fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
 #[test]
 fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
     run_on_engine_stack("wave11-quota-fallback-default", || async {
-        let (fixture, a, _b) = setup().await;
+        let (fixture, a, _b) = setup_ai().await;
         let id = offer_question_id(0xb2);
         plant_fallback_question(&fixture, &id);
 
@@ -929,9 +960,8 @@ fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
             None,
             "no fallback is set"
         );
-        assert_eq!(
-            QuotaAnswerRecord::read(&fixture.vault, &id).expect("read the answer row"),
-            None,
+        assert!(
+            answer_row(&fixture, &id).is_none(),
             "a refused answer keeps no row"
         );
 
@@ -948,11 +978,9 @@ fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
             StatusCode::NO_CONTENT,
             "owner uses the fallback: {bytes:?}"
         );
-        let record = QuotaAnswerRecord::read(&fixture.vault, &id)
-            .expect("read the answer row")
-            .expect("the answer row is kept");
+        let record = answer_row(&fixture, &id).expect("the answer row is kept");
         assert_eq!(record.choice, QuotaChoice::UseFallback);
-        assert_eq!(record.answered_by, QuotaAnswerer::Owner);
+        assert_eq!(record.answered_by, AnsweredBy::Owner);
 
         fixture.finish().await;
     });
@@ -996,7 +1024,7 @@ fn question_open(fixture: &Fixture, id: &str) -> bool {
 #[test]
 fn a_top_up_records_its_answerer_on_every_question_it_closes() {
     run_on_engine_stack("wave11-quota-top-up-account", || async {
-        let (fixture, _a, _b) = setup().await;
+        let (fixture, _a, _b) = setup_ai().await;
         let answered = offer_question_id(0xc3);
         let sibling = offer_question_id(0xc4);
         let other = offer_question_id(0xc5);
@@ -1016,21 +1044,18 @@ fn a_top_up_records_its_answerer_on_every_question_it_closes() {
 
         for id in [&answered, &sibling] {
             assert!(!question_open(&fixture, id), "the top-up closes {id}");
-            let record = QuotaAnswerRecord::read(&fixture.vault, id)
-                .expect("read the answer row")
-                .expect("the answer row is kept");
+            let record = answer_row(&fixture, id).expect("the answer row is kept");
             assert_eq!(record.question, *id);
             assert_eq!(record.choice, QuotaChoice::TopUp);
             assert_eq!(record.fallback, None);
-            assert_eq!(record.answered_by, QuotaAnswerer::Owner);
+            assert_eq!(record.answered_by, AnsweredBy::Owner);
         }
         assert!(
             question_open(&fixture, &other),
             "another account's question stays open"
         );
-        assert_eq!(
-            QuotaAnswerRecord::read(&fixture.vault, &other).expect("read the answer row"),
-            None,
+        assert!(
+            answer_row(&fixture, &other).is_none(),
             "an unanswered question keeps no row"
         );
 
