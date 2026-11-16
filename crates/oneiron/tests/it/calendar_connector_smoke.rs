@@ -700,17 +700,13 @@ fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
 }
 
 /// The owner approves every passport the import filed on `event`. The import
-/// gate files them pending review, and a write takes its UID and SEQUENCE only
-/// from an admitted passport (FIX 8650, #4292; Engine ruling
-/// T0F-CALDAV-PENDING-PASSPORT-UID = A, Tue 10 Nov 09:02), so a write-back of
-/// a pulled EVENT follows the owner's approval of the import.
+/// gate files them pending review. A write takes its UID from an admitted
+/// passport, or from the importer's own pending passport on the same calendar
+/// (the lead's ruling 10 Nov 10:3x), and its SEQUENCE from admitted passports
+/// and the seat's remote copy (FIX 8650, #4292; Engine ruling
+/// T0F-CALDAV-PENDING-PASSPORT-UID = A, Tue 10 Nov 09:02). These write-backs
+/// follow the owner's approval of the import, so they pin the admitted path.
 fn approve_import_passports(vault: &Vault, event: EntityId) {
-    settle_import_passports(vault, event, ClaimSettleDecision::Approve);
-}
-
-/// The owner settles every passport the import filed on `event` with
-/// `decision`, after reviewing each one.
-fn settle_import_passports(vault: &Vault, event: EntityId, decision: ClaimSettleDecision) {
     let (id, owner) = seat_owner(vault);
     let memory = vault.memory(id, EdgeActorClass::Human);
     for (passport, _) in live_passports_for_event(vault, &event).expect("passports") {
@@ -730,11 +726,11 @@ fn settle_import_passports(vault: &Vault, event: EntityId, decision: ClaimSettle
                 &ClaimSettleRequest {
                     claim_ref,
                     review_id: review.review_id,
-                    decision,
+                    decision: ClaimSettleDecision::Approve,
                     grant_ref: None,
                 },
             )
-            .expect("settle the import's passport");
+            .expect("approve the import's passport");
     }
 }
 
@@ -1353,27 +1349,38 @@ fn caldav_pending_import_writes_back_under_its_own_uid() {
     assert_eq!(object.last_sequence, 2);
 }
 
-/// The exception widens nothing: once the owner rejects the import's passport,
-/// a write-back takes no UID from it and mints the EVENT's own, as FIX 8650's
-/// admitted-only rule says for every UID but the importer's own pending one.
+/// The exception widens nothing: once the owner withdraws the import's
+/// passport, a write-back takes no UID from it and mints the EVENT's own, as
+/// FIX 8650's admitted-only rule says for every UID but the importer's own
+/// live pending one. (A MACHINE-filed proposal with no pending-consent row is
+/// withdrawn by a retract; the settle door declines no such proposal.)
 #[test]
-fn caldav_rejected_import_takes_no_uid_on_write_back() {
+fn caldav_retracted_import_takes_no_uid_on_write_back() {
     let (_dir, vault) = temp_vault();
     let wire = StubCalDavWire::default();
     wire.queue_sync(Ok(upsert_batch(
-        Some("tok-rejected-1"),
-        body(&[EventSpec::new("uid-rejected@x", 1)]),
-        "/stub/work/uid-rejected.ics",
+        Some("tok-retracted-1"),
+        body(&[EventSpec::new("uid-retracted@x", 1)]),
+        "/stub/work/uid-retracted.ics",
         Some("v1"),
     )));
     let connector = CalDavConnector::new(wire);
     let seat = caldav_seat();
     let pulled = run_sync(&vault, &seat, &connector, T0);
     assert_eq!(counters(&pulled), (1, 0, 0, 0));
-    let event = resolve_event_by_uid(&vault, "uid-rejected@x")
+    let event = resolve_event_by_uid(&vault, "uid-retracted@x")
         .expect("resolve")
         .expect("event");
-    settle_import_passports(&vault, event, ClaimSettleDecision::Reject);
+    for (passport, _) in live_passports_for_event(&vault, &event).expect("passports") {
+        vault
+            .retract_claim(&passport, T0 + 50)
+            .expect("the owner withdraws the import's passport");
+        let body = vault
+            .get_claim(&passport)
+            .expect("read the passport")
+            .expect("the passport is kept on record");
+        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
+    }
 
     connector
         .wire()
@@ -1385,7 +1392,7 @@ fn caldav_rejected_import_takes_no_uid_on_write_back() {
     assert_eq!(puts.len(), 1, "one put");
     assert!(
         puts[0].uid.ends_with("@calendar.invalid"),
-        "a rejected passport gives no UID: {}",
+        "a retracted passport gives no UID: {}",
         puts[0].uid
     );
     assert_eq!(puts[0].href, None, "no pulled object is addressed");
