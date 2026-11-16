@@ -680,11 +680,13 @@ fn a_new_kits_activation_keeps_the_kit_restored_machine_standing() {
 /// row `R_A` signed at the restore is older than the window when kit B
 /// revokes `R_A`, and goes stale at that moment.
 ///
-/// Red at the carry chosen after the revocation (fe9beb1d9758): kit B's
-/// confirm is refused, because its activation revoked `R_A` before it
-/// enrolled the new R, and the enrolment's carrier, this install, stood only
-/// on `R_A`'s now stale row (no carrier). Green when the activation enrols
-/// the new R first and the carry is chosen before the revocation: the new R
+/// Red at the carry chosen after the revocation (fe9beb1d9758): that fold
+/// already reads the row stale, so nothing carried it. Kit B's confirm then
+/// fails (its activation revoked `R_A` before it enrolled the new R, and
+/// this install, the enrolment's carrier and the wraps' publisher, stood on
+/// that row), or, where the anchor's mark still admits the carrier, the
+/// post-24 h liveness assertion fails. Green when the activation enrols the
+/// new R first and the carry is chosen before the revocation: the new R
 /// signs the next revision, and 24 h later the standing is still live.
 #[test]
 fn a_new_kits_activation_keeps_an_aged_kit_restored_machine_standing() {
