@@ -404,6 +404,12 @@ pub(crate) struct CoreContextPackRequest {
     /// whole requested limit is served.
     #[serde(skip)]
     pub(super) limit_clamped: bool,
+    /// The chat host's TURN this pack's recall serves, stamped on its
+    /// retrieval run (the convention on [`oneiron::store::RetrievalTurn`]):
+    /// a live chat turn sets it; never on the wire, so no caller names one.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 }
 
 impl CoreContextPackRequest {
