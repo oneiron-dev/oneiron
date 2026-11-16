@@ -1,5 +1,7 @@
 //! ChannelIdentity addressability shapes with wire serde.
 
+use oneiron_contracts::register::Register;
+
 /// ChannelIdentity addressability shape (OF-347 R1, ARCH-0063 R2).
 #[derive(
     Debug,
@@ -13,9 +15,11 @@
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
+#[register("channel.identity.shape")]
 pub enum ChannelIdentityShape {
     DedicatedAddress,
     DedicatedHandle,
@@ -30,24 +34,8 @@ pub enum ChannelIdentityShape {
 
 impl ChannelIdentityShape {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DedicatedAddress => "dedicated_address",
-            Self::DedicatedHandle => "dedicated_handle",
-            Self::SharedPresence => "shared_presence",
-            Self::DelegatedGrant => "delegated_grant",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "dedicated_address" => Some(Self::DedicatedAddress),
-            "dedicated_handle" => Some(Self::DedicatedHandle),
-            "shared_presence" => Some(Self::SharedPresence),
-            "delegated_grant" => Some(Self::DelegatedGrant),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// Whether the product itself holds the underlying account.
