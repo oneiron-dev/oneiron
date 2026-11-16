@@ -5,9 +5,11 @@
 //! generation, every enrollment sample with its vector and the active-space
 //! pointer, through the one deletion routine withdrawal and retention
 //! pruning use, and every render-reference bank row the subject holds,
-//! through the routine withdrawal uses. Erasing a counterparty contact
-//! removes the prints enrolled for it. The consent log keeps its
-//! non-biometric decisions; no read filter stands in for the removal.
+//! through the bank's owner-row routine, which no withdrawal calls: a
+//! recognition withdrawal keeps the render bank, and a render withdrawal
+//! keeps its history. Erasing a counterparty contact removes the prints
+//! enrolled for it. The consent log keeps its non-biometric decisions; no
+//! read filter stands in for the removal.
 
 use heed::RwTxn;
 
