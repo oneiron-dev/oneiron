@@ -18,9 +18,10 @@ use super::*;
 use crate::EntityId;
 
 pub(super) use super::entry_transition_predicates::{
-    active_participant_keys, entry_is_retired, has_authority_consent, lands_restriction_only,
-    public_participant_keys, public_row_is_retired, row_is_re_root, row_is_retired,
-    row_is_retired_device_op,
+    active_participant_keys, entry_is_retired, floor_refuses, has_authority_consent,
+    lands_restriction_only, public_participant_keys, public_row_is_retired, row_changes_roster,
+    row_floor_refuses, row_is_re_root, row_is_retired, row_is_retired_device_op,
+    standing_changes_roster,
 };
 
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
@@ -69,10 +70,13 @@ pub(super) fn fold_entry_state(
     // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_fold::NoVouch`).
+    // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
+    // refuses a roster row, which vouches for its own signer's rows below it
+    // that a floor refuses (`changes_roster`, `floor_refuses`); its signer's
+    // own order binds it below.
     let past_floor = seq_past_floor(hash, entry.seq, context);
     let vouched = floor_vouched(hash, context);
-    if past_floor && !vouched && !lands_restriction_only(&entry.op) {
+    if past_floor && !vouched && floor_refuses(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     let restriction_only = lands_restriction_only(&entry.op)
@@ -567,10 +571,11 @@ pub(super) fn fold_row_state(
 /// The transition of a sealed row whose record does not open here: structure
 /// only (RULING PLAN-L5-22-ERASED-ROWS = A). Its signer is judged as its
 /// kind's open row judges it, on the public fields alone ([`PublicStanding`]):
-/// a retired device op, the sequence floor, the incoming device's posture,
-/// parents of one vault, and the kind's signer rule with its strict
-/// sequence. A row any of them refuses is refused, as the open row would be;
-/// no sealed kind lands restriction only. A row that stands moves only its
+/// a retired device op, the sequence floor (which refuses no roster kind,
+/// `standing_changes_roster`), the incoming device's posture, parents of one
+/// vault, and the kind's signer rule with its strict sequence. A row any of
+/// them refuses is refused, as the open row would be; no sealed kind lands
+/// restriction only. A row that stands moves only its
 /// signer's sequence: no roster entry, slip, grant, answer, refusal, handoff
 /// or any other effect, so nothing it made counts, and a later row that
 /// needs its effect does not count either. A genesis starts its vault's
@@ -595,7 +600,10 @@ fn fold_public_row_state(
     if public_row_is_retired(row, hash, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    if seq_past_floor(hash, scaffold.seq, context) && !floor_vouched(hash, context) {
+    if seq_past_floor(hash, scaffold.seq, context)
+        && !floor_vouched(hash, context)
+        && !standing_changes_roster(standing)
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     if let Some((key, tier, roles)) = standing.incoming_device()

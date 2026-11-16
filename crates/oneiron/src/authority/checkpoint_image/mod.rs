@@ -666,7 +666,7 @@ impl Vault {
             .copied()
             .collect();
         // A local floor is an anti-rollback receipt: an image never carries
-        // what one decided.
+        // what one decided. It decides no roster row (`changes_roster`).
         let metas: Vec<_> = covered
             .iter()
             .zip(&fold_rows)
@@ -681,6 +681,7 @@ impl Vault {
                 .sequence_floors
                 .get(hash)
                 .is_some_and(|floor| row.seq() < *floor)
+                && !super::entry_transition::row_changes_roster(row)
         }) {
             return Err(refused(
                 "a local sequence floor decides a covered authority row",
