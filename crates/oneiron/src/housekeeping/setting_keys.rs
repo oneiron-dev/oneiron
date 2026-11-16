@@ -1,4 +1,4 @@
-//! The cadences of the engine's 19 sweeps (DESIGN 15-setting-primitive, stage 5a): one catalogue
+//! The cadences of the engine's 20 sweeps (DESIGN 15-setting-primitive, stage 5a): one catalogue
 //! key each, `housekeeping.<sweep>.every`, whose value in force arms the sweep's job
 //! ([`super::jobs`]). The owner sets them, and so does a live holder of the
 //! `maintenance_cadence` class of `engine.controls` unless the owner has set the key. The write
@@ -174,6 +174,13 @@ crate::setting::setting_keys! {
     };
     /// How often the OAuth server's rows past their lifetime are dropped: hourly.
     pub(crate) SWEEP_OAUTH_EXPIRY: Trigger = "housekeeping.oauth_expiry.every" {
+        kind: Kind::new(hourly).tighter(more_often_is_tighter),
+        set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
+        on_change: Some(crate::schedule::rearm_on_change),
+    };
+    /// How often the verifiers of signing links past their hard expiry are removed: hourly. Each
+    /// use refuses a link past its expiry, so none waits on the job.
+    pub(crate) SWEEP_ESIGN_TOKEN_EXPIRY: Trigger = "housekeeping.esign_token_expiry.every" {
         kind: Kind::new(hourly).tighter(more_often_is_tighter),
         set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
         on_change: Some(crate::schedule::rearm_on_change),

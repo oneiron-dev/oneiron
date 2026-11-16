@@ -1,4 +1,4 @@
-//! The engine's 19 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
+//! The engine's 20 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
 //!
 //! Each engine sweep is one [`JobSpec`] whose trigger is its cadence key
 //! ([`super::setting_keys`]): the engine arms it at a handle's first pass and in the write that
@@ -152,6 +152,8 @@ sweep_jobs! {
     MODEL_PACK_RETIREMENT_JOB = "housekeeping.model_pack_retirement", SWEEP_MODEL_PACK_RETIREMENT, at_open: false;
     /// The OAuth server's rows past their lifetime.
     OAUTH_EXPIRY_JOB = "housekeeping.oauth_expiry", SWEEP_OAUTH_EXPIRY, at_open: false;
+    /// Signing links past their hard expiry (ARCH-0064 SGN-09).
+    ESIGN_TOKEN_EXPIRY_JOB = "housekeeping.esign_token_expiry", SWEEP_ESIGN_TOKEN_EXPIRY, at_open: false;
 }
 
 /// The code of `sweep`'s job.
