@@ -56531,7 +56531,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "re-export": 22
      }
     },
@@ -56848,7 +56848,21 @@
      "purpose": "The Files world (FIX 6942; ARCH-0027 #files-world): an opt-in, device-local world over folders the owner…",
      "surface": {
       "crate-vis": 1,
-      "re-export": 2
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NameMatch"
+     ],
+     "path": "src/note/files/search.rs",
+     "purpose": "The name tier of a Files world search (ARCH-0027 #files-world: \"Search goes by name first and meaning…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -56876,7 +56890,7 @@
      "path": "src/note/folder_source/mod.rs",
      "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "re-export": 2,
       "struct": 4
@@ -93351,8 +93365,53 @@
      "purpose": "The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`…",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "fn": 12,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FileCitation",
+      "FilesAskOutcome",
+      "FilesAskText",
+      "FilesAskedFile",
+      "FilesNoCitedAnswer",
+      "FilesSourceAskAnswer",
+      "FilesSourceAskRequest"
+     ],
+     "path": "src/verbs/files_ask.rs",
+     "purpose": "`vault.files.sources.ask` (ARCH-0027 #files-world: \"The owner can ask about a file and get an answer with…",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FilesDeviceAnswer",
+      "FilesMeaningState",
+      "FilesSearchDevices",
+      "FilesSearchHit",
+      "FilesSearchMatch",
+      "FilesSourceSearchAnswer",
+      "FilesSourceSearchRequest",
+      "FilesUnreachedDevice",
+      "FilesUnreachedWhy"
+     ],
+     "path": "src/verbs/files_search.rs",
+     "purpose": "`vault.files.sources.search` (ARCH-0027 #files-world: \"Search goes by name first and meaning second\"): the…",
+     "surface": {
+      "const": 3,
+      "enum": 4,
+      "fn": 7,
+      "struct": 5
      }
     },
     {
@@ -93755,7 +93814,7 @@
       "crate-vis": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 130,
+      "re-export": 132,
       "struct": 9
      }
     },
@@ -99599,6 +99658,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/files_search.rs",
+     "purpose": "`vault.files.sources.search` (census L2-16; ARCH-0027 #files-world: \"Search goes by name first and meaning…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100894,6 +100961,14 @@
      "notable": [],
      "path": "tests/note_edit_lands_by_grant.rs",
      "purpose": "Whether a NOTE edit lands or waits is the Grant's answer for the actor and the NOTE, never the writer's…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/note_indexed_recall.rs",
+     "purpose": "An owner's recall finds a NOTE by its words (ARCH-0032: a research NOTE is vault-readable), and still leaves…",
      "surface": {}
     },
     {
@@ -103613,7 +103688,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -104250,7 +104325,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 143,
+     "files": 145,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104315,8 +104390,8 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7607,
-   "test_files": 1350
+   "source_files": 7610,
+   "test_files": 1352
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -119907,6 +119982,21 @@
   "oneiron-mesh-transport": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FilesSearchService"
+     ],
+     "path": "src/files_search.rs",
+     "purpose": "Cross-device Files search over the mesh (ARCH-0027 #files-world: \"Cross-device search over the iroh mesh…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -119976,7 +120066,7 @@
      "surface": {
       "enum": 1,
       "fn": 2,
-      "mod": 3,
+      "mod": 4,
       "re-export": 3,
       "struct": 5,
       "trait": 8,
@@ -120021,6 +120111,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/files_mesh_search.rs",
+     "purpose": "Cross-device Files search over the mesh (census L2-16 PR 3; ARCH-0027 #files-world: \"Cross-device search…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -120030,6 +120128,13 @@
     }
    ],
    "modules": {
+    "files_search": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Cross-device Files search over the mesh (ARCH-0027 #files-world: \"Cross-device search over the iroh mesh…"
+    },
     "iroh_transport": {
      "files": 4,
      "impl_vault": false,
@@ -120054,8 +120159,8 @@
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 7,
-   "test_files": 2
+   "source_files": 8,
+   "test_files": 3
   },
   "oneiron-model": {
    "files": [
@@ -142422,13 +142527,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/files_doors.rs",
      "purpose": "The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.convert`…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/files_doors/ask.rs",
+     "purpose": "`vault.files.sources.ask` (census L2-16 PR 2; ARCH-0027 #files-world: \"The owner can ask about a file and…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -160125,6 +160240,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/files_ask_cited.rs",
+     "purpose": "`vault.files.sources.ask` (census L2-16 PR 2; ARCH-0027 #files-world: \"The owner can ask about a file and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/first_party_html_isolation.rs",
      "purpose": "First-party HTML on the API's origin is isolated from every other document there (ARCH-0050…",
      "surface": {}
@@ -160899,7 +161022,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 788,
+     "files": 789,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -161454,8 +161577,8 @@
    },
    "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1891,
-   "test_files": 271
+   "source_files": 1892,
+   "test_files": 272
   },
   "oneiron-skill-attribution": {
    "files": [
