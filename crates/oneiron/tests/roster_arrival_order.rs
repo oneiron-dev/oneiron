@@ -907,5 +907,12 @@ fn a_reroot_on_another_signers_row_past_the_floor_holds_in_either_arrival_order(
             install.puts,
             install.fold.issues
         );
+        assert!(
+            applied(&install.fold).contains(&hash_of(&binding))
+                && applied(&install.fold).contains(&hash_of(&handoff)),
+            "install {name} applies B's lower binding and the handoff on it; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
     }
 }
