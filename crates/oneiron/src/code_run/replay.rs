@@ -223,6 +223,24 @@ fn cached_rows(
     cached.rows.clone()
 }
 
+/// Whether a stored row's value names a lifted secret's handle in any of its
+/// text (OF-067): the side-row wall left it there in place of the value.
+fn names_a_handle(value: &rmpv::Value) -> bool {
+    match value {
+        rmpv::Value::String(text) => text
+            .as_str()
+            .is_some_and(crate::batch::secret_scan::LiftedKeys::names_a_handle),
+        rmpv::Value::Binary(bytes) => {
+            crate::batch::secret_scan::LiftedKeys::names_a_handle(&String::from_utf8_lossy(bytes))
+        }
+        rmpv::Value::Array(items) => items.iter().any(names_a_handle),
+        rmpv::Value::Map(entries) => entries
+            .iter()
+            .any(|(key, value)| names_a_handle(key) || names_a_handle(value)),
+        _ => false,
+    }
+}
+
 /// Persisted replay record for a first-party code run. Imported result
 /// outputs may have unknown frozen inputs and cannot seed deterministic execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -421,6 +439,13 @@ impl CodeRunReplayRecord {
     /// as the side-row wall admitted it (OF-067). An append rewrites the whole
     /// row, so a call an earlier append stored keeps its handles and the wall
     /// mints only for the calls this append adds.
+    ///
+    /// A resumed step that runs a changed call live at its recorded seq (a pure
+    /// change or an owner's refire, L8-23) puts another call at the same seq,
+    /// effect and stamps: the held row stands in its place only when it holds
+    /// the same request, or when its request names a lifted handle, the form
+    /// the wall left the same call's request in. Otherwise the live row stays,
+    /// so the record keeps the call that ran, not the one it replaced.
     pub(crate) fn over_held(&self, held: Option<&Self>) -> Cow<'_, Self> {
         let Some(held) = held.filter(|held| held.run_id == self.run_id) else {
             return Cow::Borrowed(self);
@@ -432,6 +457,7 @@ impl CodeRunReplayRecord {
                 && call.effect == kept.effect
                 && call.started_at_ms == kept.started_at_ms
                 && call.finished_at_ms == kept.finished_at_ms
+                && (call.request == kept.request || names_a_handle(&kept.request))
             {
                 // A parked call keeps the rows its delivered reply listed
                 // (FIX 5455), which the held copy has not kept yet.

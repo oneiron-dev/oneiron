@@ -6,6 +6,8 @@ use super::*;
 use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
 
+use super::deadline_replay::RESUME_PREFLIGHT_HELD;
+
 /// The ordinal of a stored-value path (`store_result_output_path`'s shape),
 /// for the replay of the store that made it: `None` for any other path.
 fn stored_path_ordinal(path: &str) -> Option<usize> {
@@ -164,6 +166,11 @@ impl RecordingJsHost<'_, '_> {
             .streamed
             .take_store()
             .ok_or(Error::InvalidConfig("store sent no body".into()))?;
+        // A dry walk stores nothing (L8-23): its body and occurrence would
+        // commit before the entry holds with the walk's report.
+        if self.pending_replay_dry() {
+            return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+        }
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(result_refusal("host_bridge_halted"));
         }
@@ -346,6 +353,10 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
+        // A dry walk reads nothing live (L8-23).
+        if self.pending_replay_dry() {
+            return Ok(Err(result_refusal(RESUME_PREFLIGHT_HELD)));
+        }
         self.admit_result_read(storage)?;
         let own = if callable {
             self.result_rows()
@@ -730,6 +741,10 @@ impl RecordingJsHost<'_, '_> {
             |code: &str| Error::InvalidConfig(format!("recorded output read refused: {code}"));
         if self.hard_failure.is_some() || self.left_a_gap {
             return Err(refused("host_bridge_halted"));
+        }
+        // A dry walk reads nothing live (L8-23).
+        if self.pending_replay_dry() {
+            return Err(refused(RESUME_PREFLIGHT_HELD));
         }
         if self.declined.is_some() {
             return Err(refused("task_declined"));

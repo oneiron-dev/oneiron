@@ -21,8 +21,9 @@ use super::*;
 const PENDING_STEP_HELD: &str = "pending_step_held";
 
 /// What a resumed step's guest reads once its walk turned dry (L8-23): the call ran nowhere,
-/// and the entry holds with the walk's report.
-const RESUME_PREFLIGHT_HELD: &str = "resume_preflight_held";
+/// and the entry holds with the walk's report. A result call there answers it too: a dry walk
+/// stores and reads nothing live.
+pub(super) const RESUME_PREFLIGHT_HELD: &str = "resume_preflight_held";
 
 /// What a resumed step's guest reads for a changed effect step the owner left (L8-23): the call
 /// ran nowhere, the recorded row stands, and the step goes on without it.
