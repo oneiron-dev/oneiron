@@ -677,3 +677,58 @@ fn the_verbs_carry_the_plan_and_the_confirm_as_json() {
         "the held key signs as primary"
     );
 }
+
+/// A plan that names another member than the one the Owner confirms on
+/// their device signs nothing (REVIEW2 #9093 P1-1). The Owner starts the
+/// removal of the co-Owner; the host answers the same act with a plan whose
+/// member and keys are a third Owner's, whose keys the device's copy does
+/// show. Red at b95bb7a6f6: the device signs the revokes of the third
+/// Owner's keys.
+#[test]
+fn a_plan_swapped_to_another_member_signs_nothing_on_the_device() {
+    let hosted = hosted();
+    hosted.enrol_device_key(hosted.co_owner, CO_OWNER_SEED);
+    let third = hosted.add_owner();
+    let third_key = hosted.enrol_device_key(third, THIRD_OWNER_SEED);
+    hosted
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(proof(&hosted.vault, hosted.owner), ActSurface::ThisInstall),
+            &hosted.issuer,
+        )
+        .expect("the owner enrols this install's owner signing key");
+    let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
+    let mut swapped = hosted.plan(hosted.owner, &act);
+    swapped.member = third;
+    swapped.revoked = vec![public(&third_key)];
+    let device = ActAuthority::Owner(proof(&hosted.vault, hosted.owner), ActSurface::ThisInstall);
+    let signed = hosted.vault.sign_owner_key_move_as(&device, &swapped);
+    assert!(
+        signed.is_err(),
+        "the device signs no revoke of a member the Owner did not confirm: {signed:?}"
+    );
+}
+
+/// A plan is answered only for an act that has completed, so a confirm
+/// exists only for a move that is due (REVIEW2 #9093 P2-1). With a seven-day
+/// owner-change wait the removal's objection window is open. Red at
+/// b95bb7a6f6: the plan is answered inside the window.
+#[test]
+fn a_plan_is_answered_only_once_the_act_has_completed() {
+    let hosted = hosted();
+    hosted.enrol_device_key(hosted.co_owner, CO_OWNER_SEED);
+    hosted
+        .vault
+        .set_owner_change_wait_days(&proof(&hosted.vault, hosted.owner), SHARED, Some(7))
+        .expect("a seven-day owner-change wait");
+    let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
+    let planned = hosted.vault.owner_key_move_plan(
+        &proof(&hosted.vault, hosted.owner),
+        &act,
+        Some(&hosted.issuer),
+    );
+    assert!(
+        planned.is_err(),
+        "no plan while the act's objection window is open: {planned:?}"
+    );
+}
