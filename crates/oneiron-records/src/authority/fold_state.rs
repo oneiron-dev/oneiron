@@ -12,8 +12,8 @@ pub enum AuthorityFoldIssue {
     InvalidEntry(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
-    /// Entry is signed by a key a handoff retired, outside that handoff's
-    /// own ancestry.
+    /// Entry is signed by a key a handoff or a revocation retired, outside
+    /// that row's own ancestry.
     RetiredSigner(AuthorityEntryHash),
     /// A handoff that conflicts with another (a fork, a cycle) or yields to
     /// one whose fence stands: it installs no successor.
