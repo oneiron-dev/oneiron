@@ -91,8 +91,8 @@ pub mod home_pick_fold;
 pub mod home_sections;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
-pub mod host_root_row_signature;
 pub mod host_root_loss;
+pub mod host_root_row_signature;
 #[cfg(feature = "sync")]
 pub mod host_taint_replica;
 pub mod house_link;
@@ -114,9 +114,9 @@ pub mod live_window_import;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
-pub mod mail_pack_setting_keys;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
@@ -186,8 +186,8 @@ pub mod sync_parted_row_binding;
 pub mod task_ask_role_routing;
 pub mod tray_answered_removal;
 pub mod turn_programs;
-pub mod turn_words;
 pub mod turn_sitting;
+pub mod turn_words;
 pub mod typed_reply_handle;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
