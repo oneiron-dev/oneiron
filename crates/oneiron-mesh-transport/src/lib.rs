@@ -14,6 +14,7 @@ pub use oneiron::sync::mesh_path::{
 use oneiron::{ErrorKind, Vault, entity_id::EntityId};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub mod files_search;
 #[cfg(feature = "iroh")]
 pub mod iroh_transport;
 #[cfg(feature = "sync")]
