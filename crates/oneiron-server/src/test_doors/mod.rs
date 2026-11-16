@@ -40,6 +40,7 @@ pub mod recovery_box_hold;
 pub mod replay_admission;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod seal_judge;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
