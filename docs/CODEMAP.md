@@ -38,7 +38,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 12 | 3 | 0 |
 | [oneiron-hex](codemap/oneiron-hex.md) | Hex text for bytes: encode, decode and check in one place | 1 | 0 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 5 | 1 |
-| [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 15 | 3 | 2 |
+| [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 20 | 3 | 0 |
 | [oneiron-lens-wire](codemap/oneiron-lens-wire.md) | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… | 25 | 4 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 8 | 1 | 0 |
 | [oneiron-linkedin-policy](codemap/oneiron-linkedin-policy.md) | LinkedIn seat policy values consumed by outbound admission | 2 | 0 | 0 |
@@ -669,11 +669,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `auth_bound` | file | 1 | s | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) |
 | `dpapi_names` | file | 1 | s | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… |
 | `file` | file | 1 | m | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
-| `linux_tpm` | file | 1 | L | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
+| `linux_tpm` | file+dir | 4 | m | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
 | `macos_presence` | file | 1 | s | macOS: the device's own unlock sheet, and the window server's word on the screen lock (row… |
 | `memory` | file | 1 | s | Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its… |
 | `sealed_bytes` | file | 1 | s | A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN) |
-| `user_presence` | file | 1 | L | Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov… |
+| `user_presence` | file+dir | 3 | m | Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov… |
 | `windows` | file | 1 | m | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
 | `windows_presence` | file | 1 | s | Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row… |
 
