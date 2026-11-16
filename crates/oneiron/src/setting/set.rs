@@ -168,7 +168,9 @@ impl Vault {
     ///
     /// The value passes the side-row wall before it is checked and stored, as an authored row
     /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
-    /// change. A value equal to the row's writes nothing.
+    /// change. A value equal to the row's writes nothing, but for the owner's over a row the owner
+    /// did not set: that writes, and the row becomes the owner's, so a non-owner's later move
+    /// meets the owner's row.
     ///
     /// # Errors
     ///
@@ -352,10 +354,19 @@ fn set_in_txn(
     let readable = !matches!(prior, Some(None));
     let prior_row = prior.flatten();
     let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
+    // The owner's equal value over a row the owner did not set (a holder's, a subject's, the
+    // engine's, an approved check-in's) writes, and the row becomes the owner's: a later move of a
+    // non-owner then meets the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A).
+    let owner_takes_row = matches!(caller, SettingCaller::Owner(_))
+        && prior_row
+            .as_ref()
+            .is_some_and(|row| !matches!(row.setter, Setter::Owner));
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
-    let unchanged =
-        readable && prior_value.as_ref() == change.value && prior_weight == change.weight_runs;
+    let unchanged = readable
+        && !owner_takes_row
+        && prior_value.as_ref() == change.value
+        && prior_weight == change.weight_runs;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.
