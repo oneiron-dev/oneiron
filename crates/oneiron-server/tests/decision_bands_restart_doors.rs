@@ -244,7 +244,7 @@ fn a_band_version_still_only_advances_after_a_restart() {
                 (
                     StatusCode::BAD_REQUEST,
                     json!("BAD_REQUEST"),
-                    json!("learned band version must advance")
+                    json!("invalid config: learned band version must advance")
                 ),
                 "version {version}: {refused}"
             );
