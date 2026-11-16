@@ -15,6 +15,13 @@
 //! external-effect ladder is fail-closed and a compliant dispatch lands on
 //! `gate.pending.external_effect_authority`. Nothing reaches the transport in any arm.
 //!
+//! The governed arms record a UK jurisdiction on the member (`record_uk_jurisdiction`). With no
+//! jurisdiction recorded, the pack routes to its EU/DE strict pole, whose email row needs an
+//! explicit opt-in whatever the legal form (FIX CAMPAIGN-COMPLIANCE-ORACLE-CONSENT-CONTRACT): there
+//! the pack itself holds every arm, and the key would change nothing. Under UK reg 22 a corporate
+//! subscriber needs no consent, so the pack allows the evidenced send, and every hold below is
+//! the key's.
+//!
 //! Red/green: on the base (the head minus `setting_keys.rs` and the overlay) the owner's set
 //! fails with an unknown key, so all three tests fail at the set. That is the expected red;
 //! nothing here works around it.
@@ -82,6 +89,8 @@ const SENDER_SEED: u8 = 0xB6;
 const MEMBERSHIP_SEED: u8 = 0xB7;
 const EMAIL_ELEMENTS_SEED: u8 = 0xB8;
 const EVIDENCE_SEED: u8 = 0xBA;
+/// The member's `comm.jurisdiction` observation (see `record_uk_jurisdiction`).
+const JURISDICTION_SEED: u8 = 0xBF;
 /// The consent record the consent-citing arms put.
 const CONSENT_SEED: u8 = 0xC1;
 /// The replacement evidence that cites the consent record (see `cite_consent_from_fresh_evidence`).
@@ -212,6 +221,30 @@ fn enroll(vault: &Vault, member: EntityId) -> Result<()> {
                 Value::Array(vec![channel_row(EMAIL), channel_row(DM)]),
             ),
         ]),
+    )
+}
+
+/// Records the member's jurisdiction as UK, the way the oracle records JP: an ACTIVE, approved
+/// `comm.jurisdiction` observation with an owner attestation. UK email lets a corporate legal
+/// form stand in for consent, so the pack allows the evidenced send without a consent record.
+fn record_uk_jurisdiction(vault: &Vault, member: EntityId) -> Result<()> {
+    let mut jurisdiction = ClaimBody::new(
+        "comm.jurisdiction",
+        ClaimSubject::Entity(member),
+        map(&[
+            ("jurisdiction", Value::from("UK")),
+            ("observed_at", Value::from(10u64)),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    jurisdiction.evidence = Some(Value::from("owner attestation"));
+    vault.put_claim(
+        &common::entity(JURISDICTION_SEED),
+        &jurisdiction,
+        TimeRange { start: 1, end: 1 },
+        1,
     )
 }
 
@@ -377,6 +410,7 @@ fn a_campaign_send_needs_no_recorded_consent_by_default_and_waits_for_one_once_t
     let mut sink = RecordingSink::default();
 
     enroll(vault, fixture.member)?;
+    record_uk_jurisdiction(vault, fixture.member)?;
     configure_message_elements(
         vault,
         EMAIL_ELEMENTS_SEED,
@@ -465,19 +499,37 @@ fn a_consent_record_without_an_opt_in_holds_the_send_as_a_missing_lawful_basis()
     let vault = &fixture.vault;
     let mut sink = RecordingSink::default();
 
-    set_contact_without_recorded_objection(vault, false)?;
     enroll(vault, fixture.member)?;
+    record_uk_jurisdiction(vault, fixture.member)?;
     configure_message_elements(
         vault,
         EMAIL_ELEMENTS_SEED,
         common::entity(EMAIL_IDENTITY_SEED),
     )?;
 
-    // The record resolves — it is ACTIVE, on the member, and cited — but it does not opt in, so
-    // the hold is a missing lawful basis rather than missing evidence.
+    // The record resolves — it is ACTIVE, on the member, and cited — but it does not opt in.
     let consent = put_consent_record(vault, fixture.member, &["email"], false)?;
     put_evidence_citing_consent(vault, EVIDENCE_SEED, fixture.member, consent)?;
 
+    // The control: with the key at its default the pack's UK corporate row decides, and the
+    // record's missing opt-in holds nothing.
+    let allowed = dispatch(
+        vault,
+        "intent:consent-no-opt-in-default-allow",
+        EMAIL,
+        COUNTERPARTY,
+        common::entity(EMAIL_IDENTITY_SEED),
+        &mut sink,
+    );
+    assert!(
+        cleared_compliance(&allowed),
+        "with the key at its default, the pack allows the corporate send: {codes:?}",
+        codes = allowed.gate_reason_codes
+    );
+
+    // With the key off the same send is held, and as a missing lawful basis rather than missing
+    // evidence, because a record resolves.
+    set_contact_without_recorded_objection(vault, false)?;
     let held = dispatch(
         vault,
         "intent:consent-no-opt-in-held",
