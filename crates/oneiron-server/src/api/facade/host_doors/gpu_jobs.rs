@@ -13,8 +13,8 @@ use std::sync::Arc;
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms,
-    GpuJobRef, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
+    GpuJobConnector, GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest,
+    GpuJobQuoteTerms, GpuJobRef, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
 };
 use oneiron::llm::run_admission::ResumeRefused;
 use oneiron::memory::{
@@ -25,7 +25,7 @@ use oneiron::memory::{
 use super::super::FacadeApiError;
 use super::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
-use crate::gpu_host::{GpuHostError, job_admission, now_ms, offer_with_backend};
+use crate::gpu_host::{GpuHostError, NoProvider, job_admission, now_ms, offer_with_backend};
 use crate::server::SyncServer;
 
 impl From<GpuHostError> for MemoryError {
@@ -225,7 +225,8 @@ pub(crate) async fn vault_gpu_jobs_list(
 
 /// `vault.gpu.jobs.cancel`: the owner ends their job. A live chunk is
 /// terminated and settles its billed time; a stopped job gives up its
-/// resume. When the provider does not answer, the cancel stands and the
+/// resume, and calls no provider, so it needs no offer or backend on this
+/// host. When the provider does not answer, the cancel stands and the
 /// worker terminates the chunk on its next steps.
 pub(crate) async fn vault_gpu_jobs_cancel(
     server: &Arc<SyncServer>,
@@ -236,7 +237,11 @@ pub(crate) async fn vault_gpu_jobs_cancel(
         let owner = owner_act(owner, GpuJobVerb::Cancel)?;
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
-        let (_, connector) = offer_with_backend(server, &job.offer.name)?;
+        let connector: Arc<dyn GpuJobConnector> = if job.state.is_live() {
+            offer_with_backend(server, &job.offer.name)?.1
+        } else {
+            Arc::new(NoProvider)
+        };
         let job = match server.vault.cancel_gpu_job(
             owner,
             &id,
