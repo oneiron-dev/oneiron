@@ -1,5 +1,5 @@
-//! The owner's archive restore landing for `dreamer_runner` live tables: the action-mode
-//! policy and free-time receipts install through their owning modules' typed helpers.
+//! The owner's archive restore landing for `dreamer_runner` live tables: free-time receipts
+//! install through their owning module's typed helper.
 
 use crate::batch::export::ArchiveRetainedSideRow;
 use crate::batch::export::OwnerArchiveRestorePermit;
@@ -23,11 +23,6 @@ pub(crate) fn land_archived_dreamer_runner_rows_in_txn(
     let mut outcomes = Vec::with_capacity(rows.len());
     for row in rows {
         let outcome = match row.source_table.as_str() {
-            name if name == side_table::DREAMER_ACTION_MODE_POLICY.name => {
-                super::maintenance::action_mode::land_archived_dreamer_action_mode_policy_row_in_txn(
-                    vault, txn, permit, row,
-                )?
-            }
             name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => {
                 Vault::land_archived_dreamer_free_time_receipt_row_in_txn(vault, txn, permit, row)?
             }

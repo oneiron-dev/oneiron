@@ -11,6 +11,7 @@ mod output_guard;
 mod pins;
 mod preview;
 mod privacy_erase;
+mod retrieval_turn;
 mod roles;
 mod session;
 // An owner-named residual speaker handed into a PERSON window (FIX 3634).

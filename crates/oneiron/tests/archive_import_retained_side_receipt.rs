@@ -1,7 +1,7 @@
 #![cfg(oneiron_test_support)]
 //! The whole-vault import receipt's retained-rows summary (SIDE-2a).
 //!
-//! The owner import of the retained-rows fixture installs the backup choice
+//! The owner import of the retained-rows fixture installs the snapshot bounds
 //! live and reports two inert inserted rows (the standing grant and the
 //! grant's gate receipt) plus one installed row; it names each table's counts
 //! and the manifest's 23 omitted tables. A repeat import reports nothing
@@ -41,10 +41,10 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
         .import_whole_vault_archive_from_as_owner(Cursor::new(&source.archive), &dest_owner)
         .expect("the owner import succeeds");
     let summary = &receipt.retained_side_rows;
-    // Per-table inert counts: the backup choice now installs live, so only the
+    // Per-table inert counts: the snapshot bounds now install live, so only the
     // standing grant and its gate receipt stay inert.
     for (table, inserted, unchanged) in [
-        ("BACKUP_POLICY", 0, 0),
+        ("SNAPSHOT_READ_SETTINGS", 0, 0),
         ("CONSENT_STANDING_GRANT", 1, 0),
         ("GATE_DECISION_LEDGER", 1, 0),
     ] {
@@ -75,9 +75,9 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
     let summary_json =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
-        table_count(&summary_json, "BACKUP_POLICY", "installed_rows"),
+        table_count(&summary_json, "SNAPSHOT_READ_SETTINGS", "installed_rows"),
         Some(1),
-        "the summary counts one installed BACKUP_POLICY row; an absent field means it installed nothing: {summary_json}"
+        "the summary counts one installed SNAPSHOT_READ_SETTINGS row; an absent field means it installed nothing: {summary_json}"
     );
     assert_eq!(
         summary_json
@@ -128,9 +128,13 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
     let repeat_json =
         serde_json::to_value(&repeat.retained_side_rows).expect("the repeat summary serializes");
     assert_eq!(
-        table_count(&repeat_json, "BACKUP_POLICY", "unchanged_live_rows"),
+        table_count(
+            &repeat_json,
+            "SNAPSHOT_READ_SETTINGS",
+            "unchanged_live_rows"
+        ),
         Some(1),
-        "a repeat import leaves one BACKUP_POLICY row unchanged live; an absent field means it counted no live outcome: {repeat_json}"
+        "a repeat import leaves one SNAPSHOT_READ_SETTINGS row unchanged live; an absent field means it counted no live outcome: {repeat_json}"
     );
     assert_eq!(
         repeat_json

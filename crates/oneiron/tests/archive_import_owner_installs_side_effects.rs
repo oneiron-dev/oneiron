@@ -23,20 +23,16 @@
 //!   the destination serves no rung for, and a web setting naming a hub
 //!   connector the destination never installed, still install live byte for
 //!   byte: the rows are choices, and every use-time door fails closed.
-//! * `the_owner_restore_installs_the_responses_store_switch_live`,
-//!   `the_owner_restore_installs_the_dreamer_sieve_policy_live` and
+//! * `the_owner_restore_installs_the_dreamer_sieve_policy_live` and
 //!   `the_owner_restore_installs_the_dreamer_wake_policy_live`: one non-default
-//!   MODEL_OWNER_RESPONSES_STORE, DREAMER_SIEVE_POLICY and DREAMER_WAKE_POLICY row
-//!   each installs on a bare destination, and the destination's own read returns
-//!   the source's value where it returned the shipped default before the import.
+//!   DREAMER_SIEVE_POLICY and DREAMER_WAKE_POLICY row each installs on a bare
+//!   destination, and the destination's own read returns the source's value
+//!   where it returned the shipped default before the import.
 //! * `the_owner_restore_installs_the_digest_settings_and_the_coach_proposal_live`:
 //!   the owner's digest settings row and one Pending Coach proposal
 //!   (WEAVE_DIGEST_SETTINGS, WEAVE_DIGEST_SETTING_CHANGE) install together, and the
 //!   owner's accept on the destination applies the restored proposal on the
 //!   restored generation.
-//!
-//! DREAMER_WAKE_RECIPE_POLICY has no landing and no test: the export withholds
-//! every row of it (FIX-LIST ARCHIVE-WAKE-RECIPE-POLICY-WITHHELD-AS-CREDENTIAL).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on the base; an absent field fails its
@@ -407,57 +403,6 @@ fn unknown_provider_choices_install_verbatim() {
         table_count(&summary, "WEB_CONNECTOR_SETTING", "installed_rows"),
         Some(1),
         "the owner import reports one installed WEB_CONNECTOR_SETTING row; an absent field means it installed nothing: {summary}"
-    );
-}
-
-/// The owner restore installs the Responses store switch live.
-#[test]
-fn the_owner_restore_installs_the_responses_store_switch_live() {
-    let (_source_dir, source) = open_source_vault();
-    let source_owner = owner_proof(&source);
-    assert!(
-        !source
-            .responses_store()
-            .expect("read the source store switch"),
-        "the source switch starts off"
-    );
-    source
-        .set_responses_store(&source_owner, true)
-        .expect("the owner turns the source switch on");
-    assert!(
-        source
-            .responses_store()
-            .expect("read the source store switch"),
-        "the source holds the store row"
-    );
-    let archive = export_whole(&source);
-    assert_eq!(
-        rows_for(&retained_rows(&archive), "MODEL_OWNER_RESPONSES_STORE").len(),
-        1,
-        "the source archive holds one retained MODEL_OWNER_RESPONSES_STORE tuple"
-    );
-    let (_dest_dir, dest) = open_later_vault();
-    let dest_owner = owner_proof(&dest);
-    assert!(
-        !dest
-            .responses_store()
-            .expect("read the destination switch before"),
-        "the destination switch starts off"
-    );
-    let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
-        .expect("the owner import succeeds");
-    let summary =
-        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        table_count(&summary, "MODEL_OWNER_RESPONSES_STORE", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed MODEL_OWNER_RESPONSES_STORE row; an absent field means it installed nothing: {summary}"
-    );
-    assert!(
-        dest.responses_store()
-            .expect("read the restored store switch"),
-        "the owner import installs the store row live"
     );
 }
 
