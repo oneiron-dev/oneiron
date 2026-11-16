@@ -324,7 +324,9 @@ impl Vault {
 }
 
 /// Takes the erased actor out of every job they started (the side table's
-/// actor scrub).
+/// actor scrub). The scrub is a write like any other and bumps the row's
+/// revision, so a step that read the row before the erase loses its write and
+/// never puts the starter back.
 pub(crate) fn erase_job_starter_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -333,6 +335,7 @@ pub(crate) fn erase_job_starter_in_txn(
     for (id, mut job) in GPU_JOBS.scan(&vault.store, wtxn)? {
         if job.started_by == Some(*actor) {
             job.started_by = None;
+            job.revision += 1;
             GPU_JOBS.put(&vault.store, wtxn, &id, &job)?;
         }
     }
