@@ -10,6 +10,5 @@ pub(crate) struct FrozenDispatchIdentity {
     pub(crate) payload: Vec<u8>,
 }
 
-/// FIX 6424 (Engine 10-20 20:4x): the receipt field a held send's
-/// approve-once digest rides, beside its gate outcome.
-pub(crate) const APPROVAL_DIGEST_FIELD: &str = "approval_digest";
+#[doc(hidden)]
+pub(crate) use oneiron_records::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD;
