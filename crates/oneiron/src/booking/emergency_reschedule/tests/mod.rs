@@ -155,6 +155,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     };
     let body = ClaimBody::new(
