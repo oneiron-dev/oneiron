@@ -1,12 +1,14 @@
-//! The names of 3 name lists in `oneiron-model`, one line per row, generated from
+//! The names of 4 name lists in `oneiron-model`, one line per row, generated from
 //! `scripts/ratchet/hand_name_tables.py --names --only <file>` before each list became a Register
 //! (Fable pass 25, the Register wave): the names each hand table wrote. Green on the hand tables and
 //! on the derive, so no stored or sent name changed (M-1 keep). Each name is also pinned to the one
 //! serde reads and writes, and each kept reverse fn to its rows.
 //!
 //! - `crates/oneiron-model/src/llm/call.rs`
+//! - `crates/oneiron-model/src/llm/catalog.rs`
 //! - `crates/oneiron-model/src/llm/media/caps.rs`
 
+use oneiron_model::llm::LlmCapability;
 use oneiron_model::llm::ModelLocality;
 use oneiron_model::llm::media::AiOperation;
 use oneiron_model::llm::media::Modality;
@@ -102,5 +104,63 @@ fn every_modality_name_is_its_serde_name() {
         let read: Modality =
             serde_json::from_value(Value::String(name.to_owned())).expect("serde reads the name");
         assert_eq!(read, row, "{name}");
+    }
+}
+
+/// Every row of `LlmCapability`, as its hand table spelled it.
+const LLM_CAPABILITY_ROWS: [(LlmCapability, &str); 12] = [
+    (LlmCapability::Streaming, "streaming"),
+    (LlmCapability::ToolCalling, "tool_calling"),
+    (LlmCapability::ToolResults, "tool_results"),
+    (LlmCapability::ImageInput, "image_input"),
+    (LlmCapability::JsonResponse, "json_response"),
+    (LlmCapability::Reasoning, "reasoning"),
+    (LlmCapability::Voice, "voice"),
+    (LlmCapability::AssistantPrefill, "assistant_prefill"),
+    (LlmCapability::AudioInput, "audio_input"),
+    (
+        LlmCapability::ReasoningContentHistory,
+        "reasoning_content_history",
+    ),
+    (LlmCapability::TokenLogprobs, "token_logprobs"),
+    (LlmCapability::ReasoningSummary, "reasoning_summary"),
+];
+
+#[test]
+fn every_llm_capability_keeps_its_name() {
+    assert_eq!(LlmCapability::Streaming.as_str(), "streaming");
+    assert_eq!(LlmCapability::ToolCalling.as_str(), "tool_calling");
+    assert_eq!(LlmCapability::ToolResults.as_str(), "tool_results");
+    assert_eq!(LlmCapability::ImageInput.as_str(), "image_input");
+    assert_eq!(LlmCapability::JsonResponse.as_str(), "json_response");
+    assert_eq!(LlmCapability::Reasoning.as_str(), "reasoning");
+    assert_eq!(LlmCapability::Voice.as_str(), "voice");
+    assert_eq!(
+        LlmCapability::AssistantPrefill.as_str(),
+        "assistant_prefill"
+    );
+    assert_eq!(LlmCapability::AudioInput.as_str(), "audio_input");
+    assert_eq!(
+        LlmCapability::ReasoningContentHistory.as_str(),
+        "reasoning_content_history"
+    );
+    assert_eq!(LlmCapability::TokenLogprobs.as_str(), "token_logprobs");
+    assert_eq!(
+        LlmCapability::ReasoningSummary.as_str(),
+        "reasoning_summary"
+    );
+}
+
+/// The hand table, serde and `Display` spell each row alike. The rows are read by reference, so
+/// the same lines run before and after the enum becomes `Copy`.
+#[test]
+fn every_llm_capability_name_is_its_serde_and_display_name() {
+    for (row, name) in &LLM_CAPABILITY_ROWS {
+        let written = serde_json::to_value(row).expect("a row serializes");
+        assert_eq!(written, Value::String((*name).to_owned()), "{row:?}");
+        let read: LlmCapability = serde_json::from_value(Value::String((*name).to_owned()))
+            .expect("serde reads the name");
+        assert_eq!(&read, row, "{name}");
+        assert_eq!(row.to_string(), *name, "{row:?}");
     }
 }
