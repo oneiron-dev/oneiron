@@ -2040,8 +2040,75 @@ impl ServedVault {
     /// The owner confirms the held answers `entries` name through this
     /// install.
     fn confirm(&self, entries: &[AuthorityEntryHash]) -> oneiron::Result<ConfirmedHeldAnswers> {
+        self.confirm_seen(entries, &BTreeMap::new())
+    }
+
+    /// The owner confirms the held answers `entries` name through this
+    /// install, presenting back for each entry in `seen` the machine
+    /// revision the list showed beside it.
+    fn confirm_seen(
+        &self,
+        entries: &[AuthorityEntryHash],
+        seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
+    ) -> oneiron::Result<ConfirmedHeldAnswers> {
         self.vault
-            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries)
+            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries, seen)
+    }
+
+    /// The role and the revision this install's roster head holds.
+    fn install_standing(&self) -> (MachineRole, u64) {
+        let fold = self.vault.authority_fold().expect("authority fold");
+        let head = fold
+            .machine(self.install())
+            .and_then(|machine| machine.roster.as_ref())
+            .expect("a roster revision names this install");
+        (head.profile.role, head.profile.revision)
+    }
+
+    /// A held "yours" about this install, listed, and then a later answer
+    /// about it that the held one's ask outlives: the owner marks it work or
+    /// school through this install while the vault holds no owner key, so
+    /// that answer stands with no proof and is not his proven word. Returns
+    /// the held entry and the machine revision the list showed before the
+    /// later answer.
+    fn held_yours_then_an_unproven_work_school_answer(&self) -> (AuthorityEntryHash, [u8; 32]) {
+        self.answer_this_install_is_mine();
+        let listing = self.held();
+        assert_eq!(
+            listing.answers.len(),
+            1,
+            "guard: one held answer: {listing:?}"
+        );
+        let (entry, listed) = (listing.answers[0].entry, listing.answers[0].revision);
+        let landing = self
+            .vault
+            .set_machine_role(
+                &self.owner,
+                ActSurface::ThisInstall,
+                self.install(),
+                MachineRole::Owned(MachineOwnership::WorkSchool),
+                None,
+            )
+            .expect("the answer door stores the later answer");
+        assert!(
+            landing.held().is_none(),
+            "guard: the later answer stands, since no key in this vault could prove it"
+        );
+        let listing = self.held();
+        assert_eq!(
+            listing
+                .answers
+                .iter()
+                .map(|listed| listed.entry)
+                .collect::<Vec<_>>(),
+            [entry],
+            "guard: the held answer still asks: {listing:?}"
+        );
+        assert_ne!(
+            listing.answers[0].revision, listed,
+            "guard: the machine's answer changed since the first list"
+        );
+        (entry, listed)
     }
 
     /// The owner dismisses the ask of the held answers `entries` name on
@@ -2613,6 +2680,144 @@ fn a_confirm_or_a_dismissal_of_an_answered_entry_is_stale() {
         "a dismissal of it is stale: {dismissal:?}"
     );
     assert_eq!(served.stored_rows(), rows, "neither stores a row");
+}
+
+/// The confirm presents back the machine revision the list showed (FIX
+/// HELD-CONFIRM-CARRIES-NO-SEEN). An answer about the machine that the held
+/// one's ask outlives lands between the list and the confirm: the confirm on
+/// the listed revision is a conflict and writes nothing, never a silent
+/// overwrite of the newer answer. The owner reads the list again and
+/// confirms on what it shows.
+#[test]
+fn a_confirm_on_the_listed_revision_is_a_conflict_once_the_machines_answer_changed() {
+    let served = ServedVault::hosted();
+    let (entry, listed) = served.held_yours_then_an_unproven_work_school_answer();
+    served.enrol_owner_key();
+    let (rows, standing) = (served.stored_rows(), served.install_standing());
+    let stale = served.confirm_seen(&[entry], &BTreeMap::from([(entry, listed)]));
+    assert!(
+        matches!(stale, Err(Error::ConcurrentWrite(_))),
+        "a confirm on the revision the first list showed is a conflict: {stale:?}"
+    );
+    assert_eq!(
+        served.stored_rows(),
+        rows,
+        "the refused confirm stores no row"
+    );
+    assert_eq!(
+        served.install_standing(),
+        standing,
+        "the later answer stands as it did"
+    );
+    assert_eq!(served.held_entries(), [entry], "the held answer still asks");
+    let relisted = served.held().answers[0].revision;
+    served
+        .confirm_seen(&[entry], &BTreeMap::from([(entry, relisted)]))
+        .expect("a confirm on the revision the list shows now lands");
+    assert!(
+        served.install_is_mine(),
+        "the confirmed answer makes it his machine"
+    );
+}
+
+/// Guard: `seen` is optional, as at the answer door. A confirm that presents
+/// none takes the machine's current revision, so it lands one revision
+/// above an answer its list never showed.
+#[test]
+fn a_confirm_that_presents_no_revision_lands_above_a_later_answer() {
+    let served = ServedVault::hosted();
+    let (entry, _) = served.held_yours_then_an_unproven_work_school_answer();
+    served.enrol_owner_key();
+    let (_, later) = served.install_standing();
+    served
+        .confirm(&[entry])
+        .expect("a confirm that presents no revision lands");
+    assert_eq!(
+        served.install_standing(),
+        (MachineRole::Owned(MachineOwnership::Yours), later + 1),
+        "the confirmed role, one revision above the later answer"
+    );
+    assert_eq!(served.held().answers, Vec::new(), "nothing asks");
+}
+
+/// Guard: one confirm of every listed answer, each on its listed revision,
+/// lands them all: a confirm about one machine leaves another machine's
+/// revision as the list showed it. A machine no revision names lists the
+/// zero revision, and its confirm presents that back.
+#[test]
+fn a_confirm_of_two_listed_answers_lands_both_on_their_listed_revisions() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let request = served.joining_machine();
+    let landing = served
+        .vault
+        .enroll_machine(
+            &served.owner,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the enrolment is stored");
+    assert!(landing.held().is_some(), "guard: the enrolment is held");
+    served.enrol_owner_key();
+    let listing = served.held();
+    assert_eq!(listing.answers.len(), 2, "two held answers: {listing:?}");
+    let seen: BTreeMap<_, _> = listing
+        .answers
+        .iter()
+        .map(|listed| (listed.entry, listed.revision))
+        .collect();
+    let joining = listing
+        .answers
+        .iter()
+        .find(|listed| listed.answer.profile.machine == request.machine)
+        .expect("the joining machine's held enrolment");
+    assert_eq!(
+        joining.revision, [0; 32],
+        "no revision names the joining machine yet"
+    );
+    assert_ne!(
+        seen.values().collect::<BTreeSet<_>>().len(),
+        1,
+        "guard: this install's revision is not the zero revision"
+    );
+    let entries: Vec<_> = seen.keys().copied().collect();
+    served
+        .confirm_seen(&entries, &seen)
+        .expect("both confirms land on their listed revisions");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(served.install_is_mine(), "this install is his");
+    assert!(
+        fold.trusted_machine(request.machine).is_some(),
+        "the joining machine is his"
+    );
+    assert_eq!(served.held().answers, Vec::new(), "nothing asks");
+}
+
+/// A revision presented for an entry the confirm does not name is refused
+/// and nothing is written: a surface that keyed its revision wrongly would
+/// otherwise confirm with no revision at all.
+#[test]
+fn a_revision_presented_for_an_entry_the_confirm_does_not_name_is_refused() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    served.enrol_owner_key();
+    let listing = served.held();
+    assert_eq!(
+        listing.answers.len(),
+        1,
+        "guard: one held answer: {listing:?}"
+    );
+    let (entry, listed) = (listing.answers[0].entry, listing.answers[0].revision);
+    let rows = served.stored_rows();
+    let unnamed = served.confirm_seen(&[entry], &BTreeMap::from([([0x5e; 32], listed)]));
+    assert!(
+        matches!(unnamed, Err(Error::InvalidConfig(_))),
+        "a revision for an entry the confirm does not name is refused: {unnamed:?}"
+    );
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(served.held_entries(), [entry], "the held answer still asks");
 }
 
 /// The confirm carries a held answer's role and class, never other keys than
