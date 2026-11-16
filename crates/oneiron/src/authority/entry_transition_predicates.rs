@@ -30,7 +30,8 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
 }
 
 /// A row that changes the roster: a genesis, an enrollment (an agent key or
-/// an owner's own signing key), a revocation, a rotation or a re-root, the
+/// an owner's own signing key), a revocation, a rotation, a re-root or a
+/// root appointment (which the fold judges before it reads a floor), the
 /// ops whose `apply_op` arms write `FoldState::roster`. No arrival floor
 /// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]), and one vouches for
 /// every row of its own signer below it in its ancestry that a floor refuses
@@ -51,6 +52,7 @@ pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
+            | AuthorityOp::RootAppointment(_)
     )
 }
 
