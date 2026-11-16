@@ -12,6 +12,8 @@
 //! old confirm. A preview of an act that lands over a damaged clock floor
 //! classifies as that act does, and the record-erase previews an old build
 //! kept go with their caller's erase and at the next preview.
+//! A kept row is dead from its `expires_at` second on, and one second
+//! before it a confirm still lands (UC-12).
 //!
 //! Every door is reached by its verb name and every answer is read as JSON,
 //! so this file builds on main too. Red on main: `vault.owner_confirm.preview`
@@ -618,6 +620,79 @@ fn a_record_erase_confirm_older_than_the_ttl_is_refused() {
     );
     assert_confirm_refused(&error, "the confirm past its row");
     assert!(fx.is_live(&a), "the refused record stays");
+}
+
+/// How long a kept preview row lives: `OWNER_CONFIRM_TTL_SECS`, ten minutes
+/// on the vault clock.
+const CONFIRM_ROW_SECS: u64 = 600;
+
+/// When the boundary tests take their preview: a minute after the setup
+/// writes, past the five-second authorization lease those writes leave, so
+/// the vault records the preview at this very second and the kept row's
+/// `expires_at` is `PREVIEW_AT + CONFIRM_ROW_SECS`.
+const PREVIEW_AT: u64 = NOW + 60;
+
+/// A record erase confirm at its row's `expires_at` second is refused: a
+/// kept preview row is dead from that second on (UC12-EXPIRY-INSTANT = A,
+/// 15 Nov 17:42; UC12-ERASE-PREVIEW-AFTER-7861 = A, 15 Nov 18:18).
+/// Red without this PR: the confirm's row reads as live through that second,
+/// so the record is erased.
+#[test]
+fn a_record_erase_confirm_at_its_expires_at_second_is_refused() {
+    let fx = fixture();
+    let verb = "vault.records.erase_confirm";
+    let a = fx.put_record("owen.bin", BYTES_A_B64);
+    fx.clock.set(PREVIEW_AT);
+    let shown = fx.preview(verb, json!({ "record": a.clone() }));
+    fx.clock.set(PREVIEW_AT + CONFIRM_ROW_SECS);
+    let error = fx.refused(
+        verb,
+        json!({ "record": a.clone(), "confirm": confirm_of(&shown) }),
+    );
+    assert_confirm_refused(&error, "the confirm at its row's expires_at second");
+    assert!(fx.is_live(&a), "the refused record stays");
+}
+
+/// One second before its row's `expires_at`, a record erase confirm lands.
+/// Green with and without this PR.
+#[test]
+fn a_record_erase_confirm_one_second_before_its_expires_at_lands() {
+    let fx = fixture();
+    let verb = "vault.records.erase_confirm";
+    let a = fx.put_record("owen.bin", BYTES_A_B64);
+    fx.clock.set(PREVIEW_AT);
+    let shown = fx.preview(verb, json!({ "record": a.clone() }));
+    fx.clock.set(PREVIEW_AT + CONFIRM_ROW_SECS - 1);
+    fx.call(
+        verb,
+        json!({ "record": a.clone(), "confirm": confirm_of(&shown) }),
+    )
+    .expect("the confirm one second before its row's expires_at lands");
+    assert!(!fx.is_live(&a), "the confirmed record is gone");
+}
+
+/// Every kept row ends at the same second, not only the record erase's: a
+/// one-Owner history purge confirm at its row's `expires_at` second is
+/// refused, and the purge erases nothing.
+/// Red without this PR: the purge erases with that confirm.
+#[test]
+fn a_history_purge_confirm_at_its_expires_at_second_is_refused() {
+    let fx = fixture();
+    let verb = "vault.notes.history_purge";
+    let note = fx.put_note_with_history("a note with history");
+    fx.clock.set(PREVIEW_AT);
+    let shown = fx.preview(verb, json!({ "note_ref": note.clone() }));
+    fx.clock.set(PREVIEW_AT + CONFIRM_ROW_SECS);
+    let error = fx.refused(
+        verb,
+        json!({ "note_ref": note.clone(), "confirm": confirm_of(&shown) }),
+    );
+    assert_confirm_refused(&error, "the purge confirm at its row's expires_at second");
+    assert_eq!(
+        fx.purge_receipts(&note),
+        0,
+        "the refused purge erases nothing"
+    );
 }
 
 /// A preview of a one-way act that is restriction-only is restriction-only
