@@ -1381,6 +1381,6 @@ pub(crate) mod hooks {
     }
 }
 
-#[cfg(test)]
 pub(crate) mod setting_keys;
+#[cfg(test)]
 mod tests;
