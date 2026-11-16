@@ -295,6 +295,17 @@ impl<'a> ScopedRead<'a> {
         if now < claims.issued_at || now >= claims.expires_at {
             return Ok(false);
         }
+        // A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH =
+        // A): a key kept from a holder's verified slip reads nothing once
+        // that holder is deleted, as the slip's own doors refuse it then
+        // (Astra review of #8289, finding 1).
+        if crate::authority::slip_holder_is_deleted_in_txn(
+            &self.vault.store,
+            txn,
+            &claims.holder_ref,
+        )? {
+            return Ok(false);
+        }
         // A grant-bound slip reads only while its grant stands in this
         // snapshot, judged at each use as a fresh verification judges it
         // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): withdrawing an own-device
