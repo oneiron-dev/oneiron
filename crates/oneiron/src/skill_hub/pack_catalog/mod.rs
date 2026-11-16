@@ -121,6 +121,7 @@ mod screening;
 mod script_plan;
 mod script_policy;
 mod script_runtime;
+pub(crate) mod setting_keys;
 mod tool_schema;
 pub use admission_types::{
     BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
