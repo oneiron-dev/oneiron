@@ -347,15 +347,7 @@ pub(crate) fn configure(
             owner,
             "cleanup.posture",
             serde_json::json!(posture.as_str()),
-        )
-        .map_err(|error| match error.kind() {
-            ErrorKind::InvariantViolation => OwnerError::Refused(
-                "cleanup stays propose-first until the integrity checks it waits on close \
-                     (ARCH-0066); accept or reject its proposals instead"
-                    .to_owned(),
-            ),
-            _ => OwnerError::from(error),
-        })?;
+        )?;
     }
     if let Some(days) = settings.task_retention_days {
         set_cleanup_key(
