@@ -334,11 +334,8 @@ impl Memory<'_> {
             .map_or(learned_at, |header| header.learned_at);
         if let Some(birth) = birth {
             content.update_claim(id, |txn, _lane| {
-                crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                    &self.vault.store,
-                    txn,
-                    &id,
-                    birth,
+                crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(
+                    self.vault, txn, &id, birth,
                 )
             })?;
         }

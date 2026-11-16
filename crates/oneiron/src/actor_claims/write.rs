@@ -10,7 +10,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::birth::{RowBirth, stamp_row_birth_in_txn};
+use crate::provenance::birth::{RowBirth, stamp_birth_with_floor_in_txn};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
     ENTITY_TYPE_TURN,
@@ -222,7 +222,7 @@ pub(super) fn write_born_actor_claim_in_txn(
         at,
     )?;
     if let Some(birth) = birth {
-        stamp_row_birth_in_txn(&vault.store, wtxn, &claim_id, birth)?;
+        stamp_birth_with_floor_in_txn(vault, wtxn, &claim_id, birth)?;
     }
 
     for (head_id, _, head_start) in &supersedable {

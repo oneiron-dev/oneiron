@@ -51,8 +51,8 @@ pub fn put_claim_made_by(
     let at = made_by.at;
     vault.put_claim(&id, body, crate::TimeRange { start: at, end: at }, at)?;
     let mut txn = vault.store.env.write_txn()?;
-    crate::store::birth_record::stamp_row_birth_in_txn(
-        &vault.store,
+    crate::provenance::birth::stamp_birth_with_floor_in_txn(
+        vault,
         &mut txn,
         &id,
         &crate::store::row_birth::RowBirth::stated(made_by),

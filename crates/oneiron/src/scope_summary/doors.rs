@@ -585,6 +585,9 @@ pub(super) fn mint_in_txn(
     for source in word_sources(&body) {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, source)?;
     }
+    // READ-LINEAGE L1 hooks 1 and 3: the summary reads under what its
+    // words came from.
+    crate::source_audience::raise_floors_in_txn(vault, txn, [id])?;
     Ok(id)
 }
 
@@ -822,6 +825,7 @@ pub(super) fn land_in_txn(
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
+        crate::source_audience::raise_floors_in_txn(vault, txn, [appended.id])?;
         Some((appended.id, input))
     } else {
         None

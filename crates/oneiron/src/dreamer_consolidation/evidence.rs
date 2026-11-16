@@ -520,7 +520,10 @@ impl VerifiedEvidenceSet {
             .flat_map(|row| &row.messages)
             .map(|span| span.message)
             .collect();
-        crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(vault, txn, &cited)
+        crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(vault, txn, &cited)?;
+        // READ-LINEAGE L1 hook 3: the cited MESSAGEs' sources bind the row
+        // that cites them.
+        crate::source_audience::raise_floors_in_txn(vault, txn, [*citing])
     }
     pub(super) fn check_pins(&self, resources: &BranchResources<'_>) -> Result<()> {
         for row in &self.rows {

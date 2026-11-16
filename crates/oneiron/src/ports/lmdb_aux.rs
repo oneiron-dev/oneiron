@@ -24,6 +24,10 @@ impl DependencyIndex for Vault {
     ) -> Result<bool> {
         let cleared =
             super::regeneration::complete(&self.store, txn, dependent, regenerated_at, sources)?;
+        // READ-LINEAGE L1 hook 3: a regenerated row reads under its sources.
+        if cleared {
+            crate::source_audience::raise_floors_in_txn(self, txn, [*dependent])?;
+        }
         // A stale mark ran the Dreamer's erase hook; the row it clears says
         // its words again, a publication of them.
         if cleared {
@@ -38,7 +42,8 @@ impl DependencyIndex for Vault {
         source: SourceSpan,
         dependent: &EntityId,
     ) -> Result<()> {
-        record_dependency_in_txn(&self.store, txn, source, dependent)
+        record_dependency_in_txn(&self.store, txn, source, dependent)?;
+        crate::source_audience::raise_floors_in_txn(self, txn, [*dependent])
     }
     fn port_dependency_list_by_source(
         &self,

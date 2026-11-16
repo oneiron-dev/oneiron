@@ -1,6 +1,6 @@
 //! Vault write doors: put, supersede, retract, model substrate, and the shared writer.
 
-use super::birth::{RowBirth, stamp_row_birth_in_txn};
+use super::birth::{RowBirth, stamp_birth_with_floor_in_txn};
 use super::imported;
 use super::lifecycle::{closed_claim_put_payload, provenance_materialization_op};
 use super::made_by::MadeByClass;
@@ -1036,7 +1036,7 @@ impl Vault {
                 &[&evidence[ENTITY_METADATA_HEADER_LEN..]],
                 learned_at,
             ) {
-                stamp_row_birth_in_txn(&self.store, wtxn, claim_id, &birth)?;
+                stamp_birth_with_floor_in_txn(self, wtxn, claim_id, &birth)?;
             }
         }
 

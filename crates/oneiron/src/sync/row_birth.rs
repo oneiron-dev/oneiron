@@ -320,7 +320,9 @@ pub(in crate::sync) fn stamp_birth_or_warn(
     birth: &RowBirth,
 ) -> Result<()> {
     match stamp_replicated_row_birth_in_txn(&vault.store, wtxn, id, birth) {
-        Ok(()) => Ok(()),
+        // READ-LINEAGE L1 hook 1: a row that arrived with its birth reads
+        // under the inputs this vault holds, beside the floor it carried.
+        Ok(()) => crate::source_audience::raise_floors_in_txn(vault, wtxn, [*id]),
         Err(err @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
             tracing::warn!(entity = %id.to_hex(), error = %err, "carried row birth refused");
             Ok(())

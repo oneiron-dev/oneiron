@@ -543,6 +543,7 @@ impl Vault {
                 crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &occurrence, row)?;
             }
         }
+        crate::source_audience::raise_floors_in_txn(self, wtxn, [occurrence])?;
         if born_withdrawn {
             crate::ports::RetrievalIndex::port_retrieval_mark_stale(self, wtxn, &occurrence)?;
         }

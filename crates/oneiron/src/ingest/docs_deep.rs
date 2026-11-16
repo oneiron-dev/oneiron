@@ -548,7 +548,11 @@ impl Vault {
             crate::ports::record_derived_edge_in_txn(&self.store, txn, claim, &asset)?;
             receipt.claim_refs.push(claim.to_hex());
         }
-        Ok(())
+        crate::source_audience::raise_floors_in_txn(
+            self,
+            txn,
+            claims.iter().map(|(claim, _)| *claim),
+        )
     }
 
     fn deep_chunk_in(

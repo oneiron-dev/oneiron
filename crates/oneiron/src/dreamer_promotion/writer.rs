@@ -508,8 +508,8 @@ pub(super) fn promote_one_answering(
         // Both write paths reach here; a replayed attempt keeps the claim's
         // first birth.
         if let Some(birth) = &birth {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                &vault.store,
+            crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(
+                vault,
                 wtxn,
                 &candidate.claim_id,
                 birth,

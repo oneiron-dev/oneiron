@@ -142,8 +142,8 @@ impl Memory<'_> {
                 now,
                 Some(&envelope),
             )?;
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                &self.vault.store,
+            crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(
+                self.vault,
                 txn,
                 &result.active_claim_id,
                 &birth,

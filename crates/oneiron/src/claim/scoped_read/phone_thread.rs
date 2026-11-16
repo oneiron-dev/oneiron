@@ -1,5 +1,6 @@
 //! A phone thread's read gate (VOICE-PHONE-AGENT-REACH R1): a marked thread's
-//! rows read to a non-owner only under a live grant naming its conversation.
+//! rows, and every row written from them (READ-LINEAGE L1, the row's floor),
+//! read to a non-owner only under a live grant naming its conversation.
 
 use super::*;
 use crate::entity_id::EntityId;
@@ -43,13 +44,18 @@ impl ScopedRead<'_> {
     }
 
     /// Whether the phone-thread gate admits the revision `raw` of `id` in
-    /// `txn`: true for unmarked rows and for the vault owner's read; any
-    /// other reader needs a live `ConversationMessages` grant over EACH
-    /// marked conversation the row sits in, whose authority admits the row's
-    /// record Scope. This conjunct only ever removes rows. Fail closed: an
-    /// error in the grant read refuses the row. Only the three transcript
-    /// kinds and the thread SESSION pay the stamp read, and only on a
-    /// non-owner read.
+    /// `txn`: its own threads (the row's own stamp) and the threads on its
+    /// stored floor (READ-LINEAGE L1: a row written from a thread's rows,
+    /// such as a CLAIM whose birth names a kept TURN as evidence). The vault
+    /// owner reads every thread; any other reader needs a live
+    /// `ConversationMessages` grant over EACH thread, whose authority admits
+    /// the row's record Scope. A floor with an id that names no source reads
+    /// to no one, the owner's read included (READ-LINEAGE-L3 = A); the
+    /// policies on a floor are the source-audience walk's. This conjunct only
+    /// ever removes rows. Fail closed: an error in the grant read refuses the
+    /// row. Every read pays one floor read; only the three transcript kinds
+    /// and the thread SESSION pay the stamp read, and only on a non-owner
+    /// read.
     pub(super) fn phone_threads_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -57,21 +63,24 @@ impl ScopedRead<'_> {
         raw: &[u8],
         authority: &super::access_gate::HeldAuthority,
     ) -> Result<bool> {
+        let Some(mut threads) = crate::source_audience::floor_threads_in(self.vault, txn, id)?
+        else {
+            return Ok(false);
+        };
         if self.actor_key.reads_as_vault_owner() {
             return Ok(true);
         }
         let header = crate::batch::EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
-        if !matches!(
+        if matches!(
             header.entity_type,
             crate::registry::ENTITY_TYPE_CONVERSATION
                 | crate::registry::ENTITY_TYPE_TURN
                 | crate::registry::ENTITY_TYPE_MESSAGE
                 | crate::registry::ENTITY_TYPE_SESSION
         ) {
-            return Ok(true);
+            threads.extend(self.phone_threads_of_row_in(txn, id)?);
         }
-        let threads = self.phone_threads_of_row_in(txn, id)?;
         if threads.is_empty() {
             return Ok(true);
         }

@@ -320,6 +320,17 @@ fn custom_base() -> PhoneReach {
 /// One plain CLAIM row in `world`: the tests' picked and unpicked documents,
 /// readable by the line agent's base-world Grant outside a call.
 fn write_owner_claim(fixture: &Fixture, world: EntityId, value: &str) -> EntityId {
+    write_owner_claim_with_evidence(fixture, world, value, Vec::new())
+}
+
+/// [`write_owner_claim`], naming `evidence` (TURN refs) as the scoped CLAIM
+/// upsert's evidence: its birth names them as `Input`, and no edge does.
+fn write_owner_claim_with_evidence(
+    fixture: &Fixture,
+    world: EntityId,
+    value: &str,
+    evidence: Vec<String>,
+) -> EntityId {
     let id = EntityId::now();
     fixture
         .vault
@@ -343,7 +354,7 @@ fn write_owner_claim(fixture: &Fixture, world: EntityId, value: &str) -> EntityI
                 scope_project_id: default_project_id().to_hex(),
             },
             sensitivity: None,
-            evidence_turn_refs: Vec::new(),
+            evidence_turn_refs: evidence,
             valid_from: None,
             valid_to: None,
             occurred_at: Some(OCCURRED_AT),
@@ -679,6 +690,51 @@ fn a_generic_read_grant_does_not_read_a_kept_call() {
         assert!(
             !reader.is_entity_readable(id).expect("G reads A's thread"),
             "G must not read A's thread row {id:?}",
+        );
+    }
+}
+
+/// FIX [VOICE-PHONE-DERIVED-ROW-GENERIC-READ], phone half (READ-LINEAGE
+/// L1): a CLAIM the owner writes from caller A's kept TURN as its evidence
+/// (the scoped CLAIM upsert names it in the birth alone) carries A's thread
+/// on its floor. G's generic read Grant over the world's CLAIMs does not
+/// read it; the owner does, and so does the line agent, which holds A's
+/// thread.
+#[test]
+fn a_generic_read_grant_does_not_read_a_claim_learnt_from_a_kept_call() {
+    let reach = reach_fixture(custom_base());
+    let learnt = write_owner_claim_with_evidence(
+        &reach.fixture,
+        base_world_id(),
+        "learnt from caller A",
+        vec![reach.turn_a1.to_hex()],
+    );
+    let control = write_owner_claim(&reach.fixture, base_world_id(), "stated by the owner");
+    let generic = reach.fixture.vault.scoped_read(reach.g_key.clone());
+    assert!(
+        generic
+            .is_entity_readable(&control)
+            .expect("G reads the owner's CLAIM"),
+        "precondition: G's band Grant reads the owner's CLAIM in its world",
+    );
+    assert!(
+        !generic
+            .is_entity_readable(&learnt)
+            .expect("G reads the learnt CLAIM"),
+        "LEAK: G's generic Grant reads a CLAIM learnt from caller A's call",
+    );
+    for (key, who) in [
+        (&reach.owner_key, "the owner"),
+        (&reach.l_key, "L's ordinary key"),
+    ] {
+        assert!(
+            reach
+                .fixture
+                .vault
+                .scoped_read(key.clone())
+                .is_entity_readable(&learnt)
+                .expect("reads the learnt CLAIM"),
+            "{who} reads the CLAIM learnt from A's call",
         );
     }
 }

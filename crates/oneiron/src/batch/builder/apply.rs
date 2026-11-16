@@ -8,6 +8,7 @@ use heed::RwTxn;
 
 #[cfg(feature = "sync")]
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 impl BatchBuilder<'_> {
@@ -141,6 +142,7 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
+        let floor_rows = self.floor_rows();
         if let Some(actor) = actor {
             let has_owner = super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn);
             let mut staged = vault.store.env.nested_write_txn(wtxn)?;
@@ -161,7 +163,40 @@ impl BatchBuilder<'_> {
         } else {
             self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
+        // READ-LINEAGE L1 hooks 1 and 2: each row this batch gave words or a
+        // source carries the floor of what it came from, in the same write.
+        crate::source_audience::raise_floors_in_txn(vault, wtxn, floor_rows)?;
         vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
+    }
+
+    /// The rows this batch gives words or a source (READ-LINEAGE L1): each
+    /// row it puts or births, and the end of each `PartOf`, `DerivedFrom` or
+    /// `Supports` edge it writes whose words the edge adds to (a MESSAGE and
+    /// its TURN each read under the other's sources; a row under what it is
+    /// `DerivedFrom`; a CLAIM under what supports it).
+    fn floor_rows(&self) -> Vec<EntityId> {
+        let mut rows: Vec<EntityId> = self.births.iter().map(|(row, _)| *row).collect();
+        rows.extend(self.text_births.keys().copied());
+        rows.extend(self.note_births.iter().map(|(row, _)| *row));
+        for op in &self.ops {
+            let (src, kind, tgt) = match op {
+                BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
+                    rows.push(*id);
+                    continue;
+                }
+                BatchOp::Edge { src, kind, tgt, .. }
+                | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. }
+                | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. } => (*src, *kind, *tgt),
+                _ => continue,
+            };
+            match kind {
+                crate::EdgeKind::PartOf => rows.extend([src, tgt]),
+                crate::EdgeKind::DerivedFrom => rows.push(src),
+                crate::EdgeKind::Supports => rows.push(tgt),
+                _ => {}
+            }
+        }
+        rows
     }
 
     fn apply_staged(

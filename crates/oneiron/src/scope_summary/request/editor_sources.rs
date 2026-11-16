@@ -48,5 +48,5 @@ pub(super) fn register_in_txn(
         let source = EntityId::from_hex(&pin.id)?;
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, summary, &source)?;
     }
-    Ok(())
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*summary])
 }

@@ -64,6 +64,10 @@ pub struct VaultDoctorReport {
     pub db_manifest: VaultDoctorDbManifestReport,
     /// Metadata fields whose rows were present but could not be decoded.
     pub unreadable_fields: Vec<String>,
+    /// How many facts read to no one because a source their words came
+    /// from cannot be read here: "N facts hidden: source unknown"
+    /// (READ-LINEAGE-L3 = A). Only the count, never a fact or its sources.
+    pub facts_hidden_source_unknown: u64,
 }
 
 /// State of the persisted HNSW compatibility row.
@@ -699,6 +703,13 @@ impl Vault {
             "vault_meta.text_index_schema_version",
             &mut unreadable_fields,
         )?;
+        let facts_hidden_source_unknown = crate::source_audience::facts_hidden_source_unknown_in(
+            self, &rtxn,
+        )
+        .unwrap_or_else(|_| {
+            unreadable_fields.push("source_audience.derived".to_owned());
+            0
+        });
         drop(rtxn);
         let db_manifest = {
             // Held for consistency with `Store::open`'s DB-open serialization;
@@ -720,6 +731,7 @@ impl Vault {
             text_index_schema_version,
             db_manifest,
             unreadable_fields,
+            facts_hidden_source_unknown,
         })
     }
 }

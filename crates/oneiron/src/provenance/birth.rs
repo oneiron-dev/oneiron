@@ -35,6 +35,40 @@ pub(crate) use crate::store::birth_record::{
     trigger_is_live_in_txn,
 };
 
+/// Stamps `row`'s birth in the write that births it
+/// ([`stamp_row_birth_in_txn`]), then raises the row's floor over what its
+/// words came from (READ-LINEAGE L1 hook 1): the door for a write that holds
+/// the vault.
+///
+/// # Errors
+///
+/// As [`stamp_row_birth_in_txn`], and storage failures.
+pub(crate) fn stamp_birth_with_floor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    birth: &RowBirth,
+) -> crate::Result<()> {
+    stamp_row_birth_in_txn(&vault.store, txn, row, birth)?;
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
+/// [`stamp_birth_if_absent_in_txn`], then the row's floor, as
+/// [`stamp_birth_with_floor_in_txn`] raises it.
+///
+/// # Errors
+///
+/// As [`stamp_birth_if_absent_in_txn`], and storage failures.
+pub(crate) fn stamp_birth_with_floor_if_absent_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    birth: &RowBirth,
+) -> crate::Result<()> {
+    stamp_birth_if_absent_in_txn(&vault.store, txn, row, birth)?;
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
 /// Erasing `actor` (FIX 6074): every birth that names it as its process
 /// actor goes, with its born-from index row, in the erase's own transaction,
 /// and so does every window carrier of one this vault keeps (FIX 6279). A

@@ -608,7 +608,7 @@ impl Vault {
             at,
         )
         .ok_or(Error::InvariantViolation("a stated birth names its actor"))?;
-        crate::provenance::birth::stamp_row_birth_in_txn(&self.store, txn, &machine, &birth)?;
+        crate::provenance::birth::stamp_birth_with_floor_in_txn(self, txn, &machine, &birth)?;
         Ok(machine)
     }
 

@@ -106,5 +106,6 @@ fn arc_landed_in_txn(
     for claim in evidence.arc_claims() {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &summary, &claim)?;
     }
+    crate::source_audience::raise_floors_in_txn(vault, txn, [summary])?;
     super::arc_gate::succeeded_in_txn(vault, txn, &plan.input, arc)
 }

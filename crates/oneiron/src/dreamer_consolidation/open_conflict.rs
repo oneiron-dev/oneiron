@@ -192,7 +192,9 @@ pub(super) fn park_open_conflict(
             .apply_recording_gate_decisions(txn)?;
         // The marker's id is the attempt's: a retry keeps its first birth.
         if let Some(birth) = &birth {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, birth)?;
+            crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(
+                vault, txn, &id, birth,
+            )?;
         }
         verified.record_message_dependencies_in_txn(vault, txn, &id)
     })?;
