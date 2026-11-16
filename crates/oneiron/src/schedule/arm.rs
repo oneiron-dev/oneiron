@@ -124,6 +124,27 @@ pub(super) fn due_key(due: u64, key: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Adds a due-index entry for the row of `job` about `subject` at `due`, beside the row's own:
+/// the index as a runner pass read it just before another write armed the job again (the test
+/// doors' `index_due_at`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_due_entry_for_test(
+    vault: &Vault,
+    job: &str,
+    subject: Option<EntityId>,
+    due: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        DUE.put(
+            &vault.store,
+            txn,
+            &due_key(due, &row_key(job, subject)),
+            &(),
+        )?;
+        Ok(())
+    })
+}
+
 /// Writes `row` under `key` in place of `prior`, moving its due-index entry, in one write.
 pub(super) fn store_row_in_txn(
     store: &Store,

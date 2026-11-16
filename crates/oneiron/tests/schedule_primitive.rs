@@ -9,7 +9,9 @@
 //!   vault's wake time reads the first due job that wakes its host;
 //! - a wall-clock job is due at its next occurrence in its zone; an unknown zone is refused;
 //! - an interval keeps its grid through a run now, a retry and a paged run; a run's result lands
-//!   only on the row it started on; a restore rebuilds the due index (review round 1 of #8026).
+//!   only on the row it started on; a restore rebuilds the due index (review round 1 of #8026);
+//! - a run reads its row again, so a job armed for later after the pass read the due index
+//!   waits for its new time (review round 2 of #8026).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test schedule_primitive`.
 #![cfg(oneiron_test_support)]
@@ -27,7 +29,7 @@ use oneiron::schedule::{JobOutcome, Trigger};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::schedule::{
-    TEST_REARM_AFTER_SECS, arm_as_engine, runs, withdraw_test_job,
+    TEST_REARM_AFTER_SECS, arm_as_engine, index_due_at, runs, withdraw_test_job,
 };
 use oneiron::test_doors::steward::open_owner_carrier_vault;
 use oneiron::verbs::{
@@ -627,4 +629,47 @@ fn a_restore_rebuilds_the_due_index_so_an_armed_job_still_runs() {
         "the copy's runner finds the armed job"
     );
     assert_eq!(runs("test.count", Some(subject)), 1);
+}
+
+#[test]
+fn a_job_armed_for_later_after_the_pass_read_the_due_index_waits_for_its_new_time() {
+    // Review round 2 of #8026 (P1 on run.rs): a pass read a job's due-index entry, and another
+    // write armed the job again for later before the run's own write. The door leaves the entry
+    // that pass read beside the row's own.
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let counted = EntityId::now();
+    let lapsing = EntityId::now();
+    for (job, subject) in [("test.count", counted), ("test.lapse", lapsing)] {
+        call(
+            &me,
+            ARM,
+            arm(job, subject, json!({ "kind": "at", "at": T0 + 3_000 })),
+        );
+        index_due_at(&fx.vault, job, Some(subject), T0 + 1_000).expect("the entry the pass read");
+    }
+    fx.at(T0 + 2_000);
+    assert_eq!(
+        fx.run_due(),
+        Vec::<JobOutcome>::new(),
+        "neither job is due before its new time: no early run, no lapse"
+    );
+    assert_eq!(runs("test.count", Some(counted)), 0);
+    for (job, subject) in [("test.count", counted), ("test.lapse", lapsing)] {
+        let view = fx.view(job, subject).expect("still armed");
+        assert_eq!(view["due_at"], json!(T0 + 3_000), "{view}");
+    }
+
+    fx.at(T0 + 3_000);
+    assert_eq!(fx.run_due(), vec![JobOutcome::Done, JobOutcome::Done]);
+    assert_eq!(
+        runs("test.count", Some(counted)),
+        1,
+        "it ran once, at its own time"
+    );
+    assert_eq!(
+        runs("test.lapse", Some(lapsing)),
+        1,
+        "the deadline ran at its time"
+    );
 }
