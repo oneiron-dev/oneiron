@@ -22,6 +22,7 @@ pub mod live_run_payer;
 pub mod live_run_step;
 pub mod mcp_carrier_release;
 pub mod mcp_page_mint;
+pub mod mcp_refusal_status;
 pub mod mcp_surface;
 pub mod media_job_spend;
 #[cfg(unix)]

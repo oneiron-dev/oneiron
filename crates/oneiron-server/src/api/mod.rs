@@ -265,6 +265,9 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
+// The integration tests' door to the gateway's facade refusal vocabulary (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::mcp_refusal_for_test;
 // The signing session door's read of what a signing router holds (L3-22).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};

@@ -97,6 +97,9 @@ pub(crate) use self::wire::count_parse_error_for_test;
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
 pub(crate) use self::facade_refusals::mcp_facade_error;
+// The integration tests' door to the facade refusal vocabulary (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade_refusals::mcp_refusal_for_test;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_agent_verb_input,
     mcp_api_error, mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
