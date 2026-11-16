@@ -26,7 +26,7 @@ use super::wire_decode::task_verb_body;
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
 impl Vault {
-    /// Reconciles consults whose absolute deadline has passed: local
+    /// Reconciles consults whose absolute deadline second has come: local
     /// compare-and-set to terminal `Expired` with a durable expiry artifact,
     /// then ONE ARCH-0046 digest per task, addressed to that task's own asker.
     ///
@@ -78,7 +78,9 @@ impl Vault {
                 let Some(ttl) = body.ttl else {
                     continue;
                 };
-                if ttl.deadline_at >= now {
+                // Live strictly before its deadline second: at `deadline_at` the
+                // consult is due here, as the room and admission doors read it.
+                if ttl.deadline_at > now {
                     continue;
                 }
                 match body.terminal() {
@@ -210,7 +212,7 @@ impl Vault {
             if body.terminal().is_some() || body.settled_ladder_disposition().is_some() {
                 return Ok(None);
             }
-            let Some(ttl) = body.ttl.filter(|ttl| ttl.deadline_at < now) else {
+            let Some(ttl) = body.ttl.filter(|ttl| ttl.deadline_at <= now) else {
                 return Ok(None);
             };
             // A consult still waiting for its ConsultAssignee fact lapses
