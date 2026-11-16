@@ -53,7 +53,8 @@ pub(super) fn extraction_observation_facts(
             input.now_ms,
         )?;
         let selection = bound.selection_facts_in_txn(read, txn, &candidate)?;
-        let (fan_in, new_refs, vector) = bound.candidate_signals_in_txn(read, txn, &candidate)?;
+        let (fan_in, new_refs, vector) =
+            bound.candidate_signals_in_txn(read, turn_read, txn, &candidate)?;
         let keys = candidate_keys(&candidate, bound.key_rules())?;
         let tokens = observation_key_tokens(&keys)?;
         let fresh = candidate_probe_body(&candidate.candidate)?;
