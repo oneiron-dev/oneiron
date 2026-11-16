@@ -524,6 +524,55 @@ fn a_held_lane_narrows_as_its_holders_grants_are_revoked() {
     );
 }
 
+/// FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS (RULING GRANT-COMBINE Q1 = A): a lane
+/// held past a revoke stops listing, and walking into, the revoked Grant's
+/// world. The key it was built with still names both Grants' worlds; the
+/// listing judges the holder's Grants that stand in its own snapshot.
+#[test]
+fn a_held_lane_stops_listing_a_revoked_grants_world() {
+    let fixture = fixture();
+    let agent = create_enabled_agent(&fixture, "pair_held_listing_agent");
+    let _base_grant = mint_world_read_grant(&fixture, agent, base_world_id());
+    let other_grant = mint_world_read_grant(&fixture, agent, fixture.other_world);
+    let slip = paired_agent_slip(&fixture, agent, 0x93);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let lane = fixture
+        .vault
+        .scoped_read(key)
+        .recorded_lane()
+        .expect("graph filesystem record lane");
+    let tree = lane.graph_fs(GraphFsOptions::default());
+    let worlds = || -> Vec<String> {
+        tree.readdir("/worlds", None)
+            .expect("graph filesystem world listing")
+            .entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect()
+    };
+    let other = fixture.other_world.to_hex();
+    let before = worlds();
+    assert!(
+        before.contains(&"base".to_owned()) && before.contains(&other),
+        "actor=agent {agent:?}; expected its held lane to list base and {other} under its two Grants; seen {before:?}"
+    );
+
+    revoke(&fixture, other_grant);
+    let after = worlds();
+    assert!(
+        after.contains(&"base".to_owned()),
+        "actor=agent {agent:?}; expected its held lane to still list base; seen {after:?}"
+    );
+    assert!(
+        !after.contains(&other),
+        "actor=agent {agent:?}; expected its held lane to stop listing {other} once that world's Grant is revoked; seen {after:?}"
+    );
+}
+
 /// REVIEW-7051 P1: a saved read lane (a saved question's, a queued
 /// summary's) rebuilt after the holder's last Grant is revoked reads nothing,
 /// although its credential still stands. Rebuilt before the revoke, it reads.
@@ -567,5 +616,198 @@ fn a_saved_lane_rebuilt_after_the_last_revoke_reads_nothing() {
     assert!(
         after.is_empty(),
         "actor=agent {agent:?}; expected its saved lane to read nothing after its last Grant's revoke; seen names={after:?}"
+    );
+}
+
+/// A PERSON row the owner wrote and then soft-deleted, beside the short
+/// reference that names it: `UserDelete` scrubs the body in place and keeps
+/// the shell, the short-id rows and a pending tombstone, so the reference
+/// hydrates to a deleted row with no body and deletion metadata. Any other
+/// row kind would do only if `deletion_revealed_in` admits it: never a NOTE,
+/// and never a CLAIM, MESSAGE or SUMMARY to a relationship-gated reader like
+/// this file's agents, so the erased row is a PERSON.
+fn erased_person_short_ref(fixture: &Fixture) -> (String, u8) {
+    let id = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"a person the owner erases",
+        )
+        .expect("owner writes the person row");
+    let reference = oneiron::retrieval_depth::short_ref_or_hex(&fixture.vault, &id)
+        .expect("the person's short reference");
+    let (short_id, hash_hex) = reference
+        .split_once(':')
+        .expect("an engine short ref, not a hex fallback");
+    assert!(
+        !short_id.is_empty() && hash_hex.len() == 2,
+        "expected {reference} to spell a short id and one content-hash byte"
+    );
+    let hash = u8::from_str_radix(hash_hex, 16).expect("the short ref's content-hash byte");
+    fixture
+        .vault
+        .delete_entity_with_reason(&id, oneiron::deletion::DeleteReason::UserDelete)
+        .expect("owner soft-deletes the person row");
+    let hydrated = fixture
+        .vault
+        .hydrate_short_id(short_id, hash)
+        .expect("hydrate the erased row's short reference")
+        .expect("the erased row's short reference still resolves");
+    assert!(
+        hydrated.body.is_none() && hydrated.deletion.is_some(),
+        "expected the erased row to hydrate to a deleted row with no body"
+    );
+    (short_id.to_owned(), hash)
+}
+
+/// Whether the short reference `(short_id, hash)` reveals its erased row's
+/// deletion metadata through `lane`: a row with no body that carries
+/// deletion metadata.
+fn reveals_erased_deletion(
+    lane: &oneiron::claim::ScopedRead<'_>,
+    short_id: &str,
+    hash: u8,
+) -> bool {
+    lane.read(&[oneiron::claim::PointRead::short(short_id, hash)], None)
+        .expect("point-read the short reference")
+        .single()
+        .value
+        .is_some_and(|row| row.body.is_none() && row.deletion.is_some())
+}
+
+/// The owner mints `agent` a read Grant over `worlds` by `audience` (the
+/// project axis), every other axis open.
+fn mint_world_audience_read_grant(
+    fixture: &Fixture,
+    agent: EntityId,
+    worlds: ScopeAxis<ScopeId>,
+    audience: ScopeAxis<ScopeId>,
+) -> EntityId {
+    let mut authority_scope = Scope::top();
+    authority_scope.worlds = worlds;
+    authority_scope.audience = audience;
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("owner mints the agent a read Grant")
+    .grant
+    .grant_ref
+}
+
+/// FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS (RULING GRANT-COMBINE Q1 = A): a lane
+/// held past the revoke of its holder's all-covering Grant no longer reveals
+/// an erased row's deletion metadata through its short reference. The held
+/// key's built envelope still covers every position, so the base keeps
+/// revealing it; the head judges the holder's standing Grants, of which none
+/// stand, and refuses.
+#[test]
+fn a_held_lane_learns_no_deletion_in_a_revoked_grants_reach() {
+    let fixture = fixture();
+    let (short_id, hash) = erased_person_short_ref(&fixture);
+    let agent = fixture
+        .vault
+        .ensure_agent_principal("pair_held_deletion_agent")
+        .expect("named agent principal");
+    let slip = paired_agent_slip(&fixture, agent, 0xb1);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let lane = fixture.vault.scoped_read(key);
+    assert!(
+        reveals_erased_deletion(&lane, &short_id, hash),
+        "actor=named agent {agent:?}; expected its lane to reveal the erased row's deletion before the revoke"
+    );
+    let grants = grants_naming(&fixture.vault, agent);
+    assert_eq!(
+        grants.len(),
+        1,
+        "actor=named agent {agent:?}; expected one default Grant to revoke; seen grants={grants:?}"
+    );
+    revoke(
+        &fixture,
+        EntityId::from_hex(&grants[0].grant_ref).expect("Grant id hex"),
+    );
+    assert!(
+        !reveals_erased_deletion(&lane, &short_id, hash),
+        "actor=named agent {agent:?}; expected its held lane to reveal no deletion once its Grant is revoked"
+    );
+    let owner_key = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("owner read key");
+    let owner_lane = fixture.vault.scoped_read(owner_key);
+    assert!(
+        reveals_erased_deletion(&owner_lane, &short_id, hash),
+        "actor=owner {:?}; expected the owner to still reveal the erased row's deletion",
+        fixture.owner,
+    );
+}
+
+/// FIX AGENT-GRANT-TWO-AXIS-SEAMS (RULING GRANT-COMBINE Q1 = A): two Grants
+/// whose per-axis envelope covers every position, while neither alone does
+/// (every world of one project; the base world of every project), reveal no
+/// erased row's deletion metadata to a fresh key at the head. At the base the
+/// key's envelope admits every position, so it reveals it. A single
+/// all-covering Grant reveals it, so the refusal is the two-axis rule.
+#[test]
+fn a_two_grant_agent_learns_no_deletion_neither_grant_alone_covers() {
+    let fixture = fixture();
+    let (short_id, hash) = erased_person_short_ref(&fixture);
+    let agent = create_enabled_agent(&fixture, "pair_two_axis_deletion_agent");
+    let _every_world_one_project = mint_world_audience_read_grant(
+        &fixture,
+        agent,
+        ScopeAxis::All,
+        ScopeAxis::Some(BTreeSet::from([ScopeId(default_project_id())])),
+    );
+    let _base_world_every_project = mint_world_audience_read_grant(
+        &fixture,
+        agent,
+        ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())])),
+        ScopeAxis::All,
+    );
+    let slip = paired_agent_slip(&fixture, agent, 0xb2);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let lane = fixture.vault.scoped_read(key);
+    assert!(
+        !reveals_erased_deletion(&lane, &short_id, hash),
+        "actor=agent {agent:?}; expected no deletion where neither Grant alone covers every position"
+    );
+    let covered = create_enabled_agent(&fixture, "pair_two_axis_deletion_covered");
+    let _all_covering =
+        mint_world_audience_read_grant(&fixture, covered, ScopeAxis::All, ScopeAxis::All);
+    let covered_slip = paired_agent_slip(&fixture, covered, 0xb3);
+    let covered_key = fixture
+        .vault
+        .credential_read_key(&covered_slip)
+        .expect("covered agent credential read key")
+        .expect("covered agent credential grants read");
+    let covered_lane = fixture.vault.scoped_read(covered_key);
+    assert!(
+        reveals_erased_deletion(&covered_lane, &short_id, hash),
+        "actor=agent {covered:?}; expected its all-covering Grant to reveal the erased row's deletion"
     );
 }
