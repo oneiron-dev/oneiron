@@ -136,4 +136,4 @@ crate::setting::setting_keys! {
             .strictest(pairing_code_default)
             .tighter(lower_is_tighter::<PairingCodeSecs>),
     };
-};
+}
