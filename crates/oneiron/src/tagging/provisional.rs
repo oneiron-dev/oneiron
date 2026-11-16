@@ -48,6 +48,7 @@ impl Vault {
             origin: *origin,
             facet: None,
             minted_at: 1,
+            possessor: None,
         };
         self.with_write_txn(|txn| mint_in_txn(&self.store, txn, id, &entity))
     }
@@ -135,12 +136,41 @@ pub(super) fn exists_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId)
     PROVISIONAL.contains(store, txn, id)
 }
 
-/// The provisional entities of `kind` whose name keys as `mention` does.
+/// The provisional entities of `kind` whose name keys as `mention` does,
+/// whatever their possessor.
 pub(super) fn lookup_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     kind: u8,
     mention: &str,
+) -> Result<Vec<EntityId>> {
+    lookup_where_in_txn(store, txn, kind, mention, |_| true)
+}
+
+/// The provisional entities of `kind` whose name keys as `mention` does and
+/// whose possessor is `possessor`: a role phrase's own possessor's, or, for
+/// any other mention, ones minted with none (FIX
+/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
+pub(super) fn lookup_possessed_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    mention: &str,
+    possessor: Option<EntityId>,
+) -> Result<Vec<EntityId>> {
+    lookup_where_in_txn(store, txn, kind, mention, |entity| {
+        entity.possessor == possessor
+    })
+}
+
+/// The provisional entities of `kind` whose name keys as `mention` does and
+/// that `keep` takes.
+fn lookup_where_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    mention: &str,
+    keep: impl Fn(&ProvisionalEntity) -> bool,
 ) -> Result<Vec<EntityId>> {
     let digest = crate::ingest::identity_hint_digest(mention);
     let mut prefix = vec![kind];
@@ -150,7 +180,9 @@ pub(super) fn lookup_in_txn(
         // The index is checked against the row it points at, as the
         // identity index is checked against the record.
         if PROVISIONAL.get(store, txn, &id)?.is_some_and(|entity| {
-            entity.kind == kind && crate::ingest::identity_hint_digest(&entity.name) == digest
+            entity.kind == kind
+                && crate::ingest::identity_hint_digest(&entity.name) == digest
+                && keep(&entity)
         }) {
             found.push(id);
         }
@@ -430,13 +462,14 @@ fn naming_audience_in_txn(
 
 /// Mints a provisional entity named `name` from the turn `origin`, for a
 /// span the identity re-check found to be someone new (OF-123): local and
-/// unsynced, under the turn's facet, as a save mints one.
+/// unsynced, under the turn's facet, as a save mints one, with the role
+/// phrase's `possessor` ([`super::role::possessor_in_txn`]).
 pub(crate) fn mint_for_span_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    kind: u8,
-    name: &str,
+    (kind, name): (u8, &str),
     origin: EntityId,
+    possessor: Option<EntityId>,
     now: u64,
 ) -> Result<EntityId> {
     let id = vault.new_entity_id()?;
@@ -452,6 +485,7 @@ pub(crate) fn mint_for_span_in_txn(
             origin,
             facet,
             minted_at: now,
+            possessor,
         },
     )?;
     Ok(id)

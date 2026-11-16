@@ -191,9 +191,23 @@ pub(super) fn apply_in_txn(
         Answer::SomeoneNew => {
             let fresh = match ask.provisional {
                 Some(own) => own,
-                None => crate::tagging::mint_for_span_in_txn(
-                    vault, txn, ask.kind, &ask.name, ask.turn, now,
-                )?,
+                None => {
+                    let possessor = crate::tagging::possessor_in_txn(
+                        vault,
+                        txn,
+                        ask.kind,
+                        &ask.name,
+                        &ask.message,
+                    )?;
+                    crate::tagging::mint_for_span_in_txn(
+                        vault,
+                        txn,
+                        (ask.kind, &ask.name),
+                        ask.turn,
+                        possessor,
+                        now,
+                    )?
+                }
             };
             crate::tagging::settle_mention_in_txn(vault, txn, &ask.turn, span, fresh)?;
             crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh)?;
