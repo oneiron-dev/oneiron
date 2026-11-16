@@ -38,7 +38,7 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
-use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::config::{ConnectorHostConfig, ConnectorTransport, SyncServerConfig};
 use oneiron_server::{build_app, server::SyncServer};
@@ -178,41 +178,17 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl Fixture {
-    /// A rooted, profiled vault (as `mcp_server_discover.rs` builds one)
-    /// whose server installs `[connectors.docs]` as an HTTP API at the
-    /// fixture's endpoint, with Google's document (as `edit` changes it)
-    /// written to a file, and the API's bearer token in owner custody for
-    /// `connector:docs`.
+    /// A vault its own server roots, as a serving start does (as
+    /// `connector_openapi_source.rs` builds one), whose server installs
+    /// `[connectors.docs]` as an HTTP API at the fixture's endpoint, with
+    /// Google's document (as `edit` changes it) written to a file, and the
+    /// API's bearer token in owner custody for `connector:docs`. The
+    /// keystore goes in before the server, so construction draws the host
+    /// issuer the pairing route signs with; the fixture loads the same one.
     fn new(edit: impl FnOnce(&mut Value)) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        let issuer = oneiron::test_support::provision_engine_machines(&vault);
-        vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-            .expect("serving profile");
-        let (_, owner) = embedded_owner(&vault).expect("embedded owner");
-        vault
-            .register_secret_as_owner(
-                &owner,
-                &OwnerSecretRegistration {
-                    name: SECRET_NAME,
-                    class: CustodyClass::CustodyDeviceBound,
-                    device_only: true,
-                    rung: CustodyTier::T0Doored,
-                    bindings: vec![RequestedBinding {
-                        effector: format!("connector:{CONNECTOR}"),
-                        tier_ceiling: None,
-                        scopes: vec!["read".to_owned()],
-                    }],
-                    manifest: None,
-                    value: SECRET_VALUE.as_bytes(),
-                },
-                CREATED_AT,
-            )
-            .expect("register the API token");
-        let root = vault.ensure_host_root_slip(&issuer).expect("root slip");
-        let root_token = root.to_token().expect("root token");
         let api = DocsApi::start();
         let mut document = docs_document(&api.endpoint);
         edit(&mut document);
@@ -239,6 +215,37 @@ impl Fixture {
             )
             .expect("create server"),
         );
+        let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("serving profile");
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+            .expect("bind the owner under the host root");
+        let owner = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("authenticated owner");
+        vault
+            .register_secret_as_owner(
+                &owner,
+                &OwnerSecretRegistration {
+                    name: SECRET_NAME,
+                    class: CustodyClass::CustodyDeviceBound,
+                    device_only: true,
+                    rung: CustodyTier::T0Doored,
+                    bindings: vec![RequestedBinding {
+                        effector: format!("connector:{CONNECTOR}"),
+                        tier_ceiling: None,
+                        scopes: vec!["read".to_owned()],
+                    }],
+                    manifest: None,
+                    value: SECRET_VALUE.as_bytes(),
+                },
+                CREATED_AT,
+            )
+            .expect("register the API token");
+        let root = vault.ensure_host_root_slip(&issuer).expect("root slip");
+        let root_token = root.to_token().expect("root token");
         Self {
             app: build_app(server),
             vault,
