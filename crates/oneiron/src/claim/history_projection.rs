@@ -39,7 +39,10 @@ mod adopt;
 mod carry;
 mod chain;
 mod pin;
+#[cfg(feature = "sync")]
+mod read_cache;
 mod resolve;
+mod target_history;
 
 pub(crate) use self::chain::{
     ControlRows, StoreRows, chain_transitions, machine_history_for_restriction,
@@ -49,7 +52,10 @@ pub(crate) use self::chain::{
     verified_handoff_chain_from, verify_handoff_signature,
 };
 pub(crate) use self::pin::{PIN_PREFIX, pin_key};
+#[cfg(feature = "sync")]
+pub(crate) use self::read_cache::MachineHistoryReadCache;
 pub(crate) use self::resolve::project_machine_claim;
+pub(crate) use self::target_history::TargetHistory;
 
 fn missing() -> Error {
     Error::Claim(ClaimError::MachineClaimHistoryIncomplete)

@@ -403,11 +403,26 @@ pub(crate) fn blob_scope_held_at(
     raw: &[u8],
     ceilings: &[&ScopeAxis<ScopeId>],
 ) -> Result<Option<Scope>> {
+    blob_scope_held_at_with_history(store, store, txn, id, raw, ceilings)
+}
+
+/// [`blob_scope_held_at`] with each history control's scope read from
+/// `history` ([`super::scope_for_blob_with_history`]).
+pub(crate) fn blob_scope_held_at_with_history(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    history: &impl MachineHistoryScope,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Result<Option<Scope>> {
     let kind = EntityMetadataHeader::parse(raw)
         .ok_or(crate::error::Error::CorruptedIndex("record header"))?
         .entity_type;
-    Ok(super::scope_for_blob(store, txn, id, raw)?
-        .map(|scope| held_at(store, txn, id, kind, &scope, ceilings)))
+    Ok(
+        super::scope_for_blob_with_history(store, history, txn, id, raw)?
+            .map(|scope| held_at(store, txn, id, kind, &scope, ceilings)),
+    )
 }
 
 /// [`blob_scope_held_at`] for a CLAIM body served apart from its stored row,
