@@ -252,6 +252,7 @@ impl Org {
                     thread_ref: root.to_hex(),
                     person_ref: target.to_hex(),
                     history: ThreadAudienceHistory::Full,
+                    check_in_ref: None,
                 })
             }
         })
