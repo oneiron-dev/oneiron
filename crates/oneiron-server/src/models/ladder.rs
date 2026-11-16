@@ -615,6 +615,13 @@ impl OfferLadder {
         self.rungs.len()
     }
 
+    /// Whether an exact call may go out on this ladder: it is one picked
+    /// model, the guard every `generate_exact` keeps. A seat's ladder never
+    /// is.
+    pub(super) fn is_exact(&self) -> bool {
+        self.picked && self.rungs.len() == 1
+    }
+
     /// Each rung's host-bound offer, in ladder order: the access a vault's
     /// model pack resolves against reads their payers (FIX 5366).
     pub(crate) fn offer_bindings(&self) -> impl Iterator<Item = &OfferBinding> {
@@ -1122,10 +1129,13 @@ impl OfferLadder {
             return;
         }
         let rung = &self.rungs[index];
-        call.run.refuse(
+        // The row names the held call's own world (DEC-0005 fix 12), never
+        // the world that kept a call naming none on the device.
+        call.run.refuse_in_world(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
             RunDenied::KeptOnDevice { reason },
+            call.request.envelope.scope.world,
         );
         tracing::info!(
             rung = rung.position,
@@ -1145,10 +1155,11 @@ impl OfferLadder {
             return;
         }
         let rung = &self.rungs[index];
-        call.run.refuse(
+        call.run.refuse_in_world(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
             RunDenied::WorldRouteNotAdmitted,
+            call.request.envelope.scope.world,
         );
         tracing::info!(
             rung = rung.position,
