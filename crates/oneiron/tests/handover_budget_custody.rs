@@ -340,6 +340,83 @@ fn taker_leaves_out_what_open_children_hold() {
     assert_eq!(scope.cap_units, 15);
 }
 
+/// On A: dispatches X pinned at 60, spends 20 of it and releases it to B;
+/// B takes it under a fresh scope, spends `spent_on_b` and releases it back.
+/// A's own try never ran, so it is still queued on A. Answers X.
+fn pinned_run_back_from_b(a: &Machine, b: &Machine, spent_on_b: u64) -> AttemptId {
+    let x = dispatch_run(a, Funding::Pinned, 20);
+    release_to_b(a, b);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    assert!(
+        AgentDispatcher::new(&b.vault)
+            .claim_agent_run(x, "pump-b", T0 + 2)
+            .unwrap()
+            .is_some(),
+        "B claims the run it took"
+    );
+    AgentDispatcher::new(&b.vault)
+        .charge(&SpendScopeId::for_attempt(&x), spent_on_b)
+        .unwrap();
+    assert_eq!(b.vault.release_agent_run_leases().unwrap(), 1);
+    // B's take, claim and release reach B's doc before the exchange carries
+    // them to A.
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // B is the elected home, so A takes after the non-home grace.
+    a.vault.resume_executor_leases();
+    a.clock.set(T0 + 400);
+    x
+}
+
+#[test]
+fn kept_queued_try_takes_only_the_remainder() {
+    let (a, b) = machines();
+    let x = pinned_run_back_from_b(&a, &b, 30);
+    let reap = a
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "A takes the run back with its queued try");
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&SpendScopeId::for_attempt(&x))
+        .unwrap()
+        .unwrap();
+    assert_eq!(x_scope.state, SpendState::Open);
+    let room = x_scope.cap_units - x_scope.spent_units - x_scope.held_units;
+    // A spent 20 and B 30 of the 60, so 10 is left: A's kept pinned scope
+    // comes down to a cap of 30. On 3b746e51 it keeps its cap of 60 at spent
+    // 20: A may spend 40 more, 90 of the 60.
+    assert_eq!(room, 10);
+}
+
+#[test]
+fn kept_queued_try_waits_when_the_launch_is_spent() {
+    let (a, b) = machines();
+    // B spends the whole 40 its take pinned, so the 60 is spent.
+    let x = pinned_run_back_from_b(&a, &b, 40);
+    let reap = a
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    // On 3b746e51 A takes the run back and keeps its cap of 60: 40 more, 100
+    // of the 60.
+    assert_eq!(reap.taken, 0, "A waits: nothing of the launch is left");
+    let x_scope = AgentDispatcher::new(&a.vault)
+        .read_spend_scope(&SpendScopeId::for_attempt(&x))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        x_scope.cap_units, RUN_BUDGET,
+        "the waiting take writes nothing"
+    );
+}
+
 #[test]
 fn take_back_counts_the_takers_earlier_spend() {
     let (a, b) = machines();
