@@ -3,6 +3,7 @@
 //! retriable errors. Each case pins what the server's own copy did before
 //! the move.
 use oneiron::llm::media::wav::pcm16_wav;
+use oneiron::voice_cascade::our_voice::VoiceClientFrame;
 use oneiron::voice_cascade::voxcpm2::VoiceServingLimits;
 use oneiron::voice_identity::ref_bank::VoiceRegisterClip;
 use oneiron::{FatalLlmError, LlmError};
@@ -13,33 +14,11 @@ use oneiron_speech::design::hosted::{
 };
 use oneiron_speech::tts::hosted::HostedWire;
 use oneiron_speech::tts::voxcpm2::{
-    RenderReply, Transcript, TranscriptPlacement, header_pieces, render_body,
+    VOICE_GENERATION, start_frame, started_matches, text_pieces, worker_error,
 };
 use serde_json::{Value as JsonValue, json};
 
 const RATE: u32 = 24_000;
-
-/// A worker's reply: the header's length, the header, then `audio`.
-fn framed_reply(header: &JsonValue, audio: &[u8]) -> Vec<u8> {
-    let header = serde_json::to_vec(header).expect("a JSON value serializes");
-    let length = u32::try_from(header.len()).expect("a short header");
-    let mut reply = length.to_be_bytes().to_vec();
-    reply.extend_from_slice(&header);
-    reply.extend_from_slice(audio);
-    reply
-}
-
-fn limits(max_header_bytes: u64) -> VoiceServingLimits {
-    VoiceServingLimits {
-        max_text_bytes: 1_000,
-        max_ref_bytes: 1_000_000,
-        max_queued_renders: 4,
-        max_inflight_uploads: 1,
-        upload_read_deadline_ms: 1_000,
-        http_deadline_ms: 1_000,
-        max_header_bytes,
-    }
-}
 
 fn clip(media_type: &str, audio: &[u8]) -> VoiceRegisterClip {
     VoiceRegisterClip {
@@ -55,105 +34,133 @@ fn is_fatal(error: &LlmError, want: &FatalLlmError) -> bool {
 }
 
 #[test]
-fn a_render_reply_hands_back_the_same_audio_however_it_is_chunked() {
-    let target = json!({"voice_id": "voice-1", "owner": "owen"});
-    let header = json!({"target": target, "sample_rate": RATE, "channels": 1});
-    let audio = [1_u8, 2, 3, 4, 5, 6];
-    let bytes = framed_reply(&header, &audio);
-    for size in [1, 3, 7, bytes.len()] {
-        let mut reply = RenderReply::new(&target, RATE, 1_024);
-        let mut kept = Vec::new();
-        for chunk in bytes.chunks(size) {
-            kept.extend_from_slice(reply.push(chunk).unwrap());
+fn text_pieces_fit_the_text_frame_bound_and_keep_the_order() {
+    let text = "The harbour at dawn is quiet and bright, and the boats are still.";
+    let limits = VoiceServingLimits {
+        max_text_bytes: 16,
+        max_ref_bytes: 1_000_000,
+        max_queued_renders: 4,
+        max_inflight_uploads: 1,
+        upload_read_deadline_ms: 1_000,
+        http_deadline_ms: 1_000,
+        max_header_bytes: 1_024,
+    };
+    let pieces = text_pieces(text, limits).expect("pieces");
+    let renders = pieces.len();
+    assert!(renders >= 2, "two renders, got {renders}");
+    assert_eq!(pieces.concat(), text, "the order keeps");
+    for piece in &pieces {
+        let frame = VoiceClientFrame::Text {
+            generation: VOICE_GENERATION,
+            text: (*piece).to_owned(),
         }
-        assert!(reply.header_whole(), "chunks of {size}");
-        assert_eq!(kept, audio, "chunks of {size}");
+        .to_json();
+        assert!(
+            frame.len() as u64 <= limits.max_header_bytes,
+            "a frame fits: {frame:?}"
+        );
     }
-}
-
-#[test]
-fn a_render_reply_refuses_a_bad_length_or_a_header_for_another_target() {
-    let target = json!({"voice_id": "voice-1"});
-    let empty = FatalLlmError::EmptyResponse;
-    // A zero length, and one past the effective bound, before any header byte.
-    let mut reply = RenderReply::new(&target, RATE, 1_024);
-    assert!(is_fatal(&reply.push(&[0, 0, 0, 0]).unwrap_err(), &empty));
-    let mut reply = RenderReply::new(&target, RATE, 8);
-    assert!(is_fatal(
-        &reply.push(&9_u32.to_be_bytes()).unwrap_err(),
-        &empty
-    ));
-    // A header for another target, or at another rate, keeps no audio.
-    for header in [
-        json!({"target": {"voice_id": "voice-2"}, "sample_rate": RATE, "channels": 1}),
-        json!({"target": target, "sample_rate": 16_000, "channels": 1}),
-        json!({"target": target, "sample_rate": RATE, "channels": 2}),
-    ] {
-        let mut reply = RenderReply::new(&target, RATE, 1_024);
-        let error = reply.push(&framed_reply(&header, &[1, 2])).unwrap_err();
-        assert!(is_fatal(&error, &empty), "{header}");
+    let overhead = VoiceClientFrame::Text {
+        generation: VOICE_GENERATION,
+        text: String::new(),
     }
-    // A reply that ends inside its header holds no render.
-    let whole = framed_reply(
-        &json!({"target": target, "sample_rate": RATE, "channels": 1}),
-        &[],
+    .to_json()
+    .len() as u64;
+    let tight = VoiceServingLimits {
+        max_header_bytes: overhead + 4,
+        ..limits
+    };
+    let fitted = text_pieces(text, tight).expect("tight pieces");
+    assert_eq!(fitted.concat(), text, "the tight order keeps");
+    for piece in &fitted {
+        let frame = VoiceClientFrame::Text {
+            generation: VOICE_GENERATION,
+            text: (*piece).to_owned(),
+        }
+        .to_json();
+        assert!(
+            frame.len() as u64 <= tight.max_header_bytes,
+            "a tight frame fits: {frame:?}"
+        );
+    }
+    let impossible = VoiceServingLimits {
+        max_header_bytes: overhead,
+        ..limits
+    };
+    let error = text_pieces("hi", impossible).expect_err("no character fits");
+    assert!(
+        is_fatal(&error, &FatalLlmError::InvalidRequest),
+        "one character refused: {error:?}"
     );
-    let mut reply = RenderReply::new(&target, RATE, 1_024);
-    assert!(reply.push(&whole[..whole.len() - 1]).unwrap().is_empty());
-    assert!(!reply.header_whole());
 }
 
 #[test]
-fn a_render_body_frames_the_header_then_the_transcript_then_the_clip() {
+fn start_frame_refuses_metadata_past_the_bound() {
     let target = json!({"voice_id": "voice-1"});
-    let clip = b"RIFF";
-    let header_of = |body: &[u8]| -> (JsonValue, Vec<u8>) {
-        let length = u32::from_be_bytes(body[..4].try_into().unwrap()) as usize;
-        let header = serde_json::from_slice(&body[4..4 + length]).unwrap();
-        (header, body[4 + length..].to_vec())
-    };
-    let framed = Transcript {
-        text: "hello there",
-        placement: TranscriptPlacement::Frame,
-    };
-    let body = render_body(&target, "speak this", framed, 1_024, clip).unwrap();
-    let (header, rest) = header_of(&body);
-    assert_eq!(
-        header,
-        json!({"target": target, "text": "speak this", "transcript_bytes": 11})
+    let audio = b"RIFF0000WAVEfmt ";
+    let start = start_frame(&target, "hello", audio, 1_024).expect("a start fits");
+    let frame: JsonValue = serde_json::from_str(&start).expect("start JSON");
+    assert_eq!(frame["type"].as_str(), Some("start"));
+    assert_eq!(frame["transcript_bytes"].as_u64(), Some(5));
+    assert_eq!(frame["reference_bytes"].as_u64(), Some(audio.len() as u64));
+    let error = start_frame(&target, "hello", audio, 8).expect_err("a header past 8");
+    assert!(
+        is_fatal(&error, &FatalLlmError::InvalidRequest),
+        "a long frame refuses: {error:?}"
     );
-    assert_eq!(rest, b"hello thereRIFF");
-    let inline = Transcript {
-        text: "hello there",
-        placement: TranscriptPlacement::Header,
-    };
-    let body = render_body(&target, "speak this", inline, 1_024, clip).unwrap();
-    let (header, rest) = header_of(&body);
-    assert_eq!(
-        header,
-        json!({"target": target, "text": "speak this", "transcript": "hello there"})
-    );
-    assert_eq!(rest, clip);
-    // A header past the effective decoder bound does not go.
-    let error = render_body(&target, "speak this", inline, 8, clip).unwrap_err();
-    assert!(is_fatal(&error, &FatalLlmError::InvalidRequest));
-}
-
-#[test]
-fn a_transcript_too_long_for_the_header_rides_as_its_own_frame() {
-    let target = json!({"voice_id": "voice-1"});
     let long = "a".repeat(200);
-    let (transcript, pieces) =
-        header_pieces(&target, "Short text.", "brief", limits(120), true).unwrap();
-    assert_eq!(transcript.placement, TranscriptPlacement::Header);
-    assert_eq!(pieces.concat(), "Short text.");
-    let (transcript, pieces) =
-        header_pieces(&target, "Short text.", &long, limits(120), true).unwrap();
-    assert_eq!(transcript.placement, TranscriptPlacement::Frame);
-    assert_eq!(pieces.concat(), "Short text.");
-    // A worker that takes no frame: not one character fits beside it.
-    let error = header_pieces(&target, "Short text.", &long, limits(120), false).unwrap_err();
-    assert!(is_fatal(&error, &FatalLlmError::InvalidRequest));
+    let error = start_frame(&target, &long, audio, 120).expect_err("a long transcript");
+    assert!(
+        is_fatal(&error, &FatalLlmError::InvalidRequest),
+        "a long transcript refuses: {error:?}"
+    );
+}
+
+#[test]
+fn started_matches_needs_the_same_target_rate_and_mono() {
+    let target = json!({"voice_id": "voice-1"});
+    let same = json!({
+        "generation": 1,
+        "target": target,
+        "sample_rate": RATE,
+        "channels": 1
+    });
+    assert!(started_matches(&same, &target, RATE), "the same pins match");
+    for meta in [
+        json!({"generation": 2, "target": target, "sample_rate": RATE, "channels": 1}),
+        json!({"generation": 1, "target": {"voice_id": "voice-2"}, "sample_rate": RATE, "channels": 1}),
+        json!({"generation": 1, "target": target, "sample_rate": 16_000, "channels": 1}),
+        json!({"generation": 1, "target": target, "sample_rate": RATE, "channels": 2}),
+    ] {
+        assert!(
+            !started_matches(&meta, &target, RATE),
+            "another pins refuse: {meta}"
+        );
+    }
+}
+
+#[test]
+fn a_render_failure_is_retryable_and_others_fatal() {
+    let retry = worker_error("render_failed");
+    assert!(
+        matches!(
+            retry,
+            LlmError::Retryable(oneiron::RetryableLlmError::ServerError)
+        ),
+        "a failed render retries: {retry:?}"
+    );
+    for code in [
+        "invalid_request",
+        "stale_target",
+        "not_started",
+        "anything-else",
+    ] {
+        let fatal = worker_error(code);
+        assert!(
+            is_fatal(&fatal, &FatalLlmError::InvalidRequest),
+            "{code} refuses: {fatal:?}"
+        );
+    }
 }
 
 #[test]

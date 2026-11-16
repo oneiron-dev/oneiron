@@ -271,12 +271,14 @@ pub(super) async fn serve(
             .await;
             break;
         };
-        // OF-520: each call counts under the person who makes it.
-        let _ = server.wire_telemetry.record(
-            &request.method,
-            &holder,
-            oneiron_vault_contract::now_ts(),
-        );
+        // OF-520: each call counts under the person who makes it, on the
+        // blocking pool, never on this loop's worker (FIX
+        // [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+        let (verb, actor) = (request.method.clone(), holder.clone());
+        crate::wire_telemetry::record_on_blocking_pool(&server, move |telemetry, now| {
+            telemetry.record(&verb, &actor, now)
+        })
+        .await;
         if request.method == "ping" {
             // A call context rides a facade verb RPC only (FIX 2059).
             if carried.is_some() {
