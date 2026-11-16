@@ -73,6 +73,8 @@ pub(crate) use wake::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use walk::derived_travel_in;
+#[cfg(oneiron_test_support)]
+pub(crate) use walk::set_follow_birth_inputs;
 pub(crate) use walk::{
     LineagePass, ReplicationScope, read_audience_in, readable_with_read_in,
     withheld_from_replication_in,

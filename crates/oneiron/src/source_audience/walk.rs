@@ -54,6 +54,18 @@ fn source_marked(raw: &[u8]) -> bool {
     super::obligation::row_obligation(raw).is_present()
 }
 
+/// Whether [`word_sources`] also follows a row's birth inputs and its
+/// registered dependencies (pass 30's bench only; never merged).
+#[cfg(oneiron_test_support)]
+static FOLLOW_BIRTH_INPUTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Turns [`FOLLOW_BIRTH_INPUTS`] on or off (pass 30's bench only).
+#[cfg(oneiron_test_support)]
+pub(crate) fn set_follow_birth_inputs(on: bool) {
+    FOLLOW_BIRTH_INPUTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// What the words of the row `id` (bytes `bytes`) came from, as the walk
 /// reads it: the rows each of which must read, and a CLAIM's supports, one
 /// of which must.
@@ -107,6 +119,19 @@ fn word_sources(
         crate::scope_summary::body_covers_in_txn(vault, txn, &id, header.entity_type, body)
     {
         every.extend(covers);
+    }
+    // Pass 30's bench (read_lineage_cost), never merged: with the switch on,
+    // a row's words also came from its birth's inputs and its registered
+    // dependencies, the lineage pin14's `row_lineage` reads. Shape (a) made
+    // correct.
+    #[cfg(oneiron_test_support)]
+    if FOLLOW_BIRTH_INPUTS.load(std::sync::atomic::Ordering::Relaxed) {
+        every.extend(crate::store::birth_record::input_rows_in_txn(
+            &vault.store,
+            txn,
+            &id,
+        )?);
+        every.extend(crate::ports::dependency_sources_in(&vault.store, txn, &id)?);
     }
     let mut supports = Vec::new();
     if header.entity_type == ENTITY_TYPE_CLAIM {

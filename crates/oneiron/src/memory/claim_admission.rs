@@ -34,6 +34,49 @@ impl Memory<'_> {
         self.commit_scoped_one(input, false)
     }
 
+    /// Pass 30's bench (read_lineage_cost; never merged): [`Self::claim_upsert_scoped`]
+    /// of a claim with no evidence TURNs, whose birth names `inputs` (any
+    /// rows, a SUMMARY included), as a row born from a summary names it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::claim_upsert_scoped`]; an input this vault does not hold.
+    #[cfg(oneiron_test_support)]
+    pub fn claim_upsert_scoped_born_from(
+        &self,
+        input: &ScopedClaimInput,
+        inputs: &[EntityId],
+    ) -> MemoryResult<CommitReceipt> {
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let mut prepared = self.prepare_scoped_claim(input, &lane)?;
+        let mut bytes = Vec::new();
+        for row in inputs {
+            bytes.push(
+                self.vault
+                    .get(row)?
+                    .ok_or_else(|| MemoryError::bad_request("a birth input is absent"))?,
+            );
+        }
+        let read: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
+        prepared.birth = RowBirth::written(
+            self.write_actor(),
+            MadeByClass::of_source(self.claim_source(&input.source)?),
+            "vault.claims.upsert",
+            inputs,
+            &read,
+            self.vault.store.clock.now_recorded_at(),
+        )
+        .ok_or_else(|| MemoryError::bad_request("a born claim names its inputs"))?;
+        self.commit_one_guarded_with_birth(
+            &prepared.claim,
+            false,
+            None,
+            || {},
+            &|txn| self.scoped_claim_check(txn, &prepared, &lane),
+            Some(&prepared.birth),
+        )
+    }
+
     /// `vault.commit` (`proposed` false): one atomic batch (FIX 9403; ARCH-0040,
     /// ARCH-0045). Each element is prepared and gated on its own, and every
     /// element lands or none does; a refused element answers its typed
