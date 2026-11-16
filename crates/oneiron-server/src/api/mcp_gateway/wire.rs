@@ -75,3 +75,11 @@ pub(super) fn observe_envelope_error(server: &SyncServer, method: &str, kind: &s
         .wire_telemetry
         .record_mcp_error(category, oneiron_vault_contract::now_ts());
 }
+
+/// Counts one parse error, as the gateway counts a body that is not JSON:
+/// the door for `tests/wire_counts_off_runtime.rs`. Red pin: main's
+/// synchronous `observe_envelope_error`.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn count_parse_error_for_test(server: &SyncServer) {
+    observe_envelope_error(server, "mcp", "parse_error");
+}
