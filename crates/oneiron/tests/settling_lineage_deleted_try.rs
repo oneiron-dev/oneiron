@@ -257,19 +257,21 @@ fn fork_whose_spawning_try_was_deleted() -> DeletedSpawnFixture {
 
     complete_and_archive_try(&fixture.vault, chain.spawning_try)
         .expect("the spawner's try completes and is archived");
-    let owner = owner_memory(&fixture).with_owner_authorship(&owner_proof(&fixture));
-    let attempt = attempt_hex(chain.spawning_try);
-    let preview = invoke(&owner, DELETE_PREVIEW, json!({ "attempt": attempt }))
-        .unwrap_or_else(|error| panic!("the owner previews the archived try: {error:?}"));
-    let receipt = invoke(
-        &owner,
-        DELETE_CONFIRM,
-        json!({ "attempt": attempt, "expected": preview["expected"] }),
-    )
-    .unwrap_or_else(|error| panic!("the owner deletes the archived try: {error:?}"));
-    assert_eq!(receipt["attempt"], json!(attempt), "{receipt}");
-    invoke(&owner, DELETE_PREVIEW, json!({ "attempt": attempt }))
-        .expect_err("the deleted try is no longer in the queue");
+    {
+        let owner = owner_memory(&fixture).with_owner_authorship(&owner_proof(&fixture));
+        let attempt = attempt_hex(chain.spawning_try);
+        let preview = invoke(&owner, DELETE_PREVIEW, json!({ "attempt": attempt }))
+            .unwrap_or_else(|error| panic!("the owner previews the archived try: {error:?}"));
+        let receipt = invoke(
+            &owner,
+            DELETE_CONFIRM,
+            json!({ "attempt": attempt, "expected": preview["expected"] }),
+        )
+        .unwrap_or_else(|error| panic!("the owner deletes the archived try: {error:?}"));
+        assert_eq!(receipt["attempt"], json!(attempt), "{receipt}");
+        invoke(&owner, DELETE_PREVIEW, json!({ "attempt": attempt }))
+            .expect_err("the deleted try is no longer in the queue");
+    }
     DeletedSpawnFixture {
         fixture,
         delegator,

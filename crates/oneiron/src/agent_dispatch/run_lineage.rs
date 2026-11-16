@@ -49,7 +49,10 @@ fn recorded_parent(row: &AttemptRecord) -> Option<AttemptId> {
 }
 
 /// The two links a try holds on a settling lineage, as its row records them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A deletion receipt stores it as it is (`vault_cleanup`'s
+/// `VAULT_CLEANUP_ATTEMPT_DELETE`, Named), so its field names are that row's
+/// keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AttemptLineageLink {
     /// The agent definition the try dispatched, when it was an agent dispatch.
     pub(crate) dispatched_agent: Option<EntityId>,

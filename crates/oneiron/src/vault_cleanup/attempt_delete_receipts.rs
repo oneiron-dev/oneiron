@@ -20,21 +20,11 @@ struct Deletion {
     deleted_at: u64,
     run_id: Option<String>,
     /// The deleted try's links on a settling lineage, read off its row before
-    /// the delete. A receipt written before the field, or for a row whose
-    /// payload did not decode, has none: a lineage through that try stays
-    /// unknown.
+    /// the delete: ids only, no payload. A receipt written before the field,
+    /// or for a row whose payload did not decode, has none: a lineage through
+    /// that try stays unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    lineage: Option<DeletedLineage>,
-}
-
-/// [`AttemptLineageLink`] as a deletion receipt stores it: ids only, no
-/// payload. An actor erase leaves it as it is: it names an agent definition
-/// and a try, never a person, and a lineage that lost a link would let a fork
-/// settle its own lineage's proposal.
-#[derive(Serialize, Deserialize)]
-struct DeletedLineage {
-    dispatched_agent: Option<EntityId>,
-    parent_attempt: Option<AttemptId>,
+    lineage: Option<AttemptLineageLink>,
 }
 
 pub(super) fn stamp_in_txn(
@@ -54,10 +44,7 @@ pub(super) fn stamp_in_txn(
             deleted_by: Some(actor),
             deleted_at: at,
             run_id: run.map(str::to_owned),
-            lineage: lineage.map(|link| DeletedLineage {
-                dispatched_agent: link.dispatched_agent,
-                parent_attempt: link.parent_attempt,
-            }),
+            lineage,
         },
     )?;
     Ok(format!(
@@ -80,11 +67,7 @@ pub(crate) fn deleted_attempt_lineage_in_txn(
 ) -> Result<Option<AttemptLineageLink>> {
     Ok(DELETIONS
         .get_lenient(store, txn, &attempt)?
-        .and_then(|deletion| deletion.lineage)
-        .map(|link| AttemptLineageLink {
-            dispatched_agent: link.dispatched_agent,
-            parent_attempt: link.parent_attempt,
-        }))
+        .and_then(|deletion| deletion.lineage))
 }
 
 /// The run's deletion lines in time/id order, read beside its remaining rows.
@@ -112,7 +95,11 @@ pub(crate) fn deletions_for_run_in_txn(
 
 /// Receipts keep their time, not an erased actor (FIX 812). Attempt ids are
 /// not entity ids: the deletion's attempt key remains the historical fact.
-/// Only the resident-run producer embeds a proven actor in its run tag.
+/// Only the resident-run producer embeds a proven actor in its run tag. The
+/// lineage links stay as they are: they name an agent definition and a try,
+/// never a person, as the live queue row keeps them through an erase, and a
+/// lineage that lost a link would let a fork settle its own lineage's
+/// proposal.
 pub(crate) fn erase_attempt_delete_actor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
