@@ -288,11 +288,18 @@ fn the_owner_cannot_set_a_cap_day_or_a_sweep_switch_of_another_shape() {
 }
 
 /// A vault whose device keystore is installed, as a host installs it after each open.
+///
+/// A seeded vault refuses a poll on `linkedin`, a channel a built-in pack serves, until that
+/// pack is installed Active with its connection checked (OF-519): "the channel's built-in pack
+/// is not installed". The pack is not what these tests cover, so the vault drops the seed
+/// marker, as an unseeded open has none.
 fn open_seat_fixture() -> Fixture {
     let fixture = open_fixture();
     fixture.vault.install_device_keystore(std::sync::Arc::new(
         oneiron_keystore::MemoryKeystore::default(),
     ));
+    oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&fixture.vault)
+        .expect("remove the built-in pack seed marker");
     fixture
 }
 
