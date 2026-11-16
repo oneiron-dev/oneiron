@@ -1,7 +1,12 @@
-//! The owner's five answers to a found key: rotate (the rotate door settles
-//! it), delete, grant, not a secret and kept as text. Each is owner-only,
-//! checked at the owner tier in the transaction that acts, and each leaves its
-//! receipt on the key.
+//! The five answers to a found key: rotate (the rotate door settles it),
+//! delete, grant, not a secret and kept as text. Each is the owner's, checked
+//! at the owner tier in the transaction that acts, and each leaves its receipt
+//! on the key. Not a secret and kept as text are also the answers of the
+//! person who wrote the value there in their own name, checked at the person
+//! tier in that transaction (ARCH-0038 #secret-scan-target: "The writer may
+//! mark a hit 'not a secret', with a receipt"; ARCH-0069 #mask-on-write: "A
+//! person may instead mark"; L6-03-WRITER-MARK = B). An agent's write names
+//! no writer, so its keys stay the owner's to answer.
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -168,9 +173,19 @@ impl Vault {
     /// for the next pass that can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY,
     /// FIX 5407).
     ///
+    /// The person who wrote the value there in their own name may rule it
+    /// too, with `owner` their own proof at the person tier. Their ruling
+    /// does all of the above on this install, with them named on its
+    /// receipts, but carries no revoke to the owner's other machines: that
+    /// carry is the owner's own act (`OwnerAct::by_owner`), and custody acts
+    /// are owner-only (L6-03-WRITER-CARRY). A key whose writer is not the
+    /// proof's person is refused as a non-owner is, whether or not the handle
+    /// names one.
+    ///
     /// # Errors
-    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
-    /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is neither
+    /// the live owner's nor that of the live person who wrote the key.
+    /// [`Error::EntityNotFound`] for a handle no notice names, to the owner.
     /// [`GateError::InvalidConsentBound`] for a key already ruled, a place
     /// that cannot take its value back, a key whose value a revoke erased,
     /// or a value that is not text going back into text. An install key that
@@ -185,11 +200,13 @@ impl Vault {
         self.rule_found_key_text(owner, surface, handle, FoundKeyAction::NotASecret)
     }
 
-    /// Keeps a found key's span as text by the owner's explicit choice. The
-    /// value stays a secret: this is not a false-hit ruling. The marked
-    /// record's value is restored and screened from later sweeps exactly as
-    /// [`Self::rule_found_key_not_a_secret`] does, while the distinct action,
-    /// revoke cause and Gate reason record the owner's different intent.
+    /// Keeps a found key's span as text by the owner's explicit choice, or
+    /// that of the person who wrote it there. The value stays a secret: this
+    /// is not a false-hit ruling. The marked record's value is restored and
+    /// screened from later sweeps exactly as
+    /// [`Self::rule_found_key_not_a_secret`] does, for the same two people,
+    /// while the distinct action, revoke cause and Gate reason record the
+    /// different intent.
     pub fn keep_found_key_as_text(
         &self,
         owner: &AuthenticatedOwner,
@@ -233,8 +250,8 @@ impl Vault {
         };
         self.load_signing_for_revoke()?;
         let (settled, carried) = self.with_write_txn_grouped(|txn| {
-            let actor = live_owner_in_txn(self, owner, txn, "only the vault owner rules on it")?;
-            let mut found = Located::find_in_txn(&self.store, txn, handle)?;
+            let (by, mut found) = Answerer::of_key_in_txn(self, owner, txn, handle)?;
+            let actor = by.person();
             found.refuse_ruled()?;
             let place = found.key().place.clone();
             let field = place.strip_prefix("text:");
@@ -283,11 +300,20 @@ impl Vault {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
             // The ruling's surface is where the request reached this
-            // install: audit only.
-            let carried = self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?;
+            // install: audit only. Only the owner's ruling carries its
+            // revoke to his other machines, as his own act; the writer's
+            // stands here (L6-03-WRITER-CARRY).
+            let carried = match by {
+                Answerer::Owner(_) => {
+                    Some(self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?)
+                }
+                Answerer::Writer(_) => None,
+            };
             Ok((settled, carried))
         })?;
-        self.mirror_custody_change(&carried);
+        if let Some(carried) = &carried {
+            self.mirror_custody_change(carried);
+        }
         Ok(settled)
     }
 
@@ -513,12 +539,12 @@ impl Located {
     fn refuse_ruled(&self) -> Result<()> {
         if self.key().ruled_no_secret() {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "the owner ruled this key no secret; its custody record is revoked",
+                "this key was ruled no secret; its custody record is revoked",
             )));
         }
         if self.key().kept_as_text() {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "the owner kept this key as text; its custody record is revoked",
+                "this key was kept as text; its custody record is revoked",
             )));
         }
         Ok(())
@@ -552,6 +578,52 @@ fn live_owner_in_txn(
     Ok(actor)
 }
 
+/// Who gives a not-a-secret or kept-as-text answer (L6-03-WRITER-MARK = B).
+#[derive(Debug, Clone, Copy)]
+enum Answerer {
+    /// The live vault owner.
+    Owner(EntityId),
+    /// The live person who wrote the key's value where it was found, in their
+    /// own name: the key's recorded writer.
+    Writer(EntityId),
+}
+
+impl Answerer {
+    /// The answerer of the key `handle` names, and the key, in `txn`: the
+    /// proof's person when they own this vault, else when they wrote the
+    /// key. Anyone else meets the owner door's refusal, whether or not the
+    /// handle names a key, so the door tells a non-owner nothing of keys
+    /// they did not write.
+    fn of_key_in_txn(
+        vault: &Vault,
+        proof: &AuthenticatedOwner,
+        txn: &RoTxn<'_>,
+        handle: &str,
+    ) -> Result<(Self, Located)> {
+        let refused = match live_owner_in_txn(vault, proof, txn, "only the vault owner rules on it")
+        {
+            Ok(owner) => {
+                let found = Located::find_in_txn(&vault.store, txn, handle)?;
+                return Ok((Self::Owner(owner), found));
+            }
+            Err(refused) => refused,
+        };
+        let person = proof.revalidate_person_in_txn(vault, txn)?;
+        Located::find_in_txn(&vault.store, txn, handle)
+            .ok()
+            .filter(|found| found.key().writer == Some(person))
+            .map(|found| (Self::Writer(person), found))
+            .ok_or(refused)
+    }
+
+    /// The person who answers.
+    const fn person(self) -> EntityId {
+        match self {
+            Self::Owner(person) | Self::Writer(person) => person,
+        }
+    }
+}
+
 /// Whether a key was found in an entity the owner can delete, not in a row
 /// outside the entity tables.
 fn is_record_place(place: &str) -> bool {
@@ -562,7 +634,8 @@ fn gate_ref(decision: GateDecisionId) -> String {
     format!("gate:{}", decision.to_hex())
 }
 
-/// Appends the owner's ruling to the Gate receipt family, in `txn`.
+/// Appends a ruling, the owner's or the writer's, to the Gate receipt
+/// family, in `txn`.
 fn append_ruling_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,

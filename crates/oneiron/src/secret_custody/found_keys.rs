@@ -6,8 +6,11 @@
 //! that found it), its `sc` handle and where it sat. Nothing here holds a
 //! value.
 //!
-//! The owner answers each key with one of five doors, each owner-only and
-//! each with its receipt ([`actions`]):
+//! The owner answers each key with one of five doors, each with its receipt
+//! ([`actions`]). Two of them, not a secret and kept as text, the person who
+//! wrote the value there in their own name may also give (ARCH-0038
+//! #secret-scan-target: "The writer may mark a hit 'not a secret'";
+//! L6-03-WRITER-MARK = B); an agent's write keeps its keys the owner's:
 //!
 //! - **rotate**: the existing rotate door for the key's custody record
 //!   (`Vault::rotate_secret_as_owner`), which settles the key in its own
@@ -125,6 +128,11 @@ struct FoundKey {
     found_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     settled: Option<FoundKeySettled>,
+    /// The person who wrote the value there in their own name, who may rule
+    /// it not a secret or keep it as text; `None` for an agent's or the
+    /// engine's write, or once that person was erased (FIX 3520).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer: Option<EntityId>,
 }
 
 impl FoundKey {
@@ -153,10 +161,10 @@ impl FoundKey {
 
 pub(crate) use crate::secret_record::FoundNote;
 
-/// Erasing `actor` from the found keys it settled (FIX 3520): each
+/// Erasing `actor` from the found keys it settled or wrote (FIX 3520): each
 /// settlement keeps its action, its time, its receipt and its grant, and
-/// names no owner. One-way, in the erase's own transaction. An id whose
-/// entity is no actor scans nothing.
+/// names no person, and a key it wrote names no writer. One-way, in the
+/// erase's own transaction. An id whose entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -177,6 +185,10 @@ pub(crate) fn erase_found_key_actor_in_txn(
                 && settled.by == Some(*actor)
             {
                 settled.by = None;
+                named = true;
+            }
+            if key.writer == Some(*actor) {
+                key.writer = None;
                 named = true;
             }
         }
@@ -215,6 +227,7 @@ pub(crate) fn note_found_keys_in_txn(
                 place: note.place.clone(),
                 found_at: at,
                 settled: None,
+                writer: note.writer,
             });
         }
         FOUND.put(store, txn, &record, &found)?;
