@@ -43,6 +43,17 @@ const NOT_COUNTED: &str = "this install's fold does not count the conversation t
 #[doc(hidden)]
 pub use oneiron_records::authority::conversation_training::door::ConversationTrainingView;
 
+/// What a person's own slip-key proof of their choice names beside
+/// `leave_out` and `seen` (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF;
+/// ruling PERSONKEY-PR2-STATEMENT-SOURCE = A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersonProofSubject {
+    /// This vault's id, as the proof names it.
+    pub vault_id: [u8; 32],
+    /// The caller's own slip their proof presented, as the proof names it.
+    pub slip: [u8; 32],
+}
+
 impl Vault {
     /// The authenticated person's own opt-out.
     ///
@@ -57,6 +68,47 @@ impl Vault {
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(opt_out_view(&fold, person))
+    }
+
+    /// Whether `person` owns this vault, as a human, in `txn`.
+    fn person_owns_vault_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: crate::entity_id::EntityId,
+    ) -> Result<bool> {
+        crate::memory::actor_is_vault_owner_in_txn(self, txn, person, EdgeActorClass::Human)
+            .map_err(|_| invalid_authority())
+    }
+
+    /// What the authenticated person's own slip-key proof of their choice
+    /// names (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF; ruling
+    /// PERSONKEY-PR2-STATEMENT-SOURCE = A): this vault's id and the slip
+    /// their proof was bound to. Their surface signs these with `leave_out`
+    /// and `seen` under that slip's binding key. `None` when this door
+    /// takes no person proof from them: the vault owner proves with an
+    /// owner key, a proof bound to no person slip has no slip key, and an
+    /// unrooted vault judges none.
+    ///
+    /// # Errors
+    /// A refusal when the proof is no longer a live person of this vault;
+    /// storage faults, and history this vault lacks, as the fold reads them.
+    pub fn conversation_training_proof_subject(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Option<PersonProofSubject>> {
+        let txn = self.store.env.read_txn()?;
+        let person = owner.revalidate_person_in_txn(self, &txn)?;
+        let Some(slip) = owner.person_credential_slip() else {
+            return Ok(None);
+        };
+        if self.person_owns_vault_in_txn(&txn, person)? {
+            return Ok(None);
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let Some(vault_id) = fold.vault_id else {
+            return Ok(None);
+        };
+        Ok(Some(PersonProofSubject { vault_id, slip }))
     }
 
     /// The authenticated person leaves their own messages out of training
@@ -150,14 +202,7 @@ impl Vault {
             // The vault owner proves with the owner key, never a slip key:
             // the same refusal an unproven opt back in meets, so their
             // surface shows the same "use your owner device" state.
-            let owns = crate::memory::actor_is_vault_owner_in_txn(
-                self,
-                &txn,
-                person,
-                EdgeActorClass::Human,
-            )
-            .map_err(|_| invalid_authority())?;
-            if owns {
+            if self.person_owns_vault_in_txn(&txn, person)? {
                 return Err(Error::Record(RecordError::OwnerKeyRequired));
             }
             let set = ConversationTrainingSet {

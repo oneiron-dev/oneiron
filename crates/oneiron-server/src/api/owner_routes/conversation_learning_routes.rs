@@ -29,7 +29,9 @@
 //!   `PUT /me` also takes an optional `person_proof` `{ slip, signature }`
 //!   (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): the person's own slip-key
 //!   proof of their opt back in through a carrier that is not the owner's; it
-//!   needs `seen`.
+//!   needs `seen`. Both answers also name `vault_id` and `slip` where the
+//!   caller's door takes a person proof: the fields that proof signs beside
+//!   `leave_out` and the revision as `seen`.
 //!
 //! A stale `seen` is a conflict, never a silent overwrite.
 //!
@@ -48,7 +50,8 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, put};
 use oneiron::authority::{
-    ConversationLearningView, ConversationTrainingView, PersonChoiceProof, VerifiedSlip,
+    ConversationLearningView, ConversationTrainingView, PersonChoiceProof, PersonProofSubject,
+    VerifiedSlip,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -107,7 +110,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/conversation-learning/me",
-                summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force.",
+                summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force; and, where the caller's door takes a person proof, vault_id and slip (64 hex each): the fields the person's own slip-key proof of an opt back in names beside leave_out and the revision as seen.",
                 row: None,
                 shape: None,
             },
@@ -240,9 +243,19 @@ struct OwnReply {
     /// The authority entry of the choice in force, 64 hex; null while none
     /// counts or the choices conflict.
     act: Option<String>,
+    /// This vault's id as a person proof names it, 64 hex; null when this
+    /// caller's door takes no person proof (the vault owner proves with an
+    /// owner key; a Connect guest acts on no person slip).
+    vault_id: Option<String>,
+    /// The caller's own slip their proof presented, as a person proof names
+    /// it, 64 hex; null with `vault_id`. A surface signs these with
+    /// `leave_out` and `revision` as `seen` (row
+    /// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF) and sends the proof as
+    /// `person_proof` on `PUT /me`.
+    slip: Option<String>,
 }
 
-fn own_reply(view: &ConversationTrainingView) -> OwnReply {
+fn own_reply(view: &ConversationTrainingView, subject: Option<&PersonProofSubject>) -> OwnReply {
     OwnReply {
         person: view.person.to_hex(),
         leave_out: view.leave_out,
@@ -250,6 +263,8 @@ fn own_reply(view: &ConversationTrainingView) -> OwnReply {
         revision: revision_hex(&view.revision.0),
         conflicted: view.conflicted,
         act: view.act.as_ref().map(revision_hex),
+        vault_id: subject.map(|subject| revision_hex(&subject.vault_id)),
+        slip: subject.map(|subject| revision_hex(&subject.slip)),
     }
 }
 
@@ -399,7 +414,11 @@ async fn own_view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owne
                     .vault()
                     .conversation_training_view(&person)
                     .map_err(refusal)?;
-                Ok(own_reply(&view))
+                let subject = server
+                    .vault()
+                    .conversation_training_proof_subject(&person)
+                    .map_err(refusal)?;
+                Ok(own_reply(&view, subject.as_ref()))
             })
             .await?
         }
@@ -412,7 +431,7 @@ async fn own_view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owne
                 )
             })
             .await?;
-            own_reply(&view.ok_or(denied)?)
+            own_reply(&view.ok_or(denied)?, None)
         }
     };
     Ok(Json(answer))
@@ -451,7 +470,11 @@ async fn set_own(
             .vault()
             .set_conversation_training(&person, surface, body.leave_out, seen, person_proof)
             .map_err(refusal)?;
-        Ok(own_reply(&view))
+        let subject = server
+            .vault()
+            .conversation_training_proof_subject(&person)
+            .map_err(refusal)?;
+        Ok(own_reply(&view, subject.as_ref()))
     })
     .await?;
     Ok(Json(answer))
