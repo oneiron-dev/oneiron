@@ -102,6 +102,7 @@ mod tests {
                 rank: 0.5,
             }],
             flex_used: false,
+            full_days: Vec::new(),
         }
     }
 
@@ -165,7 +166,8 @@ mod tests {
                 "window_start_utc",
                 "window_end_utc",
                 "slots",
-                "flex_used"
+                "flex_used",
+                "full_days"
             ],
             "the mask schema is final; no SlotMaskArtifact compatibility path exists"
         );
