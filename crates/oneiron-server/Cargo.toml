@@ -26,6 +26,13 @@ name = "oneiron-broker"
 path = "src/bin/oneiron-broker.rs"
 doc = false
 
+# The campaign doors over a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`).
+[[test]]
+name = "vault_campaign_doors"
+path = "tests/vault_campaign_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # A vault VM's root bootstrap (FIX 6308): it takes the vault's binding and
 # fscrypt key from the host, lays out the encrypted storage and the UID table,
 # and starts the server beside it as the vault's own non-root UID.
