@@ -50,6 +50,10 @@ struct Org {
     admin: EntityId,
     member: EntityId,
     steward: EntityId,
+    /// Home room of a project whose roster is the Member alone.
+    member_room: EntityId,
+    /// Home room of a project whose roster seats the Admin and the Member.
+    seated_room: EntityId,
 }
 
 fn person(vault: &Vault) -> EntityId {
@@ -72,6 +76,18 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("a person proof")
 }
 
+// Project home rooms seat their leader and roster; no Admin seat is implied.
+fn project_home_room(vault: &Vault, owner: EntityId, roster: &[EntityId]) -> EntityId {
+    let root = vault.root_project().expect("root project");
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(project, Some(root), root, owner).expect("project");
+    record.roster.extend(roster.iter().map(EntityId::to_hex));
+    vault
+        .put_project(project, &record, vault.now_recorded_at())
+        .expect("put project");
+    EntityId::from_hex(&record.home_room).expect("home room")
+}
+
 fn assert_held(err: &MemoryError) {
     assert!(
         err.reason_codes
@@ -86,10 +102,16 @@ impl Org {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("vault");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        let issuer = provision_engine_machines(&vault);
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
-        bind_host_owner(&vault, &issuer, owner).expect("owner binding");
         let [admin, member, steward] = std::array::from_fn(|_| person(&vault));
+        // A child project put before the host root slip takes the implicit
+        // birth. Once the vault is rooted, a new child project needs an
+        // owner-signed birth (`put_project` refuses "a new project requires
+        // an owner-signed birth"), so both projects are put first.
+        let member_room = project_home_room(&vault, owner, &[member]);
+        let seated_room = project_home_room(&vault, owner, &[admin, member]);
+        let issuer = provision_engine_machines(&vault);
+        bind_host_owner(&vault, &issuer, owner).expect("owner binding");
         let founding = |member_ref, role| InitialSharedMember {
             member_ref,
             role: Some(role),
@@ -132,6 +154,8 @@ impl Org {
             admin,
             member,
             steward,
+            member_room,
+            seated_room,
         }
     }
 
@@ -151,20 +175,11 @@ impl Org {
             .expect("Owner sets the key");
     }
 
-    // Project home rooms seat their leader and roster; no Admin seat is implied.
-    fn room(&self, members: &[EntityId]) -> (EntityId, EntityId) {
-        let root = self.vault.root_project().expect("root project");
-        let project = EntityId::now();
-        let mut record =
-            ProjectRecord::new(project, Some(root), root, self.owner).expect("project");
-        record.roster.extend(members.iter().map(EntityId::to_hex));
-        self.vault
-            .put_project(project, &record, self.vault.now_recorded_at())
-            .expect("put project");
-        let room = EntityId::from_hex(&record.home_room).expect("home room");
+    /// The Owner's trunk turn in `room`, which every private thread opens on.
+    fn trunk_turn(&self, room: EntityId) -> EntityId {
         let anchor = EntityId::now();
         self.speak(room, anchor, None, None);
-        (room, anchor)
+        anchor
     }
 
     fn speak(
@@ -293,7 +308,8 @@ fn register_mail_credential(vault: &Vault, name: &str, scope: &str) {
 #[test]
 fn an_admins_policy_delete_of_a_private_thread_refuses_while_the_rule_is_on() {
     let org = Org::new();
-    let (room, anchor) = org.room(&[org.member]);
+    let room = org.member_room;
+    let anchor = org.trunk_turn(room);
     let delete = |by, root: EntityId| {
         org.as_person(by, || {
             org.vault
@@ -335,8 +351,10 @@ fn an_admins_policy_delete_of_a_private_thread_refuses_while_the_rule_is_on() {
 #[test]
 fn an_admins_audience_edit_of_a_private_thread_refuses_while_the_rule_is_on() {
     let org = Org::new();
-    let (room, anchor) = org.room(&[org.member]);
-    let (seated_room, seated_anchor) = org.room(&[org.admin, org.member]);
+    let room = org.member_room;
+    let anchor = org.trunk_turn(room);
+    let seated_room = org.seated_room;
+    let seated_anchor = org.trunk_turn(seated_room);
     // Each operation uses its own thread: add another, remove another, walk in.
     for (target, remove) in [(org.member, false), (org.member, true), (org.admin, false)] {
         let seed = if remove {
