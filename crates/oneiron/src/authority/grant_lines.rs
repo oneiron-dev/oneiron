@@ -294,6 +294,18 @@ pub(crate) struct FoldedGrantLine {
     pub(crate) family: Option<GrantFamily>,
 }
 
+#[cfg(any(test, oneiron_test_support))]
+impl FoldedGrantLine {
+    /// The person whose general grant act gives the Grant here in full: `None` when no such
+    /// giving counts (none, two unordered, or an owner's agent mint).
+    pub(crate) fn committed_giver(&self) -> Option<EntityId> {
+        match &self.giving {
+            Some((_, GrantTerms::Committed(terms))) => Some(terms.giver),
+            _ => None,
+        }
+    }
+}
+
 impl AuthorityFold {
     /// What the counted acts say of `grant` on this install; `None` when no counted act
     /// names it.

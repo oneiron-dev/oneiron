@@ -1,10 +1,10 @@
 //! Live policy-power holders from shared membership and owner-stamped action grants.
 use std::collections::BTreeSet;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound, StandingConsentGrant};
 use crate::error::{Error, Result};
-use crate::federation::{FederationGrantRole, FederationGrantScope, decode_federation_grant_body};
+use crate::federation::{FederationGrantRole, FederationGrantScope};
 use crate::{EntityId, Vault};
 
 /// A named action grant; a broad consent about another verb cannot authorize this one.
@@ -157,7 +157,8 @@ fn member_is_agent_in_txn(
 
 /// The census [`shared_members_with`] reads, before it fails closed on a
 /// shared vault with no live Owner: here such a vault reads with an empty
-/// owner set. A row that does not decode still faults.
+/// owner set. Only Grants the fold stands behind count (pass 28 R3); a row that
+/// does not stand, one that does not decode included, is skipped.
 fn shared_members_census_with(
     store: &crate::store::Store,
     posture: crate::HostingPrivacyPosture,
@@ -174,36 +175,23 @@ fn shared_members_census_with(
         serde_json::from_slice(&raw).map_err(|_| invalid())?;
     let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     let mut grants = Vec::new();
-    for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+    // Only a Grant the fold stands behind counts (pass 28 R3, FIX
+    // SHARED-OWNER-SET-FROM-ROWS): a row no counted act gives, one put back after
+    // its end and one whose terms are not its act's make no owner and no member.
+    for row in crate::federation::shared_vault_grants_for_store_in_txn(
         store,
+        &fold,
         txn,
-        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-        None,
+        creation.vault_id,
+        now,
     )? {
-        let id = entry?;
-        let raw =
-            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(invalid)?;
-        if EntityMetadataHeader::parse(&raw)
-            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT)
-        {
-            return Err(invalid());
-        }
-        // A deleted grant is no membership: its shell is skipped here, and a
-        // stored body counts only while its row is live, checked last.
-        if raw.len() == ENTITY_METADATA_HEADER_LEN
-            && !crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
-        {
-            continue;
-        }
-        let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if grant.scope == FederationGrantScope::vault(creation.vault_id)
-            && grant.confers_at(now)
+        let (id, grant) = row.into_parts();
+        if grant.confers_at(now)
             && fold
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
             && (!live_persons || person_live(&grant.member_ref)?)
             && (live_persons || !member_is_agent_in_txn(store, txn, &grant.member_ref)?)
-            && crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
         {
             grants.push(grant);
         }
@@ -225,10 +213,9 @@ fn shared_members_census_with(
 /// Whether `holder` holds this vault's ownership now, read as a recheck of
 /// an act that owner admitted earlier reads it (FIX 11591): the embedded
 /// owner of a personal vault while that PERSON lives, or an Owner a
-/// conferring grant names in a shared vault whose PERSON lives. A shared
-/// vault left with no live Owner at all reads false for every holder, not a
-/// fault: the holder's ownership is positively gone. A row that does not
-/// decode still faults.
+/// conferring grant the fold stands behind names in a shared vault whose
+/// PERSON lives. A shared vault left with no live Owner at all reads false
+/// for every holder, not a fault: the holder's ownership is positively gone.
 pub(crate) fn holds_live_ownership_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

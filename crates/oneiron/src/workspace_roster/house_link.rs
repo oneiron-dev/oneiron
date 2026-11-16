@@ -197,21 +197,45 @@ fn require_role_assigner_in_txn(
         })
 }
 
-/// The live membership grants that seat `house` in shared vault `vault_id`,
-/// in id order.
+/// The membership grants that seat `house` in shared vault `vault_id`, in id
+/// order: each the fold stands behind (pass 28 R3), never a row alone.
 fn house_grants_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     house: EntityId,
     vault_id: u64,
 ) -> Result<Vec<(EntityId, FederationGrant)>> {
-    Ok(vault
-        .vault_grants_in_txn(txn, vault_id)?
+    Ok(house_seats(
+        vault.vault_grants_in_txn(txn, vault_id)?,
+        house,
+    ))
+}
+
+/// [`house_grants_in_txn`] over every live row, standing or not: what an
+/// unlink deletes.
+fn house_grant_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    house: EntityId,
+    vault_id: u64,
+) -> Result<Vec<(EntityId, FederationGrant)>> {
+    Ok(house_seats(
+        vault.vault_grant_rows_in_txn(txn, vault_id)?,
+        house,
+    ))
+}
+
+/// The rows of `grants` that seat `house`: its own, delegates aside.
+fn house_seats(
+    grants: Vec<(EntityId, FederationGrant)>,
+    house: EntityId,
+) -> Vec<(EntityId, FederationGrant)> {
+    grants
         .into_iter()
         .filter(|(_, grant)| {
             grant.member_ref == house && grant.role != FederationGrantRole::Delegate
         })
-        .collect())
+        .collect()
 }
 
 /// The stored presets that name `house` as their house mind.
@@ -446,7 +470,7 @@ fn unlink_preset_in_txn(
 ) -> Result<bool> {
     let house = preset.house_actor_ref;
     let vault_id = preset.workspace_vault_id;
-    let held = house_grants_in_txn(vault, txn, house, vault_id)?;
+    let held = house_grant_rows_in_txn(vault, txn, house, vault_id)?;
     if !held.is_empty() {
         require_undeleted_in_txn(vault, txn)?;
     }

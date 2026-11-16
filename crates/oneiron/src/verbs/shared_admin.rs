@@ -196,9 +196,12 @@ pub fn read_member_projection(
         let activated = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+            // Active only while the fold stands behind the row (pass 28 R3); a row no
+            // counted act gives is listed, never active.
             !fold.vault_root_is_conflicted()
                 && vault.shared_vault_deletion_in_txn(&txn)?.is_none()
                 && crate::federation::pact_admits_grant(&fold, &id, &grant)
+                && vault.shared_grant_stands_in_txn(&txn, id)?
         };
         memory.produced_from([id]);
         grants.push(member_grant(

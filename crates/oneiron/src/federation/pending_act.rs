@@ -2,12 +2,8 @@
 //! this module never interprets act names or performs irreversible effects.
 //! Policy rows live in the vault's POLICY_MANIFEST (`shared_act_policies`) and
 //! change only through the owner manifest door; act records stay on this node.
-use super::{
-    FederationGrantRole as Role, FederationGrantScope, SharedVaultCreation, SharedVaultPreset,
-    decode_federation_grant_body,
-};
+use super::{FederationGrantRole as Role, SharedVaultCreation, SharedVaultPreset};
 use crate::authority::{FederationGrantActivation, federation_grant_activation};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::check_in::{ActClass, CheckInDecision, CheckInScope, DoorAct, DoorCheckIn, RolePreset};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -339,39 +335,22 @@ impl Vault {
         // time can bring an expiry forward, never put it back.
         let now = now.max(self.store.clock.now_recorded_at());
         let mut holders = Vec::new();
-        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &self.store,
-            txn,
-            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-            None,
-        )? {
-            let id = id?;
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
-                .ok_or_else(invalid)?;
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT)
-            {
-                return Err(invalid());
-            }
-            // A deleted grant is no membership: its shell is skipped here, and a
-            // stored body counts only while its row is live, checked last.
-            if raw.len() == ENTITY_METADATA_HEADER_LEN
-                && !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
-                continue;
-            }
-            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        // Only a Grant the fold stands behind makes a holder (pass 28 R3): a row no
+        // counted act gives, or one put back after its end, executes and objects to
+        // nothing.
+        for row in
+            super::shared_vault_grants_for_store_in_txn(&self.store, &fold, txn, vault_id, now)?
+        {
+            let (id, grant) = row.into_parts();
             // An owner's `engine.controls` grant confers no membership
             // standing: its holder acts as a member only by a membership row.
-            if grant.scope == FederationGrantScope::vault(vault_id)
-                && !super::is_engine_controls_grant(&grant)
+            if !super::is_engine_controls_grant(&grant)
                 && grant.confers_at(now)
                 && matches!(
                     federation_grant_activation(&fold, &id),
                     FederationGrantActivation::Unpacted | FederationGrantActivation::Active
                 )
                 && crate::consent::person_is_live_in_txn(self, txn, &grant.member_ref)?
-                && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 // A pact can further restrict the grant's content ceiling. A
                 // non-universal pact cannot confer base authority operations.

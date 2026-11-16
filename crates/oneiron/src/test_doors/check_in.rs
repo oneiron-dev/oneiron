@@ -23,9 +23,7 @@ use crate::check_in::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::federation::{
-    ScopeAxis, ScopeId, decode_federation_grant_body, encode_federation_grant_body,
-};
+use crate::federation::{ScopeAxis, ScopeId, decode_federation_grant_body};
 use crate::receipt::ReceiptRecord;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -339,7 +337,7 @@ pub fn narrow_grant_worlds(vault: &Vault, grant: EntityId, worlds: &[EntityId]) 
             },
             learned_at: now,
             row_version: None,
-            data: encode_federation_grant_body(&row)?,
+            data: super::grant_act::rewritten_grant_data_in_txn(vault, txn, grant, &row)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
             hub_sync_imported: false,

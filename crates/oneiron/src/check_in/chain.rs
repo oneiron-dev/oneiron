@@ -225,7 +225,10 @@ fn asker_grant_in_txn(
     Ok(grant_in_txn(vault, txn, &id)?.filter(|grant| grant.member_ref == pending.asker))
 }
 
-/// The live FederationGrant row `id`, decoded; `None` for any other row.
+/// The live FederationGrant row `id`, decoded; `None` for any other row. A
+/// Grant over a shared vault reads only while the fold stands behind it
+/// (pass 28 R3), never as a row alone; a guest's or a Connect Grant is read
+/// from its row until pass 28 R3's guests and slips step.
 pub(super) fn grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -238,7 +241,20 @@ pub(super) fn grant_in_txn(
     else {
         return Ok(None);
     };
-    Ok(decode_federation_grant_body(&body).ok())
+    let Ok(grant) = decode_federation_grant_body(&body) else {
+        return Ok(None);
+    };
+    if !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        return Ok(Some(grant));
+    }
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(crate::federation::shared_grant_row_in_fold(
+        &fold,
+        *id,
+        &body,
+        vault.store.clock.now_recorded_at(),
+    )
+    .map(|row| row.into_parts().1))
 }
 
 /// `member`'s live membership role on the vault `scope` names, delegate
@@ -395,26 +411,45 @@ fn holder_standing_in_txn(
     };
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     let mut grants = Vec::new();
-    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-        &vault.store,
-        txn,
-        ENTITY_TYPE_FEDERATION_GRANT,
-        None,
-    )? {
-        let id = id?;
-        let LiveEntityRow::Live {
-            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-            body,
-        } = live_entity_row_in_txn(&vault.store, txn, &id)?
-        else {
-            continue;
-        };
-        if let Ok(grant) = decode_federation_grant_body(&body)
-            && grant.member_ref == holder
-            && grant.scope == asker_grant.scope
-            && crate::federation::pact_admits_grant(&fold, &id, &grant)
-        {
-            grants.push(grant);
+    if let FederationGrantScope::Vault { vault_id } = asker_grant.scope {
+        // Only a Grant the fold stands behind gives a holder a role on a
+        // shared vault (pass 28 R3), never a row alone.
+        for row in crate::federation::shared_vault_grants_for_store_in_txn(
+            &vault.store,
+            &fold,
+            txn,
+            vault_id,
+            vault.store.clock.now_recorded_at(),
+        )? {
+            let (id, grant) = row.into_parts();
+            if grant.member_ref == holder
+                && crate::federation::pact_admits_grant(&fold, &id, &grant)
+            {
+                grants.push(grant);
+            }
+        }
+    } else {
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &vault.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = live_entity_row_in_txn(&vault.store, txn, &id)?
+            else {
+                continue;
+            };
+            if let Ok(grant) = decode_federation_grant_body(&body)
+                && grant.member_ref == holder
+                && grant.scope == asker_grant.scope
+                && crate::federation::pact_admits_grant(&fold, &id, &grant)
+            {
+                grants.push(grant);
+            }
         }
     }
     let classes = AgentVerbClasses::for_grants_in_txn(&vault.store, txn, grants.iter())?;

@@ -140,8 +140,27 @@ fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
 }
 
 impl Vault {
-    /// Every live grant record over `vault_id`, delegates included.
+    /// Every Grant over `vault_id` that confers to a membership reader, delegates included:
+    /// each row the fold stands behind (pass 28 R3), never a row alone, and a base agent's
+    /// or a guest's row still read from itself ([`crate::federation::SharedGrantRow`]). A
+    /// row put back after its counted end is none, so a writer that re-gives the ids read
+    /// here gives a fresh id in its place (REVIEW r2b P2-3).
     pub(crate) fn vault_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+    ) -> Result<Vec<(EntityId, FederationGrant)>> {
+        Ok(self
+            .shared_vault_grants_in_txn(txn, vault_id)?
+            .into_iter()
+            .map(crate::federation::SharedGrantRow::into_parts)
+            .collect())
+    }
+
+    /// Every live Grant row over `vault_id`, standing or not: what a membership change
+    /// deletes, so a leave or a removal takes every row that names the member, a row no
+    /// counted act gives included. Never a conferring read.
+    pub(crate) fn vault_grant_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
@@ -187,26 +206,43 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
     ) -> Result<Vec<(EntityId, FederationGrant)>> {
-        let mut grants = self.vault_grants_in_txn(txn, vault_id)?;
-        grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
-        // An owner's `engine.controls` grant goes with a Steward's
-        // membership and is none on its own (ruling on FIX
-        // ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov): beside
-        // a Steward membership row it is read with it, so a demotion or a
-        // removal takes it too; for anyone else it is skipped.
-        let stewards: BTreeSet<EntityId> = grants
-            .iter()
-            .filter(|(_, grant)| {
-                grant.role == Role::Steward && !crate::federation::is_engine_controls_grant(grant)
-            })
-            .map(|(_, grant)| grant.member_ref)
-            .collect();
-        grants.retain(|(_, grant)| {
-            !crate::federation::is_engine_controls_grant(grant)
-                || stewards.contains(&grant.member_ref)
-        });
-        Ok(grants)
+        Ok(member_rows(self.vault_grants_in_txn(txn, vault_id)?))
     }
+
+    /// [`Self::member_grants_in_txn`] over every live row, standing or not: what a
+    /// membership change deletes ([`Self::vault_grant_rows_in_txn`]).
+    fn member_grant_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+    ) -> Result<Vec<(EntityId, FederationGrant)>> {
+        Ok(member_rows(self.vault_grant_rows_in_txn(txn, vault_id)?))
+    }
+}
+
+/// `grants` without the rows that were never minted as a membership (see
+/// [`Vault::member_grants_in_txn`]).
+fn member_rows(mut grants: Vec<(EntityId, FederationGrant)>) -> Vec<(EntityId, FederationGrant)> {
+    grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
+    // An owner's `engine.controls` grant goes with a Steward's
+    // membership and is none on its own (ruling on FIX
+    // ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov): beside
+    // a Steward membership row it is read with it, so a demotion or a
+    // removal takes it too; for anyone else it is skipped.
+    let stewards: BTreeSet<EntityId> = grants
+        .iter()
+        .filter(|(_, grant)| {
+            grant.role == Role::Steward && !crate::federation::is_engine_controls_grant(grant)
+        })
+        .map(|(_, grant)| grant.member_ref)
+        .collect();
+    grants.retain(|(_, grant)| {
+        !crate::federation::is_engine_controls_grant(grant) || stewards.contains(&grant.member_ref)
+    });
+    grants
+}
+
+impl Vault {
     /// Steward and Deputy are the owner's to give: a role change or an
     /// invitation that names either needs an Owner of the vault, and an
     /// Admin's AssignRole and AddMember powers never reach them. Steward:
@@ -478,7 +514,7 @@ impl Vault {
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
         let dropped: Vec<(EntityId, FederationGrant)> = self
-            .member_grants_in_txn(txn, vault_id)?
+            .member_grant_rows_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
                 (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
@@ -548,7 +584,7 @@ impl Vault {
         let controls: Vec<(EntityId, FederationGrant)> = if to == Some(Role::Steward) {
             Vec::new()
         } else {
-            self.member_grants_in_txn(txn, vault_id)?
+            self.member_grant_rows_in_txn(txn, vault_id)?
                 .into_iter()
                 .filter(|(_, grant)| {
                     grant.member_ref == member && crate::federation::is_engine_controls_grant(grant)
