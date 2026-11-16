@@ -52,4 +52,11 @@ pub struct CalendarIcsImportReceipt {
     pub source_version: u64,
     pub events: Vec<CalendarImportedEvent>,
     pub screen_verdict: String,
+    /// Booking moves this upload held back because an emergency delivery for
+    /// that booking is still pending (FIX 22385): the booking's EVENT and
+    /// passport stay as they were, and every other item of the upload
+    /// landed. Uploading the feed again once the delivery completes moves
+    /// them.
+    #[serde(default)]
+    pub owed_booking_moves: u32,
 }

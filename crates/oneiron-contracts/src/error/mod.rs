@@ -309,6 +309,9 @@ pub enum ErrorKind {
     SecretDoorPolicyRefused,
     SealedFileWithheld,
     MaskedCopyWithheld,
+    /// A marked payment credential withheld on a host whose runner fence is
+    /// unproven (L8-60).
+    PaymentCredentialWithheld,
     SecretRefNotFound,
     SecretWiderThanManifest,
     SecretManifestNotFound,
@@ -401,6 +404,8 @@ pub enum ErrorKind {
     InvalidConversationDag,
     InvalidScopeSummary,
     InvalidPairingScope,
+    /// A link named verbs for an app backend that no Grant row names.
+    AppBackendGrantRequired,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,
