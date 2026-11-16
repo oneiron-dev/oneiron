@@ -182,8 +182,9 @@ impl<'a> HostSelfDispatcher<'a> {
     /// permit, a checker hold) lands it Proposed with its pending review, as
     /// the Memory claim door does. The Auto request reaches the host's auto
     /// checker as a Dreamer write does (review 6881 P1): the checker the
-    /// live-run door lent ([`Self::with_auto_checker`]) reviews it once, and a
-    /// hold parks its Proposed resubmission with the checker's pending review.
+    /// live-run door lent ([`Self::with_auto_checker`]) reviews each ask once,
+    /// the Auto request and, after a hold, its Proposed resubmission, which a
+    /// hold parks with the checker's pending review.
     pub fn put_claim_from_host(
         &self,
         input: crate::code_run::MemoryClaimInput,

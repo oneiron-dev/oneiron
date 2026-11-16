@@ -446,7 +446,7 @@ impl HostSelfDispatcher<'_> {
         )? {
             return Ok(refused);
         }
-        // The lent checker reviews the put once: its gate consults it and
+        // The lent checker reviews this ask once: its gate consults it and
         // records the decision, which the landing reuses (FIX 8752). Its turn
         // is taken before any write transaction opens, as the Dreamer's
         // writer takes it (FIX 8751), so the gate never waits for capacity.
