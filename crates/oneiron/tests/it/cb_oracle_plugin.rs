@@ -529,7 +529,6 @@ mod plugin_fixture {
     use oneiron::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
     use oneiron::edge::EdgeActorClass;
     use oneiron::inbox::{InboxBulkVerb, InboxExceptionClass, InboxQuery, InboxReviewDial};
-    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
     use oneiron::skill::{SkillLifecycle, SkillRecord};
     use oneiron::skill_hub::{
         HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillCapabilitySurface,
@@ -1141,15 +1140,15 @@ mod plugin_fixture {
             let outcome = self
                 .vault
                 .set_setting(
-                    SettingCaller::Owner(self.admission.owner()),
-                    SetSetting::vault_value(
+                    oneiron::setting::SettingCaller::Owner(self.admission.owner()),
+                    oneiron::setting::SetSetting::vault_value(
                         "dreamer.plugin_suggestions",
                         serde_json::Value::Bool(enabled),
                     ),
                 )
                 .expect("persist the suggestion knob");
             assert!(
-                matches!(outcome, SetSettingOutcome::Applied { .. }),
+                matches!(outcome, oneiron::setting::SetSettingOutcome::Applied { .. }),
                 "the owner's change applies at once: {outcome:?}"
             );
         }
