@@ -11,10 +11,15 @@
 //!   establishes, the work-companion policy an Admin sets) and an Admin's
 //!   delegate mint. A set that changes nothing logs nothing.
 //!
+//! - A house mind its org link seats at Deputy (the link's default role,
+//!   canon HOUSE-BIND = A) is a live Deputy too: it is told of an Admin's
+//!   setting and of an Admin's membership change (blind review of #8384).
+//!
 //! On main the Deputy is told of none of these: the membership writer tells
 //! the live Owners, the actor and the change's subject, and the workspace
 //! and delegate doors write no notice at all, so each case fails at its
-//! first look at the Deputy's notices.
+//! first look at the Deputy's notices. At 4387aaa7ceb the house case fails
+//! at its first look: the notice scan admitted live PERSON holders only.
 //!
 //! The vault is rooted, and a rooted vault admits only a writer its
 //! authority log binds, so each person's acts and reads run while the
@@ -176,6 +181,56 @@ impl Org {
             .count()
     }
 
+    /// How many outcome notices the shared vault holds for `house`, an agent
+    /// definition with no person proof to read `vault.shared.outcomes` with:
+    /// its `outcome:<recipient>:<receipt>` rows (test door).
+    fn house_notices(&self, house: EntityId) -> Vec<String> {
+        let prefix = format!("outcome:{}:", house.to_hex());
+        oneiron::test_doors::shared_act_family::rows_naming(&self.vault, house)
+            .expect("the shared-act rows naming the house")
+            .into_iter()
+            .filter(|row| row.starts_with(&prefix))
+            .collect()
+    }
+
+    /// The Owner stores the workspace [`WORKSPACE`] over the shared vault,
+    /// with the seeded `sys.default` agent as its house mind, and the
+    /// work-companion policy `Choose`. Returns the house.
+    fn store_workspace(&self) -> EntityId {
+        let org_row = EntityId::now();
+        self.vault
+            .put_entity(
+                &org_row,
+                ENTITY_TYPE_ORG,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"admin act notice org",
+            )
+            .expect("org row");
+        let (house, _) = self
+            .vault
+            .get_seeded_agent_definition_by_logical_id("sys.default")
+            .expect("read the seeded agents")
+            .expect("sys.default is seeded on open");
+        let preset = WorkspaceRosterPreset {
+            workspace_ref: WORKSPACE.to_owned(),
+            workspace_vault_id: SHARED,
+            org_ref: org_row,
+            venture_name: "Garden Works".to_owned(),
+            house_display_name: None,
+            house_actor_ref: house,
+            house_identity_ref: None,
+        };
+        self.vault
+            .establish_workspace_preset(
+                &preset,
+                WorkCompanionPolicy::Choose,
+                &proof(&self.vault, self.owner),
+            )
+            .expect("the Owner stores the workspace");
+        house
+    }
+
     /// The id of the shared vault grant that seats `member` at `role`.
     fn grant_of(&self, member: EntityId, role: Role) -> EntityId {
         self.vault
@@ -232,38 +287,8 @@ fn an_admins_membership_change_is_told_to_every_admin() {
 #[test]
 fn a_workspace_setting_is_logged_to_every_admin() {
     let org = Org::new();
-    let org_row = EntityId::now();
-    org.vault
-        .put_entity(
-            &org_row,
-            ENTITY_TYPE_ORG,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"admin act notice org",
-        )
-        .expect("org row");
-    let (house, _) = org
-        .vault
-        .get_seeded_agent_definition_by_logical_id("sys.default")
-        .expect("read the seeded agents")
-        .expect("sys.default is seeded on open");
-    let preset = WorkspaceRosterPreset {
-        workspace_ref: WORKSPACE.to_owned(),
-        workspace_vault_id: SHARED,
-        org_ref: org_row,
-        venture_name: "Garden Works".to_owned(),
-        house_display_name: None,
-        house_actor_ref: house,
-        house_identity_ref: None,
-    };
     let settings = json!({ "workspace_settings_changed": { "workspace": WORKSPACE } });
-    org.vault
-        .establish_workspace_preset(
-            &preset,
-            WorkCompanionPolicy::Choose,
-            &proof(&org.vault, org.owner),
-        )
-        .expect("the Owner stores the workspace");
+    org.store_workspace();
     assert_eq!(
         org.told_of(org.deputy, &settings),
         1,
@@ -346,5 +371,50 @@ fn an_admins_delegate_mint_is_told_to_every_admin() {
         org.told_of(org.steward, &minted),
         0,
         "a Steward is no admin and is not told"
+    );
+}
+
+#[test]
+fn a_house_seated_at_deputy_is_told_of_each_admin_act() {
+    let org = Org::new();
+    let house = org.store_workspace();
+    org.vault
+        .set_house_role(&proof(&org.vault, org.owner), WORKSPACE, Role::Deputy)
+        .expect("the Owner seats the house at deputy");
+    let before = org.house_notices(house).len();
+
+    org.as_person(org.admin, || {
+        org.vault.set_workspace_work_companion(
+            WORKSPACE,
+            WorkCompanionPolicy::Require,
+            &proof(&org.vault, org.admin),
+        )
+    })
+    .expect("the Admin sets the work-companion policy");
+    assert_eq!(
+        org.house_notices(house).len(),
+        before + 1,
+        "the house, a live Deputy, is told of the Admin's setting"
+    );
+
+    let moved = org
+        .as_person(org.admin, || {
+            org.vault.change_shared_member_role(
+                &proof(&org.vault, org.admin),
+                SHARED,
+                org.member_b,
+                Role::Viewer,
+                None,
+            )
+        })
+        .expect("the Admin moves a Member to Viewer");
+    let told = format!("outcome:{}:{}", house.to_hex(), moved.id);
+    assert!(
+        org.house_notices(house).contains(&told),
+        "and of the Admin's membership change"
+    );
+    assert!(
+        !org.was_told(org.steward, &moved.id),
+        "a Steward is still no admin and is not told"
     );
 }
