@@ -14,6 +14,7 @@ use oneiron::dreamer_wake::{AgentWakeSignals, WakeIdleState, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
+use oneiron_base::unix_seconds_now;
 use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig, VoiceSettings};
@@ -231,10 +232,4 @@ struct Attached {
 struct SieveDrain {
     stop: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
