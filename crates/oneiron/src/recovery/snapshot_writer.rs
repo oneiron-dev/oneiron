@@ -5,7 +5,6 @@ use std::path::Path;
 use std::{fs, io::Write, os::unix::fs::OpenOptionsExt};
 
 use loro::LoroDoc;
-use oneiron_contracts::fingerprint::ContentHash;
 
 #[cfg(unix)]
 use super::{CanonicalSnapshot, canonical::capture_canonical_window, quarantine};
@@ -48,7 +47,7 @@ pub fn write_canonical_window_snapshot(
 #[cfg(unix)]
 fn publish(snapshot: &CanonicalSnapshot, path: &Path) -> Result<[u8; 32]> {
     let bytes = snapshot.encode()?;
-    let digest = *ContentHash::of(&bytes).as_bytes();
+    let digest = *blake3::hash(&bytes).as_bytes();
     let temporary = path.with_extension(format!("snapshot-{}", crate::EntityId::now().to_hex()));
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
