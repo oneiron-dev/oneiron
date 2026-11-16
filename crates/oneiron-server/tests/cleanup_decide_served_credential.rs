@@ -28,12 +28,11 @@ use oneiron::attempt_queue::{
 };
 use oneiron::authority::{ActSurface, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof};
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::setting::{SetSetting, SettingCaller};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::ports::ManualClock;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::vault_cleanup::{
-    CleanupPosture, cleanup_proposals, run_vault_cleanup, set_cleanup_posture,
-};
+use oneiron::test_doors::setting::set_setting_as_engine;
+use oneiron::vault_cleanup::{CleanupPosture, cleanup_proposals, run_vault_cleanup};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -48,6 +47,17 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const DAY: u64 = 86_400;
 const DECIDE_KEY: &str = "vault_cleanup.decide.owner_only";
 const DECIDE: &str = "vault.cleanup.decide";
+
+/// Sets one cleanup key (`cleanup.task_retention_days`, `cleanup.posture`) through the engine's
+/// own change, before any owner row exists: SETTING-PLAIN PLAIN-2 deleted the cleanup tables
+/// and their setters.
+fn set_cleanup_key(vault: &Vault, key: &str, value: Value) -> TestResult {
+    let outcome = set_setting_as_engine(vault, None, SetSetting::vault_value(key, value))?;
+    if !matches!(outcome, SetSettingOutcome::Applied { .. }) {
+        return Err(format!("{key} does not apply: {outcome:?}").into());
+    }
+    Ok(())
+}
 
 /// What a test credential of the agent's is bound to besides its holder.
 #[derive(Clone, Copy, Debug)]
@@ -111,8 +121,12 @@ impl Fixture {
             now: completed_at,
         })?;
         clock.set(now);
-        vault.set_task_retention_days(Some(90))?;
-        set_cleanup_posture(&vault, CleanupPosture::ProposeFirst)?;
+        set_cleanup_key(&vault, "cleanup.task_retention_days", json!(90))?;
+        set_cleanup_key(
+            &vault,
+            "cleanup.posture",
+            serde_json::to_value(CleanupPosture::ProposeFirst)?,
+        )?;
         let report = run_vault_cleanup(&vault, &AttemptId::now())?;
         let proposal = report.proposal.ok_or("the run proposes the aged attempt")?;
 
