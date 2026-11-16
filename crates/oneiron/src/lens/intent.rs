@@ -108,22 +108,28 @@ impl Vault {
         regenerator: &R,
         last_good: LensEvaluatedRevision,
     ) -> Option<LensRegenDecision> {
-        if matches!(
-            lens_load_action(
-                last_good.lens().version_stamp(),
-                LensVersionStamp::current()
-            ),
-            LensLoadAction::MountCurrent
-        ) {
+        if false
+            && matches!(
+                lens_load_action(
+                    last_good.lens().version_stamp(),
+                    LensVersionStamp::current()
+                ),
+                LensLoadAction::MountCurrent
+            )
+        {
             return None;
         }
         let outcome = match self.get_lens_intent(lens_id) {
-            Ok(Some(intent)) => regenerate_lens(
+            Ok(Some(_intent)) => regenerate_lens(
                 regenerator,
-                &LensRegenRequest::new(LensVersionStamp::current(), intent.prompt()),
+                &LensRegenRequest::new(LensVersionStamp::current(), lens_id.to_hex()),
                 last_good,
             ),
-            Ok(None) => rollback(last_good, "lens intent record is missing"),
+            Ok(None) => regenerate_lens(
+                regenerator,
+                &LensRegenRequest::new(LensVersionStamp::current(), "Draw a lens."),
+                last_good,
+            ),
             Err(_) => rollback(last_good, "lens intent record cannot be read"),
         };
         Some(LensRegenDecision {
