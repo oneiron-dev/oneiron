@@ -58,7 +58,7 @@ use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
 
-use super::spend_custody::CustodySettle;
+use super::spend_custody::{CUSTODY_HOLD_WAIT_SECS, CustodySettle};
 use super::spend_record::{SCOPE, SpendScope, SpendScopeId};
 use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher};
 use crate::Vault;
@@ -359,11 +359,14 @@ pub(super) struct AgentRunSpendCarry {
     /// run's spend lands on (canon ARCH-0026: single-writer, home-node-owned;
     /// a move carries no budget).
     pub(super) custody_node: u64,
-    /// How much of what the other machines spent the custody machine has
-    /// folded into its scope of the run at its takes (PR 2 writes it; 0 until
-    /// then). The custody machine's own share counts those units again. Its
-    /// settlement folds the rest and writes nothing here (REVIEW-7890): the
-    /// closed scope takes no second fold.
+    /// How much of what the other machines committed the custody machine
+    /// has folded into its scope of the run at its takes (PR 2 writes it; 0
+    /// until then): their spend, and what their open children held then,
+    /// folded as spent (REVIEW-7890 round 2), so the custody machine's own
+    /// try never spends into a foreign child's room. The custody machine's
+    /// own share counts those units again. Its settlement folds the rest and
+    /// writes nothing here (REVIEW-7890): the closed scope takes no second
+    /// fold.
     #[serde(default)]
     pub(super) custody_folded_units: u64,
     /// One share per scope a machine ran the run under.
@@ -389,18 +392,13 @@ pub(super) struct AgentRunSpendShare {
     pub(super) committed_units: u64,
     /// Of `committed_units`, what the scope's open children hold
     /// (REVIEW-7890): units set aside, not spent. A hold ends when its child
-    /// settles, as spend or as released units, so the custody machine folds
-    /// only the spent part.
+    /// settles, as spend or as released units, so the custody machine's
+    /// settlement waits for it ([`AgentRunSpendCarry::custody_settle`]).
     #[serde(default)]
     pub(super) held_units: u64,
 }
 
 impl AgentRunSpendShare {
-    /// What the scope spent: `committed_units` less `held_units`.
-    fn spent_units(&self) -> u64 {
-        self.committed_units.saturating_sub(self.held_units)
-    }
-
     /// Sets the share from `scope`, the row it names (REVIEW-7890).
     fn set_from(&mut self, scope: &SpendScope) {
         self.committed_units = scope.spent_units.saturating_add(scope.held_units);
@@ -422,16 +420,21 @@ impl AgentRunSpendCarry {
             .saturating_sub(self.custody_folded_units)
     }
 
-    /// What every machine but `node` spent of the run that the custody
-    /// machine `node` has not folded into its one counter yet (FIX 4889):
-    /// their shares less what they hold for open children (REVIEW-7890), less
-    /// `custody_folded_units`. A hold is no spend, so it never folds.
-    pub(super) fn unfolded_spend_elsewhere(&self, node: u64) -> u64 {
+    /// What every machine but the custody machine `node` committed of the
+    /// run that it has not folded into its one counter yet (FIX 4889): their
+    /// shares, spend and holds alike (REVIEW-7890 round 2), less
+    /// `custody_folded_units`. A take folds it whole, so a hold another
+    /// machine's child keeps stays out of the kept scope's room; a
+    /// settlement folds it once no hold is left, or once the wait for one
+    /// ran out. What a folded hold left unspent is not refunded: the scope is
+    /// charged what it folded or what was spent, whichever is more, never
+    /// less than was spent.
+    pub(super) fn unfolded_commit_elsewhere(&self, node: u64) -> u64 {
         self.shares
             .iter()
             .filter(|share| share.node != node)
             .fold(0_u64, |total, share| {
-                total.saturating_add(share.spent_units())
+                total.saturating_add(share.committed_units)
             })
             .saturating_sub(self.custody_folded_units)
     }
@@ -445,26 +448,25 @@ impl AgentRunSpendCarry {
             .fold(0_u64, |total, share| total.saturating_add(share.held_units))
     }
 
-    /// How the custody machine `node` settles its scope of a run that ended
-    /// on `executor`, the run's last executor (FIX 4889). While `executor`,
-    /// another machine, still holds units for children that outlived the run
-    /// (REVIEW-7890), the scope waits: those children settle there, and the
-    /// share `executor` stamps then tells what they spent and released. A
-    /// hold that another machine's share still names when it lost the run
-    /// does not wait: its children stop once the run is held elsewhere (a
-    /// queued one ends unrun, a running one at its fence), and that machine
-    /// no longer writes the TASK.
-    pub(super) fn custody_settle(&self, node: u64, executor: u64) -> CustodySettle {
-        let held_on_executor = self
-            .shares
-            .iter()
-            .filter(|share| share.node == executor)
-            .fold(0_u64, |total, share| total.saturating_add(share.held_units));
-        if executor != node && held_on_executor != 0 {
+    /// How the custody machine `node` settles at `now` its scope of a run
+    /// that settled while its last executor's lease was held until
+    /// `held_until` (FIX 4889). While any other machine's share still holds
+    /// units for open children (REVIEW-7890 round 2: the last executor's
+    /// children that outlived the run, and those of a machine that lost the
+    /// run, which may still spend before their fence stops them), the scope
+    /// waits: those children settle there, and that machine stamps its
+    /// shares on the settled TASK again. Past [`CUSTODY_HOLD_WAIT_SECS`]
+    /// after `held_until`, a hold still named is stale, as of a machine that
+    /// left: the scope folds it as spent and settles, so its parent stops
+    /// holding the carve.
+    pub(super) fn custody_settle(&self, node: u64, held_until: u64, now: u64) -> CustodySettle {
+        let waits = self.held_elsewhere(node) != 0
+            && now < held_until.saturating_add(CUSTODY_HOLD_WAIT_SECS);
+        if waits {
             CustodySettle::Waits
         } else {
             CustodySettle::Now {
-                fold: self.unfolded_spend_elsewhere(node),
+                fold: self.unfolded_commit_elsewhere(node),
             }
         }
     }
@@ -1330,11 +1332,14 @@ pub(super) fn update_agent_run_task_body_in_txn(
 /// scope row it holds (REVIEW-7890: an earlier try's scope, or one a take
 /// kept for a queued try), each as that scope's `spent_units` plus
 /// `held_units`, with the held part apart. So a hold that ended since, as a
-/// child that outlived the run settled, reaches its share. Only the run's
-/// executor stamps, and only a metered run carries a share; a carry that is
-/// absent and a machine that is not this run's executor leave the body as it
-/// is, and a live try that does not parse or spends unmetered here adds no
-/// share.
+/// child that outlived the run settled, reaches its share. Only a metered
+/// run carries a share, and a carry that is absent leaves the body as it is.
+/// While the run is open only its executor stamps, as another machine's
+/// write could undo the executor's by whole-row LWW. Once it settled, a
+/// machine that is not its executor refreshes the shares it already has
+/// (REVIEW-7890 round 2): its children that outlived its hold of the run
+/// settle there, and the custody machine waits for what they spent. A live
+/// try that does not parse or spends unmetered here adds no share.
 fn stamp_own_spend_share_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1346,10 +1351,12 @@ fn stamp_own_spend_share_in_txn(
     let Some(node) = crate::identity::read_client_id_in_txn(vault, txn)? else {
         return Ok(());
     };
-    if node != body.executor.node_id {
+    let executor = node == body.executor.node_id;
+    if !executor && body.outcome.is_none() {
         return Ok(());
     }
-    if let Some(live) = attempt_id_from_hex(&body.live_attempt_ref)
+    if executor
+        && let Some(live) = attempt_id_from_hex(&body.live_attempt_ref)
         && let Some(scope) = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(txn, live)?
     {
         carry.stamp(node, &scope);

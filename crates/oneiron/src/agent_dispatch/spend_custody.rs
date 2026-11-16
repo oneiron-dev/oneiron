@@ -11,12 +11,16 @@
 //! Both are idempotent: a second pass finds the scope settled and does
 //! nothing.
 //!
-//! A hold is no spend (REVIEW-7890): while the run's last executor still
-//! holds units for children that outlived the run, the scope stays open and
-//! its parent goes on holding the carve. Those children settle on that
-//! machine, whose reconcile pass stamps its shares on the settled TASK again
-//! (it is the TASK's one writer), and the custody machine settles once no
-//! such hold is left.
+//! A hold is no spend (REVIEW-7890): while another machine still holds
+//! units for children of the run, the scope stays open and its parent goes
+//! on holding the carve. That machine is the run's last executor, whose
+//! children outlived the run, or one that lost the run while its children
+//! held units (REVIEW-7890 round 2). Those children settle on that machine,
+//! whose reconcile pass stamps its shares on the settled TASK again, and
+//! the custody machine settles once no such hold is left, or folds a hold
+//! as spent once [`CUSTODY_HOLD_WAIT_SECS`] ran out. A take of the run
+//! back on the custody machine folds what such children hold as spent, so
+//! the kept scope's own spend stays out of their room.
 
 use super::run_handover::local_agent_run_tries_in;
 use super::run_task::{
@@ -29,6 +33,13 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+
+/// How long after a settled run's last lease the custody machine waits for
+/// another machine's holds of it to settle (REVIEW-7890 round 2), in
+/// seconds: one day. A hold still named after that is stale, as of a
+/// machine that left or a child that never settled; the custody scope
+/// folds it as spent and settles, so its parent holds the carve no longer.
+pub(super) const CUSTODY_HOLD_WAIT_SECS: u64 = 24 * 60 * 60;
 
 /// What reserving a handed-over launch came to (FIX 4889): whether the take
 /// may run here, and how much of what the other machines committed it folded
@@ -46,13 +57,13 @@ pub(super) enum HandedOverLaunchReserve {
 /// How the custody machine settles its scope of a run that ended (FIX 4889).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CustodySettle {
-    /// The scope folds the `fold` units the other machines spent of the run
-    /// that it has not folded yet, and settles into its parent.
+    /// The scope folds the `fold` units the other machines committed of the
+    /// run that it has not folded yet, and settles into its parent.
     Now { fold: u64 },
-    /// The run's last executor, another machine, still holds units for
-    /// children that outlived the run (REVIEW-7890): the scope stays open, so
-    /// its parent goes on holding the carve, until that machine's stamp
-    /// shows them settled.
+    /// Another machine still holds units for children of the run
+    /// (REVIEW-7890): the scope stays open, so its parent goes on holding the
+    /// carve, until that machine's stamp shows them settled or the wait ran
+    /// out ([`CUSTODY_HOLD_WAIT_SECS`]).
     Waits,
 }
 
@@ -69,19 +80,21 @@ struct CustodySettlement {
 struct ReconcileDue {
     /// The settled runs in this machine's custody whose scope here settles.
     settle: Vec<CustodySettlement>,
-    /// The settled runs in another machine's custody that this machine ran
-    /// last, whose shares here moved since its last stamp (REVIEW-7890).
+    /// The settled runs in another machine's custody that this machine ran,
+    /// last or before, whose shares here moved since its last stamp
+    /// (REVIEW-7890 round 2).
     restamp: Vec<EntityId>,
 }
 
-/// What the reconcile pass owes the settled runs, read in `txn` (FIX 4889):
-/// each run in this machine's custody whose scope here is still open, with
-/// no try pending here and no hold its last executor keeps for children that
-/// outlived it, settles; a run with a try pending here settles at that try's
-/// own stand-down instead. Each run in another machine's custody that this
-/// machine ran last stamps its shares again once a scope here moved
-/// (REVIEW-7890), as a child that outlived it settled.
-fn reconcile_due_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ReconcileDue> {
+/// What the reconcile pass owes the settled runs at `now`, read in `txn`
+/// (FIX 4889): each run in this machine's custody whose scope here is still
+/// open, with no try pending here and no hold another machine keeps for its
+/// children (or none past [`CUSTODY_HOLD_WAIT_SECS`]), settles; a run with a
+/// try pending here settles at that try's own stand-down instead. Each run
+/// in another machine's custody that this machine ran stamps its shares
+/// again once a scope here moved (REVIEW-7890 round 2), as a child that
+/// outlived the run or this machine's hold of it settled.
+fn reconcile_due_in(vault: &Vault, txn: &heed::RoTxn<'_>, now: u64) -> Result<ReconcileDue> {
     let mut due = ReconcileDue::default();
     let Some(node) = crate::identity::read_client_id_in_txn(vault, txn)? else {
         return Ok(due);
@@ -97,7 +110,7 @@ fn reconcile_due_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ReconcileDue
             continue;
         };
         if carry.custody_node != node {
-            if body.executor.node_id == node && own_spend_shares_stale_in(vault, txn, &body)? {
+            if own_spend_shares_stale_in(vault, txn, &body)? {
                 due.restamp.push(task_ref);
             }
             continue;
@@ -114,7 +127,9 @@ fn reconcile_due_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ReconcileDue
         if !open {
             continue;
         }
-        if let CustodySettle::Now { fold } = carry.custody_settle(node, body.executor.node_id) {
+        if let CustodySettle::Now { fold } =
+            carry.custody_settle(node, body.executor.held_until, now)
+        {
             due.settle.push(CustodySettlement { attempt, fold });
         }
     }
@@ -124,10 +139,11 @@ fn reconcile_due_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ReconcileDue
 impl AgentDispatcher<'_> {
     /// Judges for a take the open scope `kept` that `attempt` spends under
     /// here through its retry chain (FIX 4889). On the custody machine
-    /// (`carry` names `node`) the scope folds what the other machines spent
-    /// of the run and it did not fold yet, and the take waits when that, with
-    /// what their open children hold (REVIEW-7890: a hold fills the room but
-    /// never folds), fills its cap. Elsewhere the run may commit under `kept` what its
+    /// (`carry` names `node`) the scope folds what the other machines
+    /// committed of the run and it did not fold yet, what their open
+    /// children hold included (REVIEW-7890 round 2: folded as spent, so the
+    /// kept scope's own spend never reaches into those children's room), and
+    /// the take waits when that fills its cap. Elsewhere the run may commit under `kept` what its
     /// launch reserved less what was committed outside it, this machine's
     /// other scopes included: the take waits when `kept` committed that
     /// already, and a pinned scope's cap comes down to it (a carve keeps its
@@ -142,15 +158,11 @@ impl AgentDispatcher<'_> {
         node: u64,
     ) -> Result<HandedOverLaunchReserve> {
         if let Some(carry) = carry.filter(|carry| carry.custody_node == node) {
-            let fold = carry.unfolded_spend_elsewhere(node);
-            let held_elsewhere = carry.held_elsewhere(node);
+            let fold = carry.unfolded_commit_elsewhere(node);
             return Ok(
                 match self.fold_handed_over_spend_in_txn(txn, attempt, fold)? {
                     Some(folded)
-                        if folded
-                            .spent_units
-                            .saturating_add(folded.held_units)
-                            .saturating_add(held_elsewhere)
+                        if folded.spent_units.saturating_add(folded.held_units)
                             >= folded.cap_units =>
                     {
                         HandedOverLaunchReserve::Unfunded
@@ -206,13 +218,14 @@ impl AgentDispatcher<'_> {
 impl Vault {
     /// Settles each handed-over run this machine holds custody of that ended
     /// on another machine and has no try left here (FIX 4889): its scope
-    /// folds what the other machines spent and settles into its parent. A
-    /// run whose last executor still holds units for children that outlived
-    /// it waits (REVIEW-7890). Each settled run in another machine's custody
-    /// that this machine ran last gets this machine's shares stamped again
-    /// once a scope here moved, so its custody machine reads what such a
-    /// child spent. A read finds the runs first; the write runs only when one
-    /// is due, and judges each again. Returns how many runs it settled or
+    /// folds what the other machines committed and settles into its parent.
+    /// A run another machine still holds units for, for its children, waits
+    /// (REVIEW-7890), up to [`CUSTODY_HOLD_WAIT_SECS`] after its last lease.
+    /// Each settled run in another machine's custody that this machine ran
+    /// gets this machine's shares stamped again once a scope here moved, so
+    /// its custody machine reads what such a child spent. A read finds the
+    /// runs first; the write runs only when one is due, and judges each
+    /// again. Returns how many runs it settled or
     /// stamped. Idempotent: a second pass finds the scopes settled and the
     /// shares stamped, and does nothing.
     ///
@@ -220,16 +233,16 @@ impl Vault {
     ///
     /// Storage errors.
     pub fn reconcile_handed_over_spend(&self) -> Result<usize> {
+        let now = self.now_recorded_at();
         let due = {
             let rtxn = self.store.env.read_txn()?;
-            reconcile_due_in(self, &rtxn)?
+            reconcile_due_in(self, &rtxn, now)?
         };
         if due.settle.is_empty() && due.restamp.is_empty() {
             return Ok(0);
         }
-        let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
-            let due = reconcile_due_in(self, &*txn)?;
+            let due = reconcile_due_in(self, &*txn, now)?;
             let dispatcher = AgentDispatcher::new(self);
             for run in &due.settle {
                 dispatcher.settle_custody_scope_in_txn(txn, run.attempt, run.fold, now)?;

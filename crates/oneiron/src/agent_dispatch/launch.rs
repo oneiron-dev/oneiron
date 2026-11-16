@@ -192,9 +192,13 @@ enum HandedOverReserve {
 /// a pinned `budget` outside any tree pins what is left of its cap here; a
 /// launch under a tree scope this machine holds open, or books at an open
 /// ancestor (`tree_here`), reserves under it as the dispatch did, a carve of
-/// its budget or a hold of its expected spend. A tree scope this machine
-/// does not hold lives on the machine that opened it, and nothing of it is
-/// seeded here: the run gets a pinned hard scope of what its launch reserved
+/// its budget or a hold of its expected spend. Such a take keeps no open
+/// scope of the run, so the carve is the budget less `committed_units`
+/// (REVIEW-7890 round 2): a scope of the run that settled here, or one its
+/// retry chain here does not reach, never stacks a second whole carve under
+/// the tree, and a budget committed in full is unfunded. A tree scope this
+/// machine does not hold lives on the machine that opened it, and nothing
+/// of it is seeded here: the run gets a pinned hard scope of what its launch reserved
 /// from that tree less what the machines that ran it committed of it
 /// (`committed_units`, from the run TASK's carry: every scope's spend and
 /// open children's holds, this machine's earlier scopes included), so the
@@ -225,16 +229,25 @@ fn handed_over_launch_reserve(
                 })
             }
         }
-        Some(parent) if tree_here => HandedOverReserve::Reserve(LaunchReserve::Child {
-            parent: parent.clone(),
-            ask: if statement.hard {
-                ChildSpend::Carve { cap_units }
+        Some(parent) if tree_here => {
+            let ask = if statement.hard {
+                let remaining = cap_units.saturating_sub(committed_units);
+                if remaining == 0 {
+                    return HandedOverReserve::Unfunded;
+                }
+                ChildSpend::Carve {
+                    cap_units: remaining,
+                }
             } else {
                 ChildSpend::Hold {
                     expected_units: statement.expected.units,
                 }
-            },
-        }),
+            };
+            HandedOverReserve::Reserve(LaunchReserve::Child {
+                parent: parent.clone(),
+                ask,
+            })
+        }
         Some(_) if room_bound || statement.reserved_units == 0 => HandedOverReserve::Unfunded,
         Some(_) => {
             let remaining = statement.reserved_units.saturating_sub(committed_units);
