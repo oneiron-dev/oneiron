@@ -220,6 +220,8 @@ const KIND_QUESTIONS: &[(&str, &str)] = &[
     ("Type the password you use for the bank", "password"),
     ("What is the passcode of your phone?", "passcode"),
     ("Which passphrase unlocks the backup?", "passphrase"),
+    ("Enter your pass code", "passcode"),
+    ("Enter your pass phrase", "passphrase"),
     ("Which PINs did the bank send you?", "PIN"),
     ("Select digit 1 of your payment pin", "PIN"),
     ("Read me the pin code on the letter", "PIN"),
@@ -351,6 +353,7 @@ fn texts_that_name_no_kind_are_admitted() {
         "Should the keyboard shortcut open the passport scan?",
         "Run verification on the code before the merge?",
         "Grant access to the token budget page?",
+        "Will the change pass the code review?",
     ]
     .into_iter()
     .enumerate()

@@ -46,7 +46,8 @@ struct AskSecretValueKind {
 /// between two words of a phrase (`private SSH key`, `one-time login code`),
 /// unless one of them is in [`FUNCTION_WORDS`]: "Run verification on the
 /// code?" names no one-time code. The last word of a phrase also matches its
-/// plural in `s` (`API keys`, `PINs`).
+/// plural in `s` (`API keys`, `PINs`). A kind written as one word or as two
+/// is listed both ways (`passcode`, `pass code`).
 const ASK_SECRET_VALUE_KINDS: &[AskSecretValueKind] = &[
     AskSecretValueKind {
         name: "password",
@@ -54,11 +55,11 @@ const ASK_SECRET_VALUE_KINDS: &[AskSecretValueKind] = &[
     },
     AskSecretValueKind {
         name: "passcode",
-        phrases: &[&["passcode"]],
+        phrases: &[&["passcode"], &["pass", "code"]],
     },
     AskSecretValueKind {
         name: "passphrase",
-        phrases: &[&["passphrase"]],
+        phrases: &[&["passphrase"], &["pass", "phrase"]],
     },
     AskSecretValueKind {
         name: "PIN",
