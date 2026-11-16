@@ -1,9 +1,9 @@
 {
   "name": "vault.skills.receipts",
-  "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.",
+  "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner or an audit_read holder.",
   "input": "HubSkillRequest",
   "output": "crate::task_verb::sdk::HubSkillReceipts",
-  "call": "crate::task_verb::sdk::hub_skill_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.receipts\")?, &input)?",
+  "call": "crate::task_verb::sdk::hub_skill_receipts_as_reader(memory.vault(), &memory.audit_reader(\"vault.skills.receipts\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

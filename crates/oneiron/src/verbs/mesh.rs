@@ -15,13 +15,14 @@ pub use oneiron_verb_wire::verbs::mesh::{
 };
 
 /// `vault.mesh.path_receipts` on an embedded handle: the vault's own owner
-/// reads the receipts; any other actor is refused.
+/// or a live audit_read holder reads the receipts (RULING
+/// AUDIT-READ-POWER-LIST = B); any other actor is refused.
 #[cfg(feature = "sync")]
-pub fn mesh_path_receipts_as_owner(
+pub fn mesh_path_receipts_as_reader(
     memory: &Memory<'_>,
     input: &MeshPathReceiptsRequest,
 ) -> MemoryResult<Vec<MeshPathReceipt>> {
-    memory.embedded_owner("vault.mesh.path_receipts")?;
+    memory.audit_reader("vault.mesh.path_receipts")?;
     Ok(memory.vault().mesh_path_receipts(input.bound())?)
 }
 

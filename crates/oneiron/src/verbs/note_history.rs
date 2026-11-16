@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::access_grant::AuditReader;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{PurgeReceipt, TextHistoryErase};
 use crate::memory::{MemoryError, MemoryResult};
@@ -15,7 +16,7 @@ pub use oneiron_verb_wire::verbs::note_history::{
 };
 
 /// `vault.notes.history_purge_receipts`'s input: the NOTE whose purge
-/// receipts the owner reads.
+/// receipts the owner or a live audit_read holder reads.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeReceiptsRequest {
@@ -83,12 +84,17 @@ pub fn execute_note_history_purge_as_owner(
         .into())
 }
 
-pub fn note_history_purge_receipts_as_owner(
+/// The NOTE's durable history-purge receipts for `reader`: the owner on his
+/// proof, or a live audit_read holder (RULING AUDIT-READ-POWER-LIST = B),
+/// admitted in the read's own transaction.
+pub fn note_history_purge_receipts_as_reader(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: NoteHistoryPurgeReceiptsRequest,
 ) -> MemoryResult<Vec<NoteHistoryPurgeReceipt>> {
-    owner.revalidate(vault)?;
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    reader.admit_in_txn(vault, &txn)?;
+    drop(txn);
     let note = note_id(vault, &input.note_ref)?;
     Ok(vault
         .entity_text_purge_receipts(&note)?

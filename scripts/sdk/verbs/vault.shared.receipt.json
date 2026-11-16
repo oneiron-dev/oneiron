@@ -1,9 +1,9 @@
 {
   "name": "vault.shared.receipt",
-  "description": "One shared-act or membership receipt its reader was told about, by id.",
+  "description": "One shared-act or membership receipt by id: a told reader reads it, and a live audit_read holder reads any receipt told or not.",
   "input": "crate::task_verb::sdk::SharedReceiptRequest",
   "output": "crate::federation::SharedActExecutionReceipt",
-  "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.embedded_owner(\"vault.shared.receipt\")?, input)?",
+  "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.audit_reader(\"vault.shared.receipt\")?, input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -12,5 +12,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "shared_person"
+  "host_door_proof": "shared_person_or_audit_reader"
 }

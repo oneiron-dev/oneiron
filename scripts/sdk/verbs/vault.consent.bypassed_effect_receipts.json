@@ -1,9 +1,9 @@
 {
   "name": "vault.consent.bypassed_effect_receipts",
-  "description": "The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation.",
+  "description": "The owner or a live audit_read holder reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation.",
   "input": "crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest",
   "output": "Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>",
-  "call": "crate::consent::bypass_lifecycle::bypassed_effect_receipts(memory.vault(), &memory.embedded_owner(\"vault.consent.bypassed_effect_receipts\")?, input)?",
+  "call": "crate::consent::bypass_lifecycle::bypassed_effect_receipts_as_reader(memory.vault(), &memory.audit_reader(\"vault.consent.bypassed_effect_receipts\")?, input)?",
   "scope": "Read",
   "act_class": "read",
   "admission": {
@@ -13,5 +13,5 @@
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

@@ -1,9 +1,9 @@
 {
   "name": "vault.hooks.regen.history",
-  "description": "Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing.",
+  "description": "Read, as the authenticated owner or an audit_read holder, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing.",
   "input": "crate::memory::hook_regen_doors::HookRegenHistoryRequest",
   "output": "Vec<crate::runtime_hooks::HookRegenReceipt>",
-  "call": "memory.hooks_regen_history_as(&memory.embedded_owner(\"vault.hooks.regen.history\")?, input)?",
+  "call": "memory.hooks_regen_history_as_reader(&memory.audit_reader(\"vault.hooks.regen.history\")?, input)?",
   "scope": "Read",
   "act_class": "read",
   "admission": {
@@ -13,5 +13,5 @@
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

@@ -104,12 +104,12 @@ pub(crate) async fn vault_writes_critical_confirm_receipt(
     input: CriticalWriteConfirmReceiptRequest,
 ) -> Listed<CriticalWriteConfirmReceipt> {
     const VERB: &str = "vault.writes.critical_confirm.receipt";
-    let owner = match owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
+    let reader = match crate::api::facade::audit_read_doors::audit_reader(server, auth, VERB) {
+        Ok(reader) => reader,
         Err(error) => return refused(error),
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.critical_write_confirm_receipt_as_owner(&owner, &input)
+        memory.critical_write_confirm_receipt_as_reader(&reader, &input)
     })
     .await
 }

@@ -302,13 +302,17 @@ pub(crate) async fn vault_skills_pack_receipt(
     auth: &CoreAuth,
     input: SkillPackReceiptRequest,
 ) -> Listed<SkillPackReceipt> {
-    let owner = match owner_proof(auth, server, "vault.skills.pack_receipt") {
-        Ok(owner) => owner,
+    let reader = match crate::api::facade::audit_read_doors::audit_reader(
+        server,
+        auth,
+        "vault.skills.pack_receipt",
+    ) {
+        Ok(reader) => reader,
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
     let answer = super::clock_ingress::run_blocking(move || {
-        sdk::skill_pack_receipt_as_owner(server.vault(), &owner, &input)
+        sdk::skill_pack_receipt_as_reader(server.vault(), &reader, &input)
     })
     .await
     .map_err(|_| internal("vault.skills.pack_receipt"))

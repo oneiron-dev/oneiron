@@ -17,7 +17,8 @@
 //! Authority is the owner's live proof alone (`Memory::merge_queue_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.
 //! The vault's review policy doors (`review_policy`, FIX 8268) also admit
-//! an agent under its own Grant that lists the verb.
+//! an agent under its own Grant that lists the verb. `vault.code.checks.get`
+//! also reads for a live audit_read holder.
 
 mod check_receipt;
 mod checker;

@@ -1,9 +1,9 @@
 {
   "name": "vault.skills.pack_receipt",
-  "description": "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner.",
+  "description": "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner or an audit_read holder.",
   "input": "SkillPackReceiptRequest",
   "output": "crate::task_verb::sdk::SkillPackReceipt",
-  "call": "crate::task_verb::sdk::skill_pack_receipt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.pack_receipt\")?, &input)?",
+  "call": "crate::task_verb::sdk::skill_pack_receipt_as_reader(memory.vault(), &memory.audit_reader(\"vault.skills.pack_receipt\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -12,5 +12,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

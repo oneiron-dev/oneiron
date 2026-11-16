@@ -147,6 +147,13 @@ pub(in crate::api::facade) fn door_admits(
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        // `vault.shared.receipt` (RULING AUDIT-READ-POWER-LIST = B): a live
+        // person as today, or a live audit_read holder, told or not, person
+        // or agent. The door judges the same OR for the proof it acts under.
+        Proof::SharedPersonOrAuditReader => {
+            crate::api::facade::shared_act_doors::shared_receipt_reader(server, auth, verb)
+                .map(drop)
+        }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
         // owner or not, or a designed voice's creator on its own credential;
         // the bank binds each act to the voice's subject or creator.

@@ -65,13 +65,14 @@ pub enum UsageRepairReason {
 }
 
 /// The authority a repair ran under: a live owner's own proof, by the
-/// authentication it was bound to, or an agent's own Grant, each by its 32
-/// hex id.
+/// authentication it was bound to, an agent's own Grant, or a live audit_read
+/// holder's read, each by its 32 hex id. A holder reads the receipts only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", content = "ref", rename_all = "snake_case")]
 pub enum UsageRepairAuthority {
     Owner(String),
     Grant(String),
+    AuditRead(String),
 }
 
 /// Where the call reached this install, for the receipt alone: no admission

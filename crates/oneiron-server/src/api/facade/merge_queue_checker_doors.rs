@@ -78,12 +78,19 @@ pub(crate) async fn vault_code_checks_get(
     auth: &CoreAuth,
     input: CodeCheckReceiptRequest,
 ) -> Listed<Option<CodeCheckReceiptView>> {
-    as_owner(
-        server,
-        auth,
-        "vault.code.checks.get",
-        move |memory, owner| memory.merge_queue_check_receipt_as(owner, input),
-    )
+    const VERB: &str = "vault.code.checks.get";
+    let reader = match super::audit_read_doors::audit_reader(server, auth, VERB) {
+        Ok(reader) => reader,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let caller =
+        match super::facade_actor(server, auth).map_err(super::FacadeApiError::into_memory_error) {
+            Ok(caller) => caller,
+            Err(error) => return (Err(error), Vec::new()),
+        };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.merge_queue_check_receipt_as(&reader, input)
+    })
     .await
 }
 

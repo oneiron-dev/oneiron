@@ -264,16 +264,27 @@ pub(crate) async fn vault_consent_active_bypass_grants(
     .await
 }
 
+/// `vault.consent.bypassed_effect_receipts`: the existing Gate receipts for
+/// one bypass grant's effects, the owner's view or a live audit_read
+/// holder's (RULING AUDIT-READ-POWER-LIST = B).
 pub(crate) async fn vault_consent_bypassed_effect_receipts(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: BypassedEffectReceiptsRequest,
 ) -> Listed<Vec<BypassedEffectReceipt>> {
-    as_owner(
+    let reader = match crate::api::facade::audit_read_doors::audit_reader(
         server,
         auth,
         "vault.consent.bypassed_effect_receipts",
-        move |vault, owner| bypass::bypassed_effect_receipts(vault, owner, input),
-    )
+    ) {
+        Ok(reader) => reader,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let server = Arc::clone(server);
+    let answer = clock_ingress::run_blocking(move || {
+        bypass::bypassed_effect_receipts_as_reader(server.vault(), &reader, input)
+    })
     .await
+    .unwrap_or_else(|_| Err(internal("vault.consent.bypassed_effect_receipts")));
+    (answer, Vec::new())
 }

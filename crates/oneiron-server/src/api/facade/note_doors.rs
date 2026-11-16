@@ -199,28 +199,43 @@ pub(crate) async fn vault_notes_history_purge_execute(
 }
 
 /// Durable engine receipts survive a host restart; an editor binding does not.
+/// `vault.notes.history_purge_receipts`: the owner's view or a live audit_read
+/// holder's (RULING AUDIT-READ-POWER-LIST = B).
 pub(crate) async fn vault_notes_history_purge_receipts(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::NoteHistoryPurgeReceiptsRequest,
 ) -> Listed<Vec<oneiron::task_verb::sdk::NoteHistoryPurgeReceipt>> {
-    super::legal_hold_doors::as_owner_naming(
+    let reader = match crate::api::facade::audit_read_doors::audit_reader(
         server,
         auth,
         "vault.notes.history_purge_receipts",
-        move |server, owner| {
-            oneiron::task_verb::sdk::note_history_purge_receipts_as_owner(
-                server.vault(),
-                owner,
-                input,
-            )
-        },
+    ) {
+        Ok(reader) => reader,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    let server = Arc::clone(server);
+    let answer = super::clock_ingress::run_blocking(move || {
+        oneiron::task_verb::sdk::note_history_purge_receipts_as_reader(
+            server.vault(),
+            &reader,
+            input,
+        )
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(super::host_doors::support::internal(
+            "vault.notes.history_purge_receipts",
+        ))
+    });
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
         |receipts| {
             receipts
                 .iter()
                 .flat_map(|receipt| super::host_doors::support::hex_rows([&receipt.entity]))
                 .collect()
         },
-    )
-    .await
+    );
+    (answer, rows)
 }

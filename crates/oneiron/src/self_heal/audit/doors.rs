@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::access_grant::AuditReader;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::seal_checks::queue_seal_checks_as_owner;
 use crate::dreamer_runner::maintenance::validate_owner_in_txn;
 use crate::learning::honesty::{SealAssessment, seal_assessment};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{
@@ -84,16 +86,56 @@ pub fn receipt_as_owner(
         .map(Into::into))
 }
 
-/// [`receipt_as_owner`] beside the rows the seal's content was derived from
+/// `vault.seal.receipt` on an embedded handle: the stored receipt for the
+/// owner or a live audit_read holder ([`Memory::audit_reader`]). A holder
+/// gets the same release as a host: the receipt is withheld whole unless
+/// the holder's own lane reads every source row.
+pub fn receipt_embedded(
+    memory: &Memory<'_>,
+    input: &SealAttemptRequest,
+) -> MemoryResult<Option<SealReceiptView>> {
+    let reader = memory.audit_reader("vault.seal.receipt")?;
+    let (view, rows) =
+        receipt_sourced_as_reader(memory.vault(), &reader, input).map_err(MemoryError::from)?;
+    let Some(view) = view else {
+        return Ok(None);
+    };
+    if matches!(reader, AuditReader::Holder(_)) && !lane_reads_every_row(memory, &rows)? {
+        return Ok(None);
+    }
+    Ok(Some(view))
+}
+
+/// Whether `memory`'s own lane reads every row in `rows`: the release an
+/// audit_read holder gets for a sourced receipt ([`receipt_embedded`]). A
+/// host's `vault.seal.receipt` asks it for a holder too, as a receipt on this
+/// device is released whatever its rows are (Wonder review 8483 F2).
+///
+/// # Errors
+/// A row's read fails.
+pub fn lane_reads_every_row(memory: &Memory<'_>, rows: &[EntityId]) -> MemoryResult<bool> {
+    for row in rows {
+        if memory.peek_entity(&row.to_hex())?.value.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The stored receipt for the owner, as [`receipt_as_owner`] reads it, or
+/// for a live audit_read holder, beside the rows the seal's content was derived from
 /// ([`seal_source_rows_in_txn`], FIX 8164), read in the receipt's snapshot,
 /// so a host releases it by them right before it serializes it.
-pub fn receipt_sourced_as_owner(
+pub fn receipt_sourced_as_reader(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: &SealAttemptRequest,
 ) -> Result<(Option<SealReceiptView>, Vec<EntityId>)> {
     let txn = vault.store.env.read_txn()?;
-    validate_owner_in_txn(vault, &txn, owner)?;
+    match reader {
+        AuditReader::Owner(owner) => validate_owner_in_txn(vault, &txn, owner).map(|_| ())?,
+        AuditReader::Holder(_) => reader.admit_in_txn(vault, &txn).map(|_| ())?,
+    };
     let Some(receipt) = vault.sealed_attempt_receipt_in_txn(&txn, input.attempt)? else {
         return Ok((None, Vec::new()));
     };
