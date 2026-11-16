@@ -376,8 +376,8 @@ struct OwnerRemediation<'a> {
 }
 
 /// One file of a commit, as its tree holds it.
-struct CommitFile {
-    content: Vec<u8>,
+pub(super) struct CommitFile {
+    pub(super) content: Vec<u8>,
 }
 
 /// Every regular file of `commit`'s tree, read whole from the object
@@ -385,7 +385,7 @@ struct CommitFile {
 /// no key a remediation edits, and is passed over. The files' bytes come
 /// from batched reads of their distinct blobs (FIX 10976), not two Git
 /// calls a file.
-fn commit_files(
+pub(super) fn commit_files(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     commit: &GitOid,

@@ -256,7 +256,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
     )?;
     assert!(
         memory
-            .cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?
+            .cancel_with_mode(TaskCancelTarget::Task(task), CheckInMode::NeverAsk)?
             .effected
     );
     assert!(vault.task_authority_state(task)?.unwrap().cancelled);

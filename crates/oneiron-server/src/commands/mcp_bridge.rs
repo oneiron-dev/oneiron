@@ -52,7 +52,8 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::api;
-use crate::cli::{McpArgs, McpSurface};
+use super::oauth_sign_in::OAuthSession;
+use crate::cli::{McpArgs, McpSurface, McpTransport};
 
 mod bridge_auth;
 mod call_meta;
@@ -389,7 +390,15 @@ impl Bridge {
         let base = api::normalized_base(&args.url)?;
         let auth = bridge_auth::Auth::from_args(args)?;
         Ok(Self {
-            link: link::Link::new(&base, args.transport)?,
+            // An OAuth sign-in's token goes over HTTP alone.
+            link: link::Link::new(
+                &base,
+                if auth.http_only() {
+                    McpTransport::Http
+                } else {
+                    args.transport
+                },
+            )?,
             pick: Mutex::new(Pick {
                 chosen: args.surface,
                 probing: false,
@@ -643,6 +652,11 @@ impl Bridge {
         if until.saturating_duration_since(Instant::now()).is_zero() {
             return Err(self.refusal_for(surface, link::Cut::Deadline, deadline, tool));
         }
+        let bounds = link::Bounds {
+            until,
+            idle: self.idle,
+            max_reply_bytes: MAX_REPLY_BYTES,
+        };
         let sign;
         let credential = match &self.auth {
             bridge_auth::Auth::Slip { token, seed } => {
@@ -655,11 +669,9 @@ impl Bridge {
                 }
             }
             bridge_auth::Auth::Owner { headers_file } => link::Credential::Owner { headers_file },
-        };
-        let bounds = link::Bounds {
-            until,
-            idle: self.idle,
-            max_reply_bytes: MAX_REPLY_BYTES,
+            bridge_auth::Auth::OAuth { session } => {
+                return self.post_as_oauth(session, surface, body, &bounds, deadline, tool);
+            }
         };
         let exchange = self
             .link
@@ -668,6 +680,53 @@ impl Bridge {
         Ok(Reply {
             status: exchange.status,
             body: exchange.body,
+        })
+    }
+
+    /// One request as the OAuth sign-in: its access token, refreshed first
+    /// when it is due, and sent once more with a renewed token when the
+    /// vault refuses it (HTTP 401), as it refuses an expired or rotated one.
+    fn post_as_oauth(
+        &self,
+        session: &OAuthSession,
+        surface: McpSurface,
+        body: Vec<u8>,
+        bounds: &link::Bounds,
+        deadline: Duration,
+        tool: Option<&str>,
+    ) -> Result<Reply, Refusal> {
+        let refused =
+            |why: String| self.refusal_for(surface, link::Cut::Unauthorized(why), deadline, tool);
+        let cut = |cut: link::Cut| self.refusal_for(surface, cut, deadline, tool);
+        let bearer = session.bearer().map_err(refused)?;
+        let first = self
+            .link
+            .exchange(
+                surface,
+                &link::Credential::OAuth { bearer: &bearer },
+                body.clone(),
+                bounds,
+            )
+            .map_err(cut)?;
+        if first.status != Some(401) || Instant::now() >= bounds.until {
+            return Ok(Reply {
+                status: first.status,
+                body: first.body,
+            });
+        }
+        let bearer = session.renewed(&bearer).map_err(refused)?;
+        let again = self
+            .link
+            .exchange(
+                surface,
+                &link::Credential::OAuth { bearer: &bearer },
+                body,
+                bounds,
+            )
+            .map_err(cut)?;
+        Ok(Reply {
+            status: again.status,
+            body: again.body,
         })
     }
 
