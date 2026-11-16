@@ -554,11 +554,12 @@ fn an_owner_minted_steward_row_put_over_another_scope_backs_no_selector() {
     );
 }
 
-/// Guard: a vault shared under the own-device residence's id keeps the own-device row of a
-/// device paired while it was personal; that row's selector stays authorized (review #8943
-/// P1-2: the row's scope is the shared scope, and the member read gave it nothing).
+/// Guard: a share under the own-device residence's id is refused (FIX
+/// [SHARED-VAULT-ID-7-OWN-DEVICE-ALIAS]), and the own-device row of a device paired while the
+/// vault was personal keeps its selector. Before the refusal, such a share made the row's scope
+/// the shared scope, and the member read gave it nothing (review #8943 P1-2).
 #[test]
-fn an_own_device_row_on_a_vault_shared_under_the_residence_id_keeps_its_selector() {
+fn sharing_under_the_residence_id_is_refused_and_the_own_device_row_keeps_its_selector() {
     let (_dir, vault, _, owner) = carrier_vault();
     let residence = own_device_residence_scope();
     let device_grant =
@@ -572,19 +573,27 @@ fn an_own_device_row_on_a_vault_shared_under_the_residence_id_keeps_its_selector
     let FederationGrantScope::Vault { vault_id } = residence else {
         panic!("FIXTURE: the own-device residence is a vault scope");
     };
-    vault
-        .initialize_shared_vault(
-            &proof(&vault, owner),
-            vault_id,
-            None,
-            &[InitialSharedMember {
-                member_ref: owner,
-                role: Some(Role::Owner),
-            }],
-            vault.now_recorded_at(),
-        )
-        .expect("the vault is shared under the residence's id");
+    let shared = vault.initialize_shared_vault(
+        &proof(&vault, owner),
+        vault_id,
+        None,
+        &[InitialSharedMember {
+            member_ref: owner,
+            role: Some(Role::Owner),
+        }],
+        vault.now_recorded_at(),
+    );
 
+    assert!(
+        shared.is_err(),
+        "vault_id={vault_id}; expected a share under the own-device residence's id to be \
+         refused; seen {shared:?}"
+    );
+    assert_eq!(
+        vault.shared_vault_creation().expect("the creation read"),
+        None,
+        "vault_id={vault_id}; expected the refused share to leave the vault personal"
+    );
     authorize_sync_selector(&vault, residence, &member_selector(id, owner))
-        .expect("the own-device row keeps its selector on the vault shared under its id");
+        .expect("the own-device row keeps its selector after the refused share");
 }
