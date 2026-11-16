@@ -22,9 +22,9 @@
 //! once. The vault's owner lists the archives taken in here by id, source
 //! vault and term, imported or lapsed, never a byte of one (FIX 11797).
 
-use super::removal_answer::{RemovalExportFile, spool_digest};
+use super::removal_answer::RemovalExportFile;
 use super::removal_archive::{FrozenPosition, KeptRemovalCopy, StoredRemovalExport};
-use super::removal_file::StagedArchive;
+use super::removal_file::{StagedArchive, spool_hashed};
 use super::{ArchiveRow, REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, removal_export_key};
 use std::collections::BTreeMap;
 
@@ -100,10 +100,14 @@ impl Vault {
     /// Takes into this vault the archive `copy` its home delivered to
     /// `person`, the holder of this device's own paired credential, once it
     /// checks (as this module says), and tells `person` in their inbox that
-    /// it arrived. The archive is read from `copy`'s spool file where it
-    /// lies, never whole (FIX 21529). It is kept as the removal keeps it at
-    /// the home, for the readers there to answer here; a later delivery of
-    /// the same archive moves its term on. `Some` with the records it holds
+    /// it arrived. `copy`'s spool file is read once, a piece at a time, into
+    /// a spool file of this vault's own and hashed as it is copied; every
+    /// check after the digest's, and the file kept, read that copy, so a
+    /// caller's file rewritten during the call changes nothing checked or
+    /// kept (FIX [REMOVAL-IMPORT-KEPT-BODY-UNBOUND]), and no archive is held
+    /// whole (FIX 21529). It is kept as the removal keeps it at the home, for
+    /// the readers there to answer here; a later delivery of the same
+    /// archive moves its term on. `Some` with the records it holds
     /// when this call took it in; `None` when this delivery was taken in
     /// before.
     ///
@@ -124,9 +128,11 @@ impl Vault {
         if EntityId::from_hex(copy.member()).ok() != Some(person) {
             return Err(refused("is another person's"));
         }
-        if copy.copy.format != VAULT_ARCHIVE_FORMAT
-            || spool_digest(&mut copy.archive)? != copy.digest
-        {
+        if copy.copy.format != VAULT_ARCHIVE_FORMAT {
+            return Err(refused("is not the bytes its digest names"));
+        }
+        let (mut spool, digest) = spool_hashed(&mut copy.archive, self.archive_spool_file()?)?;
+        if digest != copy.digest {
             return Err(refused("is not the bytes its digest names"));
         }
         #[cfg(oneiron_test_support)]
@@ -136,7 +142,7 @@ impl Vault {
         if version.checked_add(REMOVAL_EXPORT_RETAIN_SECS) != Some(copy.copy.expires_at) {
             return Err(refused("names a term no removal grants"));
         }
-        let held = self.removal_archive_holds(&mut copy.archive)?;
+        let held = self.removal_archive_holds(&mut spool)?;
         #[cfg(oneiron_test_support)]
         crate::test_doors::removal_import_passes::after_pass(
             crate::test_doors::removal_import_passes::RemovalImportPass::ArchiveRead,
@@ -147,7 +153,7 @@ impl Vault {
         let staged = if self.removal_export_kept(person, receipt)? {
             None
         } else {
-            Some(self.stage_removal_archive(&mut copy.archive)?)
+            Some(self.stage_removal_archive(&mut spool)?)
         };
         let copy = &*copy;
         self.with_write_txn_grouped(|txn| {
@@ -327,11 +333,12 @@ impl Vault {
 
     /// Keeps `copy` as the removal keeps it at the home, under its member
     /// and receipt, so the removal-export readers answer it here, its bytes
-    /// the file `staged` was written as (FIX 3679). One already kept must be
-    /// the same archive: a later delivery of it moves its term on, and an
-    /// earlier one leaves it; `staged` then names nothing and is debris. A
-    /// copy kept here carries no frozen positions, so a holder the slip was
-    /// transferred to takes none of it here (FIX-LIST 8224).
+    /// the file `staged` was written as (FIX 3679), which must be the bytes
+    /// `copy`'s digest names. One already kept must be the same archive: a
+    /// later delivery of it moves its term on, and an earlier one leaves it;
+    /// `staged` then names nothing and is debris. A copy kept here carries no
+    /// frozen positions, so a holder the slip was transferred to takes none
+    /// of it here (FIX-LIST 8224).
     fn keep_received_removal_export_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -356,6 +363,11 @@ impl Vault {
         let staged = staged.ok_or(Error::ConcurrentWrite(
             "a kept removal archive went while its delivery was taken in",
         ))?;
+        // The file kept is the one the copy's digest names, never what the
+        // staging pass happened to read (FIX [REMOVAL-IMPORT-KEPT-BODY-UNBOUND]).
+        if staged.digest() != copy.digest {
+            return Err(refused("is not the bytes its digest names"));
+        }
         let file = self.bind_removal_archive_in_txn(
             txn,
             ArchiveRow {
