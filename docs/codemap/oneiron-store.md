@@ -677,3 +677,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
 | `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |
 | `tests/shared_path_acl.rs` | test | s | — | — | Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS… |
+| `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
