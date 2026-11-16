@@ -23,6 +23,10 @@ crate::side_table::side_tables! {
     /// 32-byte digests. Key: id16 (document).
     ESIGN_DOCUMENT_QR_CAPABILITY_INDEX: VaultMeta b"esign.document_qr_capability.v1/" Raw
         [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];
+    /// A document's QR PDF download switch: a row means the vault owner lets its QR capabilities
+    /// read the sealed PDF; value one byte, 1. Key: id16 (document).
+    ESIGN_DOCUMENT_QR_PDF_DOWNLOAD: VaultMeta b"esign.document_qr_pdf_download.v1/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Held automated sign act, one per recipient. Key: hex32/string.
     ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named
         [restore: refuse_image_entities "e-sign ceremonies"]

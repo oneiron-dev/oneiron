@@ -33,10 +33,10 @@ pub const CODE_RUN_OUTPUT_PREVIEW_CODEC: &str = "utf8-lossy-whitespace-compact-v
 #[doc(hidden)]
 pub use oneiron_verb_wire::serialize::pack_entry::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS;
 
-/// Stable serializer identity recorded in whole-vault export manifests.
-pub const WHOLE_VAULT_EXPORT_SERIALIZER: &str = "oneiron.whole_vault_export";
-/// Version of the whole-vault export serializer contract.
-pub const WHOLE_VAULT_EXPORT_SERIALIZER_VERSION: u16 = 2;
+#[doc(hidden)]
+pub use oneiron_records::serialize::pack_entry::{
+    WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION,
+};
 
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {
@@ -225,6 +225,8 @@ pub(super) fn serialize_prepared_pack(
     mut prepared: PreparedPack,
     tokenizer: PackTokenizer,
 ) -> Vec<u8> {
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::pack_encode_work::record_pack_encode();
     let empty =
         prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();

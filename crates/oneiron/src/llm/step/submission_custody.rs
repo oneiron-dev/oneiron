@@ -42,8 +42,8 @@ fn owners(row: &Submission) -> Vec<EntityId> {
     owners
 }
 
-/// The row's erased form: the request's content, its schema included, and
-/// the result go together; its metadata stays.
+/// The row's erased form: the request's content, its schema included, the
+/// result and a correction's point go together; its metadata stays.
 fn scrub(row: &mut Submission) {
     let request = &mut row.input.request;
     request.messages.clear();
@@ -54,6 +54,8 @@ fn scrub(row: &mut Submission) {
     if let ResponseFormat::Json { schema } = &mut request.envelope.response_format {
         *schema = serde_json::Value::Null;
     }
+    // A correction's point holds the step's refused answers.
+    row.correction = None;
     row.result = Some(ModelStepResult::Erased);
 }
 

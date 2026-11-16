@@ -1,39 +1,13 @@
 //! Typed, caller-bound calendar origin creation. Imported origins belong to ICS admission.
-use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
+use crate::calendar::CalendarOrigin;
 use crate::calendar::origin::CalendarEventInput;
-use crate::calendar::{CalendarOrigin, CalendarRangeDto};
 use crate::claim::ClaimReadStatus;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
-/// The origin union forbids extraction evidence on native entries and requires
-/// it on extracted entries. Recorded time and actor are always engine-stamped.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CalendarEventCreateRequest {
-    Native {
-        summary: String,
-        #[serde(rename = "occurredAt")]
-        occurred_at: CalendarRangeDto,
-    },
-    Dreamer {
-        summary: String,
-        #[serde(rename = "occurredAt")]
-        occurred_at: CalendarRangeDto,
-        #[serde(rename = "evidenceTurnIds")]
-        evidence_turn_ids: Vec<String>,
-        #[serde(rename = "sourceFrontiers")]
-        source_frontiers: Vec<String>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarEventCreated {
-    pub event_ref: String,
-    pub origin: String,
-    pub recorded_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::door::{CalendarEventCreateRequest, CalendarEventCreated};
 
 impl Memory<'_> {
     /// Birth and recorded origin use the existing atomic calendar projector,
