@@ -261,36 +261,40 @@ pub(crate) fn check_write_gate_against_vault(
     can_resolve_pending_consent: bool,
     landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
-    check_write_gate_against_vault_with_checker(
+    let mut wtxn = vault.store.env.write_txn()?;
+    landing(&wtxn)?;
+    let gate_result = check_write_gate_in_txn(
         vault,
+        &mut wtxn,
         id,
         body,
         envelope,
         can_resolve_pending_consent,
-        landing,
         None,
-    )
-    .map(drop)
+    )?;
+    wtxn.commit()?;
+    gate_result.map(drop)
 }
 
-/// [`check_write_gate_against_vault`] with the host's auto checker a live-run
-/// door lent (FIX LIVE-RUN-CHECKER-INJECT), which the gate consults as it
-/// consults one for a Dreamer write. Answers the decision it recorded, so the
-/// write's landing reuses it rather than judge the candidate again (FIX
-/// 8752). A refusal answers only its refusal; its decision is committed.
-pub(super) fn check_write_gate_against_vault_with_checker(
+/// The gate check of [`check_write_gate_against_vault`] in the caller's write
+/// transaction, with the host's auto checker a live-run door lent (FIX
+/// LIVE-RUN-CHECKER-INJECT), which the gate consults as it consults one for a
+/// Dreamer write. `Err` is a fault: the caller drops the transaction. `Ok`
+/// holds the gate's answer, whose decision the transaction now holds: on an
+/// admission, that decision's id, which the write's landing in the same
+/// transaction reuses rather than judge the candidate again (FIX 8752); on a
+/// refusal, the refusal, which the caller commits with its decision.
+pub(super) fn check_write_gate_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
     body: &ClaimBody,
     envelope: &WriteEnvelope,
     can_resolve_pending_consent: bool,
-    landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     checker: Option<&crate::llm::BoundedAutoChecker>,
-) -> Result<Option<crate::store::GateDecisionId>> {
-    let mut wtxn = vault.store.env.write_txn()?;
-    landing(&wtxn)?;
-    validate_write_actor_binding(vault, &wtxn, envelope)?;
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+) -> Result<Result<Option<crate::store::GateDecisionId>>> {
+    validate_write_actor_binding(vault, &*wtxn, envelope)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &*wtxn)?;
     let mut recorded = None;
     // This door pre-checks a PERSISTED claim candidate, so it keeps the full
     // GATE-12 floor (the record seam never opens the synthetic-operation
@@ -298,7 +302,7 @@ pub(super) fn check_write_gate_against_vault_with_checker(
     // `claim/put.rs`).
     let gate_result = crate::gate::check_claim_policy_for_write_with_record(
         &vault.store,
-        &mut wtxn,
+        wtxn,
         &id,
         crate::gate::ClaimGateWrite {
             auto_checker: checker,
@@ -314,8 +318,7 @@ pub(super) fn check_write_gate_against_vault_with_checker(
         },
         &mut recorded,
     );
-    wtxn.commit()?;
-    gate_result.map(|()| recorded.map(|decision| decision.decision_id()))
+    Ok(gate_result.map(|()| recorded.map(|decision| decision.decision_id())))
 }
 
 fn validate_write_actor_binding(
