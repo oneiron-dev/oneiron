@@ -162,15 +162,23 @@ fn provenance(
             supersedes,
         });
     }
-    let evidence = evidence_in_txn(vault, txn, &cell.digest())?
-        .into_iter()
-        .map(|(receipt, evidence)| LearningEvidenceView { receipt, evidence })
-        .collect();
     Ok(LearningProvenanceView {
         cell: cell.clone().into(),
         heads,
-        evidence,
+        evidence: evidence_views(vault, txn, cell)?,
     })
+}
+
+/// The evidence rows recorded into `cell`, as its provenance shows them.
+fn evidence_views(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+) -> Result<Vec<LearningEvidenceView>> {
+    Ok(evidence_in_txn(vault, txn, &cell.digest())?
+        .into_iter()
+        .map(|(receipt, evidence)| LearningEvidenceView { receipt, evidence })
+        .collect())
 }
 
 /// Reads the existing backoff projection; never folds a client-supplied estimate.
@@ -188,23 +196,35 @@ pub fn read_learning_as_owner(
 }
 
 /// [`read_learning_as_owner`] for an agent or person holding a live Steward
-/// grant that names `read` (untangle 6.6c), checked at this read.
+/// grant that names `read` (untangle 6.6c), checked at this read, as far as
+/// that grant reaches. A grant narrowed to some projects reads a cell of one
+/// of them as its own runs alone make it ([`read_learning_within_cell`]); a
+/// cell of another project or of the whole vault is refused without saying
+/// what it holds.
 ///
 /// # Errors
 ///
-/// A caller who holds no such grant; as [`read_learning_as_owner`].
+/// A caller who holds no such grant, or reads outside its reach; as
+/// [`read_learning_as_owner`].
 pub fn read_learning_as_reader(
     vault: &Vault,
     reader: WriteActor,
     input: &LearningReadRequest,
 ) -> crate::memory::MemoryResult<LearningCellView> {
-    crate::federation::admit_substrate_read_by(
+    const VERB: &str = "vault.learning.read";
+    let reach = crate::federation::admit_scoped_substrate_read_by(
         vault,
         reader,
-        "vault.learning.read",
+        VERB,
         crate::federation::SubstrateRead::Evidence,
     )?;
-    Ok(read_learning(vault, input)?)
+    if reach == crate::federation::SubstrateReach::WholeVault {
+        return Ok(read_learning(vault, input)?);
+    }
+    if !reach.holds_row_in(learning_read_cell(input)?.project) {
+        return Err(crate::federation::outside_reach(VERB));
+    }
+    Ok(read_learning_within_cell(vault, input)?)
 }
 
 /// `vault.learning.read` on a bound handle: the embedded owner reads under
@@ -227,15 +247,21 @@ pub fn read_learning_embedded(
     }
 }
 
-fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
+/// The cell `input` reads: its request's project, else the cell's own, steers
+/// the cell and its tree (FIX 6038).
+fn learning_read_cell(input: &LearningReadRequest) -> Result<LearningCell> {
     let cell = input.cell.engine()?;
     let project = input.project_ref.as_deref().map(entity_id).transpose()?;
-    // One scope steers the cell and its tree (FIX 6038).
     let project = project.or(cell.project);
-    let cell = cell.with_project(project);
-    let parents = match &cell.type_ref {
+    Ok(cell.with_project(project))
+}
+
+/// The type parents `cell`'s backoff reads, from the tree its type stamp
+/// names in its project.
+fn type_parents(vault: &Vault, cell: &LearningCell) -> Result<Vec<TypeRef>> {
+    Ok(match &cell.type_ref {
         Some(stamp) => {
-            let tree = crate::task_type::type_tree_at(vault, project, stamp.tree_version)?
+            let tree = crate::task_type::type_tree_at(vault, cell.project, stamp.tree_version)?
                 .filter(|tree| tree.contains(stamp))
                 .ok_or(Error::InvalidClaimBody(
                     "the learning typeRef must name a recorded task-type tree",
@@ -243,7 +269,51 @@ fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningC
             tree.ancestors(stamp)
         }
         None => Vec::new(),
+    })
+}
+
+/// A cell as its own runs alone make it, folded now
+/// ([`super::project::fold_cell_at_catalog_in_txn`]): never a borrowed
+/// cell's reading or a prior's provenance, so the answer says nothing of
+/// what lies outside the cell. Its provenance is the cell's own evidence
+/// rows and no head: a stored head is projected under the vault's window,
+/// the cell's stored prior and every judge conversion, and written again
+/// when one of them moves. The request is checked as the cell's key alone
+/// ([`LearningCell::validate`]): its type stamp is never looked up, since
+/// that lookup walks the vault's kept tree revisions too, and its answer
+/// would say which revisions the vault keeps. The fold reads no ancestor,
+/// so a stamp no tree records reads as an empty cell at the catalog prior.
+fn read_learning_within_cell(
+    vault: &Vault,
+    input: &LearningReadRequest,
+) -> Result<LearningCellView> {
+    let cell = learning_read_cell(input)?;
+    cell.validate()?;
+    let txn = vault.store.env.read_txn()?;
+    let estimate =
+        super::project::fold_cell_at_catalog_in_txn(vault, &txn, &cell, crate::unix_seconds_now())?;
+    let provenance = LearningProvenanceView {
+        cell: cell.clone().into(),
+        heads: Vec::new(),
+        evidence: evidence_views(vault, &txn, &cell)?,
     };
+    let attributed_outcome_receipts = attributed_outcome_receipts(&provenance);
+    Ok(LearningCellView {
+        cell: cell.into(),
+        view: MeasuredLearningView {
+            own: estimate.runs > 0.0,
+            estimate: estimate.into(),
+            borrowed_from: None,
+            attributed_outcome_receipts,
+            provenance,
+            prior_provenance: None,
+        },
+    })
+}
+
+fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
+    let cell = learning_read_cell(input)?;
+    let parents = type_parents(vault, &cell)?;
     let txn = vault.store.env.read_txn()?;
     let reading = read_learning_in_txn(vault, &txn, &cell, &parents)?;
     let provenance = provenance(vault, &txn, &cell)?;

@@ -81,7 +81,7 @@ pub use goal::{
     ProjectGoalProposer, ProjectGoalRevisionsView, project_goal_propose,
 };
 pub(crate) use goal::{
-    admitted_claim_of_project, dismiss_project_goal_proposal,
+    admitted_claim_of_project, dismiss_project_goal_proposal, goal_claim_project,
     guard_claim_put as guard_goal_claim_put, guard_goal_delete,
     guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, project_goal_base_in_txn,
     project_goal_proposals_in_txn, reads_goal_proposals_in_txn, retire_goal_for_delete,
