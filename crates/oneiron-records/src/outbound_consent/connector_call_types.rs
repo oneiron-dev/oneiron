@@ -76,6 +76,11 @@ pub enum ConnectorCallOutcome {
         /// catalog pool (FIX 3759): the 80% plan and 95% land texts. Empty
         /// when none fired, and on a replay.
         budget_steering: Vec<String>,
+        /// The session manifest of the runner this send went through (canon
+        /// `#runner-fence`, row L8-27): a stdio connector's child, with the
+        /// fence's ruleset hash or its `fence_unproven` flag. `None` for an
+        /// HTTP connector, and on a replay.
+        session_manifest: Option<oneiron_container::SessionManifest>,
     },
     /// Held for consent or governance. Nothing was sent. Once the hold may
     /// have cleared, `resume_connector_call` re-enters it.

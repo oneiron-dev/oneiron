@@ -25,25 +25,6 @@ pub struct EdgeProvenanceRequest {
     pub filter: Option<ReadFilterInput>,
 }
 
-/// The write-time validated class of a provenance claim's actor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeProvenanceActorClass {
-    Human,
-    Agent,
-    System,
-}
-
-impl From<EdgeActorClass> for EdgeProvenanceActorClass {
-    fn from(class: EdgeActorClass) -> Self {
-        match class {
-            EdgeActorClass::Human => Self::Human,
-            EdgeActorClass::Agent => Self::Agent,
-            EdgeActorClass::System => Self::System,
-        }
-    }
-}
-
 /// A provenance claim's authoritative `supersession_status`, the value the
 /// edge's `confirmation_status` flag mirrors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -103,7 +84,7 @@ pub struct EdgeProvenanceView {
     /// 32-hex id of the PERSON, agent or MACHINE that asserted the edge.
     pub actor_entity_ref: String,
     /// The actor's write-time validated class.
-    pub actor_class: EdgeProvenanceActorClass,
+    pub actor_class: EdgeActorClass,
     /// 32-hex ref of the source document revision the assertion was read
     /// at; absent when no source document exists.
     pub source_revision_ref: Option<String>,
