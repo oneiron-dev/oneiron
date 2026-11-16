@@ -113,7 +113,7 @@ pub(crate) fn rebuild_return_tables(vault: &Vault, now_secs: u64) -> Result<bool
 /// from its own cell to its band, its session kind and every person wait (min 30, `user_Eplus`);
 /// a wait on a tool states no length here (FIX [IDLE-FOLD-STATED-LENGTH-NO-SITE]), so it reads
 /// its session kind's tool waits and then every tool wait (min 20, `tool_E`). `None` when even
-/// the last level is below the floor: RULING L2-37-COLD-START = A reads that as Expire.
+/// the last level is below the floor: the idle call then takes the cold-start rule D.
 pub(crate) fn backed_off_cell(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

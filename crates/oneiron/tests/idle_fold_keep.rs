@@ -267,7 +267,7 @@ fn e_plus_keeps_a_prefix_whose_returns_fall_inside_its_next_lifetime() -> TestRe
 }
 
 /// A kept wait is asked again before its refreshed horizon: a pass before the re-armed due time
-/// makes no call, and the pass at it ends the wait when the cell now favours Expire.
+/// makes no call, and the pass at it makes the wait's next call.
 #[test]
 fn a_kept_wait_is_asked_again_before_its_refreshed_horizon() -> TestResult {
     let (_dir, vault) = open_vault()?;
@@ -314,8 +314,9 @@ fn a_kept_wait_is_asked_again_before_its_refreshed_horizon() -> TestResult {
         "the first call still stands"
     );
 
-    // At 478 s into the wait every return (360 s) already passed, so the cell reads thin and the
-    // call is Expire with the one Keep it got before.
+    // At 478 s into the wait every return (360 s) already passed, so the cell reads thin: the cold
+    // start's rule D keeps (one Keep of its window's seven so far), the refresh sends nothing, and
+    // with no kind mark to fold the call falls back to Expire with the one Keep it got before.
     let mut asked_second = Vec::new();
     let second = idle_fold::run_due_idle_calls(&vault, rearmed_due, &mut |wait| {
         asked_second.push(*wait);
@@ -326,7 +327,7 @@ fn a_kept_wait_is_asked_again_before_its_refreshed_horizon() -> TestResult {
         "the pass at the re-armed due time makes the call"
     );
     assert_eq!(second.ended, vec![key], "an expired wait ends");
-    assert!(asked_second.is_empty(), "Expire asks no refresh");
+    assert_eq!(asked_second, vec![key], "rule D asks for a refresh");
     assert_eq!(
         doors::idle_call(&vault, &key)?,
         Some(IdleCallView::Expire {

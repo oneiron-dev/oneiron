@@ -24,6 +24,7 @@
 mod e_plus;
 mod horizon;
 mod returns;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 
 use serde::{Deserialize, Serialize};
