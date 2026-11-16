@@ -61,17 +61,17 @@ use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
-    ByoEndpointBackendFactory, ByoEndpointSpec, ByoaCliExecutor, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaExecutionFence, ByoaExhaust, ByoaInputStager, ByoaResult,
-    CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM, declared_host_secrets,
-    seat_secret_caller,
+    ByoEndpointBackendFactory, ByoEndpointBinding, ByoEndpointSpec, ByoaCliExecutor,
+    ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExecutionFence, ByoaExhaust,
+    ByoaInputStager, ByoaResult, CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, CliSandboxSpec,
+    OPENCODE_PROGRAM, declared_host_secrets, seat_secret_caller,
 };
 use oneiron::entity_id::EntityId;
 use oneiron::git_wire::GitWire;
 use oneiron::secret_lease::{
     SECRET_GRANT_MAX_TTL_SECS, SecretGrantCaller, SecretGrantTarget, SecretTaintRef,
 };
-use oneiron::{HostingPrivacyPosture, LlmBackend, Vault};
+use oneiron::{HostingPrivacyPosture, Vault};
 use oneiron_vault_contract::now_ts;
 use tokio::sync::broadcast;
 
@@ -438,7 +438,7 @@ fn worktree(vault: &Vault, checkout: &CheckoutLeaseAct) -> ByoaResult<PathBuf> {
 struct NoEndpoints;
 
 impl ByoEndpointBackendFactory for NoEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend(
             "the seat host serves no endpoint connector".to_owned(),
         ))

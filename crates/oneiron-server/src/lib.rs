@@ -64,6 +64,7 @@ mod feedback_redaction;
 mod files_intake;
 mod handler;
 mod home_candidacy;
+mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod hook_verdict;
 mod http_listener;
@@ -180,12 +181,9 @@ pub fn build_app_for_position(
     position: web_client::DeploymentPosition,
 ) -> Router {
     // This server's Responses state (FIX 9516): its vault keeps its stored
-    // chains, and its owner's `store` switch (OF-602) is read now;
+    // chains, and each turn reads its owner's `store` switch (OF-602) there;
     // unreadable leaves it off.
-    server.ai.models().responses_context().bind(
-        server.vault(),
-        server.vault().responses_store().unwrap_or(false),
-    );
+    server.ai.models().responses_context().bind(server.vault());
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {

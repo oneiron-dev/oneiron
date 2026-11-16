@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { broker, key_custody, testing, web_fetch }
+areas! { broker, cluster, engine_executor, git_wire, key_custody, outbound_intent_ledger, policy_model, restore, retrieval, runtime_hooks, saved_query, setting, skill, skill_attribution, testing, vault_import, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

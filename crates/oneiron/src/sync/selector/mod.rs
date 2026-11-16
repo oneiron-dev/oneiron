@@ -35,7 +35,7 @@ pub use guest_proposal::{
 };
 mod held_retire;
 mod machine_history;
-pub(in crate::sync) use machine_history::machine_history_controls;
+pub(in crate::sync) use machine_history::{HistoryControlGate, machine_history_controls};
 mod note_admission;
 mod peer_confidence;
 mod scope;
