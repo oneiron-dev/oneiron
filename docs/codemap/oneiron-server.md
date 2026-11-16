@@ -359,7 +359,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/checkout_doors.rs` | src | s | 8 crate-vis | — | One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK |
 | `src/api/facade/claim_refinement_doors.rs` | src | s | 2 crate-vis | — | The owner's claim-refinement doors under the caller's owner proof (FIX [SKILL-HUB-PROMOTION-VERBS]): the… |
 | `src/api/facade/claim_settle_doors.rs` | src | s | 3 crate-vis | — | The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and… |
-| `src/api/facade/cleanup_doors.rs` | src | s | 4 crate-vis | — | Archive cleanup and evidence-backed re-mention, under the owner's own proof |
+| `src/api/facade/cleanup_doors.rs` | src | s | 6 crate-vis | — | Archive cleanup and evidence-backed re-mention, under the owner's own proof |
 | `src/api/facade/clock_ingress.rs` | src | m | 17 crate-vis | — | A facade, owner-table or MCP call over a damaged authority clock floor (FIX 11190, FIX 11201, FIX 11202, FIX… |
 | `src/api/facade/clustering_doors.rs` | src | s | 4 crate-vis | — | The typed clustering judgments bind only the caller's own owner proof or agent Grant |
 | `src/api/facade/coach_offer_doors.rs` | src | s | 13 crate-vis | — | Typed owner doors for Coach offers and counted pilot evidence |
@@ -472,8 +472,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/merge_queue_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
 | `src/api/facade/mesh_doors.rs` | src | s | 5 crate-vis | — | Owner-bound mesh setup and a real admission-only dial |
 | `src/api/facade/model_catalog_doors.rs` | src | m | 14 crate-vis | — | The model catalog is evidence |
-| `src/api/facade/model_manifest_doors.rs` | src | m | 7 crate-vis | — | Typed owner doors over the existing manifest, route and provider seams |
-| `src/api/facade/model_pack_doors.rs` | src | s | 3 crate-vis | — | Typed owner doors over the vault's model pack setting (FIX 5367) and the pack change revert (FIX 5369) |
+| `src/api/facade/model_manifest_doors.rs` | src | m | 6 crate-vis | — | Typed owner doors over the existing manifest, route and provider seams |
+| `src/api/facade/model_pack_doors.rs` | src | s | 2 crate-vis | — | Typed owner doors over the vault's model pack setting read (FIX 5367) and the pack change revert (FIX 5369) |
 | `src/api/facade/model_step_doors.rs` | src | m | 4 crate-vis | — | Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the… |
 | `src/api/facade/model_stream_doors.rs` | src | m | 8 crate-vis | — | Owner-proof shared model streams: subscriptions can attach before one admitted producer opens |
 | `src/api/facade/non_base_world_claim_fraction_doors.rs` | src | s | 2 crate-vis | — | Typed doors over the owner's non-base world claim fraction (ARCH-0004 #world-scope; FIX… |
@@ -1421,7 +1421,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/pad_objects.rs` | src | s | 1 crate-vis | — | A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the… |
 | `src/livequery/residence/pad_refill.rs` | src | s | 1 crate-vis | — | `residence.bundle.pads.refill` (FIX 9362, L03 half): the end of a machine's upload of a kept pad object… |
 | `src/livequery/residence/pages.rs` | src | s | 1 crate-vis | — | A residence search served in pages (FIX 8865): a search for more hits than one page carries is never refused… |
+| `src/livequery/residence/predict.rs` | src | s | 2 crate-vis | — | The home's prediction asks (ARCH-0023b #predicted-residence; Engine ruling L7-46-MERGE A)… |
 | `src/livequery/residence/search.rs` | src | s | 1 crate-vis | — | A window's home search: the candidates a residence search returns for one query |
+| `src/livequery/residence/secret_same_value.rs` | src | s | 1 crate-vis | — | `residence.secret_same_value.exchange`: this home as the meeting point of its owner's machines' same-value… |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/residence/work.rs` | src | m | 11 crate-vis | — | Socket-owned drivers for durable sealed-bundle work |
 | `src/livequery/routing.rs` | src | s | 7 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
@@ -2129,6 +2131,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/campaign_surface_unexpected_code.rs` | test | s | — | — | The campaign and saved-query routes answer an engine code their refusal map does not name with 500, as every… |
 | `tests/claim_refinement_doors.rs` | test | L | — | — | A session-branch claim edit through the served doors (FIX [SKILL-HUB-PROMOTION-VERBS], ND-001's claim half) |
 | `tests/claude_code_plugin.rs` | test | m | — | — | The Claude Code plugin (`plugins/claude-code`; ARCH-0028 #plugin-agent-plugins, ARCH-0067 row 34): the… |
+| `tests/cleanup_decide_served_credential.rs` | test | s | — | — | REVIEW2-8651 P2-1 (OPUS-REVIEW2-MONEY, 16 Nov 23:52) on RESTRICTION-WAVE-10 C43: the server's… |
 | `tests/coach_offer_run.rs` | test | L | — | — | `vault.coach.training_offers.run` served over the real facade route (LEARNING-08, COACH-OFFER-PASS): one… |
 | `tests/code_mode_host_verb_refusals.rs` | test | m | — | — | The code-mode refusals of the `self.desktop.*` and `self.browser.*` rows, through the composed call… |
 | `tests/code_run_reply_evidence.rs` | test | m | — | — | RAW-PROVIDER-EVIDENCE-READ (CODE-RUNTIME-02): `vault.code.reply_evidence` reads the model reply a code run… |
