@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/buffers.rs` | src | m | 2 struct · 6 fn · 2 type · 12 crate-vis | AdmittedBytes, AdmittedStr | Shared output buffers; native accounting constructors are feature-gated |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
-| `src/lib.rs` | src | s | 2 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
+| `src/lib.rs` | src | s | 3 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
 | `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 31 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 8 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
 | `src/native/verify/evidence_time.rs` | src | s | 7 crate-vis | — | Resolve signer history separately from archival material coverage |
-| `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
+| `src/native/verify/mod.rs` | src | s | 4 crate-vis | — | Native verifier and profile classifier (§7.7) |
 | `src/native/verify/review_1842_tests.rs` | test | m | — | — | SGN-05 public verifier regressions retained across the ONE-1941 report merge |
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
 | `src/native/verify/verify_chain_gates.rs` | src | m | 12 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
@@ -78,11 +78,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
 | `src/organ.rs` | src | L | 1 struct · 12 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect` and `seal.prepare` (schema 1), run… |
 | `src/organ/report.rs` | src | s | 2 crate-vis | — | A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision… |
-| `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
+| `src/test_doors/mod.rs` | src | s | 1 enum · 1 fn | OcspDoorRejection | Doors from the integration tests to crate-private items |
+| `tests/esign_host_e2e.rs` | test | XL | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
+| `tests/seal_delta_crl_oid.rs` | test | s | — | — | Seal-path rows for the CRL complete-scope OID gate (FIX-LIST [SEAL-DELTA-CRL-OID]): a delta CRL (carrying… |
+| `tests/seal_ocsp_byname_responder_first_match.rs` | test | s | — | — | [SEAL-OCSP-BYNAME-RESPONDER-FIRST-MATCH] (FIX-LIST line 22803): a ByName OCSP responder used to be the first… |
 | `tests/support/mod.rs` | test | m | 45 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
-| `tests/support/rogue_seal_organ.rs` | test | L | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |
+| `tests/support/rogue_evidence.rs` | test | s | 1 crate-vis | — | What a test hands the hostile seal organ's evidence modes (feature `hostile-organ-tests`): a timestamp… |
+| `tests/support/rogue_seal_organ.rs` | test | XL | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |

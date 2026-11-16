@@ -477,7 +477,7 @@ fn is_live_contact_head(body: &crate::claim::ClaimBody) -> bool {
 /// no live head is attached: a batch delete tears the contact's `claim_of`
 /// edges and leaves its claims' postings behind, and that contact is gone, not
 /// a corrupted family that holds every send to its party.
-pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
+pub(crate) fn counterparty_contact_record_from_store_claims_in_txn(
     store: &crate::store::Store,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
