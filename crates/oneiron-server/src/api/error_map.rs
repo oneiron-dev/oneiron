@@ -169,7 +169,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             [
                 "Erase the vault if ending it is the goal.",
-                "To keep the vault, bind another owner first: add an Owner, who enrols an owner signing key of their own, which binds them; then this person can be deleted.",
+                "To keep the vault, bind another owner first: share the vault if it is not shared yet, add an Owner, and have them enrol an owner signing key of their own, which binds them; then this person can be deleted.",
             ],
         ),
         ErrorKind::GateWriteRejected => ApiError::new(

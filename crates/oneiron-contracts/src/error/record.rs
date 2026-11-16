@@ -233,11 +233,11 @@ pub enum RecordError {
     AuthorityRefused(&'static str),
     /// A delete of the PERSON that holds the vault's last Active owner
     /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026): the
-    /// vault would keep no owner, and no ceremony binds one again. The text
-    /// names the two ways out (Engine L9-52-OWNER-GUARD-COOWNER, 14 Nov
-    /// 2026): erasing the vault, or binding another owner, which an added
-    /// Owner's first owner key enrolment does (FIX
-    /// OWNER-DELETE-GUARD-RECOVERY). Nothing was written.
+    /// vault would keep no owner, and no ceremony brings the deleted person
+    /// back. The text names the two ways out (Engine
+    /// L9-52-OWNER-GUARD-COOWNER, 14 Nov 2026): erasing the vault, or binding
+    /// another owner, which an added Owner's first owner key enrolment does
+    /// (FIX OWNER-DELETE-GUARD-RECOVERY). Nothing was written.
     #[error(
         "this person holds the vault's last owner binding, so deleting them would leave the vault with no owner: erase the vault if ending it is the goal, or bind another owner first"
     )]

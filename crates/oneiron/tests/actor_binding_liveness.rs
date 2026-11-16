@@ -16,7 +16,8 @@
 //! erasing the vault). A person no live binding names is deleted as before.
 //! FIX OWNER-DELETE-GUARD-RECOVERY: the refusal no longer calls binding
 //! another owner "not yet available", since an added Owner's first owner key
-//! binds them; red before it: the guard's refusal test (the old text).
+//! binds them; red before it: the three tests that check the refusal's text
+//! through `names_both_ways_out` (the old text).
 //!
 //! Round-1 regressions of #7900: a hard-deleted embedded owner (its row
 //! purged, the `dt:` marker recorded) is no vault owner through the same
@@ -238,7 +239,7 @@ fn the_last_bound_owners_person_is_not_deleted_and_the_refusal_names_both_ways_o
         refused.suggestions,
         [
             "Erase the vault if ending it is the goal.",
-            "To keep the vault, bind another owner first: add an Owner, who enrols an owner signing key of their own, which binds them; then this person can be deleted.",
+            "To keep the vault, bind another owner first: share the vault if it is not shared yet, add an Owner, and have them enrol an owner signing key of their own, which binds them; then this person can be deleted.",
         ],
         "the hints name the same two ways out"
     );
