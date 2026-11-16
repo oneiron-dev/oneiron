@@ -84,6 +84,9 @@ struct FakeStripe {
     refund_status: Option<String>,
     /// Every read of a PaymentIntent answers 500 while set: an outage.
     fail_intent_reads: bool,
+    /// Every capture and cancel of a PaymentIntent answers 403 while set: a
+    /// restricted key without the permission.
+    refuse_intent_moves: bool,
     refunds: Vec<FakeRefund>,
 }
 
@@ -223,6 +226,10 @@ async fn move_intent(
         form,
     );
     let mut stripe = stripe.lock().expect("fake stripe");
+    if stripe.refuse_intent_moves {
+        // The key may not move a PaymentIntent: nothing of the fake changes.
+        return stripe_error(StatusCode::FORBIDDEN, "permission_denied");
+    }
     let lose_reply = movement == "capture" && std::mem::take(&mut stripe.lose_capture_reply);
     let intent = stripe.intents.get_mut(&id).expect("known intent");
     if movement == "cancel" && intent.status == "succeeded" {
@@ -1047,4 +1054,103 @@ async fn a_refund_owed_while_the_key_is_withheld_waits_and_runs_once_it_is_back(
         }
     );
     assert_eq!(refund_posts(&stripe), 1, "refunded once");
+}
+
+/// A restricted key without the permission to capture is refused with a 403 on
+/// every capture, the confirm's own among them: the booking stands and its
+/// capture stays owed past the settle rows' tries. It runs once the owner
+/// gives the key the permission (FIX [BK-DEPOSIT-SETTLE-OUTAGE-STRANDS-MOVE]).
+#[tokio::test]
+async fn a_capture_a_restricted_key_may_not_make_stays_owed_and_lands_once_the_key_may() {
+    let terms = deposit_terms();
+    let (fixture, stripe) = deposit_fixture(SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    // Stripe refuses every capture from here on, the confirm's own included.
+    stripe.lock().expect("fake stripe").refuse_intent_moves = true;
+    let (payment_id, _) = paid_booking(
+        &fixture,
+        &stripe,
+        selected(&slots[0]),
+        "restricted-key",
+        &terms,
+    )
+    .await;
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::CaptureDue {
+            amount_minor: terms.amount_minor
+        },
+        "the refused capture leaves the deposit owed"
+    );
+
+    let capture_posts = || {
+        stripe
+            .lock()
+            .expect("fake stripe")
+            .calls
+            .iter()
+            .filter(|(call, _, _)| call.ends_with("/capture"))
+            .count()
+    };
+
+    // Four passes, each an hour and a second after the last, the last one
+    // now. A settle row is claimed only once it is due by the vault's own
+    // clock, so no pass may run ahead of that clock: the earlier ones run
+    // behind it. In the first three every ask is refused again: a live row
+    // asks Stripe, no move fails for good, and the capture stays owed.
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let now = now_secs().expect("clock");
+    let pass_at = |pass: u64| now - (3 - pass) * 3_601;
+    for pass in 0..3_u64 {
+        let asked_before = capture_posts();
+        let drain =
+            settle_deposits_once(&fixture.server.vault, &base, pass_at(pass)).expect("settle pass");
+        assert_eq!(
+            drain.failed, 0,
+            "pass {pass}: a refused capture fails no move for good"
+        );
+        assert!(
+            capture_posts() > asked_before,
+            "pass {pass}: a live settle row asked Stripe for the capture again"
+        );
+        assert_eq!(
+            deposit_state(&fixture, &payment_id),
+            DepositState::CaptureDue {
+                amount_minor: terms.amount_minor
+            },
+            "pass {pass}: the capture stays owed"
+        );
+    }
+    assert_eq!(
+        stripe.lock().expect("fake stripe").intents[&payment_id].status,
+        "requires_capture",
+        "a refused capture takes nothing"
+    );
+
+    // The owner gives the key the permission: the next pass captures, once.
+    let refused_captures = capture_posts();
+    stripe.lock().expect("fake stripe").refuse_intent_moves = false;
+    let drain =
+        settle_deposits_once(&fixture.server.vault, &base, pass_at(3)).expect("settle pass");
+    assert_eq!(
+        drain.captured, 1,
+        "the owed capture runs once the key may capture"
+    );
+    assert_eq!(drain.failed, 0, "the landing pass fails no move");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Captured {
+            amount_minor: terms.amount_minor
+        }
+    );
+    assert_eq!(
+        stripe.lock().expect("fake stripe").intents[&payment_id].status,
+        "succeeded",
+        "Stripe captured the payment"
+    );
+    assert_eq!(
+        capture_posts() - refused_captures,
+        1,
+        "the capture was made once"
+    );
 }
