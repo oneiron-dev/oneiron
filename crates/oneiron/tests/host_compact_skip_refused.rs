@@ -1,11 +1,10 @@
 //! FIX [HOST-COMPACT-PREHOOK-SKIP-UNPROVEN-AT-DOOR]: a `host.compact`
 //! pre-hook may not Skip.
 //!
-//! Canon ARCH-0080 (mirror
-//! `/Users/olety/Desktop/code/oneiron-docs/generated/llms-full.txt`, line
-//! 351742): "Every host verb takes the full pre and post outcome sets. One
-//! exception: a `host.compact` pre-hook may not Skip, because a skipped
-//! compaction overflows the next turn (review fix S1)."
+//! Canon ARCH-0080 (oneiron-docs `generated/llms-full.txt`, line 351742):
+//! "Every host verb takes the full pre and post outcome sets. One exception:
+//! a `host.compact` pre-hook may not Skip, because a skipped compaction
+//! overflows the next turn (review fix S1)."
 //!
 //! The engine refuses such a Skip in `admit_verb_outcome`
 //! (`crates/oneiron/src/runtime_hooks/verb/chain.rs`): the run is recorded
