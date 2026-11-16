@@ -97,8 +97,11 @@ impl Memory<'_> {
     /// In `manual` mode the ask may be held for the owner's launch approval
     /// (ASK-3), and under `auto` when a host's learned ruling surfaces a
     /// multi-recipient ask to a person (FIX 10181): its receipt names the
-    /// hold and no member TASK exists yet.
+    /// hold and no member TASK exists yet. An ask whose text names a secret
+    /// value kind is refused first (`ask_label_guard`): this is the door of
+    /// caller-written asks, and engine-composed asks do not pass it.
     pub fn tasks_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
+        input.check_secret_kinds()?;
         self.tasks_ask_composed(input, None)
     }
 
