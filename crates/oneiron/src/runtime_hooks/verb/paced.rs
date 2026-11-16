@@ -801,3 +801,72 @@ impl Vault {
             .min())
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Red-pin door at the base: holds a call by the person `actor` in the line, with no witness,
+    /// as the hold writes its row. The base arms nothing.
+    pub(crate) fn plant_paced_verb_call(
+        &self,
+        actor: EntityId,
+        next_eligible_at: u64,
+        deadline: u64,
+    ) -> Result<[u8; 16]> {
+        let key = *EntityId::now().as_bytes();
+        self.with_write_txn_grouped(|txn| {
+            let now = self.store.clock.now_recorded_at();
+            let mut line = LINE.get(&self.store, txn, &())?.unwrap_or_default();
+            line.last_arrival = line.last_arrival.saturating_add(1);
+            let row = PacedVerbCall {
+                verb: PACED_VERBS[0].to_owned(),
+                actor,
+                class: HookActorClass::Human,
+                args: "{}".to_owned(),
+                reference: super::credential::VerbAskCredentialRef {
+                    instrument: super::credential::VerbAskInstrument {
+                        source: super::credential::VerbAskCredentialSource::AttestedOwner {
+                            holder: actor,
+                        },
+                        vault: [0; 32],
+                        ceiling: [0; 32],
+                    },
+                    door: super::credential::VerbAskDoor::Facade { room: None },
+                    on_device: false,
+                },
+                work: EntityId::now(),
+                arrival: line.last_arrival,
+                held_at: now,
+                deadline,
+                next_eligible_at,
+                state: PacedState::Waiting,
+                landed: false,
+                outcome: None,
+                ended_at: None,
+            };
+            CALLS.put(&self.store, txn, &key, &row)?;
+            LINE.put(&self.store, txn, &(), &line)
+        })?;
+        Ok(key)
+    }
+
+    /// Red-pin door at the base: whether the planted call still waits.
+    pub(crate) fn paced_verb_call_waits(&self, key: [u8; 16]) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(CALLS
+            .get(&self.store, &rtxn, &key)?
+            .is_some_and(|row| row.state != PacedState::Ended))
+    }
+
+    /// Red-pin door at the base: the base installs no turn runner.
+    pub fn install_paced_verb_turn_runner(&self) {}
+
+    /// Red-pin door at the base: the settler's pass as the base makes it, 64 turns with no
+    /// runner taken.
+    ///
+    /// # Errors
+    ///
+    /// As the base's drain.
+    pub fn run_due_paced_verb_line(&self) -> Result<()> {
+        self.drain_paced_verb_calls(64).map(drop)
+    }
+}

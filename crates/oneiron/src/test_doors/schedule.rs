@@ -579,3 +579,149 @@ pub fn task_tick_waiting(vault: &Vault, task: EntityId) -> Result<Option<u64>> {
     let txn = vault.store.env.read_txn()?;
     crate::runtime_hooks::task_tick_waiting_in_txn(vault, &txn, task)
 }
+
+/// The paced verb line's job code (stage 5c-2).
+pub const PACED_VERB_LINE: &str = "runtime_hooks.paced_verb_line";
+
+/// Red-pin door at the base: a held call in the paced line.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn plant_paced_verb_call(
+    vault: &Vault,
+    actor: EntityId,
+    next_eligible_at: u64,
+    deadline: u64,
+) -> Result<[u8; 16]> {
+    vault.plant_paced_verb_call(actor, next_eligible_at, deadline)
+}
+
+/// Red-pin door at the base: whether the planted call still waits.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn paced_verb_call_waits(vault: &Vault, key: [u8; 16]) -> Result<bool> {
+    vault.paced_verb_call_waits(key)
+}
+
+/// The engine disarms `job` about `subject`, as its own doors do: `false` when it was not armed.
+///
+/// # Errors
+///
+/// As the disarming.
+pub fn disarm_as_engine(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<bool> {
+    vault.disarm_schedule(None, job, subject)
+}
+
+/// The remote task poll job's code (stage 5c-2).
+pub const REMOTE_TASK_POLL: &str = "outbound_intent_ledger.remote_task_poll";
+
+/// Red-pin door at the base: one Pending `email`/`send` row deferred as a pollable remote task
+/// through the ledger's own deferral write. Answers its intent id.
+///
+/// # Panics
+///
+/// When the row cannot be written or deferred.
+#[must_use]
+pub fn defer_pollable_remote_task(
+    vault: &Vault,
+    attempt: u8,
+    poll_after_secs: Option<u64>,
+) -> [u8; 32] {
+    use crate::outbound_intent_ledger::{
+        BudgetChargeMarker, BudgetClass, IntentLedgerRecord, OutboundCallRequest,
+        RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll, defer_record, force_sync,
+        insert_pending_in_txn,
+    };
+    let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let request = OutboundCallRequest::new(
+        crate::attempt_queue::AttemptId::from_bytes(&[attempt; 16]).expect("attempt id"),
+        1,
+        "email",
+        "send",
+        vec![attempt; 8],
+        now_ms,
+    );
+    let marker = BudgetChargeMarker {
+        key_ref: None,
+        budget_class: BudgetClass::Operation,
+        matched_rows: Vec::new(),
+        sends_debit: 0,
+        accounted_at_ms: now_ms,
+    };
+    let record = IntentLedgerRecord::pending(request, false, marker).expect("pending row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    insert_pending_in_txn(vault, &mut wtxn, &record).expect("insert the pending row");
+    wtxn.commit().expect("commit the pending row");
+    force_sync(vault).expect("sync the pending row");
+    let handle = RemoteTaskHandle {
+        id: format!("task-{attempt}"),
+        poll_after_secs,
+        poll: Some(RemoteTaskPoll {
+            session: None,
+            protocol: "2025-11-25".to_owned(),
+            credential: RemoteTaskCredential::Route,
+            form_elicitation: false,
+        }),
+    };
+    defer_record(vault, record.id, handle, now_ms).expect("defer the row");
+    record.id
+}
+
+/// Red-pin door at the base: the due list read at the vault clock's now, in milliseconds.
+///
+/// # Panics
+///
+/// When the due list cannot be read.
+#[must_use]
+pub fn remote_tasks_due_now(vault: &Vault) -> Vec<[u8; 32]> {
+    vault
+        .remote_tasks_due(vault.now_recorded_at().saturating_mul(1_000), 32)
+        .expect("the due remote tasks")
+        .into_iter()
+        .map(|task| task.intent)
+        .collect()
+}
+
+/// Red-pin door at the base: a running poll recorded at the vault clock's now.
+///
+/// # Panics
+///
+/// When it cannot be recorded.
+pub fn remote_task_polled_now(vault: &Vault, intent: &[u8; 32], poll_after_ms: Option<u64>) {
+    vault
+        .remote_task_polled(
+            intent,
+            poll_after_ms,
+            "working",
+            vault.now_recorded_at().saturating_mul(1_000),
+        )
+        .expect("record the poll");
+}
+
+/// Red-pin door at the base: the polls of `intents` made due at the vault clock's now.
+///
+/// # Panics
+///
+/// When it cannot be written.
+pub fn remote_task_polls_due_now(vault: &Vault, intents: &[[u8; 32]]) {
+    vault
+        .remote_task_polls_due_at(intents, vault.now_recorded_at().saturating_mul(1_000))
+        .expect("make the polls due");
+}
+
+/// Settles `intent` by a poll that found its task ended unconfirmed.
+///
+/// # Panics
+///
+/// When it cannot be settled.
+pub fn settle_remote_task_unconfirmed(vault: &Vault, intent: &[u8; 32]) {
+    vault
+        .settle_polled_remote_task(
+            intent,
+            crate::outbound_intent_ledger::RemoteTaskEnd::Unconfirmed,
+        )
+        .expect("settle the task");
+}
