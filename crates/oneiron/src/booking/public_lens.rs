@@ -12,12 +12,10 @@
 //! frame, and a `booking-owner_display` section carries the frames after it.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use crate::booking::{
     BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb, DisclosureRung,
-    EventTypeKey, OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview,
-    project_at_rung,
+    OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview, project_at_rung,
 };
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
@@ -29,26 +27,11 @@ use crate::{Error, Result};
 
 pub const PUBLIC_BOOKING_ROUTE_PREFIX: &str = "/public/booking";
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct EventTypeCard {
-    pub key: EventTypeKey,
-    pub title: String,
-    pub duration_min: u32,
-    pub description: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConstraintFieldConfig {
-    pub enabled: bool,
-    pub placeholder: String,
-}
-
-/// Transport only. No token names, defaults, or visual rules belong here.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ThemeTokens(pub JsonValue);
+#[doc(hidden)]
+pub use oneiron_records::booking::public_lens::{
+    BookingPageModelError, ConstraintFieldConfig, EventTypeCard, PublicBookingPageToken,
+    ThemeTokens,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,18 +44,6 @@ pub struct BookingPageModel {
     pub landing: BookingLandingContent,
     pub preview: BookingSlotPreview,
     pub visitor_tz: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum BookingPageModelError {
-    NonSlotsProjection,
-    InvalidSlotMask,
-    EmptyOwnerDisplay,
-    EmptyEventTypes,
-    UnlistedEventType,
-    InvalidLanding,
-    InvalidPreview,
-    InvalidTimeZone,
 }
 
 impl BookingPageModel {
@@ -154,25 +125,6 @@ pub fn bounded_public_slots(
         SurfaceClass::Public,
         Some(&mask),
     )
-}
-
-/// A handle supplied by the published-page capability resolver, never an entity id.
-/// This envelope does not mint, resolve, or grant authority to a token.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PublicBookingPageToken(pub String);
-
-impl PublicBookingPageToken {
-    /// Derive the existing opaque page address. This grants no authority:
-    /// public serving still requires a live owner-authored publication claim.
-    #[must_use]
-    pub fn for_page(page_ref: crate::EntityId) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron.booking.agent_api.page_token.v1\0");
-        hasher.update(page_ref.as_bytes());
-        let hex = hasher.finalize().to_hex();
-        Self(format!("bkp_{}", &hex.as_str()[..32]))
-    }
 }
 
 /// Closed action vocabulary. Credentials come from the shared lifecycle only.
@@ -366,7 +318,7 @@ fn model_field(name: &str, value: &impl Serialize) -> Result<LensNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::booking::{RankedSlot, SolveRequest, SolveResult, slot_mask};
+    use crate::booking::{EventTypeKey, RankedSlot, SolveRequest, SolveResult, slot_mask};
     use crate::temporal::TimeRange;
     use serde_json::json;
 

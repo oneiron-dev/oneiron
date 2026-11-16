@@ -3,7 +3,6 @@
 //! `deletion` owns the forwarded actor predicate; the other helpers are local.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
@@ -35,20 +34,6 @@ pub(super) fn hex_bytes(bytes: &[u8]) -> String {
     out
 }
 
-pub(super) fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the mutation log or the proposals (FIX 3520).
 pub(super) use crate::deletion::names_no_actor;
-
-pub(super) fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
