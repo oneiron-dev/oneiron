@@ -6,8 +6,6 @@
 //! caller's full retrieval filter into the scoped lane, which narrows it
 //! against the actor ceiling and returns the narrowing receipt.
 
-use serde::{Deserialize, Serialize};
-
 use super::read_lane::fold_receipt;
 use super::support::*;
 use super::*;
@@ -25,82 +23,11 @@ const FILTERED_LIST_READ_CHUNK: usize = 256;
 
 pub use oneiron_contracts::gate::ReadFilterInput;
 
-/// One demotion rung, as the caller names it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ClaimDemoteActionInput {
-    /// Lower the claim_of edge weight in place.
-    Decay {
-        /// The new claim_of weight; never above the current one.
-        new_claim_of_weight: f32,
-    },
-    /// Supersede with a successor at a lower confidence.
-    Weaken {
-        /// The successor's confidence; never above the current one.
-        new_confidence: f32,
-    },
-    /// Mark the claim stale in place: retrieval stops surfacing it
-    /// unless a read's applied filter includes stale claims.
-    Stale,
-}
-
-/// `vault.claims.demote` input: one claim, one rung.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimDemoteRequest {
-    /// Claim short ref or 32-hex id.
-    pub claim_ref: String,
-    /// The rung to apply.
-    pub action: ClaimDemoteActionInput,
-}
-
-/// One applied demotion: the rung now carried and the claim carrying it.
-/// A weakening supersedes, so its `claim_ref` is the successor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClaimDemoteView {
-    /// 32-hex id of the claim that now carries the rung.
-    pub claim_ref: String,
-    /// Short-id ref, when assigned.
-    pub short_ref: Option<String>,
-    /// `decayed`, `weakened` or `stale`.
-    pub rung: String,
-    /// Whether the carrying claim is stale.
-    pub stale: bool,
-    /// Receipt ref for this demotion.
-    pub receipt_ref: String,
-}
-
-/// `vault.claims.list_filtered` input: the list selectors plus the
-/// caller's retrieval filter.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimFilteredListRequest {
-    /// Restrict to claims on this subject (short-id ref or hex).
-    #[serde(default)]
-    pub subject_ref: Option<String>,
-    /// Restrict to this predicate.
-    #[serde(default)]
-    pub predicate: Option<String>,
-    /// Restrict to this lifecycle (`active`/`superseded`/`retracted`).
-    #[serde(default)]
-    pub lifecycle: Option<String>,
-    /// Maximum results (required; no unbounded scans).
-    pub limit: usize,
-    /// Caller retrieval filter; met with the actor ceiling.
-    #[serde(default)]
-    pub filter: Option<ReadFilterInput>,
-}
-
-/// `vault.claims.read_filtered` input: one claim under a caller filter.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimFilteredReadRequest {
-    /// Claim short ref or 32-hex id.
-    pub claim_ref: String,
-    /// Caller retrieval filter; met with the actor ceiling.
-    #[serde(default)]
-    pub filter: Option<ReadFilterInput>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claim_stale::{
+    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
+    ClaimFilteredReadRequest,
+};
 
 impl Memory<'_> {
     /// Demotes one active claim by one rung through the caller's own
@@ -192,7 +119,10 @@ impl Memory<'_> {
     /// narrowed against the actor ceiling in the lane. Unlike the record
     /// list, this door serves only what retrieval may surface: approved
     /// or auto, active, and stale only when the applied filter includes
-    /// stale claims. The receipt states requested, ceiling and applied.
+    /// stale claims. Non-empty `project_refs` keep only the claims stamped
+    /// with one of those projects or a project below one, as recall's
+    /// scope does; that only narrows. The receipt states requested,
+    /// ceiling and applied.
     pub fn claim_list_filtered(
         &self,
         request: &ClaimFilteredListRequest,
@@ -211,6 +141,7 @@ impl Memory<'_> {
             })?),
             None => None,
         };
+        let projects = self.projects_at_or_below(&request.project_refs)?;
         let filter = request.filter.as_ref().map(ReadFilterInput::to_filter);
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let ids = match &request.subject_ref {
@@ -245,6 +176,7 @@ impl Memory<'_> {
                     .as_ref()
                     .is_some_and(|predicate| body.predicate != *predicate)
                     || lifecycle.is_some_and(|lifecycle| body.lifecycle != lifecycle)
+                    || !projects.matches(body.scope_project)
                 {
                     continue;
                 }
@@ -262,12 +194,14 @@ impl Memory<'_> {
     }
 
     /// Reads one claim as retrieval would surface it, under the caller's
-    /// retrieval filter met with the actor ceiling. `None` when absent
-    /// or withheld; the receipt says which axes narrowed.
+    /// retrieval filter met with the actor ceiling. `None` when absent,
+    /// withheld, or stamped outside non-empty `project_refs` (and every
+    /// project below them); the receipt says which axes narrowed.
     pub fn claim_read_filtered(
         &self,
         request: &ClaimFilteredReadRequest,
     ) -> MemoryResult<ScopedReadResult<Option<ClaimView>>> {
+        let projects = self.projects_at_or_below(&request.project_refs)?;
         let filter = request.filter.as_ref().map(ReadFilterInput::to_filter);
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let id = self.resolve_ref_in_lane(&lane, &request.claim_ref)?;
@@ -277,7 +211,13 @@ impl Memory<'_> {
             Some(row) => match row.body.as_deref() {
                 Some(bytes) => {
                     let body = crate::claim::decode_claim_body(bytes, true)?;
-                    Some(self.served_claim_view(&row.id, &body)?)
+                    // Outside the caller's projects the claim reads as
+                    // absent, the same answer as a withheld row.
+                    if projects.matches(body.scope_project) {
+                        Some(self.served_claim_view(&row.id, &body)?)
+                    } else {
+                        None
+                    }
                 }
                 None => None,
             },

@@ -240,6 +240,12 @@ fn the_owner_reads_an_observed_claim_with_its_policy_config_and_pins() -> Streng
     assert_eq!(page["config"], config);
     assert_strength_pin(&page["policy_pin"]);
     assert_strength_pin(&page["config_pin"]);
+    // The archive fence is judged for the caller (RULING S69C4-FENCE-NOISE =
+    // B): the owner archives no claim the Dreamer generated.
+    assert_eq!(
+        page["claims"][0]["fence"],
+        "gate.deny.derive.archive_not_own_generated"
+    );
     Ok(())
 }
 
@@ -395,6 +401,7 @@ fn a_source_changed_since_it_was_observed_is_moved_and_the_claim_has_no_pin()
     assert!(served.contains(&json!({"status": "moved", "source": sources[1].to_hex()})));
     assert!(claim["signals"].is_null());
     assert!(claim["pin"].is_null());
+    assert!(claim["fence"].is_null());
     Ok(())
 }
 
