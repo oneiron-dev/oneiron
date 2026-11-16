@@ -134,7 +134,7 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
-            Some((owner, surface, MachineRole::Owned(ownership))),
+            Some((owner, surface, Some(ownership))),
             None,
             None,
         )
@@ -162,7 +162,7 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
-            Some((owner, surface, MachineRole::HostedNode)),
+            Some((owner, surface, None)),
             None,
             None,
         )
@@ -212,7 +212,11 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
         link_owner: Option<&crate::consent::AuthenticatedOwner>,
-        answer: Option<(&crate::consent::AuthenticatedOwner, ActSurface, MachineRole)>,
+        answer: Option<(
+            &crate::consent::AuthenticatedOwner,
+            ActSurface,
+            Option<MachineOwnership>,
+        )>,
         share: Option<(
             crate::EntityId,
             crate::write_envelope::WriteActor,
@@ -249,14 +253,14 @@ impl Vault {
             // live, judged in the transaction that stores the answer.
             let machine = match answer {
                 None => None,
-                Some((owner, surface, role)) => {
+                Some((owner, surface, ownership)) => {
                     let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
                     Some(PendingMachine {
                         owner: actor,
                         by: ActBy::Owner,
                         surface,
-                        kind: pairing_act_kind(role),
-                        role,
+                        kind: pairing_act_kind(ownership),
+                        ownership,
                     })
                 }
             };
