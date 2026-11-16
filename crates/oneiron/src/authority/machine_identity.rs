@@ -579,6 +579,26 @@ impl Vault {
         timestamp: u64,
         nonce: &str,
     ) -> Result<Option<(EntityId, [u8; 64])>> {
+        self.machine_connection_proof_with_pin(token, timestamp, nonce, None)
+    }
+
+    /// [`Self::machine_connection_proof`] for a sync client that holds the
+    /// checkpoint pin its owner-authorized pairing handed it. While this
+    /// vault has no root of its own (no resident Genesis, no adopted pin), as
+    /// on a machine that joined from an empty vault before its first
+    /// catch-up, it signs for the pin's genesis: the vault its enrolment
+    /// request signed for (FIX 3375). Without that proof the home serves the
+    /// pinned checkpoint and the tail to no one, so the join never adopts
+    /// (FIX DEVICE-JOIN-PROOF-DEADLOCK). Proof only: the pin is never read as
+    /// this vault's root, and the home verifies against its own vault id and
+    /// the machine key the pairing enrolled.
+    pub fn machine_connection_proof_with_pin(
+        &self,
+        token: &str,
+        timestamp: u64,
+        nonce: &str,
+        pin: Option<&AuthorityCheckpointPin>,
+    ) -> Result<Option<(EntityId, [u8; 64])>> {
         self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -591,8 +611,12 @@ impl Vault {
             Ok(view) => view.vault_id,
             Err(_) => resident_genesis_vault_id_in_txn(&self.store, &txn)?,
         };
-        let Some(vault_id) = vault_id else {
-            return Ok(None);
+        let vault_id = match (vault_id, pin) {
+            (Some(vault_id), _) => vault_id,
+            (None, Some(pin)) if resident_genesis_vault_id_in_txn(&self.store, &txn)?.is_none() => {
+                pin.genesis
+            }
+            (None, _) => return Ok(None),
         };
         let transcript = machine_connection_transcript(&vault_id, machine, token, timestamp, nonce);
         Ok(Some((machine, key.sign(&transcript).to_bytes())))
