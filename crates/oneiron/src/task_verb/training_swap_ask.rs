@@ -83,21 +83,8 @@ const OPTIONS: [(&str, SwapAnswer, &str); 2] = [
     ("keep", SwapAnswer::Keep, "Keep the current model"),
 ];
 
-/// Where one owner's question about one result stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SwapAskState {
-    /// Reserved or asked, with no answer yet.
-    Open,
-    /// This owner's `approve_swap` bound the checkpoint.
-    Swapped,
-    /// This owner's `keep` kept the current model.
-    Kept,
-    /// The owner's swap word reached a setup refusal; nothing bound.
-    NeedsSetup { reason: String },
-    /// Another answer, the owner's direct swap or a newer result closed it.
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::training_swap_ask::SwapAskState;
 
 /// `(run, owner, result digest)`: one owner asked about one result.
 type SwapAskKey = (EntityId, EntityId, String);

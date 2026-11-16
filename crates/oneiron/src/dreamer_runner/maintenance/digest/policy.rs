@@ -26,10 +26,9 @@ use serde::{Deserialize, Serialize};
 
 const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
-/// The cadence row's name in a revert's settings list.
-const CADENCE_ROW: &str = "cadence";
-/// The presentation row's name in a revert's settings list.
-const PRESENTATION_ROW: &str = "presentation";
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::digest::policy::{CADENCE_ROW, PRESENTATION_ROW};
+
 /// The one field a Coach's live digest-settings Grant covers: the digest's
 /// rhythm (CALL R5). Every other field of a Coach's request stays Proposed.
 const COVERED: &str = "cadence.period_secs";
