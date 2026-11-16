@@ -34,6 +34,7 @@ mod evidence;
 mod link;
 mod record;
 mod revert;
+pub(crate) mod setting_keys;
 mod settle;
 mod sources;
 mod supersede;

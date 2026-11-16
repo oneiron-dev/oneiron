@@ -1294,12 +1294,16 @@ Operations:
 - `availability` — body: `event_type`, `window` (`start`/`end`, UTC seconds), `visitor_tz`,
   `constraint` (`null`, `{"kind":"object","value":{...}}`, or `{"kind":"free_text","value":"..."}`),
   `session_ref`. Free text is normalized into a canonical constraint before any solve; the original
-  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`) plus
-  `flex_used`.
+  sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`),
+  `flex_used`, and `full_days`: each visitor-local day (`date`, `YYYY-MM-DD`) whose times a meeting
+  cap removed, with the `cap` that filled it (`daily` or `weekly`). A full day has no slots; it
+  carries no booking detail.
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
-  hold requires a server-issued checkout lease, not a caller's ask. `confirm` takes `hold_token`,
+  hold requires a server-issued checkout lease, not a caller's ask. The vault's owner alone may add
+  `cap_override_reason` (1-4096 bytes) to hold a day a meeting cap filled; the reason is recorded on
+  the booking, and any other caller gets a 400. `confirm` takes `hold_token`,
   `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
   `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
   `stage: slot_taken` with the oracle's nearest `alternatives`.
