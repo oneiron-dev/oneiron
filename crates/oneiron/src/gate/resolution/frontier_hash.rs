@@ -464,6 +464,11 @@ pub(super) fn hash_policy_frontier_v0(
     for row in &resolution.policy_values {
         hash_str(hasher, &row.row_ref);
         hash_str(hasher, row.key.as_str());
+        // A class posture row names its class beside the key, so moving the
+        // row to another class rebinds. No other row adds bytes here.
+        if let crate::gate::policy_values::PolicyValueKey::ClaimClassPosture(class) = row.key {
+            hash_str(hasher, &class.to_hex());
+        }
         hash_str(hasher, &row.scope.as_str());
         hash_str(hasher, &row.value.as_str());
         hash_bool(hasher, row.override_parent);
