@@ -602,7 +602,7 @@ fn a_peers_machine_history_builds_its_row_here() {
 /// the narrower grant still meets the wider one. Red on #7793's second head
 /// 52dc436eda93: the adopted history put the peer's ordinary claim over the
 /// narrower grant, and the agent read the wider grant's world. Red on main
-/// 04a718a164c5 at "replayed": the exchange adopted nothing and the grant's
+/// 04a718a164c4 at "replayed": the exchange adopted nothing and the grant's
 /// bytes stood, but the landed control rows indexed its id as machine
 /// history, so the read predicate quarantined it and the fold dropped it.
 #[test]
@@ -636,7 +636,7 @@ fn a_peers_machine_history_never_replaces_a_local_grant() {
 /// rows target a grant stored here, so none of them lands, and the rest of
 /// the window does. Landed, they would index the grant's id as machine
 /// history and the read predicate would quarantine the narrower grant, as
-/// the replay door's case above shows. Red on main 04a718a164c5: the rows
+/// the replay door's case above shows. Red on main 04a718a164c4: the rows
 /// land (fails at "synced: both grants govern the agent"), or are refused
 /// into quarantine.
 #[test]
