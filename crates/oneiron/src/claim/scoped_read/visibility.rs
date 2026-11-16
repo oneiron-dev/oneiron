@@ -267,7 +267,7 @@ impl<'v> ScopedRead<'v> {
                 authority,
                 &floor_only,
             )? {
-                return Ok(false);
+                return Ok(true);
             }
         }
         Ok(true)
