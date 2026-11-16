@@ -1,12 +1,12 @@
 import { afterAll, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, copyFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError } from "./support/clients.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
 import { defineFile, expect } from "./support/run.ts";
 
@@ -16,10 +16,10 @@ const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
 
 /**
- * Skills and improvement, in plan order. LEARNING-05 and LEARNING-09 run their
- * complete flows (armed: LEARNING-05, LEARNING-09); the others are COMPLETE-flow
- * TODOs, not passing tests of a subset. suite.todo creates Bun test.todo and
- * BLOCKED rows.
+ * Skills and improvement, in plan order. LEARNING-03, LEARNING-05 and LEARNING-09
+ * run their complete flows (armed: LEARNING-03, LEARNING-05, LEARNING-09); the others
+ * are COMPLETE-flow TODOs, not passing tests of a subset. suite.todo creates Bun
+ * test.todo and BLOCKED rows.
  *
  * Binding read: main f8e2f8397685bc63405bc1a303b65f94aa26c33d (this worktree's
  * HEAD and origin/main). See fixtures/learning/bindings.json for source hashes.
@@ -142,43 +142,9 @@ type Learning02Recall = PublicCall<"vault.recall">;
 suite.todo(test, "LEARNING-02", "waits on typed measured learning-cell/prior/provenance view and attributed-outcome projection observation");
 
 // LEARNING-03 — Autoresearch retains unsuccessful experiments should work.
-// OF-351 / OF-366. Waiting: typed campaign archive/evidence read, sealed-cohort
-// setup, and host-bound experiment child creation with HTTP+SDK bindings.
-// vault.research.fork only RECORDS an already-enqueued child; it cannot enqueue
-// one. run-tree reads only queue topology/status/result refs, not experiment
-// search/held-out evidence. Do not forge IDs or redirect unrelated tasks to fake it.
-// Existing calls below are the real generated wire shapes, carried by HTTP and
-// tool-first MCP (arguments.spec); no made-up research endpoint is needed.
-// Author the ruler first. Fork good, losing and buggy candidates. Evaluate on
-// independent search/held-out/sealed families. Assert the selected candidate is
-// fixture-best, not a magic random parent order. Crossover starts OFF: weave only
-// after its held-out qualification. The woven claim must be Proposed with parent
-// and diff lineage; research metadata never bypasses ordinary claim admission.
-// Prune the loser from active exploration. Archive inspection after restart must
-// retain EVERY candidate, original failed/buggy evidence, measurements and refs;
-// no loser may be silently deleted or returned as an active parent.
-type Learning03Current = {
-  bind: PublicCall<"vault.research.bind">;
-  fork: PublicCall<"vault.research.fork">;
-  search: PublicCall<"vault.research.measure_search">;
-  held_out: PublicCall<"vault.research.measure_held_out">;
-  evaluate: PublicCall<"vault.research.evaluate_split">;
-  select: PublicCall<"vault.research.select">;
-  weave: PublicCall<"vault.research.weave">;
-  prune: PublicCall<"vault.research.prune">;
-  promote: PublicCall<"vault.research.promote">;
-};
-type Learning03Archive = {
-  campaign: Ref;
-  experiments: {
-    attempt: Ref; parents: Ref[]; candidate: Ref;
-    state: "active" | "pruned" | "woven" | "buggy";
-    search_receipts: Ref[]; held_out_receipts: Ref[]; failure_receipts: Ref[];
-  }[];
-  proposed_claim: { claim: Ref; parents: Ref[]; diff_receipt: Ref; approval: "Proposed" };
-};
-// Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-suite.todo(test, "LEARNING-03", "waits on its arming PR: the OF-366 authoring bind, real experiment results and counted sealed-referee completion over a vault.research.create_root root");
+// OF-351 / OF-366. Armed at the end of this file, after the LEARNING-09 helpers it
+// reuses: two campaigns in one vault (ARM03-ROOTS = B), the weave node as its own
+// lineage receipt (ARM03-WEAVE-LINEAGE = A).
 
 // LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
 // Waiting: typed confession/recheck/audit receipt readback and controlled public
@@ -1286,3 +1252,606 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
     if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
   }
 }, 120_000);
+
+// LEARNING-03 — Autoresearch retains unsuccessful experiments should work. OF-351 / OF-366.
+/**
+ * Two campaigns in one vault (Engine RULING ARM03-ROOTS = B, 16 Nov 10:07); the generic
+ * campaign's promotion never changes the authoring campaign's default.
+ * - The authoring root: the owner imports a Workflow strategy skill through the default hub
+ *   (a local Git folder at one full commit, as COORDINATION-01 imports its drafter skill),
+ *   binds the fixed OF-366 ruler to a create_root root with vault.research.bind_authoring,
+ *   and scores the single_pass arm on the search and held-out splits with
+ *   vault.research.evaluate_split. The OF-360 numbers come from the fixture's raw gold and
+ *   parsed run; both taste questions go through the host's decision ladder to the scripted
+ *   decider. The reports are returned, not stored, so the restart reads only the generic root.
+ * - The generic root: a host-driven config campaign (LEARNING-09's provider pattern: real
+ *   experimenter, scorer and referee runs answer through the scripted chat provider). Round 0
+ *   forks the winner from the root; while the incumbent's held-out run waits at a provider
+ *   barrier, the weave is refused (merge crossover is off before the held-out win). After the
+ *   held-out win the same weave lands, the counted sealed referee promotes the winner once,
+ *   round 1 forks the loser from the winner, the owner prunes the loser as dominated, round 2
+ *   forks the buggy candidate from the winner and the host's one debug child of it, and a
+ *   final owner stop closes selection. The archive is read again after a restart.
+ * Weave lineage (ARM03-WEAVE-LINEAGE = A): the archived weave node is the receipt: its
+ *   parents, a woven pin unlike each parent's, the owner's claim still Proposed and the
+ *   gate decision that landed it. The engine runs no merger and stores no diff object.
+ * Selection: select forks the measured, sound, unpruned branch the DGM floor ranks first,
+ *   log sigmoid(reward) - log(1 + direct run-tree children) (selection.rs). The winner's .8
+ *   against the root's .5 and many runs makes it the parent of rounds 1 and 2; the loser is
+ *   pruned before round 2, and the invalid buggy and debug nodes never become branches.
+ * Unproved: an authenticated arm execution behind the parsed runs; a merger behind the woven pin.
+ */
+interface Learning03Branch {
+  label: string; search?: number; held_out?: number; sealed?: number;
+  invalid_reason?: string; failure_evidence?: string; debug_of?: string;
+}
+type Learning03SplitInput = FacadeInput<"vault.research.evaluate_split">;
+interface Learning03Evaluation {
+  split: "search" | "held_out"; arm: "single_pass";
+  dataset: Learning03SplitInput["dataset"]; run: Learning03SplitInput["run"]; cost: Learning03SplitInput["cost"];
+  claim: string; evidence_refs: string[];
+  taste: { score: number; useful: boolean };
+  expected: { partial: string[]; omitted: string[]; hallucinated: string[] };
+}
+interface Learning03Scenario {
+  id: "LEARNING-03";
+  branches: Learning03Branch[];
+  crossover: { initially_enabled: boolean; qualifying_held_out_win_required: boolean; parents: string[]; woven_candidate: string };
+  prune: { attempt: string; cause: { kind: "dominated"; by: string }; evidence: string[] };
+  authoring: {
+    skill: { name: string; description: string; version: string; role: string; publisher: string; instructions: string };
+    splits: FacadeInput<"vault.research.bind_authoring">["splits"];
+    budget: FacadeInput<"vault.research.bind_authoring">["budget"];
+    incumbent_config: string;
+    evaluations: Learning03Evaluation[];
+  };
+  generic: { campaign_id: string; sealed_sources: string[] };
+  expected: {
+    best_candidate: string; archived_labels: string[]; retained_failure_evidence: string[];
+    active_selection_excludes: string[]; woven_claim_approval: string; ordinary_gate_required: boolean;
+    weave_lineage_parents: string[]; archive_survives_restart: boolean; random_parent_order_asserted: boolean;
+  };
+}
+/** Read-back of CampaignSplitReport (autoreason_campaign/report.rs:23-47), keys per its serde. */
+interface Learning03SplitReport {
+  arm: string; split: string; dataset: { dataset_id: string; revision: string };
+  metric_definition_digest: string;
+  of360: { report: { dataset_id: string; run_id: string; warnings: string[];
+    cases: { case_id: string; omitted_gold_memory_ids: string[]; partial_gold_memory_ids: string[];
+      hallucinated_extraction_ids: string[] }[] } };
+  taste: { score: number; useful: boolean | null; external_anchor_digest: string; receipts: unknown[] };
+  smoke: unknown; effective_taste_score: number;
+}
+type Learning03Pin = FacadeInput<"vault.research.bind">["incumbent"];
+type Learning03Node = Learning09Archive["experiments"][number];
+const L03_MODEL = "learning03-agent";
+const L03_DECIDER = "learning03-decider";
+const L03_USAGE = { inputTokens: 256, outputTokens: 96 } as const;
+/** The host-configured decision wording; the Big rung sends it as the first system text (big_rung.rs:319-328). */
+const L03_DECISION_WORDING = "You answer one typed question about the state you are given.";
+/** Each taste question is a buffered typed decision: `stream: false` (wire.rs:146-149). */
+const L03_DECIDE = { method: "POST", path: "/v1/chat/completions", model: L03_DECIDER,
+  fields: { stream: false }, system: L03_DECISION_WORDING } as const;
+/** Token units each experimenter, scorer and referee run reserves. */
+const L03_RUN_UNITS = 100_000;
+/** The token line, the pinned share and the campaign lease: room for every run of the case. */
+const L03_LIMIT = 3_000_000;
+const L03_SHARE = "learning03";
+const L03_DAY = 86_400;
+/** The incumbent's held-out run waits here, after the winner's search win is recorded. */
+const L03_HELD_OUT_BARRIER = "learning03-incumbent-held-out";
+const L03_CROSSOVER_OFF = "merge crossover stays off until a held-out win";
+const L03_HELD = { held: { reason: "budget" } } as const;
+/** The public setup time of the owner's weave claim, never an engine clock override. */
+const L03_CLAIM_AT = 1769947200;
+
+function learning03Id(label: string): string {
+  return createHash("sha256").update(`learning-e2e:LEARNING-03:${label}`).digest("hex").slice(0, 32);
+}
+/** A branch's config pin: the scenario's label as config bytes, their SHA-256 and a descriptive ref. */
+function learning03Pin(label: string): Learning03Pin {
+  return { config_ref: `learning03-config:${label}`, config_sha256: learning09Sha(`{"parameter":"${label}"}`) };
+}
+async function learning03Scenario(): Promise<Learning03Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("learning-scenarios");
+  const row = data.scenarios.find(item => item.id === "LEARNING-03");
+  if (!row) throw new Error("Missing LEARNING-03 fixture scenario");
+  return row as Learning03Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+function learning03Branch(c: Learning03Scenario, label: string): Learning03Branch {
+  const branch = c.branches.find(row => row.label === label);
+  if (!branch) throw new Error(`The LEARNING-03 fixture has no ${label} branch`);
+  return branch;
+}
+/** A branch's fixture score on one split; a branch the fixture leaves unscored there has none. */
+function learning03Score(branch: Learning03Branch, split: "search" | "held_out" | "sealed"): number {
+  const score = branch[split];
+  if (score === undefined) throw new Error(`The LEARNING-03 fixture gives ${branch.label} no ${split} score`);
+  return score;
+}
+async function learning03Agent(owner: PublicHttpClient, label: string): Promise<string> {
+  const agent_def_ref = learning03Id(label);
+  const created = await owner.call("vault.agents.create", {
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `LEARNING-03 ${label}`, version: "1" },
+  });
+  expect(created.agent_def_ref).toBe(agent_def_ref);
+  return agent_def_ref;
+}
+/** The one reply to the next agent run's model call: a program that finishes with `answer`.
+ * The runs reach the provider one at a time, in the order the single-flight pass dispatches them. */
+function learning03Reply(providers: ScriptedProviders, id: string, purpose: string, answer: unknown, barrier?: string): void {
+  const text = typeof answer === "string" ? answer : JSON.stringify(answer);
+  providers.enqueue({
+    id, origin: "chat", role: "generative_reasoner", purpose, ...(barrier === undefined ? {} : { barrier }),
+    request: { method: "POST", path: "/v1/chat/completions", model: L03_MODEL,
+      fields: { stream: true, stream_options: { include_usage: true } } },
+    response: openaiStream(id, L03_MODEL, [`finish(${JSON.stringify(text)});`], L03_USAGE),
+  });
+}
+/** One typed answer to the next taste question the decision ladder sends to the Big rung. */
+function learning03Decide(providers: ScriptedProviders, id: string, purpose: string, answer: number | boolean): void {
+  providers.enqueue({
+    id, origin: "decider", role: "checker", purpose, request: L03_DECIDE,
+    response: openaiText(id, L03_DECIDER, JSON.stringify({ answer, probability: 0.99 }), { inputTokens: 256, outputTokens: 16 }),
+  });
+}
+function learning03Git(cwd: string, args: string[]): string {
+  const run = Bun.spawnSync(["git", "-c", "user.name=oneiron-e2e", "-c", "user.email=e2e@oneiron.invalid", ...args],
+    { cwd, stdout: "pipe", stderr: "pipe" });
+  if (run.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${run.stderr.toString()}`);
+  return run.stdout.toString().trim();
+}
+/** The strategy skill, authored from the fixture into a local Git folder in the engine's own root
+ * at one full commit, imported through the default hub and approved by the owner. */
+async function learning03InstallStrategy(engine: EngineFixture, skill: Learning03Scenario["authoring"]["skill"]): Promise<string> {
+  const dir = resolve(engine.root, "learning03-hub");
+  const folder = resolve(dir, "skills", skill.name);
+  await mkdir(folder, { recursive: true });
+  await writeFile(resolve(folder, "SKILL.md"), `---\nname: ${skill.name}\ndescription: ${skill.description}\n`
+    + `version: ${skill.version}\nrole: ${skill.role}\n---\n\n${skill.instructions}`);
+  learning03Git(dir, ["init", "-q"]);
+  learning03Git(dir, ["add", `skills/${skill.name}/SKILL.md`]);
+  learning03Git(dir, ["commit", "-q", "-m", skill.name]);
+  const commit = learning03Git(dir, ["rev-parse", "HEAD"]);
+  const { hub } = await engine.client.call("vault.skill_hubs.default.get", {});
+  const configured = await engine.client.call("vault.skill_hubs.put", {
+    hub, kind: "local-dir", endpoint: dir, trust_tier: "community", sync_policy: "pinned-commit" });
+  expect(configured.consent.outcome).toBe("approved");
+  await engine.client.call("vault.skill_hubs.refs.set", {
+    hub_ref: { hub_id: hub, ref_string: "skills", pin: { type: "commit", value: commit } }, sync_policy: "pinned-commit" });
+  const hub_ref = { hub_id: hub, ref_string: `skills/${skill.name}`, pin: { type: "commit" as const, value: commit } };
+  const { entity } = await engine.client.call("vault.skills.import", { hub_ref, publisher: skill.publisher });
+  const latest = async () => (await engine.client.call("vault.skills.receipts", { entity })).imports.at(-1)?.disposition;
+  if (await latest() === "pending_permission") await engine.client.call("vault.skills.permissions.approve", { entity, hub_ref });
+  const disposition = await latest();
+  if (disposition !== "installed" && disposition !== "already_installed") {
+    throw new Error(`The LEARNING-03 strategy import is not active: ${JSON.stringify(disposition)}`);
+  }
+  return entity;
+}
+/** Two independent sealed Companion families, one receipt case each, cut by the owner into one cohort. */
+async function learning03SealedCohort(owner: PublicHttpClient, sources: string[]): Promise<string> {
+  const sourceAt = Math.floor(Date.now() / 1000) - L03_DAY;
+  for (const label of sources) {
+    const source = `learning03-source:${learning03Id(label)}`;
+    const family = await owner.call("vault.evals.families.assign", {
+      seat: "companion", roots: [source], purpose: "sealed_confirmation",
+    });
+    expect(family.purpose).toBe("sealed_confirmation");
+    await owner.call("vault.evals.cases.record", {
+      seat: "companion", kind: "receipt", receipts: [source], parents: [], stratum: null,
+      draw_probability: null, source_at: sourceAt,
+    });
+  }
+  const inventory = await owner.call("vault.evals.inventory", {});
+  const setup = await owner.call("vault.evals.cohorts.setup", {
+    inventory_at: inventory.built_at, inventory_digest: inventory.inventory_digest, families: [], cases: [],
+    cuts: [{ seat: "companion", from: sourceAt - L03_DAY, until: inventory.built_at,
+      rubric_revision: "learning03-rubric", reference: false }],
+  });
+  expect(setup.skipped).toEqual([]);
+  expect(setup.cohorts_cut).toHaveLength(1);
+  const cohort = setup.cohorts_cut[0];
+  if (!cohort) throw new Error("The owner's setup cut no cohort");
+  return cohort;
+}
+function learning03Row(view: Learning09View, work: "bootstrap" | number): Learning09Row | undefined {
+  const wanted = work === "bootstrap" ? `"bootstrap"` : `{"round":${work}}`;
+  return view.continuations.find(row => JSON.stringify(row.work) === wanted);
+}
+function learning03ForkParent(step: unknown, label: string): string {
+  if (step === null || typeof step !== "object" || !("fork" in step)) throw new Error(`${label} did not fork: ${JSON.stringify(step)}`);
+  return learning09Hex((step as { fork: { parent: unknown } }).fork.parent);
+}
+function learning03NodeOf(archive: Learning09Archive, pin: Learning03Pin): Learning03Node {
+  const node = archive.experiments.find(row => row.candidate.config_ref === pin.config_ref);
+  if (!node) throw new Error(`The campaign records no node for ${pin.config_ref}`);
+  return node;
+}
+/** The refusal message of a call that must be refused. */
+async function learning03Refusal(label: string, call: () => Promise<unknown>): Promise<string> {
+  try {
+    await call();
+  } catch (error) {
+    if (error instanceof PublicHttpError) return error.error?.message ?? `HTTP ${error.reply.status}`;
+    throw error;
+  }
+  throw new Error(`${label}: the call was not refused`);
+}
+
+suite.test(test, "LEARNING-03", "Two campaigns: the owner binds an admitted Workflow strategy to the fixed OF-366 ruler and scores it on independent search and held-out gold; a host-driven campaign forks a winner, a loser and a buggy candidate through real runs, weaves only after the held-out win under an owner claim kept Proposed, prunes the dominated loser, promotes the winner once through the counted sealed referee, and keeps every candidate and its evidence across a restart", async () => {
+  const c = await learning03Scenario();
+  const providers = await ScriptedProviders.start({ id: "learning03-research", origins: ["chat", "decider"], steps: [] });
+  const engine = await EngineFixture.start({ id: "LEARNING-03", profile, serverLog: "oneiron=info", serverConfig: `
+[models.providers.learning03chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "learning-v1"
+[models.providers.learning03decider]
+kind = "local-openai-compat"
+base_url = "${providers.urls.decider}"
+revision = "learning-v1"
+[models.roles.generative_reasoner]
+model = "learning03chat:${L03_MODEL}"
+[models.roles.checker]
+model = "learning03decider:${L03_DECIDER}"
+[models.decisions.big]
+role = "checker"
+version = "learning-v1"
+wording = ${JSON.stringify(L03_DECISION_WORDING)}
+reply = "json"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+` });
+  try {
+    const owner = engine.client;
+    const ownerId = engine.pairedActor.principalRef;
+    const rootAgent = await learning03Agent(owner, "learning03-root");
+    const experimenter = await learning03Agent(owner, "learning03-experimenter");
+    const scorer = await learning03Agent(owner, "learning03-scorer");
+    const referee = await learning03Agent(owner, "learning03-referee");
+
+    // ==== Campaign 1, the authoring root: an admitted Workflow strategy under the fixed OF-366 ruler. ====
+    const a = c.authoring;
+    const strategy = await learning03InstallStrategy(engine, a.skill);
+    const skill = await owner.call("vault.skills.get", { entity: strategy });
+    expect(skill.role).toBe("workflow");
+    expect(skill.loadable).toBe(true);
+    expect(String(skill.lifecycle).toLowerCase()).toBe("active");
+    expect(["auto", "approved"]).toContain(String(skill.approval).toLowerCase());
+    expect(skill.version).toBe(a.skill.version);
+    const contentHash = skill.content_hash;
+    if (!contentHash) throw new Error("The imported strategy carries no content hash");
+    const skillPin = { skill: skill.entity, version: skill.version, content_hash: contentHash };
+    learning03Reply(providers, "learning03-authoring-root-run", "the authoring root's own run reads its brief and finishes", "Authoring brief read.");
+    const authoringRoot = (await owner.call("vault.research.create_root", {
+      agent: rootAgent, intent_key: "learning-03/authoring", briefing: "Evaluate the claim-authoring strategy under the fixed ruler.",
+    })).root;
+    expect(await learning09RunEnded(owner, authoringRoot, "LEARNING-03 authoring root's run ends")).toBe("completed");
+    const authoringIncumbent = {
+      config_ref: "learning03-config:single-pass", config_sha256: learning09Sha(a.incumbent_config),
+    };
+    const authoring = await owner.call("vault.research.bind_authoring", {
+      root: authoringRoot, splits: a.splits, budget: a.budget, skill: skillPin, incumbent: authoringIncumbent,
+      holder: null, share: null,
+    });
+    expect(authoring.skill).toEqual(skillPin);
+    expect(learning09Hex(authoring.binding.root)).toBe(authoringRoot);
+    const heldOutGold = a.evaluations.find(row => row.split === "held_out");
+    if (!heldOutGold) throw new Error("The LEARNING-03 fixture has no held-out evaluation");
+    const heldOutDigest = `sha256:${learning09Sha(JSON.stringify(heldOutGold.dataset))}`;
+    const reports: Learning03SplitReport[] = [];
+    for (const evaluation of a.evaluations) {
+      const split = evaluation.split;
+      learning03Decide(providers, `learning03-${split}-score`, `the taste score of the ${split} claim`, evaluation.taste.score);
+      learning03Decide(providers, `learning03-${split}-useful`, `the usefulness of the ${split} claim`, evaluation.taste.useful);
+      const report = await owner.call("vault.research.evaluate_split", {
+        root: authoringRoot, arm: evaluation.arm, split, dataset: evaluation.dataset, run: evaluation.run, cost: evaluation.cost,
+        blind: { claim: evaluation.claim, evidence_refs: evaluation.evidence_refs,
+          held_out_gold: { dataset_id: a.splits.held_out.dataset_id, revision: a.splits.held_out.revision, gold_digest: heldOutDigest } },
+        smoke: "passed",
+      }) as unknown as Learning03SplitReport;
+      reports.push(report);
+      expect(report.arm).toBe(evaluation.arm);
+      expect(report.split).toBe(split);
+      expect(report.dataset).toEqual(a.splits[split]);
+      expect(report.of360.report.dataset_id).toBe(a.splits[split].dataset_id);
+      expect(report.of360.report.cases).toHaveLength(1);
+      const scored = report.of360.report.cases[0];
+      expect(scored?.partial_gold_memory_ids).toEqual(evaluation.expected.partial);
+      expect(scored?.omitted_gold_memory_ids).toEqual(evaluation.expected.omitted);
+      expect(scored?.hallucinated_extraction_ids).toEqual(evaluation.expected.hallucinated);
+      // A seed subset says so: the full owner corpus is not present.
+      expect(report.of360.report.warnings.some(warning => warning.includes("seed-subset"))).toBe(true);
+      expect(report.metric_definition_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(report.taste.score).toBe(evaluation.taste.score);
+      expect(report.taste.useful).toBe(evaluation.taste.useful);
+      expect(report.taste.external_anchor_digest).toBe(heldOutDigest);
+      expect(report.taste.receipts).toHaveLength(2);
+      expect(report.smoke).toBe("passed");
+      expect(report.effective_taste_score).toBe(evaluation.taste.score);
+    }
+    expect(reports.map(report => report.split)).toEqual(["search", "held_out"]);
+    // Both splits are scored under one pinned ruler.
+    expect(reports[0]?.metric_definition_digest).toBe(reports[1]?.metric_definition_digest);
+    expect(providers.seenFixtureCalls.filter(call => call.origin === "decider").map(call => call.fixtureId))
+      .toEqual(["learning03-search-score", "learning03-search-useful", "learning03-held_out-score", "learning03-held_out-useful"]);
+
+    // ==== Campaign 2, the generic root: the RSI lines, the sealed cohort, the root and its bind. ====
+    const configured = await owner.call("vault.budgets.rsi.configure", {
+      limit: L03_LIMIT, exploration_exposure_limit: 0, shares: { [L03_SHARE]: { units: L03_LIMIT, pinned: true } },
+    });
+    expect(configured.suspended).toBe(false);
+    expect(configured.exposure_line).toEqual({ unit: "exposures", limit: 0, spent: 0, reserved: 0 });
+    const cohort = await learning03SealedCohort(owner, c.generic.sealed_sources);
+    learning03Reply(providers, "learning03-generic-root-run", "the generic root's own run reads its brief and finishes", "Campaign brief read.");
+    const root = (await owner.call("vault.research.create_root", {
+      agent: rootAgent, intent_key: "learning-03/generic", briefing: "Search the parameter axis for a better quality score.",
+    })).root;
+    expect(await learning09RunEnded(owner, root, "LEARNING-03 generic root's run ends")).toBe("completed");
+    const labels = ["incumbent", "winner", "loser", "buggy", "debug", c.crossover.woven_candidate];
+    const pins = new Map(labels.map(label => [label, learning03Pin(label)]));
+    const pin = (label: string): Learning03Pin => {
+      const found = pins.get(label);
+      if (!found) throw new Error(`No pin for ${label}`);
+      return found;
+    };
+    const bound = await owner.call("vault.research.bind", {
+      root,
+      config: {
+        campaign_id: c.generic.campaign_id,
+        search_axes: [{ name: "parameter", values: labels }],
+        metric_set: { set_id: "learning03-quality", revision: "r1",
+          axes: [{ name: "quality", direction: "higher", role: "primary" }] },
+        splits: {
+          search: { dataset_id: "learning03-generic-search", revision: "r1" },
+          held_out: { dataset_id: "learning03-generic-held-out", revision: "r1" },
+          sealed: { dataset_id: "learning03-generic-sealed", revision: "r1" },
+        },
+        budget: { budget_id: `${c.generic.campaign_id}-lease`, max_units: L03_LIMIT, exploration_units: 10 },
+        decide: { kind: "dominance" },
+        knobs: { merge_crossover: { requested: true, min_validation_overlap: 0.5 } },
+      },
+      target: { config: { subject: "learning-03" } }, holder: null, confirmation: { seat: "companion", cohort },
+      share: L03_SHARE, incumbent: pin("incumbent"), prior_ladder: [],
+      execution: { experimenter, scorer, referee, experiment_units: L03_RUN_UNITS, measure_units: L03_RUN_UNITS,
+        confirm_units: L03_RUN_UNITS },
+    });
+    expect(bound.share).toBe(L03_SHARE);
+    expect(c.crossover.initially_enabled).toBe(false);
+
+    // The woven child exists before any round: an owner-requested experiment run under the root that
+    // answers its pin. It is no candidate until a weave records it.
+    learning03Reply(providers, "learning03-woven-experiment", "the experimenter writes the woven config", pin(c.crossover.woven_candidate));
+    const woven = (await owner.call("vault.research.create_child", {
+      root, parent: root, agent: experimenter, intent_key: "learning-03/woven",
+      briefing: "Weave the winning parameter with the incumbent's into one config.",
+    })).child;
+    expect(await learning09RunEnded(owner, woven, "LEARNING-03 woven child's run ends")).toBe("completed");
+
+    // ---- Bootstrap and round 0: the root measures .5, the owner's select forks the root, the winner measures .8. ----
+    const incumbent = learning03Branch(c, "incumbent");
+    const winner = learning03Branch(c, "winner");
+    const searchAnswer = (branch: Learning03Branch, refs: string[]) => ({
+      scores: { quality: learning03Score(branch, "search") }, confirmed_hits: learning03Score(branch, "search"),
+      attribution: 1, hop_cost: 0, receipt_refs: refs,
+    });
+    learning03Reply(providers, "learning03-bootstrap-search", "the scorer measures the incumbent root on the search split",
+      searchAnswer(incumbent, []));
+    learning03Reply(providers, "learning03-winner-experiment", "the experimenter writes the winning candidate", pin("winner"));
+    learning03Reply(providers, "learning03-winner-search", "the scorer measures the winner on the search split: it beats the root",
+      searchAnswer(winner, []));
+    learning03Reply(providers, "learning03-incumbent-held-out", "the scorer measures the incumbent on the held-out split",
+      { scores: { quality: learning03Score(incumbent, "held_out") } }, L03_HELD_OUT_BARRIER);
+    learning03Reply(providers, "learning03-winner-held-out", "the scorer measures the winner on the held-out split",
+      { scores: { quality: learning03Score(winner, "held_out") } });
+    learning03Reply(providers, "learning03-referee", "the referee scores the winner against the incumbent on the sealed cases", {
+      candidate: learning03Score(winner, "sealed"), incumbent: learning03Score(incumbent, "sealed"),
+      referee_pin: `learning03-referee@sha256:${learning09Sha("learning03-referee")}`,
+      sufficiency: { families: c.generic.sealed_sources.length, floor_slices: {}, min_families_per_slice: 1, retest_noise: 0.1,
+        owner_margin: null, paired_interval: [0, 0.2], detectable_effect: null, set_changed: false, rubric_changed: false,
+        canary_diverged: false },
+    });
+    const boot = await learning09AdvanceUntil(owner, root, "LEARNING-03 bootstrap measure ends",
+      view => learning09Ended(learning03Row(view, "bootstrap")), 30_000);
+    expect(learning03Row(boot, "bootstrap")?.state).toEqual({ done: { note: "every task ran" } });
+    const round0 = await owner.call("vault.research.select", { root, goal_met: false });
+    expect(round0.round).toBe(0);
+    expect(learning03ForkParent(round0.step, "Round 0")).toBe(root);
+    await learning09AdvanceUntil(owner, root, "LEARNING-03 the incumbent's held-out run reaches the provider",
+      () => providers.seenFixtureCalls.some(call => call.fixtureId === "learning03-incumbent-held-out"), 60_000);
+    await providers.awaitBarrier(L03_HELD_OUT_BARRIER, 10_000);
+    const atSearchWin = await owner.call("vault.research.archive", { root });
+    const winnerNode = learning03NodeOf(atSearchWin, pin("winner"));
+    const winnerId = learning09Hex(winnerNode.attempt);
+    expect(winnerNode.kind).toBe("variation");
+    expect(winnerNode.parents.map(learning09Hex)).toEqual([root]);
+    expect(winnerNode.search?.measurement.scores).toEqual({ quality: learning03Score(winner, "search") });
+    expect(winnerNode.held_out ?? null).toBeNull();
+    expect(atSearchWin.promotions).toEqual([]);
+
+    // ---- The owner's weave claim lands through the ordinary claim gate, forced Proposed. ----
+    const scope = await ownerBaseClaimScope(owner, ownerId);
+    const seeded = await owner.call("vault.claims.seed", { claims: [{
+      subject_ref: ownerId, predicate: "research.learning03.weave",
+      value: `Weave ${c.crossover.parents.join(" and ")} into ${pin(c.crossover.woven_candidate).config_ref}`,
+      confidence: 1, source: "user_stated", scope, evidence_turn_refs: [],
+      occurred_at: L03_CLAIM_AT, learned_at: L03_CLAIM_AT,
+    }] });
+    expect(seeded).toHaveLength(1);
+    const landed = seeded[0];
+    if (!landed || landed.outcome !== "landed") throw new Error(`The weave claim did not land: ${JSON.stringify(landed)}`);
+    expect(landed.approval).toBe(c.expected.woven_claim_approval);
+    const claimEntity = (await owner.call("vault.get", { entity_ref: landed.claim_short_id })).value;
+    if (!claimEntity) throw new Error("The weave claim is not readable");
+    const claimId = claimEntity.id_hex;
+    const ledger = await owner.call("vault.receipts", { limit: 1000 });
+    const gateRow = ledger.receipts.find(row => row.receipt_ref === landed.receipt_ref);
+    expect(c.expected.ordinary_gate_required).toBe(true);
+    expect(gateRow?.actor_ref).toBe(ownerId);
+    expect(String(gateRow?.outcome)).not.toBe("deny");
+    const weaveInput = {
+      root, parents: c.crossover.parents.map(label => label === "incumbent" ? root : winnerId), child: woven,
+      common_ancestor: root, validation_overlap: 1, candidate: pin(c.crossover.woven_candidate), claim: claimId,
+    };
+
+    // ---- Crossover is off before the held-out win: the same weave is refused and records nothing. ----
+    expect(c.crossover.qualifying_held_out_win_required).toBe(true);
+    expect(await learning03Refusal("LEARNING-03 weave before the held-out win",
+      () => owner.call("vault.research.weave", weaveInput))).toContain(L03_CROSSOVER_OFF);
+    expect((await owner.call("vault.research.archive", { root })).experiments).toEqual(atSearchWin.experiments);
+
+    // ---- The held-out win: both held-out runs record, the basis turns crossover on, the confirmation holds on exposure. ----
+    providers.releaseBarrier(L03_HELD_OUT_BARRIER);
+    const exposureHold = await learning09AdvanceUntil(owner, root, "LEARNING-03 confirmation holds on the exposure line",
+      view => JSON.stringify(learning03Row(view, 0)?.state) === JSON.stringify(L03_HELD), 60_000);
+    expect(learning03Row(exposureHold, 0)?.held_line).toBe("exploration");
+    const qualified = await owner.call("vault.research.archive", { root });
+    expect(learning03NodeOf(qualified, pin("winner")).held_out?.measurement.scores)
+      .toEqual({ quality: learning03Score(winner, "held_out") });
+    expect(learning03NodeOf(qualified, pin("incumbent")).held_out?.measurement.scores)
+      .toEqual({ quality: learning03Score(incumbent, "held_out") });
+    expect(qualified.promotions).toHaveLength(1);
+    const basis = qualified.promotions[0];
+    expect(basis && learning09Hex(basis.candidate)).toBe(winnerId);
+    expect(basis?.call).toBe("promote");
+    expect(basis?.merge_crossover_enabled).toBe(true);
+    expect(basis?.confirmation ?? null).toBeNull(); // the sealed shot is unspent
+
+    // ---- The same weave now lands: the archived node is the lineage receipt. ----
+    const weave = await owner.call("vault.research.weave", weaveInput);
+    expect(learning09Hex(weave.attempt)).toBe(woven);
+    expect(weave.kind).toBe("weave");
+    expect(weave.parents.map(learning09Hex)).toEqual(weaveInput.parents);
+    expect(weave.candidate).toEqual(pin(c.crossover.woven_candidate));
+    for (const parent of c.expected.weave_lineage_parents) {
+      expect(weave.candidate.config_sha256).not.toBe(pin(parent).config_sha256);
+    }
+    expect(weave.weave?.claim).toBe(claimId);
+    expect(String(weave.weave?.claim_approval)).toBe(c.expected.woven_claim_approval);
+    expect(`gate:${weave.weave?.gate_decision}`).toBe(landed.receipt_ref);
+    expect(learning09Hex(weave.weave?.common_ancestor)).toBe(root);
+    expect(weave.search ?? null).toBeNull(); // a weave records lineage; it measures nothing
+
+    // ---- The counted sealed referee: the owner opens one exposure, the same confirmation serves once and promotes. ----
+    expect((await owner.call("vault.budgets.rsi.top_up", { line: "exploration", units: 1 })).exposure_line.limit).toBe(1);
+    expect((await owner.call("vault.budgets.rsi.hold.resume", {})).suspended).toBe(false);
+    const promotedView = await learning09AdvanceUntil(owner, root, "LEARNING-03 confirmation promotes the winner",
+      view => learning09Ended(learning03Row(view, 0)), 60_000);
+    const promotedRow = learning03Row(promotedView, 0);
+    expect(promotedRow?.state).toEqual({ done: { note: "confirmed: promoted" } });
+    const refereeRun = promotedRow?.runs.at(-1);
+    if (!refereeRun) throw new Error("No referee run");
+    expect(await learning09RunEnded(owner, refereeRun, "LEARNING-03 referee run ends")).toBe("completed");
+    const promotedArchive = await owner.call("vault.research.archive", { root });
+    expect(promotedArchive.promotions).toHaveLength(1);
+    const promoted = promotedArchive.promotions[0];
+    expect(promoted && learning09Hex(promoted.candidate)).toBe(winnerId);
+    expect(promoted?.candidate_pin).toEqual(pin("winner"));
+    expect(promoted?.confirmation ?? null).not.toBeNull();
+    expect(promoted?.promotion ?? null).not.toBeNull();
+    expect(promotedArchive.incumbent).toBe(winnerId);
+    expect((await owner.call("vault.budgets.rsi", {})).exposure_line).toEqual({ unit: "exposures", limit: 1, spent: 1, reserved: 0 });
+    const exposure = await owner.call("vault.evals.exposure", { cohort });
+    expect(exposure.counts).toEqual({ candidates: 1, queries: 0, promotions: 1 });
+    expect(c.expected.best_candidate).toBe("winner");
+
+    // ---- Round 1: select forks the fixture-best measured branch, the winner; its child loses at .3. ----
+    const loser = learning03Branch(c, "loser");
+    learning03Reply(providers, "learning03-loser-experiment", "the experimenter writes a losing candidate", pin("loser"));
+    learning03Reply(providers, "learning03-loser-search", "the scorer measures the loser on the search split",
+      searchAnswer(loser, loser.failure_evidence ? [loser.failure_evidence] : []));
+    const round1 = await owner.call("vault.research.select", { root, goal_met: false });
+    expect(round1.round).toBe(1);
+    expect(c.expected.random_parent_order_asserted).toBe(false);
+    expect(round1.branches.map(row => learning09Hex(row.attempt)).sort()).toEqual([root, winnerId].sort());
+    expect(round1.best_quality).toBe(learning03Score(winner, "search"));
+    expect(learning03ForkParent(round1.step, "Round 1")).toBe(winnerId);
+    const lost = await learning09AdvanceUntil(owner, root, "LEARNING-03 round 1 measures the loser",
+      view => learning09Ended(learning03Row(view, 1)), 60_000);
+    expect(learning03Row(lost, 1)?.state).toEqual({ done: { note: "every task ran" } });
+    const loserNode = learning03NodeOf(await owner.call("vault.research.archive", { root }), pin("loser"));
+    const loserId = learning09Hex(loserNode.attempt);
+    expect(loserNode.parents.map(learning09Hex)).toEqual([winnerId]);
+    expect(loserNode.search?.measurement.scores).toEqual({ quality: learning03Score(loser, "search") });
+    expect(loserNode.search?.receipt_refs).toContain(loser.failure_evidence);
+    expect(loserNode.held_out ?? null).toBeNull(); // .3 never beat the incumbent: no held-out follow-up
+
+    // ---- The owner prunes the dominated loser; it stays archived with its evidence. ----
+    expect(c.prune.attempt).toBe("loser");
+    const pruned = await owner.call("vault.research.prune", {
+      root, attempt: loserId, cause: { kind: "dominated", by: winnerId }, evidence_refs: loserNode.search?.receipt_refs ?? [],
+    });
+    expect(pruned.pruned?.reason).toEqual({ dominated: { by: winnerNode.attempt } });
+    for (const evidence of c.prune.evidence) expect(pruned.pruned?.evidence_refs).toContain(evidence);
+
+    // ---- Round 2: the loser is out of selection; the buggy child of the winner and its one debug child measure invalid. ----
+    const buggy = learning03Branch(c, "buggy");
+    const debug = learning03Branch(c, "debug");
+    learning03Reply(providers, "learning03-buggy-experiment", "the experimenter writes a buggy candidate", pin("buggy"));
+    learning03Reply(providers, "learning03-buggy-search", "the scorer finds the buggy candidate's output invalid",
+      { invalid: buggy.invalid_reason, evidence_refs: [buggy.failure_evidence] });
+    learning03Reply(providers, "learning03-debug-experiment", "the experimenter writes one debug fix of the buggy candidate", pin("debug"));
+    learning03Reply(providers, "learning03-debug-search", "the scorer finds the debug child's output invalid too",
+      { invalid: debug.invalid_reason, evidence_refs: [debug.failure_evidence] });
+    const round2 = await owner.call("vault.research.select", { root, goal_met: false });
+    expect(round2.round).toBe(2);
+    expect(round2.branches.map(row => learning09Hex(row.attempt)).sort()).toEqual([root, winnerId].sort());
+    expect(learning03ForkParent(round2.step, "Round 2")).toBe(winnerId);
+    const debugged = await learning09AdvanceUntil(owner, root, "LEARNING-03 round 2 measures the buggy and debug children",
+      view => learning09Ended(learning03Row(view, 2)), 60_000);
+    expect(learning03Row(debugged, 2)?.state).toEqual({ done: { note: "the debug child measured invalid too" } });
+
+    // ---- The owner stops selection: no round is owed, so the restart finds nothing to run. ----
+    const stopped = await owner.call("vault.research.select", { root, goal_met: true });
+    expect(stopped.step).toBe("stopped_oracle");
+    expect(stopped.branches.map(row => learning09Hex(row.attempt)).sort()).toEqual([root, winnerId].sort());
+
+    // ---- Every candidate stays archived with its original evidence. ----
+    const archive = await owner.call("vault.research.archive", { root });
+    const labelOf = new Map(labels.map(label => [pin(label).config_ref, label]));
+    expect(archive.experiments.map(row => labelOf.get(row.candidate.config_ref) ?? row.candidate.config_ref).sort())
+      .toEqual([...c.expected.archived_labels].sort());
+    const buggyNode = learning03NodeOf(archive, pin("buggy"));
+    const debugNode = learning03NodeOf(archive, pin("debug"));
+    expect(buggyNode.kind).toBe("variation");
+    expect(buggyNode.parents.map(learning09Hex)).toEqual([winnerId]);
+    expect(buggyNode.invalid?.reason).toBe(buggy.invalid_reason);
+    expect(debugNode.kind).toBe("debug");
+    expect(debugNode.parents.map(learning09Hex)).toEqual([learning09Hex(buggyNode.attempt)]);
+    expect(debugNode.invalid?.reason).toBe(debug.invalid_reason);
+    const evidence = archive.experiments.flatMap(row => [
+      ...(row.search?.receipt_refs ?? []), ...(row.invalid?.evidence_refs ?? []), ...(row.pruned?.evidence_refs ?? []),
+    ]);
+    for (const kept of c.expected.retained_failure_evidence) expect(evidence).toContain(kept);
+    const excluded = c.expected.active_selection_excludes.map(label => learning09Hex(learning03NodeOf(archive, pin(label)).attempt));
+    for (const row of [round2, stopped]) {
+      for (const id of excluded) expect(row.branches.map(branch => learning09Hex(branch.attempt))).not.toContain(id);
+    }
+    expect(learning03NodeOf(archive, pin("loser")).pruned ?? null).not.toBeNull();
+    expect(archive.promotions).toEqual(promotedArchive.promotions);
+
+    // ---- After a restart the same archive, claim, gate row and cohort ledger read back unchanged. ----
+    expect(c.expected.archive_survives_restart).toBe(true);
+    await engine.restart();
+    const afterRestart = await owner.call("vault.research.archive", { root });
+    expect(afterRestart.experiments).toEqual(archive.experiments);
+    expect(afterRestart.rounds).toEqual(archive.rounds);
+    expect(afterRestart.promotions).toEqual(archive.promotions);
+    expect(afterRestart.incumbent).toEqual(archive.incumbent);
+    const history = (await owner.call("vault.claims.history", { claim_ref: claimId })).value;
+    expect(String(history.find(row => row.claim_ref === claimId)?.approval)).toBe(c.expected.woven_claim_approval);
+    expect((await owner.call("vault.receipts", { limit: 1000 })).receipts.find(row => row.receipt_ref === landed.receipt_ref))
+      .toEqual(gateRow);
+    expect(await owner.call("vault.evals.exposure", { cohort })).toEqual(exposure);
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+}, 300_000);

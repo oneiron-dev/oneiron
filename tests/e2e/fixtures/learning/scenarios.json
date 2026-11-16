@@ -282,6 +282,12 @@
           "label": "buggy",
           "invalid_reason": "schema-check-failed",
           "failure_evidence": "external-invalid-output"
+        },
+        {
+          "label": "debug",
+          "debug_of": "buggy",
+          "invalid_reason": "schema-check-failed",
+          "failure_evidence": "debug-output-still-invalid"
         }
       ],
       "crossover": {
@@ -310,24 +316,322 @@
           "winner",
           "loser",
           "buggy",
+          "debug",
           "woven-winner"
         ],
         "retained_failure_evidence": [
           "missed-required-fact",
-          "external-invalid-output"
+          "external-invalid-output",
+          "debug-output-still-invalid"
         ],
         "active_selection_excludes": [
           "loser",
-          "buggy"
+          "buggy",
+          "debug"
         ],
-        "woven_claim_approval": "Proposed",
+        "woven_claim_approval": "proposed",
         "ordinary_gate_required": true,
-        "diff_lineage_parents": [
+        "weave_lineage_parents": [
           "winner",
           "incumbent"
         ],
         "archive_survives_restart": true,
         "random_parent_order_asserted": false
+      },
+      "authoring": {
+        "skill": {
+          "name": "learning03-authoring",
+          "description": "Claim-authoring strategy fixture for LEARNING-03, writing each durable fact once with its evidence turn.",
+          "version": "1.0.0",
+          "role": "workflow",
+          "publisher": "oneiron-e2e-local",
+          "instructions": "# LEARNING-03 claim-authoring strategy\n\nRead the conversation turns in order. Write one claim per durable fact, cite the turn that states it, and replace an older fact when a later turn corrects it.\n"
+        },
+        "splits": {
+          "search": {
+            "dataset_id": "learning03-authoring-search",
+            "revision": "r1"
+          },
+          "held_out": {
+            "dataset_id": "learning03-authoring-held-out",
+            "revision": "r1"
+          },
+          "sealed": {
+            "dataset_id": "learning03-authoring-sealed",
+            "revision": "r1"
+          }
+        },
+        "budget": {
+          "budget_id": "learning03-authoring-lease",
+          "reserve_units_per_step": 2
+        },
+        "incumbent_config": "{\"arm\":\"single_pass\"}",
+        "evaluations": [
+          {
+            "split": "search",
+            "arm": "single_pass",
+            "dataset": {
+              "schema_version": 1,
+              "dataset_id": "learning03-authoring-search",
+              "revision": "r1",
+              "description": "LEARNING-03 search split: one synthetic seed case, apart from the held-out and sealed cases.",
+              "completeness": "seed_subset",
+              "seed": 303,
+              "target_full_memory_points": 500,
+              "owner_corpus_missing": true,
+              "source_refs": [
+                "learning-e2e:LEARNING-03:search"
+              ],
+              "cases": [
+                {
+                  "case_id": "search-commute",
+                  "title": "A commute that changed",
+                  "turns": [
+                    {
+                      "turn_id": "search-commute-t1",
+                      "speaker": "user",
+                      "timestamp": "2026-10-01T09:00:00Z",
+                      "text": "I cycle to work every day."
+                    },
+                    {
+                      "turn_id": "search-commute-t2",
+                      "speaker": "user",
+                      "timestamp": "2026-10-20T09:00:00Z",
+                      "text": "We moved across town, so now I take the train to work."
+                    }
+                  ],
+                  "gold_memory_points": [
+                    {
+                      "memory_id": "search-commute-m1",
+                      "claim": "The user takes the train to work.",
+                      "kind": "correction",
+                      "importance": 4,
+                      "weight": 1.0,
+                      "is_update": true,
+                      "temporal_required": true,
+                      "valid_from": "2026-10-20",
+                      "valid_to": null,
+                      "evidence_turn_ids": [
+                        "search-commute-t2"
+                      ]
+                    },
+                    {
+                      "memory_id": "search-commute-m2",
+                      "claim": "The user moved across town.",
+                      "kind": "event",
+                      "importance": 3,
+                      "weight": 1.0,
+                      "is_update": false,
+                      "temporal_required": false,
+                      "valid_from": null,
+                      "valid_to": null,
+                      "evidence_turn_ids": [
+                        "search-commute-t2"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "run": {
+              "schema_version": 1,
+              "run_id": "learning03-single-pass-search",
+              "system_id": "learning03-authoring@single_pass",
+              "dataset_id": "learning03-authoring-search",
+              "dataset_revision": "r1",
+              "cases": [
+                {
+                  "case_id": "search-commute",
+                  "extracted_claims": [
+                    {
+                      "extraction_id": "search-commute-x1",
+                      "text": "The user now takes the train to work.",
+                      "matched_gold": [
+                        {
+                          "memory_id": "search-commute-m1",
+                          "score": "full"
+                        }
+                      ],
+                      "temporal_correct": true,
+                      "overreach": false,
+                      "dedup_key": null
+                    },
+                    {
+                      "extraction_id": "search-commute-x2",
+                      "text": "The user changed home.",
+                      "matched_gold": [
+                        {
+                          "memory_id": "search-commute-m2",
+                          "score": "partial"
+                        }
+                      ],
+                      "temporal_correct": null,
+                      "overreach": false,
+                      "dedup_key": null
+                    }
+                  ]
+                }
+              ]
+            },
+            "cost": {
+              "input_tokens": 1200,
+              "output_tokens": 300,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost_usd": 0.0,
+              "elapsed_ms": 4200
+            },
+            "claim": "The user takes the train to work.",
+            "evidence_refs": [
+              "learning-e2e:LEARNING-03:search-commute-t2"
+            ],
+            "taste": {
+              "score": 0.8,
+              "useful": true
+            },
+            "expected": {
+              "partial": [
+                "search-commute-m2"
+              ],
+              "omitted": [],
+              "hallucinated": []
+            }
+          },
+          {
+            "split": "held_out",
+            "arm": "single_pass",
+            "dataset": {
+              "schema_version": 1,
+              "dataset_id": "learning03-authoring-held-out",
+              "revision": "r1",
+              "description": "LEARNING-03 held-out split: one synthetic seed case, never shown to the search split.",
+              "completeness": "seed_subset",
+              "seed": 304,
+              "target_full_memory_points": 500,
+              "owner_corpus_missing": true,
+              "source_refs": [
+                "learning-e2e:LEARNING-03:held-out"
+              ],
+              "cases": [
+                {
+                  "case_id": "held-out-family",
+                  "title": "A sister and an allergy",
+                  "turns": [
+                    {
+                      "turn_id": "held-out-family-t1",
+                      "speaker": "user",
+                      "timestamp": "2026-10-05T18:00:00Z",
+                      "text": "My sister Ana lives in Lisbon."
+                    },
+                    {
+                      "turn_id": "held-out-family-t2",
+                      "speaker": "user",
+                      "timestamp": "2026-10-05T18:01:00Z",
+                      "text": "I am allergic to peanuts, so check the menu for me."
+                    }
+                  ],
+                  "gold_memory_points": [
+                    {
+                      "memory_id": "held-out-family-m1",
+                      "claim": "The user's sister Ana lives in Lisbon.",
+                      "kind": "relationship",
+                      "importance": 3,
+                      "weight": 1.0,
+                      "is_update": false,
+                      "temporal_required": false,
+                      "valid_from": null,
+                      "valid_to": null,
+                      "evidence_turn_ids": [
+                        "held-out-family-t1"
+                      ]
+                    },
+                    {
+                      "memory_id": "held-out-family-m2",
+                      "claim": "The user is allergic to peanuts.",
+                      "kind": "constraint",
+                      "importance": 5,
+                      "weight": 1.0,
+                      "is_update": false,
+                      "temporal_required": false,
+                      "valid_from": null,
+                      "valid_to": null,
+                      "evidence_turn_ids": [
+                        "held-out-family-t2"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "run": {
+              "schema_version": 1,
+              "run_id": "learning03-single-pass-held-out",
+              "system_id": "learning03-authoring@single_pass",
+              "dataset_id": "learning03-authoring-held-out",
+              "dataset_revision": "r1",
+              "cases": [
+                {
+                  "case_id": "held-out-family",
+                  "extracted_claims": [
+                    {
+                      "extraction_id": "held-out-family-x1",
+                      "text": "The user's sister Ana lives in Lisbon.",
+                      "matched_gold": [
+                        {
+                          "memory_id": "held-out-family-m1",
+                          "score": "full"
+                        }
+                      ],
+                      "temporal_correct": null,
+                      "overreach": false,
+                      "dedup_key": null
+                    },
+                    {
+                      "extraction_id": "held-out-family-x2",
+                      "text": "The user likes Lisbon.",
+                      "matched_gold": [],
+                      "temporal_correct": null,
+                      "overreach": false,
+                      "dedup_key": null
+                    }
+                  ]
+                }
+              ]
+            },
+            "cost": {
+              "input_tokens": 1100,
+              "output_tokens": 280,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "cost_usd": 0.0,
+              "elapsed_ms": 3900
+            },
+            "claim": "The user's sister Ana lives in Lisbon.",
+            "evidence_refs": [
+              "learning-e2e:LEARNING-03:held-out-family-t1"
+            ],
+            "taste": {
+              "score": 0.6,
+              "useful": true
+            },
+            "expected": {
+              "partial": [],
+              "omitted": [
+                "held-out-family-m2"
+              ],
+              "hallucinated": [
+                "held-out-family-x2"
+              ]
+            }
+          }
+        ]
+      },
+      "generic": {
+        "campaign_id": "learning03-generic",
+        "sealed_sources": [
+          "sealed-source-a",
+          "sealed-source-b"
+        ]
       }
     },
     {

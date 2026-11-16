@@ -326,7 +326,9 @@ fn embedding(
     if text.trim().is_empty() {
         return Ok(Err("a blank output takes no embedding".into()));
     }
-    let token = blake3::hash(text.as_bytes()).as_bytes().to_vec();
+    let token = oneiron_contracts::fingerprint::ContentHash::of(text.as_bytes())
+        .as_bytes()
+        .to_vec();
     let vectors = embedder.embed(&[PendingEmbeddingInput {
         entity_id: input.output.entity,
         payload: PendingEmbeddingPayload::SummaryText(text),

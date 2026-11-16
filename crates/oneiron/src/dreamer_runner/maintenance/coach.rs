@@ -86,11 +86,9 @@ pub const COACH_OFFER_CHECK_FACET: &str = "coach.offer_check";
 /// [`Vault::coach_eval_measurement_target`], then generates, scores and
 /// records its legs. Input: `{measurement: <64 hex>}`.
 pub const COACH_EVAL_MEASUREMENT_FACET: &str = "coach.eval_measurement";
-/// One output-archive axes request (ARM05 P2), queued for the host by
-/// `vault.research.archive.propose_axes`. The host reads it through
-/// [`Vault::coach_archive_axes_target`] and answers it through
-/// [`Vault::run_coach_archive_axes`]: the Coach's recipe on its model seat,
-/// else clusters on the pinned embedder. Input: `{request: <32 hex>}`.
+/// One output-archive axes request (ARM05 P2) from `vault.research.archive.propose_axes`;
+/// the host reads it through [`Vault::coach_archive_axes_target`] and answers it through
+/// [`Vault::run_coach_archive_axes`]. Input: `{request: <32 hex>}`.
 pub const COACH_ARCHIVE_AXES_FACET: &str = "coach.archive_axes";
 /// One owner-authorized training run, queued for the host when the owner
 /// authorizes it; the host trains, then evaluates, or records why it cannot.
