@@ -116,7 +116,8 @@ pub struct CopingPrior {
 }
 
 /// Outcomes nearest the current state first; within one distance, worked
-/// first, then the most recent, then the most confident.
+/// first, then the most recent, then the most confident; the claim id
+/// breaks a full tie.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CopingLookup {
     pub affected_person_ref: String,

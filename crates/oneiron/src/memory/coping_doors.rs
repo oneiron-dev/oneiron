@@ -287,8 +287,9 @@ impl Memory<'_> {
 
     /// The active, consolidatable `coping.outcome` heads on `person` (in
     /// `scope` when one is named) that the coping reader may consolidate,
-    /// each with its evidence readable on `lane`. The aggregate and the
-    /// lookup read exactly these.
+    /// each with its evidence readable on `lane`. The aggregate reads
+    /// exactly these; the lookup takes them as candidates and keeps only
+    /// the heads whose baseline turn has a live VAD.
     pub(super) fn admitted_coping_heads_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
