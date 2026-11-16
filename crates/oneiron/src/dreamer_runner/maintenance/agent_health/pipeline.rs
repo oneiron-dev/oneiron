@@ -405,6 +405,20 @@ fn detector_id(signal: AgentHealthSignal) -> String {
     format!("coach.agent_health.{}.v1", signal.as_str())
 }
 
+/// The prefix of the run coordinate [`emit`] writes for a finding's attempt.
+const REPLAY_ATTEMPT_PREFIX: &str = "attempt:";
+
+/// The attempt a finding's DIAGNOSTIC names in its replay coordinate, as
+/// [`emit`] writes it; None for a finding that named none.
+pub(super) fn replay_attempt(event: &DiagnosticEvent) -> Option<EntityId> {
+    event
+        .replay
+        .run_ref
+        .as_deref()?
+        .strip_prefix(REPLAY_ATTEMPT_PREFIX)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+}
+
 /// Writes the finding's DIAGNOSTIC once: the same evidence is the same body
 /// and the same id. It cites every evidence ref, and the source id of each
 /// attribution label in `causes` (OF-568 L10); past
@@ -443,7 +457,7 @@ fn emit(vault: &Vault, finding: &Finding, causes: &[HealthCauseSource]) -> Resul
             content_hash: *digest.finalize().as_bytes(),
             run_ref: finding.attempt.map(|attempt| {
                 format!(
-                    "attempt:{}",
+                    "{REPLAY_ATTEMPT_PREFIX}{}",
                     crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
                 )
             }),
@@ -642,4 +656,107 @@ fn merge(
     }
     card.updated_at = now;
     card
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// TEST-ONLY: lands one `signal` finding on `subject`'s taskless card as
+    /// [`land`] does: its DIAGNOSTIC first, naming `attempt` in its replay
+    /// coordinate, then the card it merges into. Its evidence is `attempt`
+    /// (a fresh id for `None`), then each of `cited`.
+    pub(crate) fn land_agent_health_finding_for_test(
+        &self,
+        subject: EntityId,
+        signal: AgentHealthSignal,
+        attempt: Option<crate::attempt_queue::AttemptId>,
+        cited: &[EntityId],
+        now: u64,
+    ) -> Result<()> {
+        let mut evidence = vec![attempt.and_then(entity).unwrap_or_else(EntityId::now)];
+        evidence.extend_from_slice(cited);
+        let finding = Finding {
+            subject,
+            signal,
+            task: None,
+            attempt,
+            generation: None,
+            evidence,
+            source_rows: None,
+            window: (now, now),
+            actual: 1,
+            dial: 0,
+            measured: 1,
+            exact_dial: None,
+            exact_measured: None,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
+            observed_brief: None,
+            silence: None,
+        };
+        let diagnostic = emit(self, &finding, &[])?;
+        let route = Route {
+            recipients: Vec::new(),
+            owner_copy: true,
+        };
+        self.with_write_txn_grouped(|txn| {
+            let key = card_key(finding.subject, finding.signal, finding.task);
+            let card = CARDS.get(&self.store, txn, &key)?;
+            let card = merge(card, &finding, diagnostic, &route, &[], None, now);
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
+        })
+    }
+
+    /// TEST-ONLY: puts an answered Coach ask on `subject`'s taskless
+    /// `signal` card, as a Coach exchange leaves it: the answer read `read`
+    /// and drafted nothing.
+    pub(crate) fn answer_coach_on_agent_health_card_for_test(
+        &self,
+        subject: EntityId,
+        signal: AgentHealthSignal,
+        read: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let key = card_key(subject, signal, None);
+            let mut card = CARDS
+                .get(&self.store, txn, &key)?
+                .ok_or(crate::Error::InvalidClaimBody("a landed agent health card"))?;
+            card.coach = Some(super::ask::AgentHealthCoachAsk {
+                asked_by: subject,
+                asked_at: now,
+                diagnostic: card.diagnostics.last().copied(),
+                attempt: EntityId::now().to_hex(),
+                observed_brief: None,
+                answer: Some(super::ask::AgentHealthCoachAnswer {
+                    at: now,
+                    pads: super::ask::AgentHealthPadRead::NotCovered,
+                    draft: None,
+                    source_rows: Some(vec![read]),
+                    source_rows_complete: Some(true),
+                    draft_erased: Some(false),
+                }),
+                application: None,
+            });
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
+        })
+    }
+
+    /// TEST-ONLY: sets the stuck mark on `subject`'s taskless `signal` card,
+    /// as the agent's own blocked report sets it on a card whose TASK reads
+    /// no Blocked state.
+    pub(crate) fn mark_agent_health_card_blocked_for_test(
+        &self,
+        subject: EntityId,
+        signal: AgentHealthSignal,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let key = card_key(subject, signal, None);
+            let mut card = CARDS
+                .get(&self.store, txn, &key)?
+                .ok_or(crate::Error::InvalidClaimBody("a landed agent health card"))?;
+            card.agent_blocked = true;
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
+        })
+    }
 }

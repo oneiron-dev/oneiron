@@ -4,19 +4,25 @@
 //! nothing, so the answer is the ceiling"; FIX
 //! [SUBSTRATE-READS-NO-SCOPE-FILTER]; row UNBUILT-08). This file holds the
 //! learning dials (`vault.settings.learning`) and the learning cell
-//! (`vault.learning.read`).
+//! (`vault.learning.read`), whose rows record their project (PR A), and the
+//! agent health cards (`vault.agent_health.cards`) and failure evidence
+//! (`vault.diagnostics.evidence`), whose rows lie where the attempts they
+//! name ran (PR B).
 //!
-//! Red at main: a holder whose grant names one project is refused both
-//! reads outright. Guards (they hold there too): it reads no row of another
-//! project or of the whole vault, and no catalog line, which carries the
-//! vault-wide value. What it reads of a cell or of a spawn choice's
-//! learning is made of its own project's runs alone: a row outside the
-//! project never moves it, and never turns it into a refusal.
+//! Red at the base: a holder whose grant names one project is refused each
+//! read outright. Guards (they hold there too): it reads no row of another
+//! project or of the whole vault, no catalog line, which carries the
+//! vault-wide value, no card that merged a finding naming no attempt, and no
+//! card citing a row outside its project or measured against one.
+//! What it reads of a cell or of a spawn choice's learning is made of its
+//! own project's runs alone: a row outside the project never moves it, and
+//! never turns it into a refusal.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test substrate_scope_filter`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::attempt_queue::AttemptId;
 use oneiron::learning::{
     Anchor, EstimateValue, LearningCell, LearningEvidence, LearningPredicate, Observation, Prior,
     PriorOrigin,
@@ -24,8 +30,12 @@ use oneiron::learning::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERBS, define_agent};
-use oneiron::test_doors::steward::STEWARD_READ_VERB;
-use oneiron::test_doors::substrate_reads::{record_settled_team_run, stand_project_steward_grant};
+use oneiron::test_doors::steward::{STEWARD_READ_VERB, stand_steward_grant};
+use oneiron::test_doors::substrate_reads::{
+    answer_coach_on_agent_health_card, dispatch_into_child_projects, land_agent_health_finding,
+    land_agent_health_finding_citing, mark_agent_health_card_blocked, record_settled_team_run,
+    stand_project_steward_grant,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -55,6 +65,21 @@ fn owned_vault(dir: &tempfile::TempDir) -> (Vault, EntityId) {
     oneiron::test_support::provision_engine_machines(&vault);
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     (vault, owner)
+}
+
+/// A vault no owner has rooted, so the child projects the test door makes
+/// are born unsigned, as a fresh vault's are.
+fn unrooted_vault(dir: &tempfile::TempDir) -> Vault {
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("a vault");
+    oneiron::test_support::provision_engine_machines(&vault);
+    vault
+}
+
+/// An attempt id as the entity id hex a `run_ref` carries.
+fn hex(attempt: AttemptId) -> String {
+    EntityId::from_bytes(*attempt.as_bytes())
+        .expect("an attempt id is an entity id")
+        .to_hex()
 }
 
 fn read(vault: &Vault, actor: EntityId, verb: &str, input: Value) -> MemoryResult<Value> {
@@ -444,5 +469,215 @@ fn project_scoped_holder_reads_choice_learning_of_its_own_runs_alone() {
             && busy_after["values"].as_array().map(Vec::len)
                 == busy_before["values"].as_array().map(Vec::len),
         "actor=agent {busy_holder:?}; expected the same learned value after the vault's run and window; seen after={busy_after} before={busy_before}"
+    );
+}
+
+/// A Steward `read` holder narrowed to one project reads the agent health
+/// cards whose every finding names a run in that project: not a card of a
+/// run in another project or in the vault's root project, not a card whose
+/// finding names no run, and not a card that merged a finding of its own
+/// project with one that names no run.
+#[test]
+fn project_scoped_steward_reads_own_project_cards() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = unrooted_vault(&dir);
+    let reader = define_agent(&vault).expect("a reader");
+    let (root_run, children) =
+        dispatch_into_child_projects(&vault, 2).expect("runs in two child projects");
+    let [(own_project, own_run), (other_project, other_run)] = children[..] else {
+        panic!("expected two child projects; seen {}", children.len());
+    };
+    let (inside, other, root, unbound, mixed) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    for (subject, run, now) in [
+        (inside, Some(own_run), 10),
+        (other, Some(other_run), 11),
+        (root, Some(root_run), 12),
+        (unbound, None, 13),
+        (mixed, Some(own_run), 14),
+        (mixed, None, 15),
+    ] {
+        land_agent_health_finding(&vault, subject, run, now).expect("a finding on its card");
+    }
+    stand_project_steward_grant(&vault, reader, &[STEWARD_READ_VERB], own_project)
+        .expect("a read grant narrowed to one project");
+
+    let answer = read(
+        &vault,
+        reader,
+        "vault.agent_health.cards",
+        json!({ "from": 0, "to": u64::MAX }),
+    );
+    let cards = answer.unwrap_or_else(|error| {
+        panic!(
+            "actor=agent {reader:?}, grant=project {own_project:?}; expected its own project's cards, not a refusal; seen {error:?}"
+        )
+    });
+    let subjects: Vec<Value> = cards
+        .as_array()
+        .expect("cards")
+        .iter()
+        .map(|card| card["subject"].clone())
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![json!(inside)],
+        "actor=agent {reader:?}, grant=project {own_project:?}; expected only the card of its own project's run, none of project {other_project:?}, the root project's run, a run-less finding or the mixed card {mixed:?}; seen subjects={subjects:?}"
+    );
+}
+
+/// A Steward `read` holder narrowed to one project reads no card that cites
+/// a row outside its project, or whose measure is held against rows of
+/// other runs, even when the card's one finding named a run of its own
+/// project: a duplicate-work card citing the other project's run it
+/// duplicated, a cost-spike card (its p90 baseline is every project's runs
+/// of its task type and unit) and a silence card (its quiet counts its
+/// actor's calls that name no run). A long-wait card of its own run alone
+/// still reads, without its Coach exchange, which reads rows no run places
+/// (the whole vault's reader sees it), and without a stuck mark its own TASK
+/// does not carry: the agent's blocked report also sets that mark, and a
+/// report bound to no run rests in no project (REVIEW-8771 P1; the whole
+/// vault's reader sees the mark). Red at the base (every card is refused
+/// there), at 90c687702fc4 (it judged a card by its findings' replay runs
+/// alone), at 2062acbc712 (it showed the Coach exchange) and at 172ef94bbe20
+/// (it showed the stuck mark).
+#[test]
+fn project_scoped_steward_reads_no_card_citing_or_measured_outside_its_project() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = unrooted_vault(&dir);
+    let reader = define_agent(&vault).expect("a reader");
+    let (_, children) =
+        dispatch_into_child_projects(&vault, 2).expect("runs in two child projects");
+    let [(own_project, own_run), (other_project, other_run)] = children[..] else {
+        panic!("expected two child projects; seen {}", children.len());
+    };
+    let (duplicate, spike, silent, waited) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    for (subject, signal, cited, now) in [
+        (duplicate, "duplicate_work", vec![other_run], 10),
+        (spike, "cost_spike", Vec::new(), 11),
+        (silent, "silent", Vec::new(), 12),
+        (waited, "long_wait", Vec::new(), 13),
+    ] {
+        land_agent_health_finding_citing(&vault, subject, signal, own_run, &cited, now)
+            .expect("a finding on its card");
+    }
+    answer_coach_on_agent_health_card(&vault, waited, "long_wait", EntityId::now(), 14)
+        .expect("a Coach answer on the long-wait card");
+    mark_agent_health_card_blocked(&vault, waited, "long_wait")
+        .expect("a stuck mark no TASK carries on the long-wait card");
+    stand_project_steward_grant(&vault, reader, &[STEWARD_READ_VERB], own_project)
+        .expect("a read grant narrowed to one project");
+
+    let answer = read(
+        &vault,
+        reader,
+        "vault.agent_health.cards",
+        json!({ "from": 0, "to": u64::MAX }),
+    );
+    let cards = answer.unwrap_or_else(|error| {
+        panic!(
+            "actor=agent {reader:?}, grant=project {own_project:?}; expected its own project's cards, not a refusal; seen {error:?}"
+        )
+    });
+    let subjects: Vec<Value> = cards
+        .as_array()
+        .expect("cards")
+        .iter()
+        .map(|card| card["subject"].clone())
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![json!(waited)],
+        "actor=agent {reader:?}, grant=project {own_project:?}; expected only the long-wait card of its own run, not the duplicate-work card {duplicate:?} citing project {other_project:?}'s run, the cost-spike card {spike:?} or the silence card {silent:?}; seen subjects={subjects:?}"
+    );
+    let coach = cards[0]["coach"].clone();
+    assert!(
+        coach.is_null(),
+        "actor=agent {reader:?}, grant=project {own_project:?}; expected the long-wait card {waited:?} without its Coach exchange; seen coach={coach}"
+    );
+    let blocked = cards[0]["agent_blocked"].clone();
+    assert_eq!(
+        blocked,
+        json!(false),
+        "actor=agent {reader:?}, grant=project {own_project:?}; expected the long-wait card {waited:?} without the stuck mark its TASK does not carry; seen agent_blocked={blocked}"
+    );
+    let whole = define_agent(&vault).expect("a whole-vault reader");
+    stand_steward_grant(&vault, whole, &[STEWARD_READ_VERB]).expect("a whole-vault read grant");
+    let whole_cards = read(
+        &vault,
+        whole,
+        "vault.agent_health.cards",
+        json!({ "from": 0, "to": u64::MAX }),
+    )
+    .expect("the whole vault's cards");
+    let answered = whole_cards
+        .as_array()
+        .expect("cards")
+        .iter()
+        .find(|card| card["subject"] == json!(waited))
+        .map(|card| {
+            (
+                card["coach"]["answer"].is_object(),
+                card["agent_blocked"].as_bool(),
+            )
+        });
+    assert_eq!(
+        answered,
+        Some((true, Some(true))),
+        "actor=agent {whole:?}, grant=whole vault; expected the long-wait card {waited:?} with its Coach answer and its stuck mark; seen cards={whole_cards}"
+    );
+}
+
+/// A Steward `read` holder narrowed to one project reads the failure
+/// evidence of a run in that project, with that run's own checks, and is
+/// refused another project's run, the root project's run, an unknown
+/// attempt, and another run's checks under its own run.
+#[test]
+fn project_scoped_reader_reads_own_project_failure_evidence() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = unrooted_vault(&dir);
+    let reader = define_agent(&vault).expect("a reader");
+    let (root_run, children) =
+        dispatch_into_child_projects(&vault, 2).expect("runs in two child projects");
+    let [(own_project, own_run), (_, other_run)] = children[..] else {
+        panic!("expected two child projects; seen {}", children.len());
+    };
+    stand_project_steward_grant(&vault, reader, &[STEWARD_READ_VERB], own_project)
+        .expect("a read grant narrowed to one project");
+    let evidence = |attempt: AttemptId, run: Option<AttemptId>| {
+        let mut input = json!({ "attempt": attempt });
+        if let Some(run) = run {
+            input["run_ref"] = json!(hex(run));
+        }
+        read(&vault, reader, "vault.diagnostics.evidence", input)
+    };
+
+    for (what, answer) in [
+        ("its own project's run", evidence(own_run, None)),
+        ("its own run's checks", evidence(own_run, Some(own_run))),
+    ] {
+        if let Err(error) = answer {
+            assert_ne!(
+                error.code, MEMORY_CODE_FORBIDDEN,
+                "actor=agent {reader:?}, grant=project {own_project:?}; expected {what} admitted; seen {error:?}"
+            );
+        }
+    }
+    assert_forbidden(evidence(other_run, None), "another project's run");
+    assert_forbidden(evidence(root_run, None), "the root project's run");
+    assert_forbidden(evidence(AttemptId::now(), None), "an unknown attempt");
+    assert_forbidden(
+        evidence(own_run, Some(other_run)),
+        "another run's checks under its own run",
     );
 }

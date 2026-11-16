@@ -543,13 +543,7 @@ fn read_findings(
         if event.detector_id.starts_with(TREND_DETECTOR_PREFIX) {
             continue;
         }
-        let attempt = event
-            .replay
-            .run_ref
-            .as_deref()
-            .and_then(|run| run.strip_prefix("attempt:"))
-            .and_then(|hex| EntityId::from_hex(hex).ok());
-        let Some(attempt) = attempt else {
+        let Some(attempt) = super::pipeline::replay_attempt(&event) else {
             found.unjoined += 1;
             continue;
         };

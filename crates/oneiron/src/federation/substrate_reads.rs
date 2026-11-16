@@ -15,14 +15,16 @@
 //! so an owner credential the owner doors refuse, attenuated or handed to
 //! another key, reads none of these rows through them.
 //!
-//! These rows are the engine's own, kept for the whole vault. The learning
-//! cell and the learning dials answer a grant narrowed to some projects with
-//! the rows its ceiling holds ([`SubstrateReach`]; DEC-0005 #scope: "the
-//! answer is the ceiling"; FIX [SUBSTRATE-READS-NO-SCOPE-FILTER]). A row lies
-//! inside a narrowed ceiling only by the project it records, so a row that
-//! records none stays whole-vault-only, and so does every row for a ceiling
-//! narrowed on an axis these rows record nothing for. The other reads (the
-//! agent health cards and calls, the failure evidence, the retrieval runs, a
+//! These rows are the engine's own, kept for the whole vault. The six reads
+//! of them answer a grant narrowed to some projects with the rows its ceiling
+//! holds ([`SubstrateReach`]; DEC-0005 #scope: "the answer is the ceiling";
+//! FIX [SUBSTRATE-READS-NO-SCOPE-FILTER]). A row lies inside a narrowed
+//! ceiling only by the projects it records: the learning cell and the
+//! learning dials record their own, and the agent health cards and calls,
+//! the failure evidence and the retrieval runs lie where the attempts they
+//! name ran ([`SubstrateReach::holds_attempts_in_txn`]). A row that records
+//! no project stays whole-vault-only, and so does every row for a ceiling
+//! narrowed on an axis these rows record nothing for. The other reads (a
 //! project's intake goal, a hosted import, the snapshot and world settings)
 //! still ask a grant that reaches the whole vault: one narrowed to part of it
 //! reads none of them (review of #6996).
@@ -30,6 +32,7 @@
 use super::engine_controls::reaches_whole_vault;
 use super::system_agent_grant::SystemAgent;
 use super::{Scope, ScopeId, grant_scope};
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -101,6 +104,34 @@ impl SubstrateReach {
     pub(crate) fn holds_row_in(&self, project: Option<EntityId>) -> bool {
         self.holds_row_of(project.as_slice())
     }
+
+    /// [`Self::holds_row_of`] for a row that lies where the attempts
+    /// `attempts` ran: the projects their stored agent dispatches name
+    /// ([`Vault::attempt_dispatch_project_in_txn`]). An attempt that names
+    /// none, or a row that names no attempt, leaves the row
+    /// whole-vault-only. The whole vault holds every row, unread.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub(crate) fn holds_attempts_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        attempts: &[AttemptId],
+    ) -> Result<bool> {
+        if *self == Self::WholeVault {
+            return Ok(true);
+        }
+        let mut projects = Vec::with_capacity(attempts.len());
+        for attempt in attempts {
+            let Some(project) = vault.attempt_dispatch_project_in_txn(txn, *attempt)? else {
+                return Ok(false);
+            };
+            projects.push(project);
+        }
+        Ok(self.holds_row_of(&projects))
+    }
 }
 
 /// Whether `project` lies inside the narrowed ceiling `ceiling`: its
@@ -117,6 +148,25 @@ fn project_inside(ceiling: &Scope, project: EntityId) -> bool {
 }
 
 impl Vault {
+    /// The project `attempt`'s stored agent dispatch names (every dispatch
+    /// records the project it runs in); None for an attempt that is not
+    /// stored, is no agent dispatch, or names none.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub(crate) fn attempt_dispatch_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+    ) -> Result<Option<EntityId>> {
+        Ok(AttemptQueue::new(self)
+            .get_in_txn(txn, attempt)?
+            .as_ref()
+            .and_then(crate::agent_dispatch::record_dispatch_input)
+            .and_then(|input| input.project_ref))
+    }
+
     /// How far `holder` reads the substrate read `read` through its grants:
     /// the whole vault when a live Steward grant naming one of the read's
     /// verbs reaches it ([`reaches_whole_vault`]), else the ceilings of the
@@ -163,8 +213,8 @@ impl Vault {
     /// [`Self::project_intake_goal_as_in_txn`]): the vault's human owner, or
     /// a holder of the grant ([`Self::substrate_read_granted_in_txn`]). Never
     /// the admission of a request's caller, whose actor id proves no owner:
-    /// those go through [`admit_substrate_read`] and
-    /// [`admit_substrate_read_by`].
+    /// those go through [`admit_scoped_substrate_read`],
+    /// [`admit_scoped_substrate_read_by`] and [`admit_substrate_read_by`].
     pub(crate) fn substrate_read_allowed_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -227,7 +277,8 @@ impl Vault {
 /// grants reach ([`Vault::substrate_read_reach_in_txn`]), or refuses a
 /// holder no such grant names without saying what the rows hold. The vault's
 /// owner, named here by its actor id, holds no such grant and is refused as
-/// anyone is (review of #6999).
+/// anyone is (review of #6999). The reader side of every scoped read with an
+/// owner door.
 pub(crate) fn admit_scoped_substrate_read_by(
     vault: &Vault,
     holder: WriteActor,
@@ -267,27 +318,28 @@ pub(crate) fn outside_reach(verb: &str) -> MemoryError {
 
 /// Admits the caller of a read that has no owner door of its own (the agent
 /// health rows) to the substrate read `read` of verb `verb`: the embedded
-/// owner under the proof its own handle carries
-/// ([`Memory::embedded_owner`]), else as a holder
-/// ([`admit_substrate_read_by`]). It refuses without saying what the rows
-/// hold.
-pub(crate) fn admit_substrate_read(
+/// owner under the proof its own handle carries ([`Memory::embedded_owner`])
+/// across the whole vault, else as far as its grants reach
+/// ([`admit_scoped_substrate_read_by`]). It refuses without saying what the
+/// rows hold.
+pub(crate) fn admit_scoped_substrate_read(
     memory: &Memory<'_>,
     verb: &str,
     read: SubstrateRead,
-) -> MemoryResult<()> {
+) -> MemoryResult<SubstrateReach> {
     if memory.embedded_owner(verb).is_ok() {
-        return Ok(());
+        return Ok(SubstrateReach::WholeVault);
     }
     let holder = WriteActor::new(memory.actor(), memory.actor_class());
-    admit_substrate_read_by(memory.vault(), holder, verb, read)
+    admit_scoped_substrate_read_by(memory.vault(), holder, verb, read)
 }
 
 /// Admits `holder` to the substrate read `read` of verb `verb` in `vault` by
 /// its grant alone ([`Vault::substrate_read_granted_in_txn`]), or refuses it
 /// without saying what the rows hold. The reader side of every read with an
-/// owner door: the vault's owner, named here by its actor id, holds no such
-/// grant and is refused as anyone is (review of #6999).
+/// owner door that does not filter by project: the vault's owner, named here
+/// by its actor id, holds no such grant and is refused as anyone is (review
+/// of #6999).
 pub(crate) fn admit_substrate_read_by(
     vault: &Vault,
     holder: WriteActor,
