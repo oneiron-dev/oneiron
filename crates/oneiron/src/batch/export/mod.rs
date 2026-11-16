@@ -22,7 +22,9 @@ pub(crate) mod archive_side_install;
 mod archive_side_tables;
 mod archive_spool;
 pub(crate) use archive_project::project_stored_archive;
-pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
+pub(crate) use archive_read::{
+    ArchiveFileSource, ArchiveFiles, checked_archive_manifest, read_vault_archive_indexed,
+};
 pub use archive_retained_side_rows::ArchiveRetainedSideRow;
 #[cfg(oneiron_test_support)]
 pub(crate) use archive_side_tables::archive_side_family_table_names;
@@ -36,6 +38,13 @@ pub(crate) mod tables;
 pub(crate) use archive_spool::{FileSpool, RecordSpool};
 pub use archive_types::*;
 use oneiron_store::batch::export::archive_types;
+mod archive_provenance;
+pub use archive_provenance::{
+    ARCHIVE_PROVENANCE_DOMAIN, ArchiveProvenance, archive_provenance_transcript,
+};
+pub(crate) use archive_provenance::{
+    ArchiveSigner, ArchiveVerifierState, archive_signer, sign_archive_manifest,
+};
 mod export_authority;
 mod export_diary;
 pub use export_diary::EXPORT_DIARY_READ_REASON;
