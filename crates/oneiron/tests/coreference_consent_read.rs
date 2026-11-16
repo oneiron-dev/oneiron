@@ -133,9 +133,6 @@ fn a_consent_claim_cycle_is_judged_once() {
     let first = EntityId::now();
     let second = EntityId::now();
     for (from, to) in [(first, second), (second, first)] {
-        vault
-            .put_edge(&from, EdgeKind::SameAs, &fixture.person_a, 0.0)
-            .expect("the same_as link to the person");
         let body = ClaimBody::new(
             PREDICATE_COREFERENCE_SHARE_CONSENT,
             ClaimSubject::Edge {
