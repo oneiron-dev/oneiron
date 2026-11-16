@@ -682,7 +682,7 @@ impl RunGuests {
         Ok(Ok(AgentVerbAnswer::new(output, Some(Vec::new()))))
     }
 
-    pub(super) fn admits(
+    pub(crate) fn admits(
         &self,
         verb: AgentVerb,
         server: &SyncServer,

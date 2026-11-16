@@ -266,6 +266,12 @@ pub(crate) use self::mcp_gateway::{
     ride_run_carrier, run_brief_people_budget, run_brief_pins, run_session_reads,
     swap_oauth_access_token,
 };
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::{McpCodeModeVerbs, mcp_admit_host_verb, mcp_host_verb_gate};
+// The `#[cfg(test)]` list above names it too; one import per build.
+#[cfg(all(oneiron_test_support, not(test)))]
+pub(crate) use self::mcp_gateway::resolve_mcp_gateway_actor;
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;

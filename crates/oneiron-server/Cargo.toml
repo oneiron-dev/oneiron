@@ -305,6 +305,12 @@ name = "consent_revoke_grantee_renounce"
 path = "tests/consent_revoke_grantee_renounce.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The code-mode host-verb refusals root their servers on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "code_mode_host_verb_refusals"
+path = "tests/code_mode_host_verb_refusals.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "facade_live_run_status"
 path = "tests/facade_live_run_status.rs"
