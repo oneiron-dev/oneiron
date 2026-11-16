@@ -201,18 +201,10 @@ struct RedactedClaimRevisionHistory {
     pub changed_rows: usize,
 }
 
-/// One retained frontier's exact old/new reference and citation status.
-/// An old content hash is never silently assigned to different bytes.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ClaimValueRedactionBinding {
-    pub previous_revision: RevisionRef,
-    pub revision: RevisionRef,
-    pub frontier: Vec<u8>,
-    pub body_changed: bool,
-    /// A saved `short:hh@rev` needs a new hash byte when this is true.
-    /// False does not prove content equality: an 8-bit hash can collide.
-    pub short_hash_changed: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::vault::entity_revision::storage::redact::{
+    ClaimValueRedactionBinding, LocalClaimValueRedaction,
+};
 
 fn record_container(container: &ContainerID) -> bool {
     matches!(container, ContainerID::Root { name, container_type: ContainerType::Map }
@@ -276,15 +268,6 @@ fn rebind(
 
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidConfig(reason.to_owned())
-}
-
-/// Content-free local result, not peer convergence or an export receipt.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LocalClaimValueRedaction {
-    pub record: EntityId,
-    pub value_fields: Vec<String>,
-    pub changed_history_rows: usize,
-    pub bindings: Vec<ClaimValueRedactionBinding>,
 }
 
 /// The courtesy-answer writer has re-proved owner and actual copy scope.
@@ -427,6 +410,15 @@ pub(crate) fn redact_claim_value_fields_in_txn(
         IDENTITY.put(&vault.store, txn, &binding.revision.0, &id)?;
     }
     DOC.put(&vault.store, txn, &id, &prepared.snapshot)?;
+    // A memory frontier names the revision the row held there: it names the
+    // redacted one now, so a fork reads the redacted words (L3-39).
+    super::super::timeline::replace_revisions_in_txn(&vault.store, txn, &id, |revision| {
+        prepared
+            .bindings
+            .iter()
+            .find(|binding| binding.previous_revision == revision)
+            .map(|binding| binding.revision)
+    })?;
     // Old staged inputs and vectors describe the pre-redaction bytes even
     // when their causal frontier did not change. Publish fresh text now.
     super::super::pending_index::clear(&vault.store, txn, &id)?;

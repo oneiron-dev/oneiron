@@ -922,12 +922,15 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
         .vault
         .put_edge(&holder, oneiron::EdgeKind::About, &about, 1.0)
         .unwrap();
+    // The holder reads the question TURN and the PERSON its answer names
+    // (FIX 9917); the fixture's own grant covers the owner only.
+    put_actor_read_grant(&server.vault, holder, None);
     let (handle, answered) =
         oneiron::test_support::settle_outcome_ask(&server.vault, owner, holder, Some("about"))
             .unwrap();
     for offset in [30, 31] {
         let at = answered + offset;
-        let body = oneiron::ClaimBody::new(
+        let mut body = oneiron::ClaimBody::new(
             "outcome.earned",
             oneiron::ClaimSubject::Entity(about),
             rmpv::Value::from("won"),
@@ -936,12 +939,25 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        // A CLAIM is born only under a stored FACET (FIX 7757): the `about`
+        // claim's derived facet names no stored row, so the outcome takes
+        // the vault's default facet.
+        body.scope_facet = server.vault.default_facet().expect("default facet");
         let occurred = oneiron::TimeRange { start: at, end: at };
         server
             .vault
             .put_claim(&EntityId::now(), &body, occurred, at)
             .unwrap();
     }
+    // The asker is no live owner of this vault, so a fact's arrival labels
+    // nothing (FIX OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE): a
+    // projection judges both facts under the asker's saved lane.
+    oneiron::llm::decision::questions::project_bound_outcomes(
+        &server.vault,
+        owner,
+        handle.group_ref,
+    )
+    .unwrap();
     let here = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     assert_eq!(here.tasks_ask_outcomes(&handle).unwrap().len(), 2);
     let outcomes = |page: Value| {
