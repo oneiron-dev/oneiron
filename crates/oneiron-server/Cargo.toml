@@ -395,6 +395,13 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# The channel identity door cases root their owner on a `MemoryKeystore` and install the
+# owner's lifecycle grants through `conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "vault_channel_identities_doors"
+path = "tests/vault_channel_identities_doors.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # The skill hub door cases root their owner on a `MemoryKeystore` (`oneiron/test-support`).
 [[test]]
 name = "vault_skill_hubs_doors"
