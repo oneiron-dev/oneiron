@@ -47,12 +47,15 @@ pub use admission::{CursorSpan, EvidenceKind, EvidenceRef, PromotionEvidenceReas
 pub(crate) use admission::{
     evidence_ref_refusal_in_txn, public_evidence_refs, public_evidence_value,
 };
+mod close_marker;
+pub(crate) use close_marker::{CloseMarkerRequest, close_marker_in_txn};
 mod corrections;
 pub(crate) use corrections::{
     CloseConflictsRequest, close_conflicts_naming_in_txn, grant_allowed_replacement_in_txn,
 };
 mod imported_keep;
 mod resolved_outputs;
+pub(crate) use resolved_outputs::{ResolvedClose, resolved_close_in_txn};
 mod scoped;
 mod settlement;
 mod writer;

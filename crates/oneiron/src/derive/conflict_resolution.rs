@@ -13,7 +13,9 @@
 //! job's. A replacement lands Proposed with its staged supersession, then takes
 //! native's Auto grant in the same transaction when the policy allows it; a
 //! granted replacement closes the open conflicts that named its prior, as
-//! native's sink does. Every row carries derive provenance and no decision memo.
+//! native's sink does. Then the item closes the open marker its attempt's first
+//! try left for the set, once every member's output stands. Every row carries
+//! derive provenance and no decision memo.
 //!
 //! For `skip` by the bound-correction rule, the engine checks both native rules
 //! on what it reads. Native also requires that no other candidate of the pass
@@ -510,6 +512,10 @@ pub(super) fn stage_in_txn(
         }
     }
     let is_accumulate = matches!(item.outcome, DerivedResolutionOutcome::Accumulate);
+    // An accumulate lands the members it can. One it leaves out (it restates
+    // a head, or the owner declined it) leaves the set answered only in part,
+    // and native writes no first-try close for such a set.
+    let mut member_left_out = false;
     let mut writable: Vec<OutputCandidate> = Vec::with_capacity(outputs.len());
     for output in outputs {
         let read_txn: &heed::RoTxn<'_> = txn;
@@ -522,7 +528,9 @@ pub(super) fn stage_in_txn(
             &output.evidence,
         ) {
             Ok(()) => writable.push(output),
-            Err(SealError::Refusal(SealRefusal::RestatesHead)) if is_accumulate => {}
+            Err(SealError::Refusal(SealRefusal::RestatesHead)) if is_accumulate => {
+                member_left_out = true;
+            }
             Err(SealError::Refusal(SealRefusal::RestatesHead)) => {
                 return refuse(
                     vault,
@@ -552,7 +560,9 @@ pub(super) fn stage_in_txn(
             &output.proposal,
             &cited,
         ) {
-            Ok(Some(_)) if is_accumulate => {}
+            Ok(Some(_)) if is_accumulate => {
+                member_left_out = true;
+            }
             Ok(Some(_)) => {
                 return refuse(
                     vault,
@@ -670,7 +680,25 @@ pub(super) fn stage_in_txn(
         }
     }
     let (savepoint, landed) = completion::grant_and_close_in_txn(
-        vault, savepoint, context, run, fence, provenance, landed,
+        vault,
+        savepoint,
+        completion::CompletionRequest {
+            context,
+            run,
+            fence,
+            provenance,
+            landed,
+            first_try_marker: (!member_left_out)
+                .then(|| {
+                    crate::dreamer_consolidation::conflict_open_marker_id(&selected.set, attempt_id)
+                })
+                .transpose()?,
+            resolution: match item.outcome {
+                DerivedResolutionOutcome::Skip => "fast_path",
+                DerivedResolutionOutcome::Accumulate => "accumulate",
+                DerivedResolutionOutcome::Merge { .. } => "merge",
+            },
+        },
     )?;
     savepoint.commit()?;
     // The replacement alone (skip, merge) or the members written, in set
