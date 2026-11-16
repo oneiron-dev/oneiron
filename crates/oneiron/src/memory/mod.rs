@@ -27,6 +27,7 @@ pub mod affect;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
+pub(crate) mod archive_restore;
 mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
