@@ -6,11 +6,12 @@
 //! host-owned: the host's transport sends one request per call, so a run's
 //! media gate may wrap this backend.
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
-    MediaUsage, ReferenceCompatibility,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaJobState, MediaPart,
+    MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, ReferenceCompatibility,
+    run_once_released,
 };
+use oneiron::llm::{BrokerIsolation, DispatchRelease};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -82,6 +83,20 @@ pub trait GeminiMediaTransport: Send + Sync {
         lease: &'a BudgetLease,
     ) -> GeminiMediaFuture<'a>;
 
+    /// [`Self::execute`] under the caller's release, for a transport whose
+    /// send may go out more than once: it re-checks the release before each
+    /// physical request. The default sends through [`Self::execute`], for a
+    /// transport that sends each request once; the backend checks the
+    /// release before it hands the request over.
+    fn execute_released<'a>(
+        &'a self,
+        request: GeminiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        _release: Option<DispatchRelease<'a>>,
+    ) -> GeminiMediaFuture<'a> {
+        self.execute(request, lease)
+    }
+
     /// Every check the transport makes before it sends, with no I/O (a
     /// broker it cannot reach, a key its custody door would refuse); `Ok`,
     /// the default, for a transport that checks nothing first.
@@ -133,7 +148,24 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
         request: GeminiMediaHttpRequest,
         lease: &BudgetLease,
     ) -> LlmResult<GeminiMediaHttpResponse> {
-        let reply = self.transport.execute(request, lease).await?;
+        self.send_released(request, lease, None).await
+    }
+
+    /// [`Self::send`] under the caller's release: a refused release sends
+    /// nothing, and the transport re-checks it before each physical request.
+    async fn send_released(
+        &self,
+        request: GeminiMediaHttpRequest,
+        lease: &BudgetLease,
+        release: Option<DispatchRelease<'_>>,
+    ) -> LlmResult<GeminiMediaHttpResponse> {
+        if let Some(release) = release {
+            release()?;
+        }
+        let reply = self
+            .transport
+            .execute_released(request, lease, release)
+            .await?;
         if (200..300).contains(&reply.status) {
             Ok(reply)
         } else {
@@ -145,7 +177,12 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
         }
     }
 
-    async fn image(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
+    async fn image(
+        &self,
+        request: MediaRequest,
+        lease: &BudgetLease,
+        release: Option<DispatchRelease<'_>>,
+    ) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let PreparedImage { prompt, config } = prepare_image(&request)?;
         // Every reference goes, in order (FIX 8612): none is dropped or cut.
@@ -158,12 +195,13 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
             "generationConfig": config,
         });
         let reply = self
-            .send(
+            .send_released(
                 GeminiMediaHttpRequest::Post {
                     path: format!("/v1beta/models/{wire}:generateContent"),
                     body,
                 },
                 lease,
+                release,
             )
             .await?;
         image_response(&reply.json(), request.model)
@@ -346,10 +384,29 @@ impl<T: GeminiMediaTransport> MediaBackend for GeminiMediaBackend<T> {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
             match request.operation {
-                AiOperation::Image => self.image(request, lease).await,
+                AiOperation::Image => self.image(request, lease, None).await,
                 // A video is a job; the rest are not this wire's.
                 _ => Err(FatalLlmError::InvalidRequest.into()),
             }
+        })
+    }
+
+    /// An image call under the caller's release (UC-16): a refused release
+    /// sends nothing. Every other call is refused as [`Self::run`] refuses
+    /// it.
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        if request.voice.is_some() || request.operation != AiOperation::Image {
+            return run_once_released(self, request, lease, None);
+        }
+        Box::pin(async move {
+            self.image(request, lease, release)
+                .await
+                .map_err(InterruptedMediaCall::nothing)
         })
     }
 
