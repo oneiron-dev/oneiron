@@ -65,11 +65,12 @@
 //! disk room for the body, and the daemon's hang-up cancels the exchange.
 //! No redirect is followed and nothing is resent.
 
+use oneiron_fingerprint::{LegacyDigest, purposes};
 use reqwest::Url;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
-use crate::digest::{BodyDigest, field, is_hex_digest};
+use crate::digest::{BodyDigest, framed_part, is_hex_digest};
 use crate::git_http::{GitRepository, MAX_GIT_HEADER_VALUE};
 use crate::{PROTOCOL_VERSION, Refusal};
 
@@ -82,9 +83,6 @@ mod serve;
 pub use client::{LfsReply, PreparedLfsCall};
 #[cfg(unix)]
 pub(crate) use serve::serve_lfs;
-
-/// The blake3 key-derivation context of an LFS request digest.
-const DIGEST_CONTEXT: &str = "oneiron-broker 2026-11-06 lfs request digest v1";
 
 /// The value the broker writes in a batch reply's action header in place of
 /// the repository's `Authorization` value, which the repository handed back
@@ -397,7 +395,8 @@ pub(crate) fn is_credential_placeholder(value: &str) -> bool {
 /// derives; every header, in its order, as given; the body's length and
 /// its bytes. Each field is length-prefixed. The daemon takes it as it
 /// spools the body; the broker takes it again as it receives the body and
-/// sends nothing whose digest differs.
+/// sends nothing whose digest differs. Its purpose is
+/// `purposes::broker::LFS_REQUEST`, whose tag is the derive-key context.
 pub struct LfsRequestDigest {
     body: BodyDigest,
 }
@@ -407,30 +406,32 @@ impl LfsRequestDigest {
     /// `body_len` bytes, before its body.
     #[must_use]
     pub fn new(target: &LfsTarget, headers: &[(String, String)], body_len: u64) -> Self {
-        let mut hasher = blake3::Hasher::new_derive_key(DIGEST_CONTEXT);
-        field(&mut hasher, target.kind().as_bytes());
+        let mut digest = LegacyDigest::new(purposes::broker::LFS_REQUEST);
+        framed_part(&mut digest, target.kind().as_bytes());
         let repository = target.repository();
-        field(&mut hasher, repository.origin().as_bytes());
-        field(&mut hasher, repository.path().as_bytes());
+        framed_part(&mut digest, repository.origin().as_bytes());
+        framed_part(&mut digest, repository.path().as_bytes());
         match target {
-            LfsTarget::Batch(batch) => field(&mut hasher, batch.operation.as_str().as_bytes()),
+            LfsTarget::Batch(batch) => {
+                framed_part(&mut digest, batch.operation.as_str().as_bytes())
+            }
             LfsTarget::ObjectDownload(action)
             | LfsTarget::ObjectUpload(action)
             | LfsTarget::Verify(action) => {
-                field(&mut hasher, action.batch.as_bytes());
-                field(&mut hasher, action.oid.as_bytes());
-                hasher.update(&action.size.to_le_bytes());
+                framed_part(&mut digest, action.batch.as_bytes());
+                framed_part(&mut digest, action.oid.as_bytes());
+                digest.raw(&action.size.to_le_bytes());
             }
         }
-        field(&mut hasher, target.method().as_bytes());
-        field(&mut hasher, target.endpoint().as_bytes());
-        hasher.update(&(headers.len() as u64).to_le_bytes());
+        framed_part(&mut digest, target.method().as_bytes());
+        framed_part(&mut digest, target.endpoint().as_bytes());
+        digest.len_u64_le(headers.len());
         for (name, value) in headers {
-            field(&mut hasher, name.as_bytes());
-            field(&mut hasher, value.as_bytes());
+            framed_part(&mut digest, name.as_bytes());
+            framed_part(&mut digest, value.as_bytes());
         }
         Self {
-            body: BodyDigest::new(hasher, body_len),
+            body: BodyDigest::new(digest, body_len),
         }
     }
 
