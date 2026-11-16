@@ -341,6 +341,13 @@ name = "rerank_pair_template_price"
 path = "tests/rerank_pair_template_price.rs"
 required-features = ["oneiron/test-support"]
 
+# The person's own client signs their opt back in over the in-process wire: GET /me names vault_id and slip, and the PUT's person_proof lands the opt back in through a carrier that is not the owner's.
+# It roots its hosted vault on a `MemoryKeystore` and reaches `oneiron::test_doors` under `--cfg oneiron_test_support`, as `crates/oneiron/tests/person_choice_proof.rs` does.
+[[test]]
+name = "own_conversation_training_client"
+path = "tests/own_conversation_training_client.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 

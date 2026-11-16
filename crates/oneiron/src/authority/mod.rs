@@ -208,17 +208,17 @@ pub use oneiron_authority::authority::{
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkRequest, OwnerWorkResult, PersonChoiceProof, PrivacyDirection, RESIDENCE_REASON_MAX,
-    RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
-    ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
+    OwnerWorkRequest, OwnerWorkResult, PERSON_CHOICE_DOMAIN, PersonChoiceProof, PrivacyDirection,
+    RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
     SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
     SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
     WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    authority_transcript, conversation_training_statement, decode_authority_log_entry_body,
+    effective_slip_comm, encode_authority_log_entry_body, federation_pact_transcript,
+    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
@@ -301,7 +301,7 @@ pub use clock_repair::{
     AUTHORITY_CLOCK_REPAIR_EVIDENCE, AuthorityClockRepair, AuthorityClockRepairEvidence,
     AuthorityClockRepairOutcome, ClockRepairCaller,
 };
-pub use conversation_training::ConversationTrainingView;
+pub use conversation_training::{ConversationTrainingView, PersonProofSubject};
 pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
 pub use fold_state::*;
