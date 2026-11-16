@@ -199,24 +199,6 @@ pub fn plant_timer_arming(
     )
 }
 
-/// Whether this machine keeps a disarm row for the registration.
-///
-/// # Errors
-///
-/// A store failure.
-pub fn disarm_kept_here(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<bool> {
-    crate::dreamer_runner::turn_program_test_hooks::disarm_kept_here(vault, actor, registration)
-}
-
-/// Encodes an armed row as the window mirror does, bypassing its outbound filter.
-///
-/// # Errors
-///
-/// No such arming, a store failure, or a row that cannot encode.
-pub fn arming_row_bytes(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<Vec<u8>> {
-    crate::dreamer_runner::turn_program_test_hooks::arming_row_bytes(vault, actor, registration)
-}
-
 /// Claims the try admitted for `registration` through the program kind's
 /// point-claim door, then holds it as an unfinished program through the
 /// runtime's hold writer. Returns the try and its stored park, including
@@ -240,4 +222,22 @@ pub fn hold_admitted_program_try(
         registration,
         now,
     )
+}
+
+/// Whether this machine keeps a disarm row for the registration.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn disarm_kept_here(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::disarm_kept_here(vault, actor, registration)
+}
+
+/// Encodes an armed row as the window mirror does, bypassing its outbound filter.
+///
+/// # Errors
+///
+/// No such arming, a store failure, or a row that cannot encode.
+pub fn arming_row_bytes(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<Vec<u8>> {
+    crate::dreamer_runner::turn_program_test_hooks::arming_row_bytes(vault, actor, registration)
 }

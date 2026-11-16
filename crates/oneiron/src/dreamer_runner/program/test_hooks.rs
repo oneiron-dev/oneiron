@@ -263,31 +263,6 @@ pub(crate) fn plant_timer_arming(
     Ok(registration)
 }
 
-/// Whether a disarm row for this registration is kept here.
-pub(crate) fn disarm_kept_here(
-    vault: &Vault,
-    actor: EntityId,
-    registration: EntityId,
-) -> Result<bool> {
-    let txn = vault.store.env.read_txn()?;
-    DISARMED.contains(vault, &txn, &(actor, registration))
-}
-
-/// Encodes the mirror's externally tagged `ArmingRow::Armed` envelope directly,
-/// without its outbound filter. The replica module's row enum is private.
-pub(crate) fn arming_row_bytes(
-    vault: &Vault,
-    actor: EntityId,
-    registration: EntityId,
-) -> Result<Vec<u8>> {
-    let txn = vault.store.env.read_txn()?;
-    let arming = ARM
-        .get(vault, &txn, &(actor, registration))?
-        .ok_or(Error::EntityNotFound)?;
-    serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
-        .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
-}
-
 /// Claims one real admission's program try through the same point claim the
 /// program kind uses, then writes the runtime's unfinished hold. No pass
 /// reservation is made, so the settlement fixture owns its only reserve.
@@ -331,4 +306,29 @@ pub(crate) fn hold_admitted_program_try(
         .parked_attempt(attempt)?
         .ok_or(Error::EntityNotFound)?;
     Ok((attempt, parked))
+}
+
+/// Whether a disarm row for this registration is kept here.
+pub(crate) fn disarm_kept_here(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    DISARMED.contains(vault, &txn, &(actor, registration))
+}
+
+/// Encodes the mirror's externally tagged `ArmingRow::Armed` envelope directly,
+/// without its outbound filter. The replica module's row enum is private.
+pub(crate) fn arming_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let arming = ARM
+        .get(vault, &txn, &(actor, registration))?
+        .ok_or(Error::EntityNotFound)?;
+    serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
+        .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
 }
