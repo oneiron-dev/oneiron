@@ -66,25 +66,10 @@ use crate::vault::Vault;
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// The verdict vocabulary
-// ---------------------------------------------------------------------------
-
-/// What an ES-07 ask resolves to.
-///
-/// Closed at three arms with pinned wire tokens `allow`, `deny`, and
-/// `escalate-to-human`. They are the ask's only options: any other answer, or
-/// none, is no verdict and therefore escalates.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum FanoutAskVerdict {
-    /// The fan-out may start as asked.
-    Allow,
-    /// The fan-out should not start. Still surfaced, never a silent kill.
-    Deny,
-    /// Nobody here is entitled to rule; a human sees it.
-    EscalateToHuman,
-}
+#[doc(hidden)]
+pub use oneiron_records::fanout_auto::{
+    FanoutAskVerdict, FanoutDecisionHistory, FanoutHistoryRuling,
+};
 
 /// The verdict's options, by their pinned wire tokens.
 const VERDICTS: [(&str, FanoutAskVerdict); 3] = [
@@ -180,37 +165,6 @@ pub struct FanoutAskContext {
     pub trigger: FanoutAskTrigger,
     /// What the human would be asked.
     pub question: String,
-}
-
-// ---------------------------------------------------------------------------
-// The shared decision path
-// ---------------------------------------------------------------------------
-
-/// One past human ruling, flattened for a decision state that has no business
-/// decoding ED-01's Δ.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum FanoutHistoryRuling {
-    /// A human approved the ask.
-    Approve,
-    /// A human denied it.
-    Deny,
-    /// A human changed it.
-    Amend,
-}
-
-/// One `(scope, trigger)` pair's ruling history, as the decision sees it.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct FanoutDecisionHistory {
-    /// Approvals recorded for the exact `(scope, trigger)` key.
-    pub approve: u32,
-    /// Denials recorded for the exact key.
-    pub deny: u32,
-    /// Amendments recorded for the exact key.
-    pub amend: u32,
-    /// ED-06's `last_rulings`, bounded by that lane's own
-    /// `ESCALATION_LAST_RULINGS_BOUND`: the newest eight, oldest-to-newest.
-    pub last_rulings: Vec<FanoutHistoryRuling>,
 }
 
 /// The only carrier of ONE-1719's crate-internal plan and estimate into the

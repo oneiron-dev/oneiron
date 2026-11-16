@@ -40,10 +40,7 @@ pub(super) fn key(fixture: &str, author: &str) -> String {
     format!("{fixture}-{author}")
 }
 pub(super) fn hex_id(id: &str) -> bool {
-    id.len() == 32
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    oneiron_hex::is_lower_hex(id, Some(32))
 }
 pub(super) fn canonical_hash(value: &Value) -> Result<String> {
     serde_json_canonicalizer::to_vec(value)
