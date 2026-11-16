@@ -486,7 +486,7 @@ impl Vault {
             // purged by a hard delete, and every door refuses it as it refuses a deleted row
             // whose bytes remain, whoever runs the import.
             if row.entity_type == ENTITY_TYPE_AGENT_DEF
-                && crate::agent_def::is_pinned_agent_id_in_txn(&self.store, &wtxn, &id)?
+                && crate::agent_def::agent_id_pinned_in_txn(&self.store, &wtxn, &id)?
             {
                 return Err(invalid("import ID collides with a deleted entity"));
             }

@@ -468,18 +468,6 @@ pub(crate) fn refuse_agent_id_retype_in_txn(
     }))
 }
 
-/// Whether this vault has held an agent at `id`: its pin is stored. The pin
-/// outlives the row (a delete pins the row it removes, a hard delete
-/// included), so a pinned id with no row is an agent this vault deleted. A
-/// seeded id this vault never held has no pin.
-pub(crate) fn is_pinned_agent_id_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    PIN.contains(store, txn, id)
-}
-
 /// Whether `id` is an agent id: pinned, or a seeded row's.
 pub(crate) fn is_agent_id_in_txn(
     store: &Store,
@@ -487,6 +475,17 @@ pub(crate) fn is_agent_id_in_txn(
     id: &EntityId,
 ) -> Result<bool> {
     Ok(PIN.contains(store, txn, id)? || seeded_pin(id)?.is_some())
+}
+
+/// Whether `id` holds a stored pin: a definition was put or stored at it
+/// here, and every delete pins the row it removes. A seeded id whose row
+/// this vault never stored holds none.
+pub(crate) fn agent_id_pinned_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    PIN.contains(store, txn, id)
 }
 
 /// Every agent id: each pinned one, and each seeded row's.
