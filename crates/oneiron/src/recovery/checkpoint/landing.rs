@@ -292,7 +292,9 @@ impl Vault {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
             }
             if let Some(home) = home {
-                vault.store.mark_live_only_at_in_txn(txn, home)?;
+                vault
+                    .store
+                    .mark_replacement_live_only_at_in_txn(txn, home)?;
             }
             vault
                 .store

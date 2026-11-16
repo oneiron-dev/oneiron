@@ -125,7 +125,7 @@ async fn linked_time_preselects_only_a_live_solver_slot() {
         }));
     publication.value["event_config_hashes"]["consultation&60"] =
         json!(oneiron::booking::booking_config_hash(&second.config).unwrap());
-    let owner = vault.memory(id(0x77), EdgeActorClass::Human);
+    let owner = vault.memory(fixture.owner_actor(), EdgeActorClass::Human);
     let pending = owner
         .claim_upsert(&publication)
         .expect("owner updates page");
@@ -433,7 +433,7 @@ async fn public_booking_publication_lifetime_and_revocation_are_non_oracular() {
     fixture
         .server
         .vault
-        .memory(id(0x77), EdgeActorClass::Human)
+        .memory(fixture.owner_actor(), EdgeActorClass::Human)
         .claim_retract(&claim)
         .expect("owner revocation");
     for (method, suffix) in [("GET", ""), ("POST", "/verbs/booking.hold")] {
@@ -469,7 +469,10 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
     let fixture = Fixture::unpublished();
     let now = now_secs().expect("clock");
     let input = publication_input(fixture.page, true, 1, now + 86_400);
-    let agent = fixture.server.vault.memory(id(0x77), EdgeActorClass::Agent);
+    let agent = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Agent);
     assert_eq!(
         agent
             .claim_upsert(&input)
@@ -501,7 +504,7 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
     let receipt = fixture
         .server
         .vault
-        .memory(id(0x77), EdgeActorClass::Human)
+        .memory(fixture.owner_actor(), EdgeActorClass::Human)
         .claim_upsert(&changed)
         .expect("owner edits presentation");
     assert_eq!(receipt.approval, "proposed");
@@ -532,7 +535,7 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
     let confirmed = fixture
         .server
         .vault
-        .memory(id(0x77), EdgeActorClass::Human)
+        .memory(fixture.owner_actor(), EdgeActorClass::Human)
         .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
         .expect("owner confirms presentation edit");
     assert_eq!(
@@ -573,7 +576,10 @@ async fn landing_serialized_bound_matches_owner_write_and_public_render() {
     let fixture = Fixture::unpublished();
     let now = now_secs().expect("clock");
     let mut input = publication_input(fixture.page, true, 1, now + 86_400);
-    let owner = fixture.server.vault.memory(id(0x77), EdgeActorClass::Human);
+    let owner = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Human);
     let mut landing = BookingLandingContent {
         photo_path: None,
         intro: "\"".repeat(2048),
