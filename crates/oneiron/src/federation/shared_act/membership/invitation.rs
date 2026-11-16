@@ -12,8 +12,8 @@
 //! and decline doors, only while it is pending and only while that key is
 //! the one it records.
 use super::super::{
-    Effect, SharedActExecutionReceipt, SharedVaultChange, check_vault, decode, encode, invalid,
-    key, non_root,
+    Effect, OUTCOME_PREFIX, SharedActExecutionReceipt, SharedActOutcome, SharedVaultChange,
+    check_vault, decode, encode, invalid, key, non_root,
 };
 use crate::authority::{
     CapabilitySlip, ConnectOffer, HostSlipIssuer, PairingLink, PendingInvitationLink,
@@ -33,23 +33,8 @@ const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
 /// How long an invitation stays open on the store clock.
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
-/// Where an invitation stands. Only `Pending` before `expires_at` admits.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedInvitationState {
-    Pending,
-    Accepted {
-        at: u64,
-    },
-    Declined {
-        at: u64,
-    },
-    /// An `add_member` holder (`by`) took it back.
-    Withdrawn {
-        by: String,
-        at: u64,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::shared_act::membership::invitation::SharedInvitationState;
 
 /// One invitation of one person into this shared vault at one role.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -483,6 +468,14 @@ impl Vault {
     /// opening key and is never written to the receipt or a log. A seat
     /// accepted without an offer takes its edge later through
     /// [`Self::attach_inquiry_edge_to_seat`] (L7-04-NO-PERSONAL-VAULT = A).
+    ///
+    /// An exact retry answers again and applies nothing: the member's pact
+    /// waits on the counter, so a lost answer must not strand it. The proof
+    /// therefore carries no invitation slip, only the invitee's own
+    /// independent credential (or none, when the host vouches for it): an
+    /// invitation slip stops standing once the acceptance spends its
+    /// invitation (FIX 8745), so it could not retry, and an invitee who holds
+    /// only that slip accepts with a credential, then attaches the edge.
     pub fn accept_shared_invitation_with_inquiry_edge(
         &self,
         invitee: &AuthenticatedOwner,
@@ -491,7 +484,12 @@ impl Vault {
         issuer: &HostSlipIssuer,
         edge: &InquiryJoinOffer,
     ) -> Result<(SharedActExecutionReceipt, ConnectOffer)> {
-        invitee.require_invitation_acceptor(invitation_id)?;
+        invitee.require_independent_acceptor()?;
+        if let Some(answer) =
+            self.repeat_inquiry_join_acceptance(invitee, vault_id, invitation_id, issuer, edge)?
+        {
+            return Ok(answer);
+        }
         let mut counter = None;
         let receipt =
             self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
@@ -504,6 +502,73 @@ impl Vault {
             "accepted membership did not join its offered inquiry edge",
         ))?;
         Ok((receipt, counter))
+    }
+
+    /// The answer of an acceptance with an inquiry edge that already applied,
+    /// for its exact retry, in its own writer before the change's: while
+    /// `invitee`'s invitation `invitation_id` in `vault_id` is still pending,
+    /// `None`, and the first call applies. Once it is accepted, `edge`'s pact
+    /// must be logged here as the edge of the seat it gave (any other offer
+    /// refuses, as the spent invitation does); the answer is then the
+    /// original receipt, read back from the invitee's own notice of it, and
+    /// the same counter, from the Connect's exact repeat, which writes
+    /// nothing.
+    fn repeat_inquiry_join_acceptance(
+        &self,
+        invitee: &AuthenticatedOwner,
+        vault_id: u64,
+        invitation_id: &str,
+        issuer: &HostSlipIssuer,
+        edge: &InquiryJoinOffer,
+    ) -> Result<Option<(SharedActExecutionReceipt, ConnectOffer)>> {
+        self.with_write_txn_grouped(|txn| {
+            let actor = invitee.revalidate_person_in_txn(self, txn)?;
+            check_vault(self, txn, vault_id)?;
+            let invitation = self.invitation_in_txn(txn, actor, invitation_id)?;
+            if invitation.vault_id != vault_id
+                || !matches!(invitation.state, SharedInvitationState::Accepted { .. })
+            {
+                return Ok(None);
+            }
+            // Only the logged pact is a retry: join_inquiry_edge_in_txn
+            // would mint a new edge for any other.
+            if !self
+                .authority_fold_readonly_in_txn(txn)?
+                .federation_pacts
+                .contains_key(&edge.connect.pact_id)
+            {
+                return Err(invalid());
+            }
+            let receipt = self
+                .invitation_acceptance_receipt_in_txn(txn, actor, vault_id, &invitation.id)?
+                .ok_or_else(invalid)?;
+            let counter = self.join_inquiry_edge_in_txn(txn, issuer, vault_id, actor, edge)?;
+            Ok(Some((receipt, counter)))
+        })
+    }
+
+    /// The receipt of `actor`'s acceptance of `invitation` in `vault_id`,
+    /// read back from their own notice of it: every receipt tells its actor.
+    fn invitation_acceptance_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        vault_id: u64,
+        invitation: &str,
+    ) -> Result<Option<SharedActExecutionReceipt>> {
+        let prefix = key(OUTCOME_PREFIX, &format!("{}:", actor.to_hex()));
+        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (_, bytes) = entry?;
+            let outcome: SharedActOutcome = decode(&bytes)?;
+            let accepted = matches!(
+                &outcome.change,
+                SharedVaultChange::InvitationAccepted { invitation: id, .. } if id == invitation
+            );
+            if outcome.vault_id == vault_id && accepted {
+                return self.shared_act_receipt_in_txn(txn, &outcome.receipt_id);
+            }
+        }
+        Ok(None)
     }
 
     /// Accepts the invitee's invitation and mints their regular credential in
