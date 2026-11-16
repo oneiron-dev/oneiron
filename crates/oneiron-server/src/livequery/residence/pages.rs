@@ -88,11 +88,7 @@ pub(super) fn search_pages(
     let as_of = input
         .as_of
         .or_else(|| input.page.as_ref().map(|page| page.as_of))
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |since| since.as_secs())
-        });
+        .unwrap_or_else(oneiron_base::unix_seconds_now);
     let current_windows: HashSet<_> = read_window_list(&server.root_doc).into_iter().collect();
     let mut selected_by_window = HashMap::new();
     // The ranking starts as deep as a search of one call reads and doubles

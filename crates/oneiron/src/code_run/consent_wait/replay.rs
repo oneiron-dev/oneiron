@@ -450,7 +450,7 @@ impl Resumed<'_> {
             resumed_path: self.resumed_path.to_owned(),
             result_handle: self.result_handle.to_owned(),
             result_digest: self.result_digest,
-            consumed_at_ms: super::settle::now_ms(),
+            consumed_at_ms: crate::unix_millis_now(),
         }
     }
 

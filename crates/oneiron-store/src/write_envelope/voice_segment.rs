@@ -12,6 +12,7 @@ use rmpv::Value;
 
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 
 /// One captured audio segment, subject = the ASSET entity holding its bytes.
 pub const PREDICATE_VOICE_SEGMENT: &str = "voice.segment";
@@ -97,16 +98,12 @@ fn value_map(value: &Value) -> Result<&[(Value, Value)]> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let value = matches
-        .next()
-        .ok_or_else(|| invalid_claim("voice.segment value missing required key"))?;
-    if matches.next().is_some() {
-        return Err(invalid_claim("voice.segment value contains duplicate key"));
-    }
-    Ok(value)
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_claim(match error {
+            MsgpackError::DuplicateKey(_) => "voice.segment value contains duplicate key",
+            _ => "voice.segment value missing required key",
+        })
+    })
 }
 
 fn required_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {

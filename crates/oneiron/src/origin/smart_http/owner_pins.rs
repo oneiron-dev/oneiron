@@ -7,7 +7,6 @@ use std::path::Path;
 use super::door_window::parse_optional_oid;
 use super::evidence::local_repo_ref;
 use super::intent::ReceivePackRefStatus;
-use super::paths::now_secs;
 use crate::Vault;
 use crate::error::Result;
 use crate::git_wire::{GitRefName, GitWire};
@@ -89,7 +88,7 @@ impl Vault {
                 continue;
             }
             let repo = wire.open_repo(local_repo_ref(repo_dir, &owner.new_oid)?, repo_dir)?;
-            self.repin_origin_dependencies(&wire, &repo, &owner, now_secs())?;
+            self.repin_origin_dependencies(&wire, &repo, &owner, crate::unix_seconds_now())?;
         }
     }
 

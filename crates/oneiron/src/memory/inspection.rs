@@ -30,12 +30,18 @@ impl Memory<'_> {
         lane: &ScopedRead<'_>,
         state: InspectionState,
     ) -> MemoryResult<InspectionResolved> {
-        let ScopedReadResult { value, receipt } =
-            self.vault
-                .inspect_state_projected(lane, &state, |txn, row| match row {
-                    Some(row) => self.entity_view_of_in_txn(lane, txn, row, ReadMode::Live),
-                    None => Ok(None),
-                })?;
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = self.lane_snapshot()?;
+        let known = snapshot.known();
+        let ScopedReadResult { value, receipt } = self.vault.inspect_state_projected_in_txn(
+            lane,
+            snapshot.txn(),
+            &state,
+            |txn, row| match row {
+                Some(row) => self.entity_view_of_in_txn(lane, txn, known, row, ReadMode::Live),
+                None => Ok(None),
+            },
+        )?;
         Ok(InspectionResolved {
             state,
             handle: encode_inspection_handle(&state),
