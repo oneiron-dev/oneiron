@@ -468,11 +468,9 @@ fn screened(
             "the connector lists no tool {unknown}"
         )));
     }
-    let screen = discovery
-        .screen(vault, name, choices)?
-        .map_err(|reason| {
-            OwnerError::Refused(format!("the connector's tools failed screening: {reason}"))
-        })?;
+    let screen = discovery.screen(vault, name, choices)?.map_err(|reason| {
+        OwnerError::Refused(format!("the connector's tools failed screening: {reason}"))
+    })?;
     if let Some(reason) = host::screen_refusal(&screen, discovery.tools.len()) {
         return Err(OwnerError::Refused(format!(
             "the connector's tools failed screening: {reason}"

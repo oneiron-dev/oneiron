@@ -428,7 +428,10 @@ async fn register_and_read_digest(host: &Host) -> String {
     let (status, registered) = host.register(json!({})).await;
     assert_eq!(status, StatusCode::OK, "{registered}");
     names_tripped_tool(&registered);
-    assert_eq!(registered["skipped"][0]["owner_may_install"], true, "{registered}");
+    assert_eq!(
+        registered["skipped"][0]["owner_may_install"], true,
+        "{registered}"
+    );
     registered["skipped"][0]["digest"]
         .as_str()
         .expect("the skipped tool's digest")
@@ -455,7 +458,11 @@ fn install_anyway_at_the_seen_digest_installs_the_tool_and_attest_admits_it() {
         assert_eq!(refreshed["skipped"], json!([]), "{refreshed}");
         let accepted = &refreshed["accepted"]["docs_send"];
         assert_eq!(accepted["tool_digest"], digest.as_str(), "{refreshed}");
-        assert_eq!(accepted["rules"], json!(["parameter_injection"]), "{refreshed}");
+        assert_eq!(
+            accepted["rules"],
+            json!(["parameter_injection"]),
+            "{refreshed}"
+        );
         let mut tools = slate_tools(&refreshed);
         tools.sort_unstable();
         assert_eq!(tools, ["docs_read", "docs_send"], "{refreshed}");
@@ -491,7 +498,10 @@ fn an_accepted_tool_whose_schema_changed_is_skipped_again() {
         let digest = register_and_read_digest(&host).await;
         let (status, refreshed) = install_anyway(&host, &digest).await;
         assert_eq!(status, StatusCode::OK, "{refreshed}");
-        assert!(refreshed["accepted"].get("docs_send").is_some(), "{refreshed}");
+        assert!(
+            refreshed["accepted"].get("docs_send").is_some(),
+            "{refreshed}"
+        );
         *listing.lock().expect("the listing") = vec![clean_tool(), tripped_tool_changed()];
         let (status, answer) = host.post("refresh", json!({"connector": CONNECTOR})).await;
         assert_eq!(status, StatusCode::OK, "{answer}");
@@ -514,7 +524,9 @@ fn install_anyway_at_a_digest_the_owner_did_not_see_is_refused() {
         let (status, answer) = install_anyway(&host, &"0".repeat(64)).await;
         assert!(!status.is_success(), "{status} {answer}");
         assert!(
-            answer.to_string().contains("changed since the owner saw it"),
+            answer
+                .to_string()
+                .contains("changed since the owner saw it"),
             "{answer}"
         );
     });

@@ -27,7 +27,9 @@ use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
-use oneiron::skill_hub::pack_catalog::{ConnectorToolScreen, OwnerAcceptedScreen, PackObservedTool};
+use oneiron::skill_hub::pack_catalog::{
+    ConnectorToolScreen, OwnerAcceptedScreen, PackObservedTool,
+};
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;

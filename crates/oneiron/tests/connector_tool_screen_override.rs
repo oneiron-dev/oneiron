@@ -86,7 +86,11 @@ fn unresolved(name: &str) -> PackObservedTool {
 
 /// A description past the screen's 16384-byte text bound.
 fn oversized(name: &str) -> PackObservedTool {
-    tool(name, &"a".repeat(16_385), "Maximum number of rows to return")
+    tool(
+        name,
+        &"a".repeat(16_385),
+        "Maximum number of rows to return",
+    )
 }
 
 fn each(vault: &Vault, tools: &[PackObservedTool]) -> ConnectorToolScreen {
@@ -109,7 +113,10 @@ fn a_skipped_tool_names_every_rule_it_trips_and_its_digest() {
     assert_eq!(skip.tool, "docs_send");
     assert_eq!(
         skip.rules,
-        rules(&[ScreenRule::HiddenInstructions, ScreenRule::ParameterInjection])
+        rules(&[
+            ScreenRule::HiddenInstructions,
+            ScreenRule::ParameterInjection
+        ])
     );
     // The first-reason answer is unchanged: the description is read first.
     assert_eq!(skip.reason, "hidden instructions");
@@ -133,7 +140,10 @@ fn the_owner_accepting_at_the_seen_digest_admits_the_tool() {
     assert_eq!(accepted.tool_digest, seen);
     assert_eq!(
         accepted.rules,
-        rules(&[ScreenRule::HiddenInstructions, ScreenRule::ParameterInjection])
+        rules(&[
+            ScreenRule::HiddenInstructions,
+            ScreenRule::ParameterInjection
+        ])
     );
     assert!(!accepted.public_secret_shape());
 }
@@ -145,7 +155,10 @@ fn an_acceptance_at_another_digest_is_refused() {
     let refused = screen
         .accept_owner("docs_send", &listed_tool_digest(&clean("docs_send")))
         .expect_err("the owner saw another tool");
-    assert!(refused.contains("changed since the owner saw it"), "{refused}");
+    assert!(
+        refused.contains("changed since the owner saw it"),
+        "{refused}"
+    );
     assert!(!screen.admits("docs_send"));
 }
 

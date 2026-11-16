@@ -5,9 +5,9 @@ use super::slate_revision::SlateRevisionCause;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::skill_hub::pack_catalog::OwnerAcceptedScreen;
 use crate::store::Store;
 use crate::{EntityId, Vault};
-use crate::skill_hub::pack_catalog::OwnerAcceptedScreen;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
