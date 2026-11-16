@@ -9,7 +9,7 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
-use crate::batch::apply_ops;
+use crate::batch::apply_ops_beside_authority_rows;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -50,6 +50,10 @@ struct PreparedAuthorityLogRows {
     /// the batch door reads the rows back.
     overlays: Vec<super::overlay_rows::PreparedOverlay>,
     pending: Option<super::history_admission::PendingAuthorityHistory>,
+    /// Every row the batch carries: each row's store door reads the fold
+    /// beside them, as the batch's preflight did (owner-reserve delta
+    /// review F2).
+    batch: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 }
 
 impl PreparedAuthorityLogRows {
@@ -65,6 +69,7 @@ impl PreparedAuthorityLogRows {
             ops,
             overlays,
             pending,
+            batch,
         } = self;
         if ops.is_empty() {
             return Ok(super::history_admission::AuthorityPut::Stored(ids));
@@ -72,7 +77,7 @@ impl PreparedAuthorityLogRows {
         for overlay in &overlays {
             super::overlay_rows::put_overlay_in_txn(&vault.store, wtxn, overlay)?;
         }
-        apply_ops(
+        apply_ops_beside_authority_rows(
             &vault.store,
             &vault.config,
             &vault.analyzer,
@@ -83,6 +88,12 @@ impl PreparedAuthorityLogRows {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
+            &|| {
+                Ok(batch
+                    .iter()
+                    .map(|(hash, entry)| (*hash, FoldRow::Open(entry.clone())))
+                    .collect())
+            },
         )?;
         if let Some(pending) = pending {
             return Ok(super::history_admission::AuthorityPut::Pending(pending));
@@ -291,6 +302,7 @@ impl Vault {
                 ops,
                 overlays,
                 pending: None,
+                batch,
             });
         }
         // A batch of granting rows, each of whose fold past an adopted image
@@ -325,6 +337,7 @@ impl Vault {
             ops,
             overlays,
             pending,
+            batch,
         })
     }
 
