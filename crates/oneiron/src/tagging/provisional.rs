@@ -5,7 +5,9 @@
 //! card 3 = A). It is a row of `vault_meta`, never an entity row, so sync
 //! never carries it and another device of the vault never sees it. Its name
 //! is indexed beside it the way the engine's identity index keys a name, so
-//! the next lookup of the same key finds it instead of minting a twin. The
+//! the next lookup of the same key finds it instead of minting a twin. A
+//! role phrase's (`my manager`) is its possessor's alone: only that
+//! speaker's next lookup finds it (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER). The
 //! Dreamer's or an actor's confirmation makes the real, synced entity, under
 //! the same id, or names an existing entity in its place.
 
@@ -147,10 +149,11 @@ pub(super) fn lookup_in_txn(
     lookup_where_in_txn(store, txn, kind, mention, |_| true)
 }
 
-/// The provisional entities of `kind` whose name keys as `mention` does and
-/// whose possessor is `possessor`: a role phrase's own possessor's, or, for
-/// any other mention, ones minted with none (FIX
-/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
+/// The provisional entities of `kind` whose name keys as `mention` does, for
+/// a mention of `possessor`: a role phrase's possessor finds only its own
+/// (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER). With no possessor (a mention
+/// that is no role phrase, or a role phrase of no single author) every one,
+/// as [`lookup_in_txn`].
 pub(super) fn lookup_possessed_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -159,14 +162,16 @@ pub(super) fn lookup_possessed_in_txn(
     possessor: Option<EntityId>,
 ) -> Result<Vec<EntityId>> {
     lookup_where_in_txn(store, txn, kind, mention, |entity| {
-        entity.possessor == possessor
+        possessor.is_none() || entity.possessor == possessor
     })
 }
 
 /// Whether any of `entities` is a provisional person minted for a role
 /// phrase of a possessor other than `possessor`, when `possessor` names one:
 /// a role phrase's link never names another speaker's (FIX
-/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER). Real entities, and every
+/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER). A role phrase's row minted before
+/// possessors were kept is no one's own, so it counts as another's. Real
+/// entities, a provisional person minted for any other mention, and every
 /// provisional entity when `possessor` is `None`, name no other.
 pub(super) fn names_other_possessor_in_txn(
     store: &Store,
@@ -180,7 +185,10 @@ pub(super) fn names_other_possessor_in_txn(
     for id in entities {
         if PROVISIONAL
             .get(store, txn, id)?
-            .is_some_and(|entity| entity.possessor != possessor)
+            .is_some_and(|entity| match entity.possessor {
+                Some(own) => Some(own) != possessor,
+                None => super::role::role_word(entity.kind, &entity.name).is_some(),
+            })
         {
             return Ok(true);
         }

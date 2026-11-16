@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::edge::EdgeActorClass;
-use oneiron::memory::extraction::{EncoderOutput, NerSpan};
+use oneiron::memory::extraction::{CorefLink, EncoderOutput, NerSpan};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
@@ -286,4 +286,78 @@ fn answering_one_speakers_manager_leaves_the_others_mention() {
         "Yumi's \"my manager\" is not the owner's manager: {after:?}"
     );
     minted(&vault, &after, "Yumi");
+}
+
+/// "Bob, my manager, called.": the tagger links "my manager" to "Bob", an
+/// ordinary name the key misses, so the role phrase takes Bob's link, as on
+/// main. Only another speaker's role person is never inherited (FIX
+/// LINKER-ROLE-PROVISIONAL-PER-SPEAKER, Opus second review P1).
+#[test]
+fn a_role_phrase_takes_its_antecedents_ordinary_name() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, _owner) = open_with_owner(&dir);
+    let xavier = person(&vault, "Xavier Ito");
+    let text = "Bob, my manager, called.";
+    let span = |name: &str| {
+        let start = text.find(name).expect("the name is in the text");
+        NerSpan {
+            message: 0,
+            start,
+            end: start + name.len(),
+            label: "PERSON".to_owned(),
+            confidence: 1.0,
+        }
+    };
+    let witnessed = WitnessTurn {
+        conversation_ref: ROOM.into(),
+        turn_ref: Some(FIRST_TURN.to_owned()),
+        thread_audience: None,
+        occurred_at: now_seconds(),
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "text".into(),
+            content: text.into(),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        assertions: WitnessAssertions::default(),
+    };
+    let tags = EncoderOutput {
+        spans: vec![span("Bob"), span(ROLE_PHRASE)],
+        links: vec![CorefLink {
+            span: 1,
+            antecedent: 0,
+            confidence: Some(0.9),
+        }],
+        vad: None,
+        context_links: Vec::new(),
+        speaker_links: Vec::new(),
+        stack_sha16: None,
+        mood_parts: Vec::new(),
+    };
+    let (_, outcome) = vault
+        .memory(xavier, EdgeActorClass::Human)
+        .witness_with_held_tags(&witnessed, &tags)
+        .expect("witness with held tags");
+    assert!(
+        matches!(outcome, HeldTagsOutcome::Completed(_)),
+        "FIXTURE: the held tags are saved in the witness write: {outcome:?}"
+    );
+    let turn = EntityId::from_hex(FIRST_TURN).expect("turn id");
+    let saved = vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn has saved tags");
+    assert_eq!(saved.mentions.len(), 2, "FIXTURE: two mentions");
+    let bob = minted(&vault, &saved.mentions[0].link, "Bob");
+    assert_eq!(
+        saved.mentions[1].link.entities(),
+        [bob].as_slice(),
+        "\"my manager\" takes Bob's link: {:?}",
+        saved.mentions[1].link
+    );
 }

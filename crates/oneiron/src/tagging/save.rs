@@ -23,8 +23,9 @@
 //! labels as a reference and not as a name, takes its antecedent's link, so a pronoun
 //! that happens to spell someone's name is never linked to them. A
 //! coreferent name the key misses takes its antecedent's link and never
-//! mints; one whose own name keys elsewhere keeps its own and is merge
-//! evidence. The mood lands on the turn. The save writes no claim, no edge
+//! mints, unless it is a role phrase whose antecedent names another
+//! speaker's role person; one whose own name keys elsewhere keeps its own
+//! and is merge evidence. The mood lands on the turn. The save writes no claim, no edge
 //! and no merge.
 //!
 //! A span's antecedent may sit outside the turn's spans. A context link
