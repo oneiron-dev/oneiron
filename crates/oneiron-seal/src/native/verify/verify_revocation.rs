@@ -16,14 +16,21 @@ fn time_secs(t: x509_cert::time::Time) -> u64 {
 }
 
 /// Freshness window shared by CRL and OCSP evidence (§7.5 step 3): issued
-/// at or before the applicable time, and a present nextUpdate not in the
-/// past. Also used by the seal-side CRL fetcher.
+/// at or before the applicable time, and a nextUpdate that is present and
+/// not in the past. Evidence without nextUpdate is never fresh: Oneiron sets
+/// no maximum freshness, so ETSI EN 319 102-1 V1.4.1 §5.2.5.4 step 1 finds
+/// its freshness failed, as for stale evidence (FIX
+/// SEAL-REVOCATION-NO-NEXT-UPDATE-MAX-FRESHNESS). The host's own check
+/// refuses it too (organ-host seal/evidence.rs). The seal-side CRL and OCSP
+/// fetchers use this check, so the organ never embeds such evidence: it
+/// falls to the next source, or the material degrades to B-T (FIX
+/// SEAL-EVIDENCE-NO-NEXTUPDATE).
 pub(crate) fn evidence_fresh(
     this_update: x509_cert::time::Time,
     next_update: Option<x509_cert::time::Time>,
     at_unix: u64,
 ) -> bool {
-    time_secs(this_update) <= at_unix && next_update.is_none_or(|n| at_unix <= time_secs(n))
+    time_secs(this_update) <= at_unix && next_update.is_some_and(|n| at_unix <= time_secs(n))
 }
 
 /// Certificates whose subject is `issuer`, embedded DSS certs first, then
@@ -432,8 +439,8 @@ pub(crate) enum EvidenceRejection {
     /// failure.
     Unverifiable,
     /// Genuine but not usable here: stale or future-dated at the applicable
-    /// time, a delegate responder outside its validity, or a delta or
-    /// IDP-scoped CRL.
+    /// time, without nextUpdate, a delegate responder outside its validity,
+    /// or a delta or IDP-scoped CRL.
     Unusable,
     /// Genuine, and says a validation-set certificate is revoked.
     Revoked,
