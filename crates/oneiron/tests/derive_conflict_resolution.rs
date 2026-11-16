@@ -9,6 +9,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 #[path = "extraction_verdict/support.rs"]
+#[allow(dead_code)]
 mod support;
 
 use oneiron::claim::{
@@ -1256,6 +1257,9 @@ fn a_granted_replacement_closes_the_open_conflict_that_named_its_head() -> TestR
         "the marker is closed"
     );
 
+    // The correction close wins before the first-try close; the latter sees
+    // its standing answer and must not write a second row.
+    assert_eq!(standing_closes(&vault, subject, marker)?.len(), 1);
     let mut answered = false;
     for id in vault.claims_for_subject(&subject)? {
         let Some(body) = vault.get_claim(&id)? else {
@@ -1299,6 +1303,437 @@ fn a_granted_replacement_closes_the_open_conflict_that_named_its_head() -> TestR
     assert!(
         answered,
         "a standing conflict.resolved names the marker and the replacement"
+    );
+    Ok(())
+}
+
+/// Every close row on the subject, including rows held or retracted.
+fn close_rows(vault: &Vault, subject: EntityId) -> TestResult<Vec<(EntityId, ClaimBody)>> {
+    let mut closes = Vec::new();
+    for id in vault.claims_for_subject(&subject)? {
+        if let Some(body) = vault.get_claim(&id)?
+            && body.predicate == "core.conflict.resolved"
+        {
+            closes.push((id, body));
+        }
+    }
+    Ok(closes)
+}
+
+/// The standing close rows that name this marker, with no tied-row ordering.
+fn standing_closes(
+    vault: &Vault,
+    subject: EntityId,
+    marker: EntityId,
+) -> TestResult<Vec<(EntityId, ClaimBody)>> {
+    let named = RmpValue::Binary(marker.as_bytes().to_vec());
+    Ok(close_rows(vault, subject)?
+        .into_iter()
+        .filter(|(_, body)| {
+            body.lifecycle == ClaimLifecycleStatus::Active
+                && matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                )
+                && !body.stale
+                && map_at(&body.value, "open_marker") == Some(&named)
+        })
+        .collect())
+}
+
+/// The output ids in a resolution's receipt, as a set.
+fn resolution_rows(item: &Value) -> TestResult<std::collections::BTreeSet<EntityId>> {
+    item["rows"]
+        .as_array()
+        .ok_or("the rows are an array")?
+        .iter()
+        .map(|row| -> TestResult<EntityId> {
+            EntityId::from_hex(row.as_str().ok_or("the row is an id")?).map_err(Into::into)
+        })
+        .collect()
+}
+
+/// Parks exactly the named resolution fixture's set in its first batch.
+fn park_resolution_set(
+    vault: &Vault,
+    attempt: AttemptId,
+    subject: EntityId,
+    members: Vec<Value>,
+    heads: Vec<Value>,
+) -> TestResult<EntityId> {
+    let first = commit_dreamer(
+        vault,
+        Some(attempt),
+        json!({"items": [conflict_spec("open", members, heads)], "sources": []}),
+    )?;
+    assert_eq!(first["items"][0]["landed"], true, "{first}");
+    let marker = EntityId::from_hex(first["items"][0]["rows"][0].as_str().ok_or("the marker")?)?;
+    let open = open_for(vault, subject)?;
+    assert_eq!(open.len(), 1, "the first batch parks one set");
+    assert_eq!(open[0].marker, marker);
+    Ok(marker)
+}
+
+/// Pins the one standing close of `marker`: its value, its subject and axes,
+/// its cited evidence and its derive provenance. `None` is the correction's
+/// shape (one replacement id); `Some` is the first-try answer's shape (the
+/// output array and the label). A wrong marker, a missing or extra output, a
+/// wrong label or lost evidence fails here even when the marker left the page.
+fn assert_native_close(
+    vault: &Vault,
+    subject: EntityId,
+    marker: EntityId,
+    item: &Value,
+    retried: Option<&str>,
+    turns: &[(String, Value)],
+) -> TestResult<EntityId> {
+    assert_eq!(item["landed"], true, "{item}");
+    assert_eq!(item["approval"], json!("auto"), "{item}");
+    assert!(
+        open_for(vault, subject)?.is_empty(),
+        "the marker no longer lists as open"
+    );
+    let closes = standing_closes(vault, subject, marker)?;
+    assert_eq!(
+        closes.len(),
+        1,
+        "exactly one standing answer names the marker"
+    );
+    let (id, close) = &closes[0];
+    let marker_body = vault
+        .get_claim(&marker)?
+        .ok_or("the marker remains as audit")?;
+    assert_eq!(marker_body.predicate, "core.conflict.open");
+    assert_eq!(marker_body.lifecycle, ClaimLifecycleStatus::Active);
+    let outputs = resolution_rows(item)?;
+    let superseded_by = match retried {
+        Some(_) => {
+            let resolution = map_at(&close.value, "resolution").ok_or("the resolution")?;
+            let ids = map_at(resolution, "superseded_by")
+                .and_then(RmpValue::as_array)
+                .ok_or("a first-try close records an output array")?;
+            let expected: std::collections::BTreeSet<Vec<u8>> = outputs
+                .iter()
+                .map(|output| output.as_bytes().to_vec())
+                .collect();
+            let actual: std::collections::BTreeSet<Vec<u8>> = ids
+                .iter()
+                .map(|value| -> TestResult<Vec<u8>> {
+                    match value {
+                        RmpValue::Binary(bytes) => Ok(bytes.clone()),
+                        _ => Err("an output is not a binary id".into()),
+                    }
+                })
+                .collect::<TestResult<_>>()?;
+            assert_eq!(actual, expected);
+            assert_eq!(ids.len(), outputs.len(), "no repeated output id");
+            RmpValue::Array(ids.clone())
+        }
+        None => {
+            assert_eq!(outputs.len(), 1, "a correction names one replacement");
+            RmpValue::Binary(outputs.first().ok_or("one output")?.as_bytes().to_vec())
+        }
+    };
+    let mut resolution = vec![(RmpValue::from("superseded_by"), superseded_by)];
+    if let Some(label) = retried {
+        resolution.push((RmpValue::from("retried"), RmpValue::from(label)));
+    }
+    let expected_value = RmpValue::Map(vec![
+        (
+            RmpValue::from("open_marker"),
+            RmpValue::Binary(marker.as_bytes().to_vec()),
+        ),
+        (RmpValue::from("resolution"), RmpValue::Map(resolution)),
+    ]);
+    assert_eq!(
+        close.value, expected_value,
+        "native's exact nested value shape"
+    );
+    // The close stands on the marker's own subject and axes. The builder's
+    // other fields are native's shared code and are not pinned here.
+    assert_eq!(close.subject, marker_body.subject);
+    assert_eq!(close.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(close.world, marker_body.world);
+    assert_eq!(close.rel, marker_body.rel);
+    assert_eq!(close.scope_project, marker_body.scope_project);
+    let evidence = close.evidence.as_ref().ok_or("the close cites evidence")?;
+    let envelope = oneiron::dreamer_consolidation::decode_consolidation_evidence(
+        map_at(evidence, "candidate_evidence").ok_or("candidate evidence")?,
+    )?
+    .ok_or("native's consolidation envelope")?;
+    let expected_refs: std::collections::BTreeSet<EntityId> = turns
+        .iter()
+        .map(|(turn, _)| EntityId::from_hex(turn))
+        .collect::<Result<_, _>>()?;
+    let cited: std::collections::BTreeSet<EntityId> = envelope.refs.iter().copied().collect();
+    assert_eq!(
+        cited, expected_refs,
+        "the close cites all outputs' TURN evidence"
+    );
+    assert_eq!(
+        envelope.refs.len(),
+        expected_refs.len(),
+        "no repeated evidence ref"
+    );
+    let mut output_refs = std::collections::BTreeSet::new();
+    for output in outputs {
+        let body = vault.get_claim(&output)?.ok_or("the output")?;
+        let evidence = body.evidence.as_ref().ok_or("the output evidence")?;
+        let envelope = oneiron::dreamer_consolidation::decode_consolidation_evidence(
+            map_at(evidence, "candidate_evidence").ok_or("the output candidate evidence")?,
+        )?
+        .ok_or("the output envelope")?;
+        output_refs.extend(envelope.refs);
+        let provenance = map_at(evidence, "provenance").ok_or("output provenance")?;
+        assert!(map_at(provenance, "answers_open_conflict").is_none());
+    }
+    assert_eq!(output_refs, expected_refs);
+    let provenance = map_at(evidence, "provenance").ok_or("close provenance")?;
+    assert_eq!(
+        map_at(provenance, "surface").and_then(RmpValue::as_str),
+        Some("vault.derive")
+    );
+    assert_eq!(
+        map_at(provenance, "item").and_then(RmpValue::as_str),
+        Some("resolve")
+    );
+    assert_eq!(
+        map_at(provenance, "run").and_then(RmpValue::as_str),
+        Some("run")
+    );
+    assert!(map_at(provenance, "job_id").is_none());
+    Ok(*id)
+}
+
+/// The single-value skip fixture: without the close the parked marker would
+/// remain open. The correction wins first, so native writes no retried label.
+#[test]
+fn a_resolution_closes_the_marker_its_first_try_left_by_skip() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let ((vault, attempt_id, turns, subject), head) = black_against_green(&dir, true)?;
+    seed_extraction_single_valued_predicates(&vault, &[FOOD])?;
+    assert_eq!(turns.len(), 1);
+    let operand = operand_for(&subject.to_hex(), json!("black coffee"), &turns[0]);
+    let black = member(operand, 0.7, vec![]);
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let marker = park_resolution_set(&vault, attempt_id, subject, vec![black.clone()], vec![pin])?;
+    // The head's pin is read again after the first batch, as the existing
+    // two-batch test reads it.
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [skip_spec("resolve", vec![black], vec![pin])], "sources": []}),
+    )?;
+    assert_native_close(&vault, subject, marker, &answer["items"][0], None, &turns)?;
+    Ok(())
+}
+
+/// The no-head sibling merge fixture: without Part 4 there is no granted
+/// replacement to trigger a correction close, so its marker would stay open.
+#[test]
+fn a_resolution_closes_the_marker_its_first_try_left_by_merge() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let (vault, attempt_id, turns, subject) = sibling_attempt(&dir)?;
+    assert_eq!(turns.len(), 2);
+    let pair = sibling_pair(&subject, &turns);
+    let marker = park_resolution_set(&vault, attempt_id, subject, pair.clone(), vec![])?;
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [merge_spec("resolve", pair, vec![], 1, json!("oolong tea"))], "sources": []}),
+    )?;
+    assert_native_close(
+        &vault,
+        subject,
+        marker,
+        &answer["items"][0],
+        Some("merge"),
+        &turns,
+    )?;
+    Ok(())
+}
+
+/// The sibling accumulate fixture: without Part 4, or if it kept only one
+/// output's evidence/id, the open-page or native-field assertions fail.
+#[test]
+fn a_resolution_closes_the_marker_its_first_try_left_by_accumulate() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let (vault, attempt_id, turns, subject) = sibling_attempt(&dir)?;
+    assert_eq!(turns.len(), 2);
+    let pair = sibling_pair(&subject, &turns);
+    let marker = park_resolution_set(&vault, attempt_id, subject, pair.clone(), vec![])?;
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [accumulate_spec("resolve", pair, vec![])], "sources": []}),
+    )?;
+    assert_eq!(resolution_rows(&answer["items"][0])?.len(), 2);
+    assert_native_close(
+        &vault,
+        subject,
+        marker,
+        &answer["items"][0],
+        Some("accumulate"),
+        &turns,
+    )?;
+    Ok(())
+}
+
+/// All three unchanged fixtures without a parked first batch: an unguarded
+/// new close would invent a conflict.resolved row where no marker exists.
+#[test]
+fn a_first_resolution_writes_no_close() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let ((vault, attempt_id, turns, subject), head) = black_against_green(&dir, true)?;
+    seed_extraction_single_valued_predicates(&vault, &[FOOD])?;
+    let operand = operand_for(&subject.to_hex(), json!("black coffee"), &turns[0]);
+    let black = member(operand, 0.7, vec![]);
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [skip_spec("resolve", vec![black], vec![pin])], "sources": []}),
+    )?;
+    assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+    assert!(close_rows(&vault, subject)?.is_empty());
+
+    for accumulate in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let (vault, attempt_id, turns, subject) = sibling_attempt(&dir)?;
+        let pair = sibling_pair(&subject, &turns);
+        let spec = if accumulate {
+            accumulate_spec("resolve", pair, vec![])
+        } else {
+            merge_spec("resolve", pair, vec![], 1, json!("oolong tea"))
+        };
+        let answer = commit_dreamer(
+            &vault,
+            Some(attempt_id),
+            json!({"items": [spec], "sources": []}),
+        )?;
+        assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+        assert!(close_rows(&vault, subject)?.is_empty());
+    }
+    Ok(())
+}
+
+/// The UserStated-head merge fixture with its marker parked first: treating
+/// a merely landed Proposed replacement as standing would wrongly close it.
+#[test]
+fn a_held_replacement_leaves_its_marker_open() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let ((vault, attempt_id, turns, subject), head) = black_against_green(&dir, false)?;
+    assert_eq!(turns.len(), 1);
+    let operand = operand_for(&subject.to_hex(), json!("black coffee"), &turns[0]);
+    let black = member(operand, 0.0, vec![]);
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let marker = park_resolution_set(&vault, attempt_id, subject, vec![black.clone()], vec![pin])?;
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [merge_spec("resolve", vec![black], vec![pin], 0, json!("oolong tea"))], "sources": []}),
+    )?;
+    assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+    assert_eq!(
+        answer["items"][0]["approval"],
+        json!("proposed"),
+        "{answer}"
+    );
+    let open = open_for(&vault, subject)?;
+    assert!(open.iter().any(|conflict| conflict.marker == marker));
+    assert!(
+        close_rows(&vault, subject)?.is_empty(),
+        "a held output writes no close row"
+    );
+    assert_eq!(claim_lifecycle(&vault, head)?, Some("active".to_owned()));
+    Ok(())
+}
+
+/// The observed-head revert fixture, then the no-head sibling merge fixture:
+/// if either close shape failed to name the outputs for native's inverse,
+/// its row would remain standing and the owner's marker would not reopen.
+#[test]
+fn the_committer_s_revert_reopens_a_resolutions_first_try_marker() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let words = ["owen chooses black coffee"];
+    let (vault, attempt_id, turns, subject) = extraction_attempt_with_turns(&dir, "owen", &words)?;
+    let head = land_sourced_head(&vault, subject, "green tea", ClaimSource::Observed)?;
+    let operand = operand_for(&subject.to_hex(), json!("black coffee"), &turns[0]);
+    let black = member(operand, 0.0, vec![]);
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let marker = park_resolution_set(&vault, attempt_id, subject, vec![black.clone()], vec![pin])?;
+    let pin = json!({"claim": head.to_hex(), "version": served_version(&vault, head)?});
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [merge_spec("resolve", vec![black], vec![pin], 0, json!("oolong tea"))], "sources": []}),
+    )?;
+    let close = assert_native_close(&vault, subject, marker, &answer["items"][0], None, &turns)?;
+    assert_reverted_close(&vault, subject, marker, close, &answer)?;
+    assert_eq!(claim_lifecycle(&vault, head)?, Some("active".to_owned()));
+    assert_eq!(
+        vault.get_claim(&head)?.ok_or("the restored head")?.value,
+        RmpValue::from("green tea")
+    );
+
+    let dir = tempfile::tempdir()?;
+    let (vault, attempt_id, turns, subject) = sibling_attempt(&dir)?;
+    let pair = sibling_pair(&subject, &turns);
+    let marker = park_resolution_set(&vault, attempt_id, subject, pair.clone(), vec![])?;
+    let answer = commit_dreamer(
+        &vault,
+        Some(attempt_id),
+        json!({"items": [merge_spec("resolve", pair, vec![], 1, json!("oolong tea"))], "sources": []}),
+    )?;
+    let close = assert_native_close(
+        &vault,
+        subject,
+        marker,
+        &answer["items"][0],
+        Some("merge"),
+        &turns,
+    )?;
+    assert_reverted_close(&vault, subject, marker, close, &answer)?;
+    Ok(())
+}
+
+/// Revert the output rows through the existing door, without touching the
+/// unrecorded close explicitly. Owner and Dreamer intentionally see different pages.
+fn assert_reverted_close(
+    vault: &Vault,
+    subject: EntityId,
+    marker: EntityId,
+    close: EntityId,
+    answer: &Value,
+) -> TestResult<()> {
+    let batch = EntityId::from_hex(answer["batch"].as_str().ok_or("the batch")?)?;
+    let reverted = revert_as_owner(vault, batch)?;
+    assert_eq!(reverted["reverted"], json!(["resolve"]));
+    assert_eq!(reverted["left"], json!([]));
+    for output in resolution_rows(&answer["items"][0])? {
+        assert_ne!(
+            claim_lifecycle(vault, output)?,
+            Some("active".to_owned()),
+            "the output no longer stands"
+        );
+    }
+    assert_eq!(claim_lifecycle(vault, close)?, Some("retracted".to_owned()));
+    assert!(standing_closes(vault, subject, marker)?.is_empty());
+    assert_eq!(claim_lifecycle(vault, marker)?, Some("active".to_owned()));
+    let reviewer = oneiron::test_doors::steward::owner(vault)?;
+    let memory = vault.memory(vault.ensure_embedded_owner_actor()?, EdgeActorClass::Human);
+    let owner_open = memory.open_conflicts(Some(&reviewer), Some(subject), usize::MAX)?;
+    assert_eq!(owner_open.len(), 1);
+    assert_eq!(owner_open[0].marker, marker);
+    assert!(
+        owner_open[0].reverted,
+        "the owner gets the reverted conflict back"
+    );
+    assert!(
+        open_for(vault, subject)?.is_empty(),
+        "the Dreamer does not get a reverted marker again"
     );
     Ok(())
 }
