@@ -424,3 +424,9 @@ fn require_active_person_in_txn(
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::agent_health::call_receipt_accepts_masked;
 pub(crate) use self::curator::dreamer_curator_rubric_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    coach_environment::grant_terms_digest_for_test, fold_suggestions::suggestion_state_for_test,
+    room_upkeep::source_state_for_test,
+};

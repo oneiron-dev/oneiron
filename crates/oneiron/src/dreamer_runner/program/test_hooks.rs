@@ -287,3 +287,6 @@ pub(crate) fn arming_row_bytes(
     serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
         .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
 }
+
+// The K-proof door's reach into the step digests (PLAN-UC-04 stage 7).
+pub(crate) use super::run::{outbound_result_digest_for_test, step_id_for_test};
