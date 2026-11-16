@@ -617,9 +617,7 @@ impl SyncConnection {
         // peer session reads none (FIX 4748).
         if peer.is_none() && client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
         {
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs());
+            let now_secs = crate::unix_seconds_now();
             client
                 .fetch_current_index_by_side(now_secs)
                 .await
@@ -629,6 +627,17 @@ impl SyncConnection {
                         format!("Fetch residence index failed: {fault}"),
                     )
                 })?;
+        }
+
+        // A followed world's window asked as a follow waits for the home's
+        // answer before the queue replays: a granted window's queued writes
+        // go now, a refused one's stay owed, and the socket stays open. A home
+        // that answers no follow leaves those windows' writes queued.
+        let asked = client.unanswered_follow_requests();
+        if peer.is_none() && !asked.is_empty() {
+            let answered = |client: &SyncClient, key: &WindowKey| client.follow_answered(key);
+            self.pump_until_each(&mut write, &mut read, client, event_tx, &asked, answered)
+                .await?;
         }
 
         // Phase 3: Drain offline queue
@@ -653,29 +662,14 @@ impl SyncConnection {
         }
         let full_resync_markers = self.full_resync_markers()?;
         // FIX 20202: an opened-item session re-bootstraps from the server
-        // each marked window this device promoted and the home may read, over
-        // its promoted exchange, once the queue is replayed. Any other marked
-        // window still needs sync-all.
+        // the marked windows it may recover over this connection
+        // (`opened_resync_markers`), once the queue is replayed.
         let (full_resync_markers, promoted_markers) =
             if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
-                for marker in &full_resync_markers {
-                    let recoverable = match WindowKey::try_new(marker.window_key.as_str()) {
-                        Some(key) => {
-                            client
-                                .opened_window_promoted(&key)
-                                .map_err(SessionFault::local)?
-                                && client.home_may_promote(&key)
-                                && client.home_may_request(&key)
-                        }
-                        None => false,
-                    };
-                    if !recoverable {
-                        return Err(SessionFault::local(
-                            "opened-item full-resync requires explicit sync-all recovery",
-                        ));
-                    }
-                }
-                (Vec::new(), full_resync_markers)
+                (
+                    Vec::new(),
+                    Self::opened_resync_markers(client, full_resync_markers)?,
+                )
             } else {
                 (full_resync_markers, Vec::new())
             };
@@ -748,6 +742,27 @@ impl SyncConnection {
             let _ = event_tx.send(SyncEvent::Error(format!(
                 "Failed to record last sync timestamp: {e}"
             )));
+        }
+
+        // L7-47: the first full round under sync all writes this machine's
+        // full-copy mark. A home session only, never a peer's (a peer serves
+        // state-only copies, never a full copy), and never on a federation
+        // lane. A mark that does not land never fails the session.
+        if client.peer_session.is_none()
+            && client.config.federation_peer.is_none()
+            && client.config.residence_mode == crate::sync::SyncResidenceMode::All
+        {
+            let vault = Arc::clone(self.manager.vault());
+            match tokio::task::spawn_blocking(move || vault.declare_full_copy(true)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the full-copy mark was not written"
+                ),
+                Err(error) => {
+                    tracing::warn!("the full-copy mark write did not finish: {error}");
+                }
+            }
         }
 
         Ok(ws_stream)

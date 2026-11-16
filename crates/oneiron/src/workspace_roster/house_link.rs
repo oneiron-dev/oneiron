@@ -145,19 +145,22 @@ fn require_undeleted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> 
 
 /// The refusal of a set or clear by someone the role table does not let
 /// assign that role.
-const ROLE_ASSIGNER_REFUSAL: &str = "a house's role is set or cleared only by whoever may assign that role: org:assign-role, or an Owner for the deputy or owner role";
+const ROLE_ASSIGNER_REFUSAL: &str = "a house's role is set or cleared only by whoever may assign that role: org:assign-role, or an Owner for the steward, deputy or owner role";
 
 /// What the role table asks of whoever assigns `role` (ARCH-0043), as the
-/// membership acts ask it: a member, steward or admin role is the
-/// `org:assign-role` power's (`change_shared_member_role`), the deputy and
-/// owner roles the org root's, an Owner's. An assigner never grants a power
-/// it lacks, so an Admin assigns up to Admin; a deputy is the Owner's
-/// delegate (ARCH-0082 #roles), so only an Owner seats a house there
-/// (HOUSE-UNBIND-AUTHORITY = A), and only an Owner moves or clears it.
+/// membership acts ask it: a member or admin role is the `org:assign-role`
+/// power's (`change_shared_member_role`), the steward, deputy and owner
+/// roles the org root's, an Owner's. An assigner never grants a power it
+/// lacks, so an Admin assigns up to Admin; Steward is a named grant preset
+/// that only the vault's owner gives (ARCH-0043: an Admin "cannot self-grant
+/// blanket access"; lead 10 Nov 06:5x); a deputy is the Owner's delegate
+/// (ARCH-0082 #roles). So only an Owner seats a house at steward or deputy
+/// (HOUSE-UNBIND-AUTHORITY = A; HOUSE-ROLE-DEPUTY-AFTER-7071 = A, Engine
+/// 12 Nov 09:36), and only an Owner moves or clears it from there.
 fn assignment_write(role: FederationGrantRole) -> SharedVaultWrite {
     if matches!(
         role,
-        FederationGrantRole::Owner | FederationGrantRole::Deputy
+        FederationGrantRole::Owner | FederationGrantRole::Deputy | FederationGrantRole::Steward
     ) {
         SharedVaultWrite::OrgRoot
     } else {
@@ -653,9 +656,10 @@ pub(crate) fn erase_house_link_actor_in_txn(
 /// latest bind still open at `at` ([`open_links_at_in_txn`]). Nothing about a
 /// statement is stored for this, so an unbind never changes how a statement
 /// written before it reads. A statement's byline reads it at the statement's
-/// write time (FIX row SPEAKER-BYLINE-FOR-ORG). Times are recorded seconds: a
-/// statement written in the second of a bind or an unbind reads as after it.
-#[cfg_attr(not(oneiron_test_support), allow(dead_code))]
+/// write time (FIX row SPEAKER-BYLINE-FOR-ORG): `vault.rooms.messages` and
+/// `vault.rooms.trunk` read it for each turn's speaker. Times are recorded
+/// seconds: a statement written in the second of a bind or an unbind reads as
+/// after it.
 pub(crate) fn house_org_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

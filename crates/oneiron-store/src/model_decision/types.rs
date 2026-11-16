@@ -338,6 +338,10 @@ pub enum StopCause {
     /// The deadline cut work the call still wanted, or the caller took the answer early.
     Deadline,
     ProviderFailure,
+    /// The call's last read stopped at its provider's token cap before its answer
+    /// (ARCH-0076 #receipt): an unfinished reply is not an answer, so the call
+    /// holds none from that read.
+    TokenCap,
 }
 
 /// Whether more thinking (a stronger rung, or a required second measurement) ran,
@@ -351,7 +355,8 @@ pub enum Reasoning {
     /// It did not start: no time was left, no rung up to the ceiling could take it, or
     /// its admission was refused.
     Skipped(ReasoningCause),
-    /// It started, and the deadline came before its answer.
+    /// It started, and the deadline, or its read's token cap, came before its answer; the
+    /// stop cause says which.
     Cut(ReasoningCause),
 }
 

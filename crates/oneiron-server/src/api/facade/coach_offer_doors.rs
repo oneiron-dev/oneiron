@@ -115,6 +115,27 @@ pub(crate) async fn vault_coach_training_offers_trigger(
     .await
 }
 
+/// `vault.coach.training_offers.run`: one Coach offer pass run now on this
+/// host, for the owner or a holder of the maintenance-cadence class of
+/// `engine.controls`, checked in the writer that admits the request's own
+/// Coach attempt. The pass draws on the nightly pass's day budget. Its
+/// answer is ids and control metadata only, as `trigger`'s is: it lists
+/// none, and the owner reads the offers through `.result`.
+pub(crate) async fn vault_coach_training_offers_run(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: offer_doors::OfferPassRunRequest,
+) -> Listed<offer_doors::OfferPassRunAnswer> {
+    let answer = super::engine_control_doors::as_controller_answering(
+        server,
+        auth,
+        offer_doors::OFFER_PASS_RUN_VERB,
+        move |server, actor| crate::ai_host::run_training_offer_pass(server, actor, input),
+    )
+    .await;
+    (answer, Vec::new())
+}
+
 pub(crate) async fn vault_coach_training_offers_result(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

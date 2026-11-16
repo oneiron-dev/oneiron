@@ -30,7 +30,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
@@ -818,9 +818,7 @@ pub(crate) fn keep_screenshot(
     media_type: String,
     bytes: &[u8],
 ) -> MemoryResult<BlobVersionAppendOutcome> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let artifact = writer.put_blob_artifact(&BlobArtifactInput {
         id: None,
         name,
@@ -835,11 +833,7 @@ pub(crate) fn keep_screenshot(
 /// to the subgoal's `until_ms` (none when it has passed), or the request's
 /// own `deadline_ms`, and one call never past [`MAX_RECALL_DEADLINE_MS`].
 fn clock(request: &AiVerdictRequest) -> (Duration, u64) {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        });
+    let now_ms = oneiron_base::unix_millis_now();
     let asked = request.deadline_ms.unwrap_or(AI_VERDICT_DEADLINE_MS);
     let budget_ms = match request.until_ms {
         Some(until) => until

@@ -445,7 +445,7 @@ fn known_bad_removed_hash_secret_and_missing_policy_keep_card_reasons() -> Resul
     // A removed policy row cannot be interpreted as empty permission.
     vault.with_write_txn(|txn| {
         crate::batch::deindex_entity_for_test(
-            &vault.store,
+            &vault,
             txn,
             &crate::gate::default_policy_manifest_id()?,
         )?;

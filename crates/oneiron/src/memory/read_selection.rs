@@ -3,23 +3,10 @@ use super::{Memory, MemoryError, MemoryResult, RecallScope};
 use crate::EntityId;
 use crate::claim::world_access::WorldAuthoritySet;
 use crate::corpus::CorpusScope;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RecallWorlds {
-    All,
-    Base,
-    World {
-        world_ref: String,
-        include_base: bool,
-    },
-    Worlds {
-        world_refs: Vec<String>,
-        include_base: bool,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::read_selection::RecallWorlds;
 
 impl Memory<'_> {
     pub(super) fn selected_worlds(
@@ -93,11 +80,21 @@ impl Memory<'_> {
     /// project below it (FIX 7775). Selection only narrows; the caller's
     /// credential still decides what is read.
     pub(super) fn selected_projects(&self, scope: &RecallScope) -> MemoryResult<CorpusScope> {
-        if scope.project_refs.is_empty() {
+        self.projects_at_or_below(&scope.project_refs)
+    }
+
+    /// Each of `project_refs` with every project below it, the project
+    /// narrowing recall and the filtered claim reads share. Empty adds no
+    /// narrowing. A ref resolves as any entity ref does, so an anchor id
+    /// that names no row narrows to the claims stamped with it.
+    pub(super) fn projects_at_or_below(
+        &self,
+        project_refs: &[String],
+    ) -> MemoryResult<CorpusScope> {
+        if project_refs.is_empty() {
             return Ok(CorpusScope::All);
         }
-        let selected = scope
-            .project_refs
+        let selected = project_refs
             .iter()
             .map(|reference| self.resolve_ref(reference))
             .collect::<MemoryResult<Vec<_>>>()?;

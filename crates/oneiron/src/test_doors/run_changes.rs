@@ -1,6 +1,7 @@
 //! Doors for `tests/run_changes_journal_cost.rs` (the stored size of a run's
-//! change journal rows, `memory::run_review`) and `tests/run_revert_unsettled.rs`
-//! (a run's claim put that asks Auto). Compiled only under
+//! change journal rows, `memory::run_review`), `tests/run_revert_unsettled.rs`
+//! (a run's claim put that asks Auto) and `tests/run_changes_topology.rs` (a
+//! run's journal read with no owner). Compiled only under
 //! `--cfg oneiron_test_support`; never API.
 
 use crate::Result;
@@ -16,6 +17,16 @@ use crate::vault::Vault;
 #[doc(hidden)]
 pub fn journal_row_sizes(vault: &Vault, run: &str) -> Result<Vec<(usize, usize)>> {
     crate::memory::run_review::journal_row_sizes(vault, run)
+}
+
+/// The changes `run` wrote, each once and in write order, as
+/// `vault.runs.changes.get` lists them, read with no owner.
+///
+/// # Errors
+/// The store's.
+#[doc(hidden)]
+pub fn journal_changes(vault: &Vault, run: &str) -> Result<serde_json::Value> {
+    crate::memory::run_review::journal_changes(vault, run)
 }
 
 /// The run's claim put asking Auto of the gates, as a caller's live run asks

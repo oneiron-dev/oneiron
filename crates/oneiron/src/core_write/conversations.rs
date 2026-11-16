@@ -16,7 +16,9 @@ use crate::edge::EdgeActorClass;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::conversation_body::ConversationBody;
 use crate::{EntityId, Vault, WriteActor};
-use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron_contracts::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult,
+};
 
 impl Vault {
     /// Creates a conversation, held to `lane` (FIX 10781): an id a stored
@@ -316,12 +318,25 @@ impl Vault {
         if outside.get() {
             return Ok(None);
         }
-        committed?;
+        committed.map_err(turn_create_engine_error)?;
         Ok(Some(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
             normalized_body.into_owned(),
         )))
+    }
+}
+
+/// A turn create's engine refusal. A ChildOf or cycle constraint is the
+/// conversation's state, INVALID_STATE, as the DAG append door answers it
+/// (`conversation_dag::policy`'s `append_engine_error`) and as the route
+/// documents it (409); any other error keeps its own mapping.
+fn turn_create_engine_error(error: crate::error::Error) -> MemoryError {
+    match error.kind() {
+        crate::error::ErrorKind::ChildOfCardinality | crate::error::ErrorKind::CycleDetected => {
+            MemoryError::new(MEMORY_CODE_INVALID_STATE, error.to_string(), &[])
+        }
+        _ => error.into(),
     }
 }

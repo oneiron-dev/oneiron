@@ -172,15 +172,15 @@ impl FederationGrantScope {
     }
 }
 
-/// Role assigned by a federation grant.
+/// Role assigned by a federation grant. Roles have no order: each check
+/// names the roles it admits, and Steward is a named preset, never a rank
+/// (lead 10 Nov 06:5x).
 #[derive(
     Debug,
     Clone,
     Copy,
     PartialEq,
     Eq,
-    PartialOrd,
-    Ord,
     Hash,
     serde::Serialize,
     serde::Deserialize,
@@ -202,9 +202,10 @@ pub enum FederationGrantRole {
     /// and organise everything in this vault, but it can only suggest who
     /// joins or what role they get, and it can never give itself more access.
     ///
-    /// ARCH-0043's seventh role, between Admin and Member; a person or an
-    /// agent holds it. Its preset reads and derives across this vault root,
-    /// archives inside the grant and deletes in scope
+    /// ARCH-0043's seventh role, a named preset beside the others; a person
+    /// or an agent holds it, and only the vault's owner assigns it. Its
+    /// preset reads and derives across this vault root, archives inside the
+    /// grant and deletes in scope
     /// ([`super::grant_scope::membership_preset`]). It is never
     /// administrative ([`Self::is_admin`] is false), so it cannot add or
     /// remove members, assign roles, parent a delegate, widen any grant or
@@ -826,7 +827,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     }
     let legacy = schema_version == FEDERATION_GRANT_LEGACY_SCHEMA_VERSION;
     validate_body_keys(entries, schema_version)?;
-    if !legacy && optional_value(entries, "authority_scope").is_none() {
+    if !legacy && optional_value(entries, "authority_scope")?.is_none() {
         return Err(invalid_grant());
     }
 
@@ -841,17 +842,17 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         .and_then(FederationGrantPreset::parse)
         .ok_or_else(invalid_grant)?;
 
-    let expires_at = optional_value(entries, KEY_EXPIRES_AT)
+    let expires_at = optional_value(entries, KEY_EXPIRES_AT)?
         .map(|value| value.as_u64().ok_or_else(invalid_grant))
         .transpose()?;
-    let delegated_by = optional_value(entries, KEY_DELEGATED_BY)
+    let delegated_by = optional_value(entries, KEY_DELEGATED_BY)?
         .map(decode_canonical_entity_ref)
         .transpose()?;
-    let guest = optional_value(entries, KEY_GUEST)
+    let guest = optional_value(entries, KEY_GUEST)?
         .map(decode_guest_payload)
         .transpose()?;
     // Present only as `true`: a body states the mark or omits it.
-    let owner_agent = match optional_value(entries, KEY_OWNER_AGENT) {
+    let owner_agent = match optional_value(entries, KEY_OWNER_AGENT)? {
         None => false,
         Some(value) if value.as_bool() == Some(true) => true,
         Some(_) => return Err(invalid_grant()),

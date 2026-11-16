@@ -12,6 +12,9 @@ use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, openat, statat, unlinkat}
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 
+#[cfg(target_os = "macos")]
+mod extended_acl;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileIdentity {
     pub dev: u64,
@@ -124,11 +127,21 @@ pub struct SharedPath {
     pub directory: PathBuf,
     /// Whether it is the vault's own directory, writable by a group or other.
     pub vault_root: bool,
+    /// Whether an access-control list entry, not the mode bits, lets that
+    /// user in.
+    pub acl: bool,
 }
 
 impl std::fmt::Display for SharedPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.vault_root {
+        if self.acl {
+            write!(
+                f,
+                "another user could move entries in {}: an access-control list entry lets them; \
+                 remove it (ls -le lists the entries, chmod -a# <n> removes one, chmod -N all)",
+                self.directory.display()
+            )
+        } else if self.vault_root {
             write!(
                 f,
                 "another user could change entries in the vault {}; chmod go-w it",
@@ -161,8 +174,15 @@ pub fn refuse_shared_path(dir: &Path) -> Result<()> {
 /// as the kernel resolves it, through every link and `..`: each directory
 /// passed must be this user's or root's, with no group or other write unless
 /// its sticky bit keeps others to their own entries, and each link followed
-/// must be this user's or root's. Mode bits only: an access-control list
-/// granting another user more is not read.
+/// must be this user's or root's.
+///
+/// An access-control list counts too. On macOS each directory's extended
+/// list is read: an allow entry giving any group, or a user other than this
+/// one or root, the right to add, remove or rename an entry, to remove or
+/// rename the directory, or to rewrite its list or owner makes it shared,
+/// sticky or not; deny entries never count. On Linux a POSIX list's named
+/// entries take effect only through its mask, which the group mode bits show,
+/// so the mode check covers them. Elsewhere mode bits only.
 pub fn shared_path(dir: &Path) -> Result<Option<SharedPath>> {
     use std::ffi::OsString;
     use std::path::Component;
@@ -172,8 +192,11 @@ pub fn shared_path(dir: &Path) -> Result<Option<SharedPath>> {
         Ok(Some(SharedPath {
             directory: at.to_path_buf(),
             vault_root: false,
+            acl: false,
         }))
     };
+    #[cfg(target_os = "macos")]
+    let own = extended_acl::OwnPrincipals::of(euid)?;
     // Names still to resolve, the next one last; `None` is the root.
     let mut names: Vec<Option<OsString>> = Vec::new();
     let push = |names: &mut Vec<Option<OsString>>, path: &Path| {
@@ -211,6 +234,14 @@ pub fn shared_path(dir: &Path) -> Result<Option<SharedPath>> {
         if !(metadata.is_dir() && ours(&metadata) && shielded) {
             return shared(&next);
         }
+        #[cfg(target_os = "macos")]
+        if extended_acl::lets_another_user_change(&next, &own)? {
+            return Ok(Some(SharedPath {
+                directory: next,
+                vault_root: false,
+                acl: true,
+            }));
+        }
         at = next;
     }
     Ok(None)
@@ -232,6 +263,7 @@ pub fn shared_vault_root(root: &Path) -> Result<Option<SharedPath>> {
         (std::fs::metadata(root)?.mode() & 0o022 != 0).then(|| SharedPath {
             directory: root.to_path_buf(),
             vault_root: true,
+            acl: false,
         }),
     )
 }

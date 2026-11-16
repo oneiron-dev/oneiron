@@ -5,16 +5,22 @@
 mod artifact_backend;
 pub(crate) use artifact_backend::ArtifactBackendHost;
 mod clock;
-pub(crate) use self::clock::wall_clock_ms;
 pub use self::clock::{ManualClockFile, RuntimeClock};
+// The older name of the one millisecond read. ai_host/dreamer.rs and the
+// open stack that adds ai_host/dreamer/extraction_decisions.rs import it;
+// once that stack lands they import unix_millis_now and this line goes.
+pub(crate) use oneiron_base::unix_millis_now as wall_clock_ms;
 mod config;
 mod gpu;
 pub use gpu::{
-    GPU_LEASE_SECONDS, GPU_RENEW_SECONDS, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
+    GPU_LEASE_SECONDS, GPU_RENEW_SECONDS, GpuHealth, GpuLease, GpuPodHours, GpuRegistry,
+    GpuRegistryError,
 };
 mod gpu_pool;
 pub(crate) use gpu_pool::POD_PROBE_TIMEOUT;
-pub use gpu_pool::{GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPoolConfig};
+pub use gpu_pool::{
+    GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPodHoursConfig, GpuPool, GpuPoolConfig,
+};
 mod defaults;
 mod mode;
 mod routes;

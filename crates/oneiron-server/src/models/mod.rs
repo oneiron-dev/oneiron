@@ -1,8 +1,8 @@
 //! The one provider abstraction: `[models]` in, one backend per seat out.
 //!
 //! Every provider kind is reached over HTTP through the matching adapter
-//! crate (`oneiron-llm-openai` for OpenAI-compatible and local servers,
-//! `oneiron-llm-anthropic` for Anthropic-compatible ones). Each role's ladder
+//! module of `oneiron-llm` (`openai_compat` for OpenAI-compatible and local
+//! servers, `anthropic` for Anthropic-compatible ones). Each role's ladder
 //! becomes an `OfferLadder` behind one seat model id, so the engine pins a
 //! single identity while the ladder falls back across rungs.
 //!
@@ -24,8 +24,8 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::llm::{SingleRouteBackend, WorkerKind};
 use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
-use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
-use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
+use oneiron_llm::anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
+use oneiron_llm::openai_compat::{OpenAiCompatBackend, OpenAiCompatConfig};
 
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind, role_key};
 
@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod broker_rerank;
 mod broker_responses;
 mod cache_usage;
 mod catalog;
@@ -87,6 +88,12 @@ mod seat_model;
 mod seat_model_admission;
 mod served;
 mod siwc_responses;
+// SEAT-PARK-MODEL-STEP-PATH: the housekeeping tick's restore of a lapsed SIWC login.
+pub(crate) mod siwc_seat_login;
+// SEAT-PARK-MODEL-STEP-PATH: an SIWC offer's model seat and the refusals that name it,
+// for the test door only.
+#[cfg(oneiron_test_support)]
+pub(crate) use siwc_responses::{seat_refusal, siwc_offer_seat};
 pub(crate) mod soniox;
 mod source_admission;
 mod sse;
@@ -103,13 +110,14 @@ mod worker_host;
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
+pub(crate) use cooldown::{HEALTH_REST_MAX_SECS, HEALTH_REST_SECS, HealthRestSettings};
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::{MeshRoutes, withdraw_discovered};
 pub(crate) use host_budgets::ModelHostBudgets;
-pub use hosted_speech::{HostedCloner, VendorVoice};
+pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
 pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
@@ -119,6 +127,7 @@ pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
+pub use oneiron_speech::design::hosted::VendorVoice;
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
@@ -281,6 +290,9 @@ pub struct ModelRuntime {
     budgets: ModelHostBudgets,
     /// This server's Responses state, which its socket pools hold (FIX 9516).
     responses: ResponsesContext,
+    /// The configured SIWC logins the housekeeping tick restores a lapsed
+    /// seat of (SEAT-PARK-MODEL-STEP-PATH).
+    siwc_logins: Arc<siwc_seat_login::SiwcSeatLogins>,
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
@@ -476,28 +488,30 @@ fn build_provider(
     Ok(Some(backend))
 }
 
-/// The rerank client for `provider`'s reranker `models`.
+/// The rerank client for `provider`'s reranker `models`: over the
+/// provider's own HTTP client, or, for a `key_secret` key, over the
+/// credential broker at `site` with the key read at `keys` (L9-12), as the
+/// offer's T0 custody says.
 fn build_reranker(
     provider: &ProviderConfig,
     models: &[ModelRef],
+    site: Option<&Result<broker::BrokerSite, String>>,
+    keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
     anyhow::ensure!(
         provider.siwc.is_none(),
         "SIWC credentials serve Responses, not reranking"
     );
-    // The credential broker sends chat calls only. A rerank call sent without
-    // it would carry no key, while its offer says the broker holds one.
-    if provider.key_secret.is_some() {
-        anyhow::bail!(
-            "a reranker cannot use a key_secret key yet: the credential broker has no rerank shape"
-        );
-    }
-    let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
+    let transport = if provider.key_secret.is_some() {
+        rerank::RerankTransport::Broker(broker_rerank::BrokerRerank::new(provider, site, keys)?)
+    } else {
+        rerank::RerankTransport::Direct(http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?)
+    };
     let wire_models = models
         .iter()
         .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
         .collect::<anyhow::Result<_>>()?;
-    Ok(Arc::new(rerank::RerankBackend::new(http, wire_models)))
+    Ok(Arc::new(rerank::RerankBackend::new(transport, wire_models)))
 }
 
 /// The output ceiling a provider's wire carries.

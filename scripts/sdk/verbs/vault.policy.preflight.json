@@ -1,6 +1,6 @@
 {
   "name": "vault.policy.preflight",
-  "description": "Says, per ref, whether the caller's own read serves it: readable with its version and source-audience policies, or withheld with nothing more. It writes nothing.",
+  "description": "Says, per ref, whether the caller's own read serves it: readable with its version and source-audience policies, or withheld with nothing more; for derive and archive a readable ref adds the derive verdict. It writes nothing.",
   "input": "crate::snapshot_read::PolicyPreflightRequest",
   "output": "crate::claim::ScopedReadResult<crate::snapshot_read::PolicyPreflight>",
   "call": "crate::snapshot_read::policy_preflight(memory, &input)?",

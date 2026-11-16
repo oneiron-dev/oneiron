@@ -674,6 +674,13 @@ async fn off_record_execute(
         oneiron::engine_executor::EngineExecutorStatus::WindowFull { next_step_seq, .. } => {
             (OffRecordRunStatus::WindowFull, Some(*next_step_seq))
         }
+        // An off-record run binds no queue lease, so no Pause signal reaches
+        // it.
+        oneiron::engine_executor::EngineExecutorStatus::Paused { .. } => {
+            return Err(MemoryError::from(oneiron::Error::InvariantViolation(
+                "an off-record run took a step-boundary pause",
+            )));
+        }
     };
     Ok(OffRecordExecuted {
         run_ref: input.run_ref,

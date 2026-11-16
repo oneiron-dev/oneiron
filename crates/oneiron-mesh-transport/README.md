@@ -17,9 +17,10 @@ HTTP/WebSocket paths remain separate. There is no automatic production migration
 - **Admission.** `PairedMachineGrants` admits a key only when `Vault::mesh_peer_machine`
   proves the paired machine: the host-signed binding names the key the machine stands
   on, and the live ALPN grant admits it. Both ends use it.
-- **Server.** `oneiron-server` built with `--features mesh` starts the listener when
-  `ONEIRON_MESH_BIND` names a socket address (`ONEIRON_MESH_RELAYS`: comma-separated
-  private relay URLs, none by default). The install must be enrolled as a machine: its
+- **Server.** `oneiron-server` carries the listener in its default features (`mesh`)
+  and starts it only when `ONEIRON_MESH_BIND` names a socket address
+  (`ONEIRON_MESH_RELAYS`: comma-separated private relay URLs, none by default); without
+  one no listener runs. The install must be enrolled as a machine: its
   transport key derives from the machine key (`TransportKey::for_install`). Routes are
   one row per ALPN in `handler/mesh.rs` `mesh_routes`; a route may add a tick. A mesh
   caller is always off-device: its requests carry a `fd00::/8` peer address made from
@@ -27,6 +28,24 @@ HTTP/WebSocket paths remain separate. There is no automatic production migration
 - **Client.** Set `SyncClientConfig::mesh_dialer` to a `MeshSyncDialer` (feature `sync`;
   `MeshSyncDialer::bind_for_install` with `iroh`). The steady socket and the residence
   sockets to the configured home ride it; an elected home elsewhere is dialed at its URL.
+
+## Files search over the mesh (ARCH-0027 #files-world)
+
+- **ALPN `oneiron/files-search/1`** (`files_search::FILES_SEARCH_ALPN`) carries one
+  search per stream: a `FilesSourceSearchRequest` and the device's reply, both
+  MessagePack. `FilesSearchService` answers with this install's own ranking of its own
+  Files world (`search_files_sources_for_peer`): name hits, then meaning hits with
+  their snippets.
+- **Admission.** The live `mesh:alpn:oneiron/files-search/1` grant on the asking
+  MACHINE, checked by the transport at every open and by the engine again before the
+  search reads anything. The grant is the whole gate: metadata and snippets go to any
+  machine of the owner holding it (ruling L2-16-MESH-SNIPPETS = B). Enrolment grants
+  sync only; the owner grants Files search per machine (`vault.mesh.set_alpn_grant`).
+- **Asking.** `ask_files_search_devices` sends the request to each chosen machine at
+  once and waits under one deadline (`FILES_SEARCH_DEADLINE`); the engine's
+  `merge_files_search_answers` orders every name hit before any meaning hit and
+  interleaves the meaning hits by each device's own rank. A machine that refused,
+  failed or was late is listed in `unreached`.
 
 ## Trust boundary
 

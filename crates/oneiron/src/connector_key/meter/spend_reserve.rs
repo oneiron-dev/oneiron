@@ -112,15 +112,13 @@ pub(crate) fn reserve_connector_spend_in_txn(
                     row: state.row,
                 };
                 let on_exhaust = state.budget.on_exhaust;
-                if on_exhaust == EffectorBudgetOnExhaust::Suspend
-                    && record.status == ConnectorKeyStatus::Active
-                {
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
                     suspend_connector_key_in_txn(
                         store,
                         wtxn,
                         owner,
                         record,
-                        budget_exhausted_reason(&location),
+                        SuspendCause::BudgetExhausted(&location),
                         now,
                     )?;
                 }
@@ -248,16 +246,13 @@ pub(crate) fn reconcile_connector_spend_in_txn(
             });
         }
         USAGE.put(store, wtxn, &usage_key, &usage)?;
-        if usage.used() >= budget.limit
-            && budget.on_exhaust == EffectorBudgetOnExhaust::Suspend
-            && record.status == ConnectorKeyStatus::Active
-        {
+        if usage.used() >= budget.limit && budget.on_exhaust == EffectorBudgetOnExhaust::Suspend {
             suspend_connector_key_in_txn(
                 store,
                 wtxn,
                 &location.key_ref,
                 &record,
-                budget_exhausted_reason(&location),
+                SuspendCause::BudgetExhausted(&location),
                 now,
             )?;
         }

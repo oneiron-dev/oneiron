@@ -60,6 +60,17 @@ pub struct Distinct {
     pub apply: bool,
 }
 
+/// A merge judgment for a door batch: `sources` are `survivor`, under the
+/// agent's `topology_seal` Grant `grant`; applied when `apply`.
+#[derive(Debug, Clone)]
+pub struct Merge {
+    pub local: &'static str,
+    pub sources: Vec<EntityId>,
+    pub survivor: EntityId,
+    pub grant: EntityId,
+    pub apply: bool,
+}
+
 /// A supersession for a door batch: `new` replaces `old`.
 #[derive(Debug, Clone)]
 pub struct Supersede {
@@ -147,6 +158,7 @@ pub enum Derived {
     Settle(Settle),
     SameAs(SameAs),
     Distinct(Distinct),
+    Merge(Merge),
     About(About),
     Profile(Profile),
     Archive(Archive),
@@ -724,6 +736,23 @@ pub fn commit_in_attempt(
                         ),
                         grant: distinct.grant,
                         apply: distinct.apply,
+                    }),
+                    Derived::Merge(merge) => DerivationItem::Topology(DerivedTopology {
+                        local: merge.local.to_owned(),
+                        op: crate::identity_topology::IdentityTopologyOp::Merge(
+                            crate::identity_topology::MergeOp {
+                                sources: merge.sources.clone(),
+                                survivor: merge.survivor,
+                                evidence: crate::identity_topology::IdentityOpEvidence {
+                                    refs: Vec::new(),
+                                    rationale: "derived".to_owned(),
+                                },
+                                survivorship_plan:
+                                    crate::identity_topology::SurvivorshipPlan::ReadThrough,
+                            },
+                        ),
+                        grant: merge.grant,
+                        apply: merge.apply,
                     }),
                     Derived::About(about) => DerivationItem::PersonAbout(DerivedPersonAbout {
                         local: about.local.to_owned(),

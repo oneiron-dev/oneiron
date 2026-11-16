@@ -16,7 +16,6 @@ pub use run::TaskSeatReceipt;
 
 use serde::{Deserialize, Serialize};
 
-use super::decision::TypedDecision;
 use super::registry::ModelWireFormat;
 use super::run_admission::offer_id;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
@@ -24,18 +23,16 @@ use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
 use crate::authority::WorldModelRoutes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{
-    EntityId, Vault,
-    error::{Error, Result},
-};
+use crate::{EntityId, Vault, error::Result};
 
 /// One revision-pinned model description. Key: string (model id).
 const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
     SideTable::new(&side_table::LLM_MODEL_DESCRIPTION);
 
-fn invalid(reason: impl Into<String>) -> Error {
-    Error::InvalidConfig(reason.into())
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::seat::DescriptionSource;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::seat::invalid;
 
 /// Whether the worlds' order pre-admits a seat model at a locality (FIX
 /// 11768): [`WorldModelRoutes::Inherit`] admits all; an ordered list admits
@@ -82,20 +79,8 @@ fn served_admits(
     served.is_none_or(|set| set.get(model).is_some_and(|at| *at == locality))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DescriptionSource {
-    Owner,
-    Measured,
-    Benchmarks,
-    Vendor,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DescriptionLine {
-    pub source: DescriptionSource,
-    pub text: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::seat::{DescriptionLine, SeatChoiceReceipt, SeatKind};
 
 impl ModelDescription {
     pub fn validate(&self) -> Result<()> {
@@ -274,15 +259,6 @@ pub enum PurposeEffort {
     Fallback(ReasoningEffort),
 }
 
-/// Kind is part of warm-seat eligibility; a follower never borrows a child seat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SeatKind {
-    Attempt,
-    Child,
-    Follower,
-}
-
 /// A host-scoped seat birth. `warm_scope` identifies a compatible prefix and
 /// access scope; distinct scopes must not share a cached prefix.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,26 +320,6 @@ pub struct SeatCandidate {
     /// Composed policy default, or this model's first rung when none is authored.
     pub default_effort: ReasoningEffort,
     pub allowed_efforts: Vec<ReasoningEffort>,
-}
-
-/// Plain-language choice receipt; retained on the seat even if policies change.
-/// Beside the model, effort and why, it keeps the pick's complete typed reads
-/// (FIX 9926), carried with the seat on reuse and resume.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SeatChoiceReceipt {
-    pub model: ModelId,
-    pub effort: ReasoningEffort,
-    pub why: String,
-    pub reused: bool,
-    /// Every model-pick read of the birth, in the order asked: one for 64 or
-    /// fewer candidates; for more, each round's batch reads, the final last.
-    #[serde(default)]
-    pub model_decisions: Vec<TypedDecision>,
-    /// The effort pick's read; `None` when that pick did not run (a holder
-    /// fixed the effort, or the model has one rung).
-    #[serde(default)]
-    pub effort_decision: Option<TypedDecision>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

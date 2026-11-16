@@ -32,26 +32,8 @@ const OPT_OUTS_NOT_ALLOWED: &str = "this vault does not allow opt-outs";
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the conversation training choice";
 
-/// A person's own opt-out, as their own surface shows it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ConversationTrainingView {
-    /// The PERSON whose choice this is: the proof's own.
-    pub person: EntityId,
-    /// Whether they asked to leave their own messages out. A conflict reads
-    /// as left out.
-    pub leave_out: bool,
-    /// Whether the vault's setting lets people opt out now: while it does
-    /// not, `leave_out` is kept and ignored.
-    pub allowed: bool,
-    /// The revision to present back as `seen`: the digest of the person's
-    /// live choices, zero when none.
-    pub revision: PolicyRevision,
-    /// Whether the person's live choices conflict.
-    pub conflicted: bool,
-    /// The authority entry of the choice in force; `None` while no choice
-    /// counts or the choices conflict.
-    pub act: Option<AuthorityEntryHash>,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::conversation_training::door::ConversationTrainingView;
 
 impl Vault {
     /// The authenticated person's own opt-out.

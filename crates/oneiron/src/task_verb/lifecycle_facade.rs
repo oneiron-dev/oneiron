@@ -437,15 +437,7 @@ impl Memory<'_> {
         if !self.has_task_work_turn() {
             return self.task_work_memory().tasks_answer(handle, word);
         }
-        // A person's word is theirs to give: a human connector running
-        // generated code does not make that code's answer the person's.
-        if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "generated code cannot answer in a person's name",
-                &["Ask the person to answer through their own client."],
-            ));
-        }
+        self.require_answers_in_own_name()?;
         if let Some(answer) = self.vault().verb_hook_state.session.answer_ask(
             self.vault(),
             handle.group_ref,
@@ -503,6 +495,56 @@ impl Memory<'_> {
             self.vault().store.clock.now_recorded_at(),
         )?;
         Ok(answer)
+    }
+
+    /// The checks [`Self::tasks_answer`] meets before it records `word`, in
+    /// one read transaction: nothing is recorded, no member completes and no
+    /// ask settles. `Ok(false)` for an ask a verb hook's session holds, which
+    /// that session answers rather than the vault, so `can({verb})` leaves
+    /// it unchecked (FIX [UI-GATE-PREVIEW]).
+    pub(crate) fn tasks_answer_admission(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+    ) -> MemoryResult<bool> {
+        self.require_answers_in_own_name()?;
+        if self
+            .vault()
+            .verb_hook_state
+            .session
+            .holds_ask(handle.group_ref)
+        {
+            return Ok(false);
+        }
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        self.verify_actor_write_in_txn(&txn)?;
+        let group = self
+            .ask_group_named_in(&txn, handle.group_ref)?
+            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        super::ask_record::check_word(
+            self.vault(),
+            &txn,
+            handle.group_ref,
+            &group,
+            self.write_actor(),
+            word,
+            self.answer_owner_proof(),
+            self.vault().store.clock.now_recorded_at(),
+        )?;
+        Ok(true)
+    }
+
+    /// A person's word is theirs to give: a human connector running
+    /// generated code does not make that code's answer the person's.
+    fn require_answers_in_own_name(&self) -> MemoryResult<()> {
+        if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot answer in a person's name",
+                &["Ask the person to answer through their own client."],
+            ));
+        }
+        Ok(())
     }
 }
 

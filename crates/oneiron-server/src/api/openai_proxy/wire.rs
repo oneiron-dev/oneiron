@@ -126,7 +126,7 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
             "insufficient_quota",
             "budget_denied",
         ),
-        LlmError::Fatal(FatalLlmError::Auth) => {
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
             (StatusCode::BAD_GATEWAY, "api_error", "upstream_auth")
         }
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => {

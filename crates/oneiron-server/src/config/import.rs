@@ -7,9 +7,15 @@
 //! queued under those folders: `serve` lands each one as `oneiron import`
 //! would, and nothing outside them. Listing a hook folder is the same act for
 //! the transcripts under it, queued or imported directly.
+//!
+//! Two rows bound what an import reads out of an archive (ARCH-0027
+//! #archive-precheck): `archive_max_entries`, the most entries an archive may
+//! declare, and `storage_cap_bytes`, the vault's storage cap, unset unless the
+//! owner or the Cloud's provisioner sets it.
 
 use std::path::{Path, PathBuf};
 
+use oneiron::ingest::archive_precheck::DEFAULT_ARCHIVE_MAX_ENTRIES;
 use oneiron::ingest::history::HistorySource;
 use serde::Deserialize;
 
@@ -30,9 +36,23 @@ pub struct ImportConfig {
     /// under (`oneiron import hook-transcript`), each with everything below
     /// it. Empty unless set: no hook transcript is read.
     pub hook_transcript_roots: Vec<PathBuf>,
+    /// The most entries an import archive may declare; past it the archive
+    /// is refused before its entry list is read, and the refusal names this
+    /// row. `None` means 262,144.
+    pub archive_max_entries: Option<u64>,
+    /// The vault's storage cap, in bytes: an archive import reads at most
+    /// this less what the vault's folder holds, and stops there. `None` (the
+    /// default) is no cap: a local vault never stops.
+    pub storage_cap_bytes: Option<u64>,
 }
 
 impl ImportConfig {
+    /// The most entries an import archive may declare.
+    pub fn archive_entry_cap(&self) -> u64 {
+        self.archive_max_entries
+            .unwrap_or(DEFAULT_ARCHIVE_MAX_ENTRIES)
+    }
+
     /// The queue directory for `vault_path`.
     pub fn queue_dir_for(&self, vault_path: &Path) -> PathBuf {
         self.queue_dir.clone().unwrap_or_else(|| {
@@ -125,6 +145,12 @@ impl ImportConfig {
             self.hook_transcript_roots =
                 roots.into_iter().map(super::lookup::expand_home).collect();
         }
+        if let Some(value) = over.archive_max_entries {
+            self.archive_max_entries = Some(value);
+        }
+        if let Some(value) = over.storage_cap_bytes {
+            self.storage_cap_bytes = Some(value);
+        }
     }
 }
 
@@ -137,4 +163,6 @@ pub struct ImportConfigOverride {
     pub claude_code_root: Option<PathBuf>,
     pub codex_root: Option<PathBuf>,
     pub hook_transcript_roots: Option<Vec<PathBuf>>,
+    pub archive_max_entries: Option<u64>,
+    pub storage_cap_bytes: Option<u64>,
 }

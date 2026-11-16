@@ -11,7 +11,7 @@
 //! directory does not name is decoded and handed as a member. A run or an
 //! entry no reader here decodes is left to the scan of the file's own bytes.
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use flate2::read::DeflateDecoder;
 use zip::write::FileOptions;
@@ -56,35 +56,91 @@ pub struct Entry {
 /// finds them and read before it is: the reader sizes its tables by it.
 /// `None` when no record reads.
 fn declared_entries(bytes: &[u8]) -> Option<u64> {
+    declared_zip_entries(&mut Cursor::new(bytes))
+}
+
+/// The entry count a ZIP archive's end records declare, found as the `zip`
+/// reader finds them and read before it is: the reader sizes its tables by
+/// it, so a caller that bounds the count checks it here first. Reads the
+/// archive's last `END_LEN + u16::MAX` bytes, the ZIP64 locator before the
+/// end record, and, for a ZIP64 archive, the bytes from where the locator
+/// points up to its record. `None` when no record reads. The secret scan and
+/// the import's archive pre-check (ARCH-0027 #archive-precheck) both count
+/// with it.
+pub fn declared_zip_entries<R: Read + Seek>(reader: &mut R) -> Option<u64> {
+    let length = reader.seek(SeekFrom::End(0)).ok()?;
+    let window = length.min(u64::try_from(END_LEN + usize::from(u16::MAX)).ok()?);
+    let window_start = length - window;
+    let tail = read_at(reader, window_start, usize::try_from(window).ok()?)?;
     let field = |at: usize| {
-        bytes
-            .get(at..at + 2)
+        tail.get(at..at + 2)
             .map(|field| u16::from_le_bytes([field[0], field[1]]))
     };
-    let last = bytes.len().checked_sub(END_LEN)?;
+    let last = tail.len().checked_sub(END_LEN)?;
     let floor = last.saturating_sub(usize::from(u16::MAX));
     let at = (floor..=last)
         .rev()
-        .find(|&at| bytes[at..].starts_with(END))?;
+        .find(|&at| tail[at..].starts_with(END))?;
     let on_disk = field(at + 8)?;
     // The reader looks for a ZIP64 locator before an end record whose
-    // comment runs to the end of the bytes.
-    let comment = usize::from(field(at + 20)?);
-    let Some(locator) = bytes
-        .len()
-        .checked_sub(ZIP64_LOCATOR_LEN + END_LEN + comment)
-        .filter(|&locator| bytes[locator..].starts_with(ZIP64_LOCATOR))
+    // comment runs to the end of the archive.
+    let comment = u64::from(field(at + 20)?);
+    let locator_bytes = u64::try_from(ZIP64_LOCATOR_LEN + END_LEN).ok()?;
+    let Some(locator) = length
+        .checked_sub(locator_bytes + comment)
+        .and_then(|locator| read_at(reader, locator, ZIP64_LOCATOR_LEN))
+        .filter(|locator| locator.starts_with(ZIP64_LOCATOR))
     else {
         return Some(u64::from(on_disk));
     };
-    let nominal = bytes.get(locator + 8..locator + 16)?.try_into().ok()?;
-    let nominal = usize::try_from(u64::from_le_bytes(nominal)).ok()?;
+    let nominal = u64::from_le_bytes(locator.get(8..16)?.try_into().ok()?);
     // The first ZIP64 record from where the locator says, as the reader
     // searches for it past any bytes prepended to the archive.
-    let upper = at.checked_sub(ZIP64_SEARCH_GAP)?;
-    let record = (nominal..=upper).find(|&at| bytes[at..].starts_with(ZIP64_END))?;
-    let count = bytes.get(record + 32..record + 40)?.try_into().ok()?;
-    Some(u64::from_le_bytes(count))
+    let end_at = window_start + u64::try_from(at).ok()?;
+    let upper = end_at.checked_sub(u64::try_from(ZIP64_SEARCH_GAP).ok()?)?;
+    let record = find_forward(reader, nominal, upper, ZIP64_END)?;
+    let count = read_at(reader, record + 32, 8)?;
+    Some(u64::from_le_bytes(count.as_slice().try_into().ok()?))
+}
+
+/// Up to `len` bytes from `at`; fewer where the archive ends first.
+fn read_at<R: Read + Seek>(reader: &mut R, at: u64, len: usize) -> Option<Vec<u8>> {
+    reader.seek(SeekFrom::Start(at)).ok()?;
+    let mut bytes = Vec::with_capacity(len);
+    reader
+        .take(u64::try_from(len).ok()?)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(bytes)
+}
+
+/// The first place in `from..=upper` where `needle` starts, read a window at
+/// a time so the search holds a bounded buffer whatever the span.
+fn find_forward<R: Read + Seek>(
+    reader: &mut R,
+    from: u64,
+    upper: u64,
+    needle: &[u8],
+) -> Option<u64> {
+    const SEARCH_WINDOW: usize = 64 * 1024;
+    let mut start = from;
+    while start <= upper {
+        let span =
+            usize::try_from(upper - start).map_or(SEARCH_WINDOW, |span| span.min(SEARCH_WINDOW));
+        let bytes = read_at(reader, start, span + needle.len())?;
+        if let Some(found) = bytes
+            .windows(needle.len())
+            .position(|window| window == needle)
+        {
+            let found = start + u64::try_from(found).ok()?;
+            return (found <= upper).then_some(found);
+        }
+        if bytes.len() < span + needle.len() {
+            return None;
+        }
+        start += u64::try_from(span).ok()? + 1;
+    }
+    None
 }
 
 pub fn open(bytes: &[u8]) -> Walked<ZipArchive<Cursor<&[u8]>>> {
