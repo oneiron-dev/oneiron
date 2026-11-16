@@ -475,6 +475,13 @@ name = "vault_off_record_doors"
 path = "tests/vault_off_record_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval ledger door promise tests serve the owner's root from a `MemoryKeystore`
+# too; the Steward read grant stands through `oneiron::test_doors` (`--cfg oneiron_test_support`).
+[[test]]
+name = "vault_retrieval_ledger_doors"
+path = "tests/vault_retrieval_ledger_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.
 [[test]]
 name = "rerank_pair_template_price"
