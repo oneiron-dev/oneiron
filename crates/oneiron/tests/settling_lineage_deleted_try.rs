@@ -25,7 +25,7 @@ use oneiron::memory::{Memory, MemoryError};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::derive_verbs::define_agent;
-use oneiron::test_doors::settling_lineage_deleted_try::{
+use oneiron::test_doors::dispatch_chain_deleted_try::{
     DelegatedFork, complete_and_archive_try, spawn_delegated_fork,
 };
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};

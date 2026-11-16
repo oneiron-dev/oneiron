@@ -191,7 +191,7 @@ fn auto_source(vault: &Vault) -> Result<EntityId> {
         true,
         rmpv::Value::Map(vec![(
             rmpv::Value::from("definedVia"),
-            rmpv::Value::from("settling_lineage_deleted_try"),
+            rmpv::Value::from("dispatch_chain_deleted_try"),
         )]),
         None,
         true,
