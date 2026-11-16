@@ -178,32 +178,10 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
             ));
         }
     }
-    // What landed goes in front of the Dreamer now, as a session end would
-    // put captured turns: no sitting ever ends for an import. Planning runs on
-    // every import, so a rerun after a crash plans what the crash left.
     let review = match &target {
         Target::Land(landing) => {
             let (vault, _, imported_at) = &**landing;
-            let dreamer_attempts = queue_dreamer(vault, *imported_at)?;
-            if totals.new + totals.changed == 0 && dreamer_attempts > 0 {
-                progress(&format!(
-                    "queued {dreamer_attempts} Dreamer attempt(s) an earlier import left; \
-                     `oneiron runs pending` lists the reviews"
-                ));
-            }
-            if totals.new + totals.changed > 0 {
-                // One inbox row for the batch, never one per conversation.
-                vault.record_history_import_finished(source, *imported_at)?;
-                let run_id =
-                    oneiron::ingest::history::history_import_review_id(source, *imported_at);
-                Some(Review {
-                    run_ref: crate::owner::runs::run_ref(&run_id),
-                    run_id,
-                    dreamer_attempts,
-                })
-            } else {
-                None
-            }
+            landed_review(vault, source, &totals, *imported_at)?
         }
         Target::Plan(..) => None,
     };
@@ -245,6 +223,36 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         ));
     }
     Ok(())
+}
+
+/// What landed goes in front of the Dreamer now, as a session end would put
+/// captured turns: no sitting ever ends for an import. Planning runs on every
+/// import, so a rerun after a crash plans what the crash left. The review the
+/// Dreamer's claims wait in, when the import landed anything.
+fn landed_review(
+    vault: &oneiron::Vault,
+    source: HistorySource,
+    totals: &Totals,
+    imported_at: u64,
+) -> anyhow::Result<Option<Review>> {
+    let dreamer_attempts = queue_dreamer(vault, imported_at)?;
+    if totals.new + totals.changed == 0 && dreamer_attempts > 0 {
+        progress(&format!(
+            "queued {dreamer_attempts} Dreamer attempt(s) an earlier import left; \
+             `oneiron runs pending` lists the reviews"
+        ));
+    }
+    if totals.new + totals.changed == 0 {
+        return Ok(None);
+    }
+    // One inbox row for the batch, never one per conversation.
+    vault.record_history_import_finished(source, imported_at)?;
+    let run_id = oneiron::ingest::history::history_import_review_id(source, imported_at);
+    Ok(Some(Review {
+        run_ref: crate::owner::runs::run_ref(&run_id),
+        run_id,
+        dreamer_attempts,
+    }))
 }
 
 impl Totals {
@@ -551,12 +559,14 @@ impl Decoded {
                 + message.text.len()
                 + message.parent_id.as_ref().map_or(0, String::len)
                 + message.alias.as_ref().map_or(0, String::len)
+                + message.said_by.as_ref().map_or(0, String::len)
                 + message.tools.iter().map(String::len).sum::<usize>();
         }
     }
 }
 
 pub(super) mod notes;
+pub(super) mod slack;
 
 #[cfg(unix)]
 use crate::files_intake::confined::{self, open_in, walk_logs};
@@ -818,11 +828,8 @@ struct ExportBounds {
 
 impl ExportBounds {
     fn for_config(config: &ServeConfig) -> anyhow::Result<Self> {
-        let room = config
-            .import
-            .storage_cap_bytes
-            .map(|cap| folder_bytes(&config.vault_path).map(|held| cap.saturating_sub(held)))
-            .transpose()?;
+        let room =
+            archive_precheck::storage_room(config.import.storage_cap_bytes, &config.vault_path)?;
         Ok(Self {
             archive: ArchiveBounds {
                 max_entries: config.import.archive_entry_cap(),
@@ -879,34 +886,6 @@ impl ExportBounds {
             ),
         }
     }
-}
-
-/// What the folder at `dir` holds on disk: every file below it, through no
-/// link. A folder that does not exist holds nothing.
-fn folder_bytes(dir: &Path) -> anyhow::Result<u64> {
-    let mut held = 0_u64;
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => anyhow::bail!("read {}: {error}", dir.display()),
-        };
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| anyhow::anyhow!("read {}: {error}", dir.display()))?;
-            // Never through a link: the entry's own metadata.
-            let metadata = entry
-                .metadata()
-                .map_err(|error| anyhow::anyhow!("read {}: {error}", entry.path().display()))?;
-            if metadata.is_dir() {
-                pending.push(entry.path());
-            } else if metadata.is_file() {
-                held = held.saturating_add(metadata.len());
-            }
-        }
-    }
-    Ok(held)
 }
 
 /// The session a Claude Code subagent log ran in: the folder above the

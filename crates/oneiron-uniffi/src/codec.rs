@@ -745,6 +745,7 @@ impl Lift<engine::ClaimView> for ClaimView {
             scope: Lift::lift(view.scope)?,
             claim_scope: lift_record("ClaimView.claim_scope", &view.claim_scope)?,
             made_by: lift_record("ClaimView.made_by", &view.made_by)?,
+            for_org: view.for_org,
             claim: lift_record("ClaimView.claim", &view.claim)?,
             valid_from: optional_signed("valid_from", view.valid_from)?,
             valid_to: optional_signed("valid_to", view.valid_to)?,

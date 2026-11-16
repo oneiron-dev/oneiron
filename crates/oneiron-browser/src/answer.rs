@@ -149,7 +149,9 @@ impl<T> DesktopAnswer<T> {
 /// What a guest session proved about its fence, as the run's door names it
 /// on every answer (FIX 5705): the container's own session manifest, as it
 /// reads on the wire. The door sends that manifest; this is its shape. Its
-/// guest-image release evidence (FIX 8253) rides as `image_release`.
+/// guest-image release evidence (FIX 8253) rides as `image_release`. A
+/// stdio connector's reply names its child's runner manifest in the same
+/// shape (canon `#runner-fence`, row L8-27).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionManifest {
     pub backend: String,
@@ -195,4 +197,7 @@ pub enum SessionSeccomp {
     GuestSandbox,
     /// Engine Landlock and seccomp user-notification launcher.
     EngineFence,
+    /// No filter: a runner the daemon starts on the host, under the runner
+    /// fence alone (canon `#runner-fence`: no seccomp deny-list).
+    Unfiltered,
 }
