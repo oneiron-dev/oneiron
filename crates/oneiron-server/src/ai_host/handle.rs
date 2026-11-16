@@ -66,8 +66,12 @@ impl AiHandle {
                     models.raw_budget_units
                 }),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
+            rerank_pair_template_units: models.map_or(
+                crate::config::models::DEFAULT_RERANK_PAIR_TEMPLATE_UNITS,
+                |models| models.recall.rerank_pair_template_units,
+            ),
             turns: TurnTracker::new(),
-            inbound: Arc::new(AtomicU64::new(unix_now())),
+            inbound: Arc::new(AtomicU64::new(unix_seconds_now())),
             summaries: false,
             decisions: Arc::default(),
             turn_wakes: Arc::default(),
@@ -165,6 +169,13 @@ impl AiHandle {
     #[must_use]
     pub fn rerank_budget_units(&self) -> u64 {
         self.rerank_budget_units
+    }
+
+    /// The tokens a rerank call is priced at for each query and document
+    /// pair beside their words: the reranker template's share.
+    #[must_use]
+    pub(crate) fn rerank_pair_template_units(&self) -> u64 {
+        self.rerank_pair_template_units
     }
 
     /// Whether the host syncs as a device of another home (`[device_sync]`),
@@ -327,7 +338,7 @@ impl AiHandle {
     /// (ARCH-0026 RD-26), off the request path. A no-op without a running
     /// Dreamer, so a model-free vault queues nothing that never runs.
     pub fn turn_landed(&self, vault: &Arc<Vault>, subject: WakeTurnSubject) {
-        self.inbound.fetch_max(unix_now(), Ordering::AcqRel);
+        self.inbound.fetch_max(unix_seconds_now(), Ordering::AcqRel);
         self.queue_turn_wake(vault, subject, None);
     }
 

@@ -82,9 +82,7 @@ pub(crate) fn push_task_now(
     let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
     let timeout = Duration::from_secs(policy.request_timeout_secs);
     let pages = budget.max_pull_pages_per_pass;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |time| time.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let pushed = match mode {
         LinearMode::Direct => {
             let tracker = settings.tracker().map_err(unavailable)?;
