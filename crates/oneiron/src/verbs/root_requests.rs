@@ -178,8 +178,8 @@ pub struct PendingRootRequestView {
     pub carrier_is_yours: bool,
     /// For a pin: the question a surface asks before the owner confirms it,
     /// composed here from the root's code and this install's reading of the
-    /// carrier, never from the request's own words. `None` for every other
-    /// change.
+    /// carrier, never from the request's own words: three lines separated
+    /// by a line feed. `None` for every other change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
     /// For a pin: the code of the root it names, 26 symbols, as the owner's

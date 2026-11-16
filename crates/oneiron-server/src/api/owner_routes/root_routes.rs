@@ -221,8 +221,8 @@ struct PendingRootRequest {
     /// with `POST /roots/pin` or declines it with
     /// `POST /roots/requests/cancel`, composed by the engine from the root's
     /// code and its reading of the carrier
-    /// ([`oneiron::authority::pin_request_prompt`]). None for every other
-    /// change.
+    /// ([`oneiron::authority::pin_request_prompt`]): three lines separated
+    /// by a line feed. None for every other change.
     prompt: Option<String>,
     /// For a pin: the code of the root it names, 26 symbols, as the owner's
     /// kit shows it (`recovery-kit issue` prints it as `root_code`). None

@@ -103,14 +103,19 @@ pub struct ListedHeldAnswer {
 
 impl ListedHeldAnswer {
     /// The question a surface asks about this held answer
-    /// ([`held_answer_prompt`]): what it asks for, then who carried it by
-    /// this install's reading, or that it can only be dismissed.
+    /// ([`held_answer_prompt`]): what it asks for, then on the last line
+    /// who carried it by this install's reading, or that it can only be
+    /// dismissed. No name is held for either device here, so each is named
+    /// by its kind.
     #[must_use]
     pub fn prompt(&self) -> String {
         held_answer_prompt(
             self.answer.profile.role,
             self.answer.profile.device_class,
-            self.carrier_reading.as_ref(),
+            PromptDeviceName::NotHeld,
+            self.carrier_reading
+                .as_ref()
+                .map(|reading| (reading, PromptDeviceName::NotHeld)),
             self.replaces_keys,
         )
     }

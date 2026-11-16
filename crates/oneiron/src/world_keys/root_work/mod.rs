@@ -202,13 +202,19 @@ impl ListedRootRequest {
     }
 
     /// The question a surface asks before the owner confirms a pending pin
-    /// ([`crate::authority::pin_request_prompt`]): the kit's code, then who
-    /// asked by this install's reading of the carrier. `None` for every
-    /// other change.
+    /// ([`crate::authority::pin_request_prompt`]): three lines, the
+    /// question, the kit's code, then who asked by this install's reading
+    /// of the carrier. No name is held for the carrier here, so the last
+    /// line names it by its kind. `None` for every other change.
     #[must_use]
     pub fn prompt(&self) -> Option<String> {
-        self.pin_root()
-            .map(|root| crate::authority::pin_request_prompt(&root, &self.carrier))
+        self.pin_root().map(|root| {
+            crate::authority::pin_request_prompt(
+                &root,
+                &self.carrier,
+                crate::authority::PromptDeviceName::NotHeld,
+            )
+        })
     }
 
     /// The code of the root a pending pin names

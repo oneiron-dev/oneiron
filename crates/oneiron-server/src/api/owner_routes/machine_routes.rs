@@ -539,16 +539,19 @@ struct ListedHeldAnswer {
     dismissed: bool,
     /// The question a surface asks about this answer before the owner
     /// confirms or dismisses it, composed by the engine: what the answer
-    /// asks for, then who carried it by this install's reading of the key
-    /// that signed it ([`oneiron::authority::held_answer_prompt`]).
+    /// asks for, then on the last line who carried it by this install's
+    /// reading of the key that signed it
+    /// ([`oneiron::authority::held_answer_prompt`]). Its lines are
+    /// separated by a line feed.
     prompt: String,
     /// `machine_key` as a code, 26 symbols, in the form of a recovery kit's
     /// code ([`oneiron::authority::machine_key_code`]): what the owner
     /// compares with the code that machine shows. `machine_key` in full
     /// stays the detail.
     machine_code: String,
-    /// The line a surface shows under the question: "Code shown on that
-    /// machine: " and `machine_code`.
+    /// What a surface shows under the question: "Code shown on that
+    /// phone: " (or computer) and `machine_code`
+    /// ([`oneiron::authority::machine_code_line`]).
     machine_code_text: String,
 }
 
@@ -577,6 +580,8 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 ),
                 machine_code_text: oneiron::authority::machine_code_line(
                     &listed.answer.profile.machine_key,
+                    listed.answer.profile.device_class,
+                    oneiron::authority::PromptDeviceName::NotHeld,
                 ),
             })
             .collect(),

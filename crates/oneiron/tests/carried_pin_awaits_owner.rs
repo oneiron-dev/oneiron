@@ -342,11 +342,11 @@ fn a_hosts_pin_request_lists_the_host_as_its_carrier_and_never_as_the_owners_mac
     assert_eq!(
         request.prompt(),
         Some(format!(
-            "Use the recovery kit with code {}? A computer (a hosted server, not one of your \
-             devices) asked for it.",
+            "Use your recovery kit to get back in?\nKit code: {}\nAsked from a computer. It is a \
+             server Oneiron hosts, not one of your devices.",
             oneiron::authority::recovery_root_code(&root)
         )),
-        "the question names the kit by the root's code and the host as a hosted server"
+        "the question shows the kit's code and names the host as a server Oneiron hosts"
     );
     assert_eq!(
         request.root_code(),
