@@ -53,7 +53,10 @@ impl SyncServer {
     /// standing `erase_request_reply` row says; under `ask`, or with no row,
     /// nothing. Blocking: call it off the runtime.
     pub(super) fn answer_filed_asks_by_setting(&self) {
-        match self.vault().answer_filed_asks_by_setting(unix_now()) {
+        match self
+            .vault()
+            .answer_filed_asks_by_setting(unix_seconds_now())
+        {
             Ok(answered) if answered.is_empty() => {}
             Ok(answered) => tracing::info!(
                 answered = answered.len(),
