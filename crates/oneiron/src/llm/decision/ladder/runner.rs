@@ -7,7 +7,8 @@ use super::{
     abstained, ask, asks_person, millis, price_answers, step_cause, take, takes, validate_pin,
     validate_state,
 };
-use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
+use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility, ThinkThreshold};
+use crate::llm::decision::questions::receipt_route;
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
@@ -786,7 +787,7 @@ impl DecisionLadder<'_> {
             .map(|image| image.evidence.clone())
             .chain(audio.iter().map(|clip| clip.evidence.clone()))
             .collect();
-        Ok(TypedDecision {
+        let decision = TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
             evidence: evidence.to_vec(),
@@ -820,7 +821,11 @@ impl DecisionLadder<'_> {
                 asked,
                 state_cut: None,
             },
-        })
+        };
+        if let Some(row) = think_row {
+            log_think_route(policy, row, &decision.receipt);
+        }
+        Ok(decision)
     }
 
     /// One provider request on the call's clock, one read per pack question. The first read
@@ -898,4 +903,29 @@ impl DecisionLadder<'_> {
         }
         Ok(reads)
     }
+}
+
+/// Counts a read weighed against the think row `row` on the host's policy, and
+/// logs its route, its first paired reading and the host's step-up rate so far
+/// (lead ruling THINK-START, 13 Nov 2026): a house-mix bench reads these lines
+/// to confirm or move the row's start value. A read the rule rung or a person
+/// answered is not counted.
+fn log_think_route(policy: &DecisionBandPolicy, row: ThinkThreshold, receipt: &DecisionReceipt) {
+    let route = receipt_route(receipt);
+    let Some(counts) = policy.count_think_route(route) else {
+        return;
+    };
+    let think = receipt.paired.first().map(|reading| reading.probability);
+    tracing::info!(
+        target: "oneiron::decision::think_route",
+        route = ?route,
+        think = ?think,
+        threshold = row.threshold,
+        think_row = row.version,
+        direct = counts.direct,
+        stepped_up = counts.stepped_up,
+        step_unfinished = counts.step_unfinished,
+        step_up_rate = ?counts.step_up_rate(),
+        "decision routed against the think row"
+    );
 }

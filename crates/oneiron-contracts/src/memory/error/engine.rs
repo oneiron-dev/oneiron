@@ -8,6 +8,18 @@ impl From<Error> for MemoryError {
         if let Error::VerbHook(stop) = err {
             return Self::verb_hook(*stop);
         }
+        if let Error::CheckInPending(check_in) = &err {
+            return Self {
+                reason_codes: vec![format!("{CHECK_IN_PENDING_REASON_PREFIX}{check_in}")],
+                ..Self::new(
+                    MEMORY_CODE_CHECK_IN_PENDING,
+                    err.to_string(),
+                    &[
+                        "Wait for a holder to approve the check-in its reason code names, then call again with check_in_ref set to it.",
+                    ],
+                )
+            };
+        }
         let message = err.to_string();
         if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
             return Self {
@@ -292,6 +304,18 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // The refusal's own words say where to decide; its reason code
+            // lets a client tell it from any other conflict.
+            ErrorKind::OwnerKeyRequired => Self {
+                reason_codes: vec![crate::error::OWNER_KEY_REQUIRED.to_owned()],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "Make this choice on an owner device: a machine that holds the vault's owner key.",
+                    ],
+                )
+            },
             // FIX 12023 W0: the process that serves the vault spends its
             // request nonces; no change to the request helps here.
             ErrorKind::VaultServedElsewhere => Self::new(

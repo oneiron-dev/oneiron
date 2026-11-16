@@ -73,9 +73,11 @@ pub use budget::{
 pub use children::create_research_child;
 pub use continuation::{
     ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
-    ResearchWork, advance_research_continuations, ensure_research_continuations,
-    research_work_pending,
+    ResearchWork, advance_research_campaign, advance_research_continuations,
+    ensure_research_continuations, research_continuations, research_work_pending,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use continuation::{seed_research_continuation, step_research_continuation};
 pub use estimator::{
     BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,
     SelectionBenchmark, SelectionRanking, record_selection_benchmark, selection_benchmark,
@@ -123,10 +125,8 @@ pub use oneiron_verb_wire::autoreason_campaign::research::{
 #[doc(hidden)]
 use oneiron_verb_wire::autoreason_campaign::research::{MAX_REF_BYTES, bounded};
 
-/// The gate's recorded content kind and outcomes a weave claim is read by.
+/// The gate's recorded content kind a weave claim is read by.
 const WEAVE_CONTENT_KIND: &str = "claim";
-const OUTCOME_ALLOW: &str = "allow";
-const OUTCOME_DENY: &str = "deny";
 
 /// The sealed cohort a campaign confirms on: OF-578's exposure ledger, not a
 /// campaign twin.

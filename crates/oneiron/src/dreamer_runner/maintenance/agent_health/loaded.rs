@@ -5,8 +5,6 @@
 //! its proposal replaces. The owner's apply door (`apply.rs`) takes exactly
 //! the revisions this pack loaded, so the list and the door cannot disagree.
 
-use serde::{Deserialize, Serialize};
-
 use super::AgentHealthCard;
 use super::ask::{AgentHealthCoachDraft, AgentHealthCoachRoute};
 use crate::attempt_queue::{AttemptId, ManifestEntry};
@@ -15,32 +13,11 @@ use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_attribution::manifest_entry_names_skill;
 use crate::{EntityId, Result, Vault};
 
-/// One skill revision the card's run loaded, as the card's reader and the
-/// Coach read it: the target the apply door takes, and what it says.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentHealthLoadedSkill {
-    /// The SKILL revision, as 32 hex: the apply door's `skill`.
-    pub skill: String,
-    /// Its stable name, the pack manifest's `skill_id`.
-    pub name: String,
-    /// The version the pack pinned: the apply door's `version`.
-    pub version: String,
-    /// Whether it is still the skill's active revision. Only an active one
-    /// takes an edit; a superseded one names what the run ran.
-    pub active: bool,
-    /// Its instructions, whole: what a `skill_edit` replaces.
-    pub instructions: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::agent_health::loaded::AgentHealthLoadedSkill;
 
-/// The revision a `skill_edit` draft replaces whole: one the card's run
-/// loaded, named as the apply door takes it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentHealthSkillTarget {
-    /// The SKILL revision, as 32 hex.
-    pub skill: String,
-    pub version: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::agent_health::loaded::AgentHealthSkillTarget;
 
 /// The pack the card's run loaded: its attempt receipt's manifest rows and
 /// the resident that receipt is bound to.

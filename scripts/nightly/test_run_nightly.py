@@ -5,12 +5,21 @@ run` (with and without --no-run) from a fixture workspace, logs each call with
 its CARGO_BUILD_JOBS, and writes the JUnit nextest would write. It fails to
 compile the test targets named in STUB_FAIL_TESTS, and cannot list the tests of
 a run that selects a target named in STUB_LIST_ERROR_TESTS (exit 104, no JUnit).
+A `--lib` build fails at the lib test of the first workspace package named in
+STUB_FAIL_LIBS that it does not exclude, and stops there, as a cargo build at
+one job stops at its first failed unit.
 A budget verdict run (its filter starts with the budget set's first row) gives
 the timed cases of STUB_BUDGET_CASES, or cannot list its tests when
 STUB_LIST_ERROR_BUDGET is set. A build that names `--bin` (the bench
 selection) builds the stub bench bin STUB_BENCH_BIN as target/debug/<bin>,
 unless STUB_BENCH_NO_BIN is set; the bench verdict run gives one case per test
 target and bin.
+A build puts its test binaries where the toolchain does: debug/deps (rustc before
+1.100), or debug/build/<package>/<hash>/out/ with no debug/deps when STUB_LAYOUT
+is build-dir (rustc 1.100). A bin's copy in debug/ is a hard link of its build
+copy. Under --cargo-message-format json* the build prints cargo's
+compiler-artifact messages to stdout, unless STUB_NO_MESSAGES is set; its errors
+go to stderr, as cargo's do.
 
 Run: python3 -m unittest discover -s scripts/nightly -p 'test_*.py' -v
 """
@@ -19,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -53,24 +63,63 @@ STUB_CARGO = textwrap.dedent(
     assert args[:2] == ["nextest", "run"], args
     tests = [args[i + 1] for i, arg in enumerate(args) if arg == "--test"]
     bins = [args[i + 1] for i, arg in enumerate(args) if arg == "--bin"]
-    deps = target / "debug" / "deps"
-    deps.mkdir(parents=True, exist_ok=True)
+    metadata = json.loads(Path(os.environ["STUB_METADATA"]).read_text())
+    owner = {t["name"]: p["name"] for p in metadata["packages"] for t in p["targets"]}
+    message_format = args[args.index("--cargo-message-format") + 1] if "--cargo-message-format" in args else "human"
+    messages = message_format.startswith("json") and not os.environ.get("STUB_NO_MESSAGES")
+
+    def built_path(name, unit_hash="0123456789abcdef"):
+        file_name = f"{name.replace('-', '_')}-{unit_hash}"
+        if os.environ.get("STUB_LAYOUT") == "build-dir":
+            return target / "debug" / "build" / owner[name] / unit_hash / "out" / file_name
+        return target / "debug" / "deps" / file_name
+
+    def artifact(name, kind, test, executable):
+        if messages:
+            print(json.dumps({
+                "reason": "compiler-artifact", "package_id": f"path+file:///repo#{owner[name]}@0.1.0",
+                "target": {"kind": [kind], "crate_types": ["bin"], "name": name, "test": test},
+                "profile": {"test": test}, "filenames": [str(executable)], "executable": str(executable),
+                "fresh": False,
+            }))
+
     if "--no-run" in args:
+        (target / "debug").mkdir(parents=True, exist_ok=True)
         if any(t in os.environ.get("STUB_SETUP_ERROR_TESTS", "").split(",") for t in tests):
-            print("error: the stub's setup error (no unit named)")
+            print("error: the stub's setup error (no unit named)", file=sys.stderr)
             sys.exit(96)
+        excluded = [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"]
+        members = {p["name"] for p in metadata["packages"]}
+        for package in os.environ.get("STUB_FAIL_LIBS", "").split(","):
+            if "--lib" in args and package in members and package not in excluded:
+                print(f"error: could not compile `{package}` (lib test) due to 1 previous error", file=sys.stderr)
+                sys.exit(101)
         broken = [t for t in tests if t in os.environ.get("STUB_FAIL_TESTS", "").split(",")]
         for t in broken:
-            print(f'error: could not compile `oneiron` (test "{t}") due to 1 previous error')
+            print(f'error: could not compile `oneiron` (test "{t}") due to 1 previous error', file=sys.stderr)
         if broken:
             sys.exit(101)
+        if messages:  # a lib's artifact names no executable
+            print(json.dumps({"reason": "compiler-artifact", "target": {"kind": ["lib"], "name": "oneiron"},
+                              "profile": {"test": False}, "executable": None, "fresh": True}))
         for t in tests:
-            (deps / f"{t}-0123456789abcdef").write_text("test binary")
+            built_path(t).parent.mkdir(parents=True, exist_ok=True)
+            built_path(t).write_text("test binary")
+            artifact(t, "test", True, built_path(t))
         for b in bins:
-            (deps / f"{b.replace('-', '_')}-0123456789abcdef").write_text("bin test binary")
+            built_path(b).parent.mkdir(parents=True, exist_ok=True)
+            built_path(b).write_text("bin test binary")
+            artifact(b, "bin", True, built_path(b))
             if not os.environ.get("STUB_BENCH_NO_BIN"):
-                (target / "debug" / b).write_text(Path(os.environ["STUB_BENCH_BIN"]).read_text())
-                (target / "debug" / b).chmod(0o755)
+                build_copy, uplifted = built_path(b, "fedcba9876543210"), target / "debug" / b
+                build_copy.parent.mkdir(parents=True, exist_ok=True)
+                build_copy.write_text(Path(os.environ["STUB_BENCH_BIN"]).read_text())
+                build_copy.chmod(0o755)
+                uplifted.unlink(missing_ok=True)
+                os.link(build_copy, uplifted)
+                artifact(b, "bin", False, uplifted)
+        if messages:
+            print(json.dumps({"reason": "build-finished", "success": True}))
         if "--lib" in args:
             door = target / "debug" / "oneiron-testkit-pending-door"
             door.write_text(
@@ -80,7 +129,7 @@ STUB_CARGO = textwrap.dedent(
             door.chmod(0o755)
         sys.exit(0)
     for t in tests:
-        if not (deps / f"{t}-0123456789abcdef").exists():
+        if not built_path(t).exists():
             print(f"stub: the {t} test binary is gone before its run", file=sys.stderr)
             sys.exit(102)
     if any(t in os.environ.get("STUB_LIST_ERROR_TESTS", "").split(",") for t in tests):
@@ -338,6 +387,96 @@ class RunNightlyTest(unittest.TestCase):
         for name in ("summary.json", "summary.txt", "results-store.json", "flake-row.json"):
             self.assertTrue((self.out / name).is_file(), name)
 
+    def binaries_left(self) -> list[str]:
+        """Every file left under the target's debug/deps and debug/build, relative to debug/."""
+        debug = self.target / "debug"
+        return sorted(
+            str(path.relative_to(debug))
+            for place in ("deps", "build")
+            if (debug / place).is_dir()
+            for path in (debug / place).rglob("*")
+            if path.is_file()
+        )
+
+    def delete_lines(self, result: subprocess.CompletedProcess[str]) -> list[str]:
+        """The delete steps' lines, without their KiB (the stub's files are a few bytes on any file system)."""
+        return [
+            re.sub(r" kb=[0-9]+", "", line)
+            for line in result.stdout.splitlines()
+            if line.startswith("## NIGHTLY delete-")
+        ]
+
+    def test_a_sharded_night_deletes_the_test_binaries_cargo_names_in_the_build_dir_layout(self) -> None:
+        # rustc 1.100 (main's pin since 14 Nov) puts test binaries in debug/build/<package>/<hash>/out/ and makes no
+        # debug/deps, so the deps glob deleted nothing: each shard's binaries (about 2 GiB each) stayed
+        result = self.run_nightly("--shard-files", "2", STUB_LAYOUT="build-dir")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=2/2 next=alpha passed=5 failed=0 ", self.summary_line(result))
+        self.assertFalse((self.target / "debug/deps").exists())
+        self.assertEqual(
+            self.binaries_left(), ["build/oneiron-testkit/0123456789abcdef/out/pending_door-0123456789abcdef"]
+        )
+        self.assertEqual(
+            self.delete_lines(result),
+            [
+                "## NIGHTLY delete-tests-01 rc=0 files=2 cargo_named=2 deps_fallback=0",
+                "## NIGHTLY delete-tests-02 rc=0 files=2 cargo_named=2 deps_fallback=0",
+            ],
+        )
+        self.assertTrue((self.out / "build-tests-01.json").is_file(), "the build's cargo messages are kept in --out")
+
+    def test_the_bench_bin_and_its_hard_linked_build_copy_are_deleted_in_either_layout(self) -> None:
+        self.use_bench_workspace()
+        for layout in ("deps", "build-dir"):
+            with self.subTest(layout=layout):
+                shutil.rmtree(self.target, ignore_errors=True)
+                out = self.out.parent / f"out-{layout}"
+                result = self.run_nightly("--shard-files", "2", "--max-shards", "1", out=out, STUB_LAYOUT=layout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("## NIGHTLY bench-beam-contract rc=0 expected=0 ", result.stdout)
+                self.assertEqual(
+                    self.binaries_left(),
+                    [
+                        "build/oneiron-testkit/0123456789abcdef/out/pending_door-0123456789abcdef"
+                        if layout == "build-dir"
+                        else "deps/pending_door-0123456789abcdef"
+                    ],
+                )
+                self.assertFalse((self.target / "debug/oneiron-bench").exists())
+                # 2 test binaries, the bin's unit test binary, the bin in debug/ and its hard-linked build copy
+                self.assertIn(
+                    "## NIGHTLY delete-bench rc=0 files=5 cargo_named=3 deps_fallback=0", self.delete_lines(result)
+                )
+
+    def test_a_build_without_cargo_messages_falls_back_to_the_deps_glob(self) -> None:
+        result = self.run_nightly("--shard-files", "2", STUB_NO_MESSAGES="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.binaries_left(), ["deps/pending_door-0123456789abcdef"])
+        self.assertEqual(
+            self.delete_lines(result),
+            [
+                "## NIGHTLY delete-tests-01 rc=0 files=2 cargo_named=0 deps_fallback=2",
+                "## NIGHTLY delete-tests-02 rc=0 files=2 cargo_named=0 deps_fallback=2",
+            ],
+        )
+
+    def test_a_delete_that_finds_no_binary_stops_the_night_after_its_shard(self) -> None:
+        # no cargo messages and no debug/deps: the binaries cannot be found, so no further shard adds its own
+        cursor = self.out.parent / "cursor.json"
+        result = self.run_nightly(
+            "--shard-files", "1", "--cursor", str(cursor), STUB_LAYOUT="build-dir", STUB_NO_MESSAGES="1"
+        )  # fmt: skip
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.delete_lines(result),
+            ["## NIGHTLY delete-tests-01 rc=1 files=0 cargo_named=0 deps_fallback=0 not_found=alpha"],
+        )
+        self.assertIn("## NIGHTLY stop reason=delete-incomplete after=tests-01 next=tests-02", result.stdout)
+        self.assertEqual(
+            json.loads(cursor.read_text()), {"next": "beta", "cycle": 1}, "the shard ran: the cursor moves"
+        )
+        self.assertIn(" shards_run=1/4 next=beta ", self.summary_line(result))
+
     def test_a_test_file_that_does_not_compile_is_left_out_and_the_night_is_red(self) -> None:
         result = self.run_nightly(STUB_FAIL_TESTS="beta")
         line = self.summary_line(result)
@@ -433,6 +572,75 @@ class RunNightlyTest(unittest.TestCase):
         text = (self.out / "summary.txt").read_text()
         self.assertIn("unselected: tests-01 oneiron test beta (did not compile)", text)
         self.assertNotIn("dropped:", text)
+
+    def add_lib_packages(self, *names: str, tested: bool = True) -> None:
+        """Workspace packages with a lib target alone; `tested=False` marks the lib `test = false`."""
+        path = self.target.parent / "metadata.json"
+        metadata = json.loads(path.read_text())
+        for name in names:
+            metadata["workspace_members"].append(f"{name} 0.1.0")
+            lib = {"name": name.replace("-", "_"), "kind": ["lib" if tested else "cdylib"], "test": tested}
+            metadata["packages"].append({"id": f"{name} 0.1.0", "name": name, "targets": [lib]})
+        path.write_text(json.dumps(metadata))
+
+    def test_broken_lib_tests_take_one_round_each_and_the_night_goes_on_to_the_shards(self) -> None:
+        broken = ("oneiron-driver", "oneiron-seal", "oneiron-store", "oneiron-sync")
+        self.add_lib_packages(*broken)
+        result = self.run_nightly(STUB_FAIL_LIBS=",".join(broken))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            [
+                line.split(" seconds=")[0]
+                for line in result.stdout.splitlines()
+                if line.startswith("## NIGHTLY build-libs ")
+            ],
+            [f"## NIGHTLY build-libs rc={rc} round={n}" for n, rc in ((1, 101), (2, 101), (3, 101), (4, 101), (5, 0))],
+        )
+        self.assertNotIn("stop reason=build-dropped", result.stdout)
+        self.assertIn(" RED build=partial cycle=1 shards_run=1/1 next=alpha ", self.summary_line(result))
+        text = (self.out / "summary.txt").read_text()
+        for package in broken:
+            self.assertIn(f"unselected: libs {package} lib-test (did not compile)", text)
+        self.assertNotIn("dropped:", text)
+
+    def test_the_build_rounds_stop_at_nightly_build_rounds_and_the_dropped_libs_stop_the_night(self) -> None:
+        broken = ("oneiron-driver", "oneiron-seal", "oneiron-store", "oneiron-sync")
+        self.add_lib_packages(*broken)
+        result = self.run_nightly(STUB_FAIL_LIBS=",".join(broken), NIGHTLY_BUILD_ROUNDS="2")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY stop reason=build-dropped next=libs", result.stdout)
+        self.assertEqual(len(self.builds()), 2)
+        self.assertIn("dropped: libs (the build failed in 2 rounds)", (self.out / "summary.txt").read_text())
+
+    def test_a_build_that_fails_past_the_deadline_is_dropped_without_another_round(self) -> None:
+        self.add_lib_packages("oneiron-driver", "oneiron-seal")
+        result = self.run_nightly("--deadline-epoch", "1", STUB_FAIL_LIBS="oneiron-driver,oneiron-seal")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(len(self.builds()), 1)
+        self.assertIn(
+            "dropped: libs (the build failed in round 1, at the deadline)", (self.out / "summary.txt").read_text()
+        )
+
+    def test_a_round_count_that_is_not_a_positive_number_stops_the_job_before_any_build(self) -> None:
+        for value in ("0", "three"):
+            result = self.run_nightly(NIGHTLY_BUILD_ROUNDS=value)
+            self.assertEqual(result.returncode, 2, value + result.stdout + result.stderr)
+            self.assertIn(f"NIGHTLY_BUILD_ROUNDS={value} is not a positive number", result.stderr)
+        self.assertFalse(self.calls.exists(), "no cargo call")
+
+    def test_a_package_with_no_tested_target_is_left_out_of_every_build_and_the_night_stays_green(self) -> None:
+        self.add_lib_packages("oneiron-py", tested=False)
+        result = self.run_nightly("--shard-files", "2", STUB_FAIL_LIBS="oneiron-py")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=2/2 ", self.summary_line(result))
+        builds = self.builds()
+        self.assertEqual(len(builds), 3, "libs once, then two shards")
+        for line in builds:
+            self.assertIn(" --exclude oneiron-py ", line + " ")
+        self.assertIn(
+            "not tested by design: oneiron-py (no lib, bin or test target sets test = true)",
+            (self.out / "summary.txt").read_text(),
+        )
 
     def use_bench_workspace(self) -> None:
         """oneiron-bench joins the fixture workspace: a bin, two integration tests, the fixtures its jobs read."""

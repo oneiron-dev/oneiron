@@ -29,7 +29,9 @@ pub struct GateExplanation {
     /// `allow`, `pending` or `deny`.
     pub outcome: String,
     pub reason_codes: Vec<String>,
-    /// The policy rows and checks behind the outcome, by opaque reference.
+    /// The policy rows, the charter stamp and the checks behind the
+    /// outcome, by opaque reference (`policy_row_<row>`,
+    /// `charter_stamp_<approval>`).
     pub receipt_reasons: Vec<String>,
     /// Each system notice's type, and the policy row it cites.
     pub notices: Vec<(String, Option<String>)>,

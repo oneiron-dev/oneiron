@@ -2,45 +2,13 @@
 use super::{HttpEndpointSkillHubAdapter, INDEX_LIMIT};
 use crate::error::Result;
 use crate::skill_hub::package_codec::invalid;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::io::Read;
 
-/// Public provider metadata. Missing fields do not become package identity.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ClawHubSearchHit {
-    pub score: Option<f64>,
-    pub slug: Option<String>,
-    pub display_name: Option<String>,
-    pub summary: Option<String>,
-    pub version: Option<String>,
-    pub updated_at: Option<f64>,
-    pub owner_handle: Option<String>,
-    pub owner: Option<ClawHubSearchOwner>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ClawHubSearchOwner {
-    pub handle: Option<String>,
-    pub display_name: Option<String>,
-    pub image: Option<String>,
-}
-
-/// Provider failures remain distinct from a successful search with no hits.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum ClawHubSearchReply {
-    Results {
-        /// None means the provider omitted its list, not a confirmed empty list.
-        results: Option<Vec<ClawHubSearchHit>>,
-    },
-    ProviderError {
-        status: u16,
-        retry_after: Option<String>,
-        body: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_hub::http_fetch::clawhub::{
+    ClawHubSearchHit, ClawHubSearchOwner, ClawHubSearchReply,
+};
 
 #[derive(Deserialize)]
 struct SearchResponse {
@@ -51,11 +19,12 @@ impl HttpEndpointSkillHubAdapter {
     /// Queries `/api/v1/search` on this configured origin, without fetching or
     /// admitting a package. Optional filters are sent only when requested.
     /// The response budget defaults to the existing HTTP index budget and is
-    /// caller-overridable; it is not an upstream query parameter.
+    /// caller-overridable; it is not an upstream query parameter. `limit` is
+    /// unsigned: the verb door refuses a negative ask before it gets here.
     pub fn search_clawhub(
         &self,
         q: &str,
-        limit: Option<i64>,
+        limit: Option<u64>,
         highlighted_only: Option<bool>,
         non_suspicious_only: Option<bool>,
         response_limit_bytes: Option<usize>,

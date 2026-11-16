@@ -7,14 +7,18 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 259 IDs, 443 public registry rows, and three explicit
+The pinned plan has 29 files, 265 IDs, 443 public registry rows, and three explicit
 excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.test.ts`
 (Engine order, 10 Nov 12:54 JST), MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
-11 Nov 05:37 JST) and MUSE-LOOP-01..08 in `coordination.test.ts` and
-`artifacts.test.ts` (Engine answer MUSE-LOOP-REGISTRATION, 10 Nov 11:52 JST) cite
-their drivable PROMISE-REGISTER ids in `promises`; each `source` lists those promises' canon anchors. The retrieval file
-has 21 cases and an estimated 300 seconds, the coordination file 16 cases and
-160 seconds, and the artifacts file 10 cases and 85 seconds. The plan pin's `expectedFacts` counts
+11 Nov 05:37 JST), MUSE-LOOP-01..08 in `coordination.test.ts` and
+`artifacts.test.ts` (Engine answer MUSE-LOOP-REGISTRATION, 10 Nov 11:52 JST), and
+FEDERATION-09..14 inquiry cases in `federation.test.ts` (Engine TASK 15 Nov 08:32 JST,
+RULING INQUIRE-NEXT-ORDER = A) make the 265-ID plan. The Muse additions cite their
+drivable PROMISE-REGISTER ids in `promises`; inquiry has no matching register id,
+so its entries cite the checked federation canon anchors in `source` instead.
+The retrieval file has 21 cases and an estimated 300 seconds, the coordination file
+16 cases and 160 seconds, the artifacts file 10 cases and 85 seconds, and the
+federation file 14 cases and 220 seconds (155 seconds added for inquiry, unmeasured). The plan pin's `expectedFacts` counts
 are derived from the plan, not maintained independently, and the `support/run.ts`
 preflight reads its file and ID counts from that pin. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
@@ -74,8 +78,14 @@ Slots must match `fixtures/suite-plan.json`: one normally, two for heavy,
 multi-peer, browser or organ files. All helpers and subprocesses count inside
 that file's budget. A flow defaults to 30 seconds. Pass `200_000` as the last
 `suite.test` argument for the actual 180-second wake case. Do not change engine
-defaults to accelerate it. The optional profile runs only its six pinned IDs;
-other IDs are not registered for that run and do not count as default coverage.
+defaults to accelerate it. A case whose flow needs more than the 30-second PR budget
+is a **nightly budget case**: `suite.nightly(test, ID, name, body, deadlineMs)`.
+Without `E2E_NIGHTLY=1` it reports BLOCKED "nightly budget case" and its body never
+runs; the nightly E2E stage (`scripts/nightly/nightly_e2e.py`) sets `E2E_NIGHTLY=1`
+on the runner, which passes it to each case process, and the case runs as
+`suite.test` with its own deadline (at most the runner's 600-second cap). The
+optional profile runs only its six pinned IDs; other IDs are not registered for
+that run and do not count as default coverage.
 
 **G01 is binding:** if a designed verb has no current typed HTTP and SDK call,
 register `suite.todo(test, ID, "waits on <door or verb>")`. Preserve canon's typed
@@ -421,7 +431,7 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 259-ID plan. The prepared manifest must identify
+never claims completion of the 265-ID plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
@@ -449,7 +459,7 @@ SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
 cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
 but does not turn an independently passing sibling into FAIL. Owner-deferred
 SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
-coverage still requires passing evidence for all 259 IDs. Partial and optional-profile
+coverage still requires passing evidence for all 265 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
