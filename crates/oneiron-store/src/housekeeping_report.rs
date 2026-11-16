@@ -115,6 +115,11 @@ pub enum SweepWork {
         enqueued: u64,
         failed: u64,
     },
+    EsignTokens {
+        documents: u64,
+        removed: u64,
+        failed: u64,
+    },
     Commitments {
         lapsed: u64,
         close_hooks_repaired: u64,
@@ -196,7 +201,9 @@ impl SweepWork {
     /// the backoff.
     pub fn items_failed(&self) -> u64 {
         match *self {
-            Self::EsignExpiry { failed, .. } | Self::EsignSeals { failed, .. } => failed,
+            Self::EsignExpiry { failed, .. }
+            | Self::EsignSeals { failed, .. }
+            | Self::EsignTokens { failed, .. } => failed,
             Self::HardErase(work) => work
                 .jobs_failed
                 .saturating_add(work.obligations_undecodable),
@@ -225,6 +232,9 @@ impl SweepWork {
             Self::EsignSeals {
                 enqueued, failed, ..
             } => enqueued == 0 && failed == 0,
+            Self::EsignTokens {
+                removed, failed, ..
+            } => removed == 0 && failed == 0,
             Self::Commitments {
                 lapsed,
                 close_hooks_repaired,

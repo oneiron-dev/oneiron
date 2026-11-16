@@ -59,6 +59,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut caller_origin = None;
     let mut funding = None;
     let mut carried_wake_keys = Vec::new();
+    let mut spawn_parent = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -383,6 +384,16 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     carried_wake_keys.push(key.to_owned());
                 }
             }
+            KEY_SPAWN_PARENT => {
+                spawn_parent = Some(
+                    value
+                        .as_str()
+                        .and_then(|hex| EntityId::from_hex(hex).ok())
+                        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "spawn_parent must be a hex EntityId",
+                        )))?,
+                );
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -472,5 +483,6 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         caller_origin,
         funding,
         carried_wake_keys,
+        spawn_parent,
     })
 }
