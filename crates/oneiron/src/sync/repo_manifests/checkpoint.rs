@@ -7,12 +7,10 @@
     reason = "KS7-3b's Loro projection drives this (CHECKPOINT_PAYLOADS_ENABLED, on since KS7-6)"
 )]
 
-use std::collections::BTreeMap;
-
 use super::decode;
 use crate::origin::{RepoManifest, RepoPortableId};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::{is_part_key, join_parts_from, part_key};
+use crate::sync::carrier_parts::{is_part_key, join_parts_from};
 use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified};
 
 /// Where the value under `key` in the repo manifest map goes.
@@ -41,47 +39,45 @@ pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
     }
 }
 
-/// Checks joinable manifest heads against their portable-id keys and CODE
-/// entities, using current and retained historical values from one capture.
-/// Only content-addressed part values enter the lookup, so a malformed old
-/// value cannot hide a correct part. A head that cannot join (a part not
-/// landed, or a join held for memory) proves no binding, so it keeps the
-/// window whole when it names a part the capture holds (FIX 10278); a
-/// proved mismatch does too, under the existing `Undecodable` fallback.
-/// Malformed heads remain `entry()`'s.
-pub(in crate::sync) fn binding_refusal(
-    entries: &[(&str, &[u8])],
-) -> Option<(OwnerRef, SyncUnclassified)> {
-    let mut parts: BTreeMap<&str, &[u8]> = BTreeMap::new();
-    for &(key, value) in entries {
-        if part_key(blake3::hash(value).as_bytes()) == key {
-            parts.insert(key, value);
-        }
+/// Whether the repo head `value` under `key` is the manifest its key names,
+/// its parts joined through `part` (UC-10 PR 1): `Some(true)` when the
+/// joined manifest names the key's portable id and the head's CODE entity,
+/// `Some(false)` when it is another manifest. `None` for a value that is no
+/// head under a portable id, for a head whose parts do not all join, and
+/// for joined bytes that read as no manifest: it proves no binding.
+pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
+    key: &str,
+    value: &[u8],
+    part: impl FnMut(&str) -> Option<B>,
+) -> Option<bool> {
+    let portable = RepoPortableId::from_hex(key)?;
+    let head = decode(value).ok()?;
+    let joined = join_parts_from(&head.body, part)?;
+    RepoManifest::decode(&joined)
+        .map(|manifest| manifest.portable == portable && manifest.code == head.code)
+}
+
+/// The CODE entity of the repo head `value` under `key` when its parts do
+/// not join through `part` to a manifest but it names one `part` holds: its
+/// holder would still take that part, so the capture keeps the window whole
+/// (FIX 10278), as it does when every part is held and the joined bytes
+/// read as no manifest. `None` for a head that joins to a manifest, or
+/// names no held part.
+pub(in crate::sync) fn unjoined_holder<B: AsRef<[u8]>>(
+    key: &str,
+    value: &[u8],
+    part: impl Fn(&str) -> Option<B>,
+) -> Option<OwnerRef> {
+    RepoPortableId::from_hex(key)?;
+    let head = decode(value).ok()?;
+    if join_parts_from(&head.body, &part)
+        .and_then(|joined| RepoManifest::decode(&joined))
+        .is_some()
+    {
+        return None;
     }
-    for &(key, value) in entries {
-        let Some(portable) = RepoPortableId::from_hex(key) else {
-            continue;
-        };
-        let Ok(head) = decode(value) else {
-            continue;
-        };
-        let Some(joined) = join_parts_from(&head.body, |part| parts.get(part).copied()) else {
-            // Its holder would still take each part it names that is here.
-            if head
-                .body
-                .keys()
-                .any(|part| parts.contains_key(part.as_str()))
-            {
-                return Some((OwnerRef::entity(&head.code), SyncUnclassified::Undecodable));
-            }
-            continue;
-        };
-        let Some(manifest) = RepoManifest::decode(&joined) else {
-            return Some((OwnerRef::entity(&head.code), SyncUnclassified::Undecodable));
-        };
-        if manifest.portable != portable || manifest.code != head.code {
-            return Some((OwnerRef::entity(&head.code), SyncUnclassified::Undecodable));
-        }
-    }
-    None
+    head.body
+        .keys()
+        .any(|key| part(&key).is_some())
+        .then(|| OwnerRef::entity(&head.code))
 }

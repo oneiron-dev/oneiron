@@ -17,3 +17,13 @@
 # file. With ONEIRON_TESTKIT_TODAY=YYYY-MM-DD set, as the nightly sets it, it
 # also fails on an expired entry. An expired test is fixed or deleted, never
 # quarantined again.
+
+# The testkit model's settlement sequence: seed 0 step 12 OwnerApprove fails
+# with MDB_PAGE_FULL (a vault_meta put, key 33 B, value 642 B) in 3 of 4 runs
+# on main. The engine defect is the issue's; the quarantine profile keeps
+# running the test, report only (Engine ruling MODEL-SEQ-QUARANTINE, 14 Nov).
+[[test]]
+filter = "package(oneiron-testkit) & binary(=model_seq) & test(=an_approved_proposal_leaves_one_standing_head_in_every_seeded_sequence)"
+issue = "TRAP-REGISTER-WAIT-PAGE-FULL"
+added = "2026-11-14"
+expires = "2026-11-21"
