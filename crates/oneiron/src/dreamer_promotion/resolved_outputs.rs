@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
-use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
+use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN};
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, RowRevision};
 use crate::dreamer_consolidation::{conflict_close_candidate, marker_ids};
@@ -199,66 +199,76 @@ pub(super) fn close_resolved_outputs(
 /// engine error behind it, when one refused it.
 type CloseRefusal = (&'static str, Option<crate::error::ErrorKind>);
 
-/// One answer's close. `Ok(None)`: it closed, or had nothing to close. It
-/// cites what each output's candidate cited in this write (`stood`), and
-/// for an output this write did not meet, the turn evidence its stored
-/// claim cites.
-fn close_answer(
+/// The revisions, resolution and evidence a standing answer's close needs.
+pub(crate) struct ResolvedCloseInputs {
+    /// Every output at the revision the close must stand on.
+    pub(crate) outputs: Vec<(EntityId, RowRevision)>,
+    /// Native's array of outputs and the resolution label.
+    pub(crate) resolution: Value,
+    /// All cited evidence, sorted and deduplicated.
+    pub(crate) evidence: Vec<EntityId>,
+}
+
+/// What the answer's read found, without attempting its close write.
+pub(crate) enum ResolvedClose {
+    /// No eligible marker, or a standing answer already names it.
+    Nothing,
+    /// An output no longer stands; the caller logs this closed reason.
+    Refused(&'static str),
+    /// All conditions hold; these are the inputs to the ordinary close.
+    Ready(ResolvedCloseInputs),
+}
+
+/// The conditions and inputs of native's close on a caller's transaction.
+/// Evidence comes from `stood`, or the output's stored TURN refs when this
+/// write did not meet it. This function writes nothing and opens no read.
+pub(crate) fn resolved_close_in_txn(
     vault: &Vault,
-    run: &DreamerRunContext,
-    fence: &ConsolidationFence,
+    txn: &heed::RoTxn<'_>,
     answer: &ResolvedConflictOutput,
     stood: &BTreeMap<EntityId, Vec<EntityId>>,
-) -> Result<Option<CloseRefusal>> {
-    // The marker, every output and its evidence from one read; each output's
-    // revision holds the close's fence to the output as it stood.
-    let (marker, outputs, mut evidence) = {
-        let txn = vault.store.env.read_txn()?;
-        let marker = vault.get_claim_in_txn(&txn, &answer.marker)?;
-        let mut outputs = Vec::new();
-        let mut evidence: Vec<EntityId> = Vec::new();
-        for output in &answer.outputs {
-            let body = vault
-                .get_claim_for_effect_in_txn(&txn, output)?
-                .filter(crate::claim::claim_surfaceable);
-            match (body, RowRevision::read_in(vault, &txn, output)?) {
-                (Some(body), Some(revision)) => {
-                    outputs.push((*output, revision));
-                    match stood.get(output) {
-                        Some(cited) => evidence.extend_from_slice(cited),
-                        None => evidence.extend(stored_turn_refs(output, &body)),
-                    }
+) -> Result<ResolvedClose> {
+    let marker = vault.get_claim_in_txn(txn, &answer.marker)?;
+    let mut outputs = Vec::new();
+    let mut evidence: Vec<EntityId> = Vec::new();
+    for output in &answer.outputs {
+        let body = vault
+            .get_claim_for_effect_in_txn(txn, output)?
+            .filter(crate::claim::claim_surfaceable);
+        match (body, RowRevision::read_in(vault, txn, output)?) {
+            (Some(body), Some(revision)) => {
+                outputs.push((*output, revision));
+                match stood.get(output) {
+                    Some(cited) => evidence.extend_from_slice(cited),
+                    None => evidence.extend(stored_turn_refs(output, &body)),
                 }
-                _ => return Ok(Some(("output_not_standing", None))),
             }
+            _ => return Ok(ResolvedClose::Refused("output_not_standing")),
         }
-        (marker, outputs, evidence)
-    };
+    }
     evidence.sort_unstable();
     evidence.dedup();
     let Some(marker) = marker else {
-        return Ok(None);
+        return Ok(ResolvedClose::Nothing);
     };
     if marker.predicate != PREDICATE_CONFLICT_OPEN
         || marker.lifecycle != ClaimLifecycleStatus::Active
         || marker.approval == ClaimApprovalStatus::Rejected
     {
-        return Ok(None);
+        return Ok(ResolvedClose::Nothing);
     }
     let crate::claim::ClaimSubject::Entity(subject) = marker.subject else {
-        return Ok(None);
+        return Ok(ResolvedClose::Nothing);
     };
-    // A standing answer already names it: a replay closes nothing twice.
-    for id in vault.claims_for_subject(&subject)? {
-        let Some(claim) = vault.get_claim(&id)? else {
-            continue;
-        };
-        if claim.predicate == PREDICATE_CONFLICT_RESOLVED
-            && crate::claim::claim_surfaceable(&claim)
-            && marker_ids(&claim.value, "open_marker").any(|named| named == answer.marker)
-        {
-            return Ok(None);
-        }
+    if crate::dreamer_consolidation::conflict_answer_standing_in_txn(
+        vault,
+        txn,
+        subject,
+        answer.marker,
+    )?
+    .standing
+    {
+        return Ok(ResolvedClose::Nothing);
     }
     let resolution = Value::Map(vec![
         (Value::from("superseded_by"), ids_value(&answer.outputs)),
@@ -267,11 +277,41 @@ fn close_answer(
             Value::from(answer.resolution.as_str()),
         ),
     ]);
-    let close = match conflict_close_candidate(vault, run, answer.marker, resolution, evidence) {
+    Ok(ResolvedClose::Ready(ResolvedCloseInputs {
+        outputs,
+        resolution,
+        evidence,
+    }))
+}
+
+/// One answer's close. `Ok(None)`: it closed, or had nothing to close. The
+/// read ends before the close builder and promotion open their own reads.
+fn close_answer(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    fence: &ConsolidationFence,
+    answer: &ResolvedConflictOutput,
+    stood: &BTreeMap<EntityId, Vec<EntityId>>,
+) -> Result<Option<CloseRefusal>> {
+    let inputs = {
+        let txn = vault.store.env.read_txn()?;
+        match resolved_close_in_txn(vault, &txn, answer, stood)? {
+            ResolvedClose::Nothing => return Ok(None),
+            ResolvedClose::Refused(reason) => return Ok(Some((reason, None))),
+            ResolvedClose::Ready(inputs) => inputs,
+        }
+    };
+    let close = match conflict_close_candidate(
+        vault,
+        run,
+        answer.marker,
+        inputs.resolution,
+        inputs.evidence,
+    ) {
         Ok(close) => close,
         Err(error) => return Ok(Some(("no_close_candidate", Some(error.kind())))),
     };
-    for (output, revision) in outputs {
+    for (output, revision) in inputs.outputs {
         fence.relies_on(output, revision);
     }
     let refused = match promote_one(vault, run, close, None, Some(fence), None) {

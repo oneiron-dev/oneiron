@@ -36,10 +36,21 @@ pub(crate) fn names_candidate(candidate: &PromotionCandidate, body: &ClaimBody) 
 /// held selection's retry, meets it again. The id is this attempt's own, so a
 /// different claim stored there is an error.
 pub(crate) fn reviewed_output(vault: &Vault, candidate: &PromotionCandidate) -> Result<bool> {
-    if vault.get_entity_type(&candidate.claim_id)? != Some(ENTITY_TYPE_CLAIM) {
+    let txn = vault.store.env.read_txn()?;
+    reviewed_output_in_txn(vault, &txn, candidate)
+}
+
+/// [`reviewed_output`] on the caller's snapshot, including an item's write.
+/// The stored type, approval and identity are checked without opening a read.
+pub(crate) fn reviewed_output_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    candidate: &PromotionCandidate,
+) -> Result<bool> {
+    if vault.get_entity_type_in_txn(txn, &candidate.claim_id)? != Some(ENTITY_TYPE_CLAIM) {
         return Ok(false);
     }
-    let Some(stored) = vault.get_claim(&candidate.claim_id)? else {
+    let Some(stored) = vault.get_claim_in_txn(txn, &candidate.claim_id)? else {
         return Ok(false);
     };
     if stored.approval == ClaimApprovalStatus::Auto {

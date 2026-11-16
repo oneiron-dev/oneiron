@@ -670,7 +670,24 @@ pub(super) fn stage_in_txn(
         }
     }
     let (savepoint, landed) = completion::grant_and_close_in_txn(
-        vault, savepoint, context, run, fence, provenance, landed,
+        vault,
+        savepoint,
+        completion::CompletionRequest {
+            context,
+            run,
+            fence,
+            provenance,
+            landed,
+            marker: crate::dreamer_consolidation::conflict_open_marker_id(
+                &selected.set,
+                attempt_id,
+            )?,
+            resolution: match item.outcome {
+                DerivedResolutionOutcome::Skip => "fast_path",
+                DerivedResolutionOutcome::Accumulate => "accumulate",
+                DerivedResolutionOutcome::Merge { .. } => "merge",
+            },
+        },
     )?;
     savepoint.commit()?;
     // The replacement alone (skip, merge) or the members written, in set

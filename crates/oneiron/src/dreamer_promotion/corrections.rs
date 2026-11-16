@@ -312,10 +312,11 @@ pub(crate) struct CloseConflictsRequest<'a> {
 ///
 /// What `promote_one` does around the preparation and the landing: the blank
 /// run guard is left out (the replacement's landing before these closes
-/// refuses a blank run); the `reviewed_output` early-Proposed check is left
-/// out (the scan's resolved filter already skips answered markers, and a
-/// derive batch commits once); the own read for the preparation is replaced
-/// by the caller's transaction; the checker admission is left out (no
+/// refuses a blank run); the `reviewed_output` check runs on this transaction
+/// before preparation, leaving a non-Auto close as the review holds it or the
+/// owner left it, including when a re-leased pass commits another reply. The
+/// own read for preparation is replaced by the caller's transaction; the
+/// checker admission is left out (no
 /// checker); the post-commit `verify_landed` is repeated as a read back with
 /// `verify_landed_body` inside the savepoint, so a mismatch aborts that
 /// close alone instead of rejecting after commit; the stage-line hold is left
@@ -341,94 +342,24 @@ pub(crate) fn close_conflicts_naming_in_txn(
     )]);
     request.fence.relies_on(request.replacement, revision);
     for marker in open {
-        let close = {
-            let read_txn: &heed::RoTxn<'_> = txn;
-            match crate::dreamer_consolidation::conflict_close_candidate_in_txn(
-                vault,
-                read_txn,
-                request.run,
-                marker,
-                resolution.clone(),
-                request.evidence.to_vec(),
-            ) {
-                Ok(close) => close,
-                Err(error @ (Error::Gate(_) | Error::Claim(_) | Error::InvalidClaimBody(_))) => {
-                    tracing::warn!(reason = "no_close_candidate", error_kind = ?error.kind(), marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
-                    continue;
-                }
-                Err(error) => {
-                    request.fence.released(request.replacement);
-                    return Err(error);
-                }
-            }
-        };
-        let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-        let (prepared, claim_candidate) = {
-            let read_txn: &heed::RoTxn<'_> = &savepoint;
-            match super::prepare_promotion(
-                vault,
-                read_txn,
-                request.run,
-                close,
-                None,
-                &[],
-                Some(request.provenance.clone()),
-            ) {
-                Ok(prepared) => prepared,
-                Err(rejection) => {
-                    savepoint.abort();
-                    if rejection.gate.is_some() || rejection.claim_domain {
-                        tracing::warn!(reason = "promotion_refused", error_kind = ?rejection.kind, marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
-                        continue;
-                    }
-                    request.fence.released(request.replacement);
-                    return Err(Error::Io(std::io::Error::other(format!(
-                        "close preparation failed: {:?}",
-                        rejection.kind
-                    ))));
-                }
-            }
-        };
-        if let Err(error) = super::land_prepared_promotion_in_txn(
+        let close = super::close_marker_in_txn(
             vault,
-            request.run,
-            &prepared,
-            claim_candidate,
-            Some(request.fence),
-            false,
-            &mut savepoint,
-        ) {
-            savepoint.abort();
-            match error {
-                error @ (Error::Gate(_) | Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-                    tracing::warn!(reason = "promotion_refused", error_kind = ?error.kind(), marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
-                    continue;
-                }
-                error => {
-                    request.fence.released(request.replacement);
-                    return Err(error);
-                }
+            txn,
+            &super::CloseMarkerRequest {
+                run: request.run,
+                fence: request.fence,
+                marker,
+                resolution: resolution.clone(),
+                evidence: request.evidence,
+                provenance: request.provenance.clone(),
+                log_message: "an open conflict the correction answered stayed open",
+            },
+        );
+        if let Err(failure) = close {
+            if failure.release_replacement {
+                request.fence.released(request.replacement);
             }
-        }
-        let stored = {
-            let save_read: &heed::RoTxn<'_> = &savepoint;
-            vault.get_claim_in_txn(save_read, &prepared.claim_id)?
-        };
-        let landed = stored.as_ref().and_then(|stored| {
-            super::verify_landed_body(stored, &prepared.predicate, prepared.source).ok()
-        });
-        match landed {
-            Some(ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed) => {
-                savepoint.commit()?;
-            }
-            Some(other) => {
-                savepoint.abort();
-                tracing::warn!(reason = other.as_str(), marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
-            }
-            None => {
-                savepoint.abort();
-                tracing::warn!(reason = "promotion_refused", marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
-            }
+            return Err(failure.error);
         }
     }
     request.fence.released(request.replacement);
