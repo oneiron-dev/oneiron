@@ -5,7 +5,11 @@
 //! `vault.calendar.passports.history` but is never the
 //! `vault.calendar.passports.read` head. The admitted head stays the head
 //! until its revision is approved, and a rejected revision leaves it admitted
-//! (FIX CAL-PASSPORT-PENDING-REVISION-SUPERSEDES-AT-IMPORT). Only the owner's
+//! (FIX CAL-PASSPORT-PENDING-REVISION-SUPERSEDES-AT-IMPORT). The EVENT follows
+//! the admitted head too: a waiting revision moves neither its name nor its
+//! time, a rejected one never does, and an approved one moves both in the
+//! approving write (FIX PASSPORT-REVISION-REWRITES-EVENT-BEFORE-APPROVAL).
+//! Only the owner's
 //! ICS import (or a feed poll) mints a passport; `vault.claims.seed` cannot,
 //! because a passport's `content_hash` must be msgpack Binary.
 #[path = "support/engine_stack.rs"]
@@ -56,6 +60,11 @@ fn pending_passport_revision_is_recorded_but_never_the_head() {
 #[test]
 fn rejected_passport_revision_leaves_the_admitted_head() {
     run_on_engine_stack("passport-rejected-revision", rejected_revision_keeps_head);
+}
+
+#[test]
+fn event_moves_only_with_its_approved_passport_revision() {
+    run_on_engine_stack("passport-event-follows-head", event_follows_admitted_head);
 }
 
 /// One owner-signed facade call and its status, error code and body.
@@ -139,13 +148,24 @@ async fn serve(name: &str) -> OwnerCaller {
 
 /// A minimal complete VCALENDAR with one VEVENT, CRLF line ends.
 fn ics_feed(uid: &str, sequence: u32, summary: &str) -> String {
+    ics_feed_at(
+        uid,
+        sequence,
+        summary,
+        "20260302T090000Z",
+        "20260302T093000Z",
+    )
+}
+
+/// [`ics_feed`] with the VEVENT's `DTSTART` and `DTEND` (UTC basic form).
+fn ics_feed_at(uid: &str, sequence: u32, summary: &str, start: &str, end: &str) -> String {
     let mut out = String::from(
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\nBEGIN:VEVENT\r\n",
     );
     out.push_str(&format!("UID:{uid}\r\n"));
     out.push_str("DTSTAMP:20260302T070000Z\r\n");
-    out.push_str("DTSTART:20260302T090000Z\r\n");
-    out.push_str("DTEND:20260302T093000Z\r\n");
+    out.push_str(&format!("DTSTART:{start}\r\n"));
+    out.push_str(&format!("DTEND:{end}\r\n"));
     out.push_str(&format!("SEQUENCE:{sequence}\r\n"));
     out.push_str(&format!("SUMMARY:{summary}\r\n"));
     out.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
@@ -289,6 +309,36 @@ async fn passport_history(caller: &OwnerCaller, event_ref: &str, system: &str, u
         "history {system} {uid}: {body}"
     );
     body
+}
+
+/// One EVENT's name and occurrence bounds as `vault.calendar.read` serves
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EventFields {
+    name: Option<String>,
+    start: u64,
+    end: u64,
+}
+
+/// Reads `event_ref` through `vault.calendar.read`.
+async fn event_fields(caller: &OwnerCaller, event_ref: &str) -> EventFields {
+    let input = json!({"event_ref": event_ref});
+    let (status, code, body) = caller.call("vault.calendar.read", &input).await;
+    assert_eq!(
+        (status, code.as_deref()),
+        (StatusCode::OK, None),
+        "calendar read {event_ref}: {body}"
+    );
+    let view = &body["value"];
+    EventFields {
+        name: view["name"].as_str().map(str::to_owned),
+        start: view["start_utc"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("event start: {body}")),
+        end: view["end_utc"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("event end: {body}")),
+    }
 }
 
 /// The events of an import receipt.
@@ -639,6 +689,93 @@ async fn rejected_revision_keeps_head() {
         revisions(&history).len(),
         4,
         "the admitted head's content files no new revision: {history}"
+    );
+}
+
+async fn event_follows_admitted_head() {
+    let caller = serve("passport-event-follows-head").await;
+    let uid = "planning-5d18@example.test";
+    let system = "work-calendar";
+
+    // rev0: 09:00-09:30 on 2 March, approved.
+    let rev0_feed = ics_feed_at(uid, 0, "Planning", "20260302T090000Z", "20260302T093000Z");
+    let (blob, version) = upload_ics(&caller, "work.ics", &rev0_feed).await;
+    let first = import_ics(&caller, system, &blob, version).await;
+    let event = receipt_event_ref(&first).to_owned();
+    let rev0 = passport_claim_ref(&first, &[]);
+    approve(&caller, &rev0).await;
+    let at_rev0 = event_fields(&caller, &event).await;
+    assert_eq!(
+        at_rev0.name.as_deref(),
+        Some("Planning"),
+        "rev0 names the EVENT: {at_rev0:?}"
+    );
+    assert!(
+        at_rev0.end > at_rev0.start,
+        "rev0 times the EVENT: {at_rev0:?}"
+    );
+    // calendar.read's unit per second: rev0 spans 30 minutes.
+    let unit = (at_rev0.end - at_rev0.start) / 1800;
+    assert_eq!(
+        (at_rev0.end - at_rev0.start) % 1800,
+        0,
+        "rev0 spans 30 minutes: {at_rev0:?}"
+    );
+
+    // rev1 moves the meeting to 15:00 and renames it; it waits for review.
+    let rev1_feed = ics_feed_at(
+        uid,
+        1,
+        "Planning (moved)",
+        "20260302T150000Z",
+        "20260302T153000Z",
+    );
+    let (blob, version) = upload_ics(&caller, "work-1.ics", &rev1_feed).await;
+    let second = import_ics(&caller, system, &blob, version).await;
+    let rev1 = passport_claim_ref(&second, &[rev0.clone()]);
+    let head = passport_read(&caller, &event, system, uid).await;
+    assert_head(&head, &rev0, 0, "rev0 is still the head while rev1 waits");
+    assert_eq!(
+        event_fields(&caller, &event).await,
+        at_rev0,
+        "the waiting rev1 leaves the EVENT as rev0 set it"
+    );
+
+    reject(&caller, &rev1).await;
+    assert_eq!(
+        event_fields(&caller, &event).await,
+        at_rev0,
+        "the rejected rev1 leaves the EVENT as rev0 set it"
+    );
+
+    // rev2: 10:00-10:45 on 3 March, renamed again; approved.
+    let rev2_feed = ics_feed_at(
+        uid,
+        2,
+        "Planning (3 March)",
+        "20260303T100000Z",
+        "20260303T104500Z",
+    );
+    let (blob, version) = upload_ics(&caller, "work-2.ics", &rev2_feed).await;
+    let third = import_ics(&caller, system, &blob, version).await;
+    let rev2 = passport_claim_ref(&third, &[rev0.clone(), rev1.clone()]);
+    assert_eq!(
+        event_fields(&caller, &event).await,
+        at_rev0,
+        "the waiting rev2 leaves the EVENT as rev0 set it"
+    );
+    approve(&caller, &rev2).await;
+    let head = passport_read(&caller, &event, system, uid).await;
+    assert_head(&head, &rev2, 2, "the approval makes rev2 the head");
+    // 2 March 09:00 to 3 March 10:00 UTC is 90,000 s.
+    assert_eq!(
+        event_fields(&caller, &event).await,
+        EventFields {
+            name: Some("Planning (3 March)".to_owned()),
+            start: at_rev0.start + 90_000 * unit,
+            end: at_rev0.start + 90_000 * unit + 2_700 * unit,
+        },
+        "the approving write moves the EVENT to rev2"
     );
 }
 
