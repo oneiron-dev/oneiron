@@ -99,8 +99,8 @@ pub(super) use self::scrub::{
 pub(super) const FANOUT_LAUNCHES: SideTable<HexId, StoredLaunch, Named> =
     SideTable::new(&side_table::TASK_FANOUT_LAUNCH);
 
-/// The plan target of a wave task with no assignee: the default realization.
-const WAVE_DEFAULT_REALIZATION: &str = "tasks.realize";
+#[doc(hidden)]
+use oneiron_records::task_verb::fanout_launch::{WAVE_DEFAULT_REALIZATION, check_row_ref};
 
 /// The lease an approval re-leases a held planning attempt under, for the
 /// instant it completes it.
@@ -435,10 +435,6 @@ impl StoredLaunch {
     }
 }
 
-fn check_row_ref(kind: &str, launch_ref: EntityId) -> String {
-    format!("fanout_check_row:{kind}:{}", launch_ref.to_hex())
-}
-
 fn load_launch(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -637,10 +633,15 @@ impl FanoutSurfaceSink for LaunchSurface<'_, '_> {
         Ok(surface_ref)
     }
 
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {
+    fn persist_choice_receipt(
+        &mut self,
+        choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String> {
         let receipt_ref = append_human_ruling(
             self.vault,
             self.txn,
+            choice,
             receipt,
             FANOUT_LAUNCH_CONTENT_KIND,
             self.launch.launch_ref.to_hex(),

@@ -15,6 +15,8 @@ use oneiron_retrieval::analyzer::{
     NormalizationPolicy, canonical_hash, canonical_hash_hex, canonical_json,
 };
 
+// main's copied lines keep their `pub`, which this private module cannot reach.
+#[allow(unreachable_pub)]
 mod base {
     use serde::Serialize;
     use sha2::{Digest, Sha256};
@@ -79,6 +81,7 @@ fn fixtures() -> Vec<(&'static str, AnalyzerManifest)> {
         casefold: false,
         kana_fold: false,
         khmer_coeng: false,
+        myanmar_zawgyi: false,
     };
     vec![
         (

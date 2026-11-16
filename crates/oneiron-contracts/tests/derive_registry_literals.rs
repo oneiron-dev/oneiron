@@ -5,13 +5,17 @@
 //! regenerate rather than edit. Each row is a purpose and the context bytes its site spelled
 //! at the base: the 107 constants of `entity_id/derived_domains.rs` (now `purposes/ids.rs`),
 //! and the 72 local constants and inline literals that moved into the registry.
+//!
+//! The merge of main c7a46a4a0cdb added two rows by hand, each with the bytes main spelled:
+//! `MEETING_FOLLOW_UP` (main's 108th `derived_domains` constant, CAL-08) and
+//! `voice::HOME_CONVERSATION` (oneiron-server `voice_host/record.rs` `VOICE_HOME_DOMAIN`).
 
 use oneiron_contracts::entity_id::{EntityId, derived_domains};
 use oneiron_contracts::fingerprint::{Purpose, purposes};
 
 /// Each purpose, with the bytes its site passed to `EntityId::derive` at the base.
 const MOVED: &[(Purpose, &[u8])] = &[
-    // The 107 constants of entity_id/derived_domains.rs.
+    // The 108 constants of entity_id/derived_domains.rs (MEETING_FOLLOW_UP from main).
     (
         derived_domains::PERSON_SUBSTRATE_FACET,
         b"oneiron/person-substrate-facet/v1",
@@ -131,6 +135,10 @@ const MOVED: &[(Purpose, &[u8])] = &[
     (
         derived_domains::CONVERSATION_MIRROR_ACTOR,
         b"oneiron:conversation-mirror-actor:v1",
+    ),
+    (
+        derived_domains::MEETING_FOLLOW_UP,
+        b"oneiron:calendar-meeting-follow-up:v1",
     ),
     (
         derived_domains::CALENDAR_ICS_FEED_BLOB,
@@ -768,6 +776,11 @@ const MOVED: &[(Purpose, &[u8])] = &[
         purposes::code_run::OUTPUT_RAW_HOLD,
         b"oneiron:code-run-output-raw-hold:v1",
     ),
+    // oneiron-server voice_host/record.rs VOICE_HOME_DOMAIN (main, after the base)
+    (
+        purposes::voice::HOME_CONVERSATION,
+        b"oneiron.conversation.voice_home.v1",
+    ),
 ];
 
 /// Part lists for the id check: none, one, and two whose boundary moves.
@@ -775,7 +788,7 @@ const PARTS: [&[&[u8]]; 4] = [&[], &[b"part"], &[b"ab", b"c"], &[b"a", b"bc"]];
 
 #[test]
 fn every_moved_purpose_keeps_its_base_context() {
-    assert_eq!(MOVED.len(), 179);
+    assert_eq!(MOVED.len(), 181);
     for (purpose, base) in MOVED {
         assert_eq!(
             purpose.context().as_bytes(),
@@ -799,8 +812,8 @@ fn every_moved_purpose_derives_the_base_id() {
 
 #[test]
 fn the_id_file_holds_the_old_registry_whole() {
-    assert_eq!(derived_domains::ALL.len(), 107);
-    for (purpose, _) in &MOVED[..107] {
+    assert_eq!(derived_domains::ALL.len(), 108);
+    for (purpose, _) in &MOVED[..108] {
         assert!(
             derived_domains::ALL.contains(purpose),
             "{}",
