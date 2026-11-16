@@ -10,7 +10,7 @@
 use heed::RwTxn;
 
 use super::rulings::{AdminRulingReceipt, RULING_PREDICATE, ruling_anchor_id};
-use super::{FederationGrantScope, decode_federation_grant_body};
+use super::{FederationGrantScope, decode_federation_grant_body_keyed};
 use crate::authority::GrantFamily;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
@@ -176,9 +176,11 @@ enum RulingGrantRead {
     /// A ruling with no witness: its grant stands now, at the vault clock.
     StandsNow,
     /// A witness taken while a writer changes the grant's row: a counted act of a member's
-    /// family gave the grant, whatever its line holds since. A role change gives the new
-    /// terms before it rewrites the row, and a peer can fold an end before the row's
-    /// delete arrives, so an honest admission is witnessed in either order.
+    /// family gave the grant exactly as the row being changed holds it, whatever its line
+    /// holds since. A role change gives the new terms before it rewrites the row, and a peer
+    /// can fold an end before the row's delete arrives, so an honest admission is witnessed
+    /// in either order; a row no counted act ever gave (a widened or forged one) witnesses
+    /// nothing (review #8852 P1-2).
     Given,
 }
 
@@ -206,7 +208,8 @@ fn grant_admits_in_txn(
     {
         return Ok(false);
     }
-    let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let (grant, terms_key) =
+        decode_federation_grant_body_keyed(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     if grant.role.is_guest()
         || grant.scope != FederationGrantScope::vault(row.vault_id)
         || grant.member_ref != holder
@@ -234,6 +237,7 @@ fn grant_admits_in_txn(
                     line.family,
                     Some(GrantFamily::SharedMember | GrantFamily::HouseLink)
                 )
+                && line.gave_row(grant_ref, &grant, terms_key.as_ref())
         }),
     })
 }
