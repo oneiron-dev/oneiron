@@ -195,6 +195,7 @@ pub mod verb_hook_ask;
 pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
+pub mod workaround_skills;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
