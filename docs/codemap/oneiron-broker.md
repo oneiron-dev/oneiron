@@ -51,5 +51,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/strip/watch.rs` | src | m | 4 crate-vis | — | The strip rule read as a reply streams (FIX 6103), moved out of the strip module whole: [`KeyWatch`] |
 | `src/testing.rs` | src | s | 3 struct · 8 fn | FakeProvider, FakeReply, SeenRequest | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |
 | `tests/drive_content_whole.rs` | test | s | — | — | A Drive file's content through the broker (GOOGLE-DRIVE-CONTENT-READ, REVIEW-8002): the bytes come back as… |
+| `tests/fingerprint_keep_broker.rs` | test | m | 2 struct · 9 fn · 12 crate-vis | GitRequestDigest, LfsRequestDigest | K-proof (oracle) for PLAN-UC-04 stage 4.2: the credential broker's request digests keep their bytes |
 | `tests/graph_workbook_shapes.rs` | test | s | — | — | The Microsoft Graph workbook rows (L3-17 PR 4): each accepts only its own workbook path, a worksheet name… |
 | `tests/workspace_shapes.rs` | test | s | — | — | The Google Workspace REST rows for Docs, Slides and Drive (L3-17; GOOGLE-DRIVE-CONTENT-READ): each accepts… |
