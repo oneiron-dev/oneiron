@@ -23,11 +23,18 @@
 //!
 //! The row is the extraction mint's: `Generated`, and while it stays empty
 //! the cleanup's to archive. A batch revert archives it by that same rule.
+//!
+//! Under a queued extraction attempt the stamp's actor must be the attempt's
+//! Dreamer, each evidence TURN must be one the attempt's inputs page serves,
+//! and the words read through the verdict's TURN read; any other stamp reads
+//! each TURN through the actor's bare key, as before.
 
 use std::collections::BTreeSet;
 
 use super::batch::DerivedPerson;
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
+use super::extraction_opening::{open_attempt, open_verdict_read};
+use super::verified_landing::{attempt_dreamer_matches, refuse_or_abort};
 use crate::claim::{ClaimSource, ScopedRead};
 use crate::dreamer_consolidation::{
     TurnText, has_name_span, normalize_name_span, origin_in_txn, speaker_admissible_in_txn,
@@ -47,7 +54,13 @@ pub const PERSON_NEEDS_ATTEMPT: &str = "gate.deny.derive.person_needs_attempt";
 
 /// The refusal of a person whose evidence holds a row that is no live TURN
 /// the actor reads, or a TURN whose speaker extraction mints no one from.
+/// Under an extraction attempt, also the refusal of a TURN the attempt's
+/// inputs page does not serve.
 pub const PERSON_SOURCE_INADMISSIBLE: &str = "gate.deny.derive.person_source_inadmissible";
+
+/// The refusal of a person item under an extraction attempt whose stamp's
+/// actor is not the attempt's Dreamer.
+pub const PERSON_NOT_ATTEMPT_DREAMER: &str = "gate.deny.derive.person_not_attempt_dreamer";
 
 /// The refusal of a person whose name holds no letter, or is no bounded span
 /// in the words any of its TURNs serves.
@@ -89,10 +102,57 @@ pub(super) fn stage_in_txn(
     if turns.is_empty() {
         return refuse(vault, txn, context, None, PERSON_SOURCE_INADMISSIBLE);
     }
-    let read = super::actor_read(vault, actor)?;
+    // Under a queued extraction attempt the naming TURNs read as the
+    // extraction reads them: the attempt's Dreamer, the TURNs its inputs
+    // page serves, the words through the verdict's TURN read. Any other
+    // stamp keeps the actor's bare read below.
+    let extraction = match open_attempt(vault, txn, context.stamp)? {
+        None => None,
+        Some(attempt_id) => {
+            if !attempt_dreamer_matches(vault, txn, attempt_id, actor)? {
+                return refuse(vault, txn, context, None, PERSON_NOT_ATTEMPT_DREAMER);
+            }
+            match open_verdict_read(vault, txn, context.stamp) {
+                Ok(Some(opening)) => Some((
+                    EntityId::from_bytes_unchecked(*attempt_id.as_bytes()),
+                    opening,
+                )),
+                Ok(None) => {
+                    return refuse(vault, txn, context, None, PERSON_SOURCE_INADMISSIBLE);
+                }
+                Err(error) => {
+                    return refuse_or_abort(vault, txn, context, error, PERSON_SOURCE_INADMISSIBLE);
+                }
+            }
+        }
+    };
+    let bare;
+    let read = if let Some((_, opening)) = extraction.as_ref() {
+        opening.turn_read()
+    } else {
+        bare = super::actor_read(vault, actor)?;
+        &bare
+    };
     let mut naming_turns = Vec::new();
     let mut naming_rows = BTreeSet::new();
     for turn in &turns {
+        if let Some((attempt_entity, opening)) = extraction.as_ref() {
+            let serves = match crate::snapshot_read::attempt_serves_turn_in_txn(
+                &opening.memory,
+                txn,
+                (&opening.read, opening.turn_read()),
+                *attempt_entity,
+                *turn,
+            ) {
+                Ok(serves) => serves,
+                Err(error) => {
+                    return refuse_or_abort(vault, txn, context, error, PERSON_SOURCE_INADMISSIBLE);
+                }
+            };
+            if !serves {
+                return refuse(vault, txn, context, None, PERSON_SOURCE_INADMISSIBLE);
+            }
+        }
         let live_turn = matches!(
             live_entity_row_in_txn(&vault.store, txn, turn)?,
             LiveEntityRow::Live {
@@ -100,14 +160,14 @@ pub(super) fn stage_in_txn(
                 ..
             }
         );
-        let text = match source_version_in_txn(&read, txn, turn)? {
+        let text = match source_version_in_txn(read, txn, turn)? {
             Some((_, Some(text))) if live_turn => text,
             _ => return refuse(vault, txn, context, None, PERSON_SOURCE_INADMISSIBLE),
         };
         if !speaker_admissible_in_txn(vault, txn, turn)? {
             return refuse(vault, txn, context, None, PERSON_SOURCE_INADMISSIBLE);
         }
-        let served = masked_words_in_txn(vault, &read, txn, turn, text)?;
+        let served = masked_words_in_txn(vault, read, txn, turn, text)?;
         let mut names = false;
         for (row, words) in served.pieces()? {
             if has_name_span(words, &normalized) {

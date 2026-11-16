@@ -48,7 +48,7 @@ impl DreamerAttemptBinding {
     /// settlement admits its conflicts page, typed verdicts on the host's
     /// lent ladder and Settle commits. Extraction admits its inputs and observations pages,
     /// evidence spans, checked verdict packs and bound generation steps with their
-    /// receipts, and Candidate, ConflictResolution or Conflict commits. A step input
+    /// receipts, and Candidate, ConflictResolution, Conflict or Person commits. A step input
     /// that names a `resolution` is a merged-value step; any other is an extraction
     /// step. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,

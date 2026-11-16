@@ -13,23 +13,37 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
+#[path = "extraction_verdict/support.rs"]
+#[allow(dead_code)]
+mod support;
+
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
     batches_of, claim_lifecycle, claim_subject, derive_item_receipts, row_live, source_version,
 };
+use oneiron::test_doors::derive_conflict;
 use oneiron::test_doors::derive_person::{cleanup_lists, person_body};
 use oneiron::test_doors::derive_verbs::{LiveRun, define_agent, grant_derive_rows, lease_run};
-use oneiron::{EdgeActorClass, EntityId, Vault};
+use oneiron::test_doors::extraction_inputs::{
+    ExtractionConversation, enqueue_admitted_extraction_attempt, witness_extraction_turns,
+};
+use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
+use oneiron::test_doors::untangle_regressions::seed_named_person;
+use oneiron::{AttemptId, EdgeActorClass, EntityId, Vault};
 use serde_json::{Value, json};
+use support::{QUEUE_NOW, extraction_attempt_with_turns, open_extraction_verdict_vault};
 
 const READER: &str = "reader";
 
 const NAME_UNREAD: &str = "gate.deny.derive.person_name_unread";
 const SOURCE_INADMISSIBLE: &str = "gate.deny.derive.person_source_inadmissible";
 const ID_TAKEN: &str = "gate.deny.derive.person_id_taken";
+const NOT_ATTEMPT_DREAMER: &str = "gate.deny.derive.person_not_attempt_dreamer";
 
 fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> EntityId {
     let id = EntityId::now();
@@ -120,6 +134,82 @@ fn commit_on(
 
 fn commit(fixture: &Fixture, items: Vec<Value>, sources: &[EntityId]) -> Value {
     commit_on(&fixture.vault, fixture.agent, &fixture.run, items, sources)
+}
+
+/// Commits `request` as the Dreamer in `attempt`, through the Conflict
+/// door's stamp door (as `derive_candidate`'s `commit_dreamer` does).
+fn commit_dreamer(vault: &Vault, attempt: Option<AttemptId>, request: Value) -> Value {
+    let actor = dreamer(vault).expect("the Dreamer");
+    derive_conflict::commit(
+        vault,
+        actor,
+        EdgeActorClass::System,
+        "run",
+        attempt,
+        request,
+    )
+    .expect("the batch commits")
+}
+
+/// Commits `items` as the Dreamer in `attempt`, citing each of `sources` at
+/// the version the Dreamer's own read serves.
+fn commit_dreamer_citing(
+    vault: &Vault,
+    attempt: AttemptId,
+    items: Vec<Value>,
+    sources: &[EntityId],
+) -> Value {
+    let actor = dreamer(vault).expect("the Dreamer");
+    let versions: Vec<Value> = sources
+        .iter()
+        .map(|source| {
+            let version = source_version(vault, actor, EdgeActorClass::System, *source)
+                .expect("read")
+                .expect("the Dreamer reads the source");
+            serde_json::to_value(version).expect("a version")
+        })
+        .collect();
+    commit_dreamer(
+        vault,
+        Some(attempt),
+        json!({ "items": items, "sources": versions }),
+    )
+}
+
+/// Witnesses one MESSAGE with explicit metadata through the public witness
+/// path (copied from `extraction_read_gate`'s `witness_metadata_turn`).
+fn witness_metadata_turn(vault: &Vault, metadata: Value) -> ExtractionConversation {
+    let conversation = EntityId::now();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let speaker = EntityId::now();
+    seed_named_person(vault, &speaker, "owen", 1).expect("a speaker");
+    vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "owen likes tea".to_owned(),
+                parts: None,
+                metadata: Some(metadata),
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: 10,
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("witness");
+    ExtractionConversation {
+        conversation,
+        turns: vec![turn],
+        messages: vec![message],
+    }
 }
 
 fn id(value: &Value) -> EntityId {
@@ -358,6 +448,149 @@ fn the_wire_names_no_person_id_or_target() {
             .is_empty(),
         "nothing is committed"
     );
+}
+
+#[test]
+fn a_name_in_a_turn_the_attempt_queues_lands_for_the_dreamer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, attempt, served, _) =
+        extraction_attempt_with_turns(&dir, "owen", &["Owen chooses green tea"])
+            .expect("an attempt");
+    assert_eq!(served.len(), 1);
+    let queued = EntityId::from_hex(&served[0].0).expect("a turn");
+    let answer = commit_dreamer_citing(
+        &vault,
+        attempt,
+        vec![person("owen", "Owen", &[queued])],
+        &[queued],
+    );
+    let (landed, row, reasons) = only_item(&answer);
+    assert!(landed, "the person lands: {answer}");
+    assert!(reasons.is_empty(), "{answer}");
+    assert_eq!(answer["items"][0]["kind"], "person", "{answer}");
+    let person = row.expect("the PERSON it minted");
+    assert!(row_live(&vault, person).expect("read"));
+    let body = person_body(&vault, person).expect("read").expect("a body");
+    assert_eq!(
+        body.name,
+        Some("Owen".to_owned()),
+        "the PERSON holds the name as the TURN spells it"
+    );
+    assert!(
+        !body.source_audience,
+        "an open TURN names no source audience"
+    );
+    assert!(
+        cleanup_lists(&vault, person).expect("read"),
+        "it is the extraction mint's row: empty, the cleanup lists it"
+    );
+    let receipts = derive_item_receipts(&vault, &person).expect("read");
+    let [receipt] = receipts.as_slice() else {
+        panic!("one receipt for the person: {receipts:?}");
+    };
+    assert_eq!(receipt.outcome, "approved");
+    assert_eq!(receipt.reasons, vec!["gate.allow.derive.person".to_owned()]);
+    assert!(
+        receipt.grant_ref.is_some(),
+        "the receipt names what judged it"
+    );
+    assert_eq!(
+        batches_of(&vault, dreamer(&vault).expect("the Dreamer")).expect("read"),
+        vec![id(&answer["batch"])],
+        "the batch is recorded under the Dreamer"
+    );
+}
+
+#[test]
+fn a_name_only_in_a_turn_the_attempt_does_not_queue_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_extraction_verdict_vault(&dir).expect("vault");
+    stand_steward_grant(
+        &vault,
+        dreamer(&vault).expect("the Dreamer"),
+        &STEWARD_VERBS,
+    )
+    .expect("the Dreamer's grant");
+    let witnessed =
+        witness_extraction_turns(&vault, &["Yuki likes coffee", "Owen chooses green tea"])
+            .expect("turns");
+    let (attempt, _) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns[..1], QUEUE_NOW)
+            .expect("an attempt");
+    let outside = witnessed.turns[1];
+    let answer = commit_dreamer_citing(
+        &vault,
+        attempt,
+        vec![person("owen", "Owen", &[outside])],
+        &[outside],
+    );
+    let (landed, row, reasons) = only_item(&answer);
+    assert!(!landed, "{answer}");
+    assert_eq!(reasons, vec![SOURCE_INADMISSIBLE.to_owned()], "{answer}");
+    assert!(row.is_none(), "no row: {answer}");
+}
+
+#[test]
+fn a_name_only_in_a_turn_the_gate_withholds_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_extraction_verdict_vault(&dir).expect("vault");
+    stand_steward_grant(
+        &vault,
+        dreamer(&vault).expect("the Dreamer"),
+        &STEWARD_VERBS,
+    )
+    .expect("the Dreamer's grant");
+    let witnessed = witness_metadata_turn(&vault, json!({"scope": {"private": true}}));
+    let (attempt, _) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)
+        .expect("an attempt");
+    let gated = witnessed.turns[0];
+    let answer = commit_dreamer_citing(
+        &vault,
+        attempt,
+        vec![person("owen", "owen", &[gated])],
+        &[gated],
+    );
+    let (landed, row, reasons) = only_item(&answer);
+    assert!(!landed, "{answer}");
+    assert_eq!(reasons, vec![SOURCE_INADMISSIBLE.to_owned()], "{answer}");
+    assert!(row.is_none(), "no row: {answer}");
+}
+
+#[test]
+fn an_agent_naming_the_extraction_attempt_is_not_its_dreamer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_extraction_verdict_vault(&dir).expect("vault");
+    stand_steward_grant(
+        &vault,
+        dreamer(&vault).expect("the Dreamer"),
+        &STEWARD_VERBS,
+    )
+    .expect("the Dreamer's grant");
+    let witnessed = witness_extraction_turns(&vault, &["Owen chooses green tea"]).expect("turns");
+    let (attempt, _) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)
+        .expect("an attempt");
+    let agent = define_agent(&vault, "oneiron.agent.derive-person-extraction").expect("an agent");
+    grant_derive_rows(&vault, &[agent]).expect("the agent's policy rows");
+    let said = turn(&vault, "user", "I had lunch with Ann today.");
+    let version = source_version(&vault, agent, EdgeActorClass::Agent, said)
+        .expect("read")
+        .expect("the agent reads the source");
+    let answer = derive_conflict::commit(
+        &vault,
+        agent,
+        EdgeActorClass::Agent,
+        "run-agent-names-extraction",
+        Some(attempt),
+        json!({
+            "items": [person("ann", "Ann", &[said])],
+            "sources": [serde_json::to_value(version).expect("a version")],
+        }),
+    )
+    .expect("the batch commits");
+    let (landed, row, reasons) = only_item(&answer);
+    assert!(!landed, "{answer}");
+    assert_eq!(reasons, vec![NOT_ATTEMPT_DREAMER.to_owned()], "{answer}");
+    assert!(row.is_none(), "no row: {answer}");
 }
 
 #[test]

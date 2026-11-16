@@ -208,10 +208,11 @@ impl DreamerAttemptBinding {
 
     /// Commits `input` as the Dreamer in this attempt and run, admitting
     /// Archive items for strength, Settle items for conflict settlement and
-    /// Candidate, ConflictResolution or Conflict items for extraction. One writer
-    /// proves the binding before the batch stages. A refused binding writes no
-    /// batch, receipt or item. A claim an extraction item lands is recorded as
-    /// an output of the attempt in the same write, and the deferred-grant
+    /// Candidate, ConflictResolution, Conflict or Person items for extraction.
+    /// One writer proves the binding before the batch stages. A refused
+    /// binding writes no batch, receipt or item. A claim an extraction item
+    /// lands is recorded as an output of the attempt in the same write (a
+    /// Person item lands a PERSON and no claim), and the deferred-grant
     /// receipts are counted once the write has committed.
     ///
     /// The stagers judge every grant at the commit's own recorded time: the
@@ -274,7 +275,9 @@ fn bound_facet_for_attempt(record: &AttemptRecord) -> Result<Option<BoundFacet>>
 }
 
 /// The engine batch of `input`, admitted only when every item belongs to
-/// the bound facet. Extraction admits only candidates, conflict resolutions and conflicts.
+/// the bound facet. Extraction admits only candidates, conflict resolutions,
+/// conflicts and persons: the items whose stagers hold an extraction
+/// attempt's commit to that attempt's own read.
 fn facet_batch(input: DeriveCommitInput, facet: BoundFacet) -> MemoryResult<DerivationBatch> {
     let batch = input.into_batch()?;
     if batch.items.iter().all(|item| {
@@ -287,6 +290,7 @@ fn facet_batch(input: DeriveCommitInput, facet: BoundFacet) -> MemoryResult<Deri
                     DerivationItem::Candidate(_)
                         | DerivationItem::ConflictResolution(_)
                         | DerivationItem::Conflict(_)
+                        | DerivationItem::Person(_)
                 )
         )
     }) {
@@ -324,7 +328,7 @@ fn facet_refused(facet: BoundFacet) -> MemoryError {
         ),
         BoundFacet::Extraction => (
             "the Dreamer extraction facet does not admit this operation",
-            "An extraction attempt reads its inputs page, evidence spans and checked ai.verdict packs, and commits candidate, conflict_resolution and conflict items only.",
+            "An extraction attempt reads its inputs page, evidence spans and checked ai.verdict packs, and commits candidate, conflict_resolution, conflict and person items only.",
         ),
     };
     MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[hint])

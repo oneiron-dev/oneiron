@@ -38,7 +38,8 @@ pub use evidence_spans::{
     evidence_spans, validate_evidence_spans,
 };
 pub(crate) use evidence_spans::{
-    evidence_spans_bound, evidence_spans_in_txn, masked_turn_spans, turn_spans,
+    attempt_serves_turn_in_txn, evidence_spans_bound, evidence_spans_in_txn, masked_turn_spans,
+    turn_spans,
 };
 pub use extraction_inputs::{
     ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
