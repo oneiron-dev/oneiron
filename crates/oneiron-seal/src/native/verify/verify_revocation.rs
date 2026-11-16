@@ -84,8 +84,8 @@ pub(crate) fn issued_by(
     )
 }
 
-/// deltaCRLIndicator (2.5.29.46) and IssuingDistributionPoint (2.5.29.28).
-const OID_EXT_DELTA_CRL_INDICATOR: &[u8] = b"\x55\x1d\x2e";
+/// deltaCRLIndicator (2.5.29.27) and IssuingDistributionPoint (2.5.29.28).
+const OID_EXT_DELTA_CRL_INDICATOR: &[u8] = b"\x55\x1d\x1b";
 
 const OID_EXT_ISSUING_DISTRIBUTION_POINT: &[u8] = b"\x55\x1d\x1c";
 
