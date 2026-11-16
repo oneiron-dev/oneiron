@@ -14,7 +14,9 @@
 //! believes its admitter"), while delivery still fetches the whole request.
 //!
 //! T1 is the attack (red on main, green with the fix); T2 guards a believed
-//! row's withheld parent (green on both). There is no unknown-signer case: a
+//! row's withheld parent and T3 a believed row resting on the stranger's row
+//! (green on both; T3 is red where the gate counts only the parents a believed
+//! row names itself). There is no unknown-signer case: a
 //! row whose signer no held row admits is refused at the replicated door
 //! (`AuthorityLogSignerPending`) and by the store door (`Unowned`), so it is
 //! never held and names no parent.
@@ -107,8 +109,6 @@ fn stranger_owner() -> EntityId {
 struct ServedVault {
     vault: Vault,
     owner: AuthenticatedOwner,
-    /// This install, the carrier of every owner act its doors sign.
-    carrier: EntityId,
     _dir: tempfile::TempDir,
 }
 
@@ -133,13 +133,11 @@ fn vault_id_of(vault: &Vault) -> AuthorityVaultId {
 impl ServedVault {
     fn self_host() -> Self {
         let (vault, issuer, dir) = unprofiled_self_host();
-        let carrier = vault
+        vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's machine profile under the host root")
             .roster
-            .expect("guard: this install has a roster chain")
-            .profile
-            .machine;
+            .expect("guard: this install has a roster chain");
         let person = vault.ensure_embedded_owner_actor().expect("the owner");
         oneiron::test_support::bind_host_owner(&vault, &issuer, person)
             .expect("the owner's binding");
@@ -149,7 +147,6 @@ impl ServedVault {
         Self {
             vault,
             owner,
-            carrier,
             _dir: dir,
         }
     }
@@ -277,22 +274,14 @@ fn deliver_via_replicated(vault: &Vault, entry: &AuthorityLogEntry) -> oneiron::
     )
 }
 
-/// T1 the attack, row C (the stranger's revision 2 of its machine, delivered
-/// alone through `replay_entity` while its parent Q is withheld): C stores,
-/// the fetch request still names Q, and the peer route stays settled. RED on
-/// main (settled reads false), GREEN with the fix (settled reads true).
-#[test]
-fn strangers_withheld_parent_leaves_peer_settled() {
-    let served = ServedVault::self_host();
-    assert!(
-        authority_fold_settled(&served.vault).expect("the settled read"),
-        "guard: the honest vault serves peers before the stranger's rows"
-    );
-    let (anchor, root_hash) = publish_stranger_root(&served.vault);
-    assert!(
-        authority_fold_settled(&served.vault).expect("the settled read"),
-        "guard: the stranger's root alone stalls no peer route"
-    );
+/// The stranger's machine revision C under its anchor `anchor`, whose
+/// parent, revision Q on the root row `root_hash`, the stranger keeps:
+/// answers Q's hash and C, neither stored.
+fn strangers_gapped_revision(
+    served: &ServedVault,
+    anchor: &SigningKey,
+    root_hash: AuthorityEntryHash,
+) -> (AuthorityEntryHash, AuthorityLogEntry) {
     let vault_id = served.vault_id();
     let machine = EntityId::from_bytes([0x71; 16]).expect("an id parses");
     let node = signing(STRANGER_MACHINE_SEED);
@@ -329,7 +318,7 @@ fn strangers_withheld_parent_leaves_peer_settled() {
         2,
         vec![root_hash],
         AuthorityOp::MachineProfile(profile(1)),
-        &anchor,
+        anchor,
     );
     let withheld_hash = hash(&withheld);
     let delivered = signed(
@@ -337,8 +326,28 @@ fn strangers_withheld_parent_leaves_peer_settled() {
         3,
         vec![withheld_hash],
         AuthorityOp::MachineProfile(profile(2)),
-        &anchor,
+        anchor,
     );
+    (withheld_hash, delivered)
+}
+
+/// T1 the attack, row C (the stranger's revision 2 of its machine, delivered
+/// alone through `replay_entity` while its parent Q is withheld): C stores,
+/// the fetch request still names Q, and the peer route stays settled. RED on
+/// main (settled reads false), GREEN with the fix (settled reads true).
+#[test]
+fn strangers_withheld_parent_leaves_peer_settled() {
+    let served = ServedVault::self_host();
+    assert!(
+        authority_fold_settled(&served.vault).expect("the settled read"),
+        "guard: the honest vault serves peers before the stranger's rows"
+    );
+    let (anchor, root_hash) = publish_stranger_root(&served.vault);
+    assert!(
+        authority_fold_settled(&served.vault).expect("the settled read"),
+        "guard: the stranger's root alone stalls no peer route"
+    );
+    let (withheld_hash, delivered) = strangers_gapped_revision(&served, &anchor, root_hash);
     let delivered_id = authority_log_entity_id(&delivered).expect("C's content-derived id");
     deliver_via_replicated(&served.vault, &delivered).expect("C lands through replicated ingest");
     assert!(
@@ -447,5 +456,60 @@ fn believed_withheld_parent_keeps_peer_unsettled() {
     assert!(
         !authority_fold_settled(&served.vault).expect("the settled read"),
         "a believed withheld parent must keep peer serving unsettled"
+    );
+}
+
+/// T3 the guard on a believed row resting on a stranger's row, row C3 (an
+/// enrolled device's home candidacy whose parent is C, the stranger's
+/// revision stored above its withheld parent Q): C3 rests on C and C on Q,
+/// so the install lacks history a believed row rests on and the peer route
+/// stays unsettled. Green on main and with the fix; red where the gate counts
+/// only the parents a believed row names itself (review of #9202).
+#[test]
+fn believed_row_on_a_strangers_row_keeps_peer_unsettled() {
+    let served = ServedVault::self_host();
+    let request = served.joining_machine();
+    served.enrol(&request).expect("the owner enrols M");
+    let (anchor, root_hash) = publish_stranger_root(&served.vault);
+    let (withheld_hash, delivered) = strangers_gapped_revision(&served, &anchor, root_hash);
+    deliver_via_replicated(&served.vault, &delivered).expect("C lands through replicated ingest");
+    let declaration = HomeCandidacy {
+        machine: request.machine,
+        node_id: 1,
+        always_on: false,
+        primary: false,
+        macro_ready: true,
+        cloud: false,
+    };
+    let on_stranger = signed(
+        served.vault_id(),
+        1,
+        vec![hash(&delivered)],
+        AuthorityOp::HomeCandidacy(declaration),
+        &signing(JOINING_SEED),
+    );
+    let on_stranger_id = authority_log_entity_id(&on_stranger).expect("C3's content-derived id");
+    deliver_via_replicated(&served.vault, &on_stranger)
+        .expect("C3 lands through replicated ingest");
+    assert!(
+        served
+            .vault
+            .get_authority_log_entry(&on_stranger_id)
+            .expect("C3 reads back")
+            .is_some(),
+        "setup: C3 is stored, so a believed row rests on the stranger's row"
+    );
+    assert!(
+        served
+            .vault
+            .authority_missing_history()
+            .expect("the history read")
+            .missing
+            .contains(&withheld_hash),
+        "setup: the fetch request names Q"
+    );
+    assert!(
+        !authority_fold_settled(&served.vault).expect("the settled read"),
+        "a believed row resting on a stranger's withheld parent must keep peer serving unsettled"
     );
 }
