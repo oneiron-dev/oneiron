@@ -21,12 +21,11 @@
 //! the tip vouches too (Astra review round 3, F2), and the install folds as
 //! one that received every row in order. A
 //! row that its own ancestry already
-//! shows its signer past is still refused on every install (the control). On
-//! a parent of another signer that this install's floor refuses, a
-//! revocation still lands, because it proves on its own signed branch, and a
-//! re-root still lands, because it vouches for its whole line; an enrolment
-//! on such a parent is still held back there (root FIX-LIST
-//! [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT], the residual).
+//! shows its signer past is still refused on every install (the control). A
+//! revocation or a re-root on a row of another signer that reached an
+//! install past that signer's floor holds there as on the install that
+//! received every row in order (root FIX-LIST
+//! [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
 
 use std::collections::BTreeSet;
 
@@ -127,9 +126,9 @@ fn enrolment(
 }
 
 /// `signer` signs `op` on `parent` at `seq` with `cosigner` as its one
-/// cosign: the cosign key goes on the entry before the transcript is taken,
-/// and both keys sign that one transcript, as an agent-primary row with an
-/// owner cosign must.
+/// cosign: the row `signed` builds gets the cosign key, and both keys sign
+/// the transcript that names it, as an agent-primary row with an owner
+/// cosign must.
 fn cosigned(
     vault_id: AuthorityVaultId,
     seq: u64,
@@ -138,31 +137,16 @@ fn cosigned(
     signer: &SigningKey,
     cosigner: &SigningKey,
 ) -> AuthorityLogEntry {
-    let key = key_of(signer);
+    let mut entry = signed(Some(vault_id), seq, Some(parent), op, signer);
     let cosign_key = key_of(cosigner);
-    let mut entry = AuthorityLogEntry {
-        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
-        seq,
-        parent_hashes: vec![authority_entry_hash(parent).expect("parent hash")],
-        op,
-        signer: AuthoritySignature {
-            suite: key.suite(),
-            public_key: key,
-            signature: vec![0; 64],
-        },
-        cosigns: vec![AuthoritySignature {
-            suite: cosign_key.suite(),
-            public_key: cosign_key,
-            signature: vec![0; 64],
-        }],
-        ts: seq + 1,
-    };
+    entry.cosigns = vec![AuthoritySignature {
+        suite: cosign_key.suite(),
+        public_key: cosign_key,
+        signature: vec![0; 64],
+    }];
     let transcript = authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    for cosign in &mut entry.cosigns {
-        cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
-    }
+    entry.cosigns[0].signature = cosigner.sign(&transcript).to_bytes().to_vec();
     entry
 }
 
@@ -745,10 +729,12 @@ fn a_mark_below_a_vouched_binding_folds_as_on_the_in_order_install() {
 }
 
 /// A revocation on another signer's binding past the floor (Sol's
-/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]): B binds itself (sequence 1)
-/// and, as a sibling, binds U (sequence 10); on the lower binding the owner
-/// revokes U. Install J receives the higher binding first, so the lower one
-/// never folds there, but the revocation still proves on its own branch.
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]): the owner enrols agents B and
+/// U; B, with the owner's cosign, binds itself (sequence 1) and, as a
+/// sibling, binds U (sequence 10); on the lower binding the owner revokes U.
+/// Install J receives the higher binding first, so the lower one reaches it
+/// past B's floor. U must stay revoked there as on install I, which
+/// received the rows in order.
 #[test]
 fn a_revocation_on_another_signers_binding_past_the_floor_holds_in_either_arrival_order() {
     let owner = SigningKey::from_bytes(&[161; 32]);
@@ -836,9 +822,10 @@ fn a_revocation_on_another_signers_binding_past_the_floor_holds_in_either_arriva
     );
 }
 
-/// A re-root on another signer's row past the floor: the owner hands the
-/// vault to a fresh owner key on B's lower binding. The handoff vouches for
-/// its whole line, so the refused binding folds on install J too.
+/// A re-root on another signer's row past the floor: the same rows as the
+/// test above, with the owner handing the vault to a fresh owner key on B's
+/// lower binding in place of the revocation. Both installs must settle the
+/// handoff: every key from before it revoked, the successor live.
 #[test]
 fn a_reroot_on_another_signers_row_past_the_floor_holds_in_either_arrival_order() {
     let owner = SigningKey::from_bytes(&[171; 32]);
