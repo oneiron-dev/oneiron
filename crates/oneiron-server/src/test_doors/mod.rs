@@ -10,6 +10,7 @@ pub mod booking_turn_line;
 pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod coach_round;
+pub mod connector_sends;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
@@ -21,10 +22,14 @@ pub mod mcp_carrier_release;
 pub mod mcp_page_mint;
 pub mod mcp_surface;
 pub mod media_job_spend;
+#[cfg(unix)]
+pub mod merge_queue_checker_pressure;
 pub mod native_board;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
 pub mod pre_idle_reuse;
+#[cfg(unix)]
+pub mod recovery_box_hold;
 pub mod remote_task_poll;
 pub mod replay_admission;
 pub mod residence_connection;
