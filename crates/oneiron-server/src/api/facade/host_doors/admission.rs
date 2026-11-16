@@ -95,12 +95,6 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Proof::Owner => owner_proof(auth, server, verb).map(drop),
-        // An owner door that also admits the owner's delegate (restriction wave 11): the owner's
-        // proof, or an agent on its own live credential whose Setting key and one live Grant the
-        // engine admits in a read transaction. The door admits again in its own transaction.
-        Proof::OwnerDelegate => {
-            crate::api::facade::owner_binding::owner_delegate_admits(server, auth, verb)
-        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.

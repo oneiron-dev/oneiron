@@ -7,8 +7,6 @@
 //! A verb whose row asks the owner's credential or a person's proof
 //! (`AgentVerb::takes_person_proof`) answers `person` for any actor that is
 //! not a person, since the dispatch refuses that call before its door runs.
-//! An owner door that also admits the owner's delegate answers `auto` for an
-//! agent its Setting key and one live Grant admit, and `person` otherwise.
 //! The room pin doors, the pin policy and the room invitation are read
 //! through their own admission functions; a room's speech through the
 //! precheck its witness meets first (the witness checks the turn's own
@@ -99,21 +97,6 @@ impl Memory<'_> {
         params: &serde_json::Value,
     ) -> MemoryResult<(CanVerbGate, Vec<String>)> {
         let person = self.actor_class == EdgeActorClass::Human;
-        // An owner door that also admits the owner's delegate (restriction
-        // wave 11): an agent its Setting key and one live Grant admit takes
-        // it; any other caller that is not a person meets the owner's proof,
-        // as before.
-        if !person && crate::authority::is_owner_delegate_verb(verb.as_str()) {
-            if self.actor_class == EdgeActorClass::Agent {
-                match crate::authority::owner_delegate_admits(self.vault, self.actor, verb.as_str())
-                {
-                    Ok(()) => return Ok((CanVerbGate::Auto, Vec::new())),
-                    Err(error) if error.code == MEMORY_CODE_FORBIDDEN => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            return Ok((CanVerbGate::Person, vec![PERSON_PROOF.to_owned()]));
-        }
         if !person && verb.takes_person_proof() {
             return Ok((CanVerbGate::Person, vec![PERSON_PROOF.to_owned()]));
         }
