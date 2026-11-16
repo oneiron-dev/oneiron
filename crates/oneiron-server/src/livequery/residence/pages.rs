@@ -66,9 +66,13 @@ pub(super) fn search_pages(
         .is_some_and(|forwarded| forwarded.locality == oneiron::claim::CallerLocality::OffDevice);
     // The caller's own access grants decide what it reads, beside the
     // selector's ceiling: taken before the read, so its answer leaves only
-    // while they stand (SELECTOR-RELEASE-POINT = B).
-    *reader = forwarded.as_ref().and_then(|caller| {
-        oneiron::sync::SelectorReaderReach::take(&server.vault, &caller.read_key())
+    // while they stand and its slip is live (SELECTOR-RELEASE-POINT = B).
+    *reader = forwarded.as_ref().map(|forwarded| {
+        oneiron::sync::SelectorReaderReach::take(
+            &server.vault,
+            forwarded.caller.caller(),
+            &forwarded.read_key(),
+        )
     });
     let admission = match &forwarded {
         Some(caller) => caller.admission(server, peer, &selector)?,
