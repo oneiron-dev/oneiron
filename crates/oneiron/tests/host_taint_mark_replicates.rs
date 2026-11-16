@@ -13,7 +13,9 @@ use oneiron::blob_artifact::BlobArtifactBody;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::secret_lease::SecretTaintRef;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::host_taint_replica::replicate_entities;
+use oneiron::test_doors::host_taint_replica::{
+    land_source_bound_artifact, replicate_entities, states_source_audience,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -45,6 +47,121 @@ fn untainted_artifact(vault: &Vault) -> Result<EntityId, Box<dyn std::error::Err
         10,
     )?;
     Ok(id)
+}
+
+#[test]
+fn a_host_mark_on_a_source_stamped_attachment_keeps_its_stamp() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let id = land_source_bound_artifact(&vault, EntityId::now(), "invoice.pdf")?;
+    assert!(
+        states_source_audience(&vault, &id)?,
+        "precondition: the landed attachment carries its source's stamp"
+    );
+    vault.mark_artifact_tainted(&id, &[taint(SECRET, 1)])?;
+    assert_eq!(
+        vault.artifact_taint_refs(&id)?,
+        vec![taint(SECRET, 1)],
+        "the host's mark lands on the stamped attachment"
+    );
+    assert!(
+        states_source_audience(&vault, &id)?,
+        "the mark keeps the stored stamp"
+    );
+    let body = vault
+        .get_blob_artifact(&id)?
+        .ok_or("the vault holds the attachment")?;
+    assert_eq!(
+        body.name, "invoice.pdf",
+        "the mark keeps the body's other keys"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_metadata_reput_keeps_the_host_mark() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let id = untainted_artifact(&vault)?;
+    vault.mark_artifact_tainted(&id, &[taint(SECRET, 1)])?;
+    // A rename with a body built without the mark, as a caller holding the
+    // artifact's clean metadata writes it.
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("renamed.bin", "application/octet-stream"),
+        AT,
+        11,
+    )?;
+    let body = vault
+        .get_blob_artifact(&id)?
+        .ok_or("the vault holds the artifact")?;
+    assert_eq!(body.name, "renamed.bin", "the rename lands");
+    assert_eq!(
+        body.secret_taint_refs,
+        vec![taint(SECRET, 1)],
+        "the re-put keeps the host's mark"
+    );
+    assert!(
+        vault.artifact_taint_state(&id)?.is_tainted(),
+        "the renamed artifact is not clean"
+    );
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)?;
+    let hex = id.to_hex();
+    let row = bundle["entities"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["id"].as_str() == Some(hex.as_str()))
+        })
+        .ok_or("the bundle carries the artifact row")?;
+    assert!(
+        row["body"].is_null(),
+        "export still nulls the renamed artifact's body: {row}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reput_naming_a_later_generation_keeps_the_lowest() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let id = untainted_artifact(&vault)?;
+    vault.mark_artifact_tainted(&id, &[taint(SECRET, 1)])?;
+    let mut body = BlobArtifactBody::new("build.bin", "application/octet-stream");
+    body.secret_taint_refs = vec![taint(SECRET, 4), taint(OTHER, 2)];
+    vault.put_blob_artifact(&id, &body, AT, 11)?;
+    assert_eq!(
+        vault.artifact_taint_refs(&id)?,
+        vec![taint(SECRET, 1), taint(OTHER, 2)],
+        "the re-put's refs join the stored ones, and each secret keeps its lowest generation"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_replicated_reput_keeps_the_replicas_host_mark() -> TestResult {
+    // The replica took the mark; the source then renames its unmarked copy,
+    // and that row reaches the replica.
+    let (_source_dir, source) = open_vault()?;
+    let id = untainted_artifact(&source)?;
+    let (_replica_dir, replica) = open_vault()?;
+    replicate_entities(&source, &replica, &[id])?;
+    replica.mark_artifact_tainted(&id, &[taint(SECRET, 1)])?;
+    source.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("renamed.bin", "application/octet-stream"),
+        AT,
+        11,
+    )?;
+    replicate_entities(&source, &replica, &[id])?;
+    let body = replica
+        .get_blob_artifact(&id)?
+        .ok_or("the replica holds the artifact")?;
+    assert_eq!(body.name, "renamed.bin", "the replicated rename lands");
+    assert_eq!(
+        body.secret_taint_refs,
+        vec![taint(SECRET, 1)],
+        "the replicated re-put keeps the replica's host mark"
+    );
+    Ok(())
 }
 
 #[test]
