@@ -42,8 +42,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::actor_claims::{
-    ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_NOTE_MAX_BYTES, ActorNote, ActorNoteKind,
-    SessionActorDistiller, SessionDistillBrief,
+    ACTOR_DISTILL_CALL_PURPOSE_NAME, ActorNote, ActorNoteKind, SessionActorDistiller,
+    SessionDistillBrief,
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
@@ -556,6 +556,8 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let wire = parse_notes(&text).ok_or_else(|| {
             Error::InvalidConfig("the Coach's distill answer holds no notes".into())
         })?;
+        // The owner's cap on a note this vault writes (`actor_claims.note.max_bytes`).
+        let max_bytes = self.vault.actor_note_max_bytes()?;
         let notes: Vec<ActorNote> = wire
             .notes
             .into_iter()
@@ -567,7 +569,7 @@ impl SessionActorDistiller for HostDistiller<'_> {
                     _ => return None,
                 };
                 let text = note.text.trim();
-                if text.is_empty() || text.len() > ACTOR_NOTE_MAX_BYTES {
+                if text.is_empty() || text.len() > max_bytes {
                     return None;
                 }
                 Some(ActorNote {
