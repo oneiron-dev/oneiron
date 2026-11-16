@@ -71,3 +71,18 @@ pub fn grant_row(vault: &Vault, id: EntityId) -> Result<Option<Vec<u8>>> {
         _ => None,
     })
 }
+
+/// The ids of the owner's git push Grants that stand at this vault's residence
+/// (`Vault::git_push_grants_in_txn`), in id order.
+///
+/// # Errors
+///
+/// A store or authority-fold read failure.
+pub fn standing_git_push_grant_ids(vault: &Vault) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .git_push_grants_in_txn(&txn)?
+        .into_iter()
+        .map(|standing| standing.id)
+        .collect())
+}
