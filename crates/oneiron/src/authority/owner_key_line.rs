@@ -14,8 +14,9 @@
 //! - an owner choice or a carried machine answer needs the proof: unproven
 //!   and carried by a carrier that is not the owner's machine, the choice
 //!   waits and the answer is held, as on parents that hold the key;
-//! - an enrolment of the key that enrolment enrolled (any op, any role) is an
-//!   invalid entry, so the roster merge cannot narrow the owner's key away.
+//! - an enrolment of the key that enrolment enrolled (any op, any role, and a
+//!   rotation or a handoff that names it as the successor) is an invalid
+//!   entry, so the roster merge cannot narrow the owner's key away.
 //!   Another proving enrolment of the same key is not refused: its shape is
 //!   fixed and its possession proof names its holder machine, so both
 //!   branches hold the same roster row and the merge keeps it. Refusing
@@ -197,7 +198,8 @@ pub(super) struct OwnerKeyLines {
     /// each needs the owner's proof.
     unproven_outside: BTreeSet<AuthorityEntryHash>,
     /// Enrolments, other than a proving one, of a key a proving enrolment
-    /// enrolled, outside that enrolment's line: each is an invalid entry.
+    /// enrolled (a rotation or a handoff naming it among them), outside that
+    /// enrolment's line: each is an invalid entry.
     refused_enrolments: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -257,10 +259,19 @@ fn owner_choice_kind(op: &AuthorityOp) -> bool {
     )
 }
 
-/// The key an enrolment op puts on the roster.
+/// The key an op puts on the roster as a new row: an enrolment's, and the
+/// successor a rotation or a handoff names. A rotation onto the owner's key
+/// on old parents narrows it at the roster merge as an agent enrolment does
+/// (pipeline review round 2 of #8502, P1). An image carries the body of each
+/// such row (`checkpoint_image::row::carries_body`, a rotation and a handoff
+/// through [`super::fold_resume::is_projected`]).
 fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
     match op {
-        AuthorityOp::EnrollDevice { device } => Some(&device.key),
+        AuthorityOp::EnrollDevice { device }
+        | AuthorityOp::RotateKey {
+            new_device: device, ..
+        }
+        | AuthorityOp::ReRoot { new_device: device } => Some(&device.key),
         AuthorityOp::OwnerKeyEnroll(enrol) => Some(&enrol.device.key),
         _ => None,
     }

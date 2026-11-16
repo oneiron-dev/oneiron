@@ -67,9 +67,10 @@ use serde::Serialize;
 /// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
 /// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
 /// 43: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
-/// waits for the owner's proof, and an enrolment of the owner's key outside the line of the
-/// enrolment that made it the owner's is refused, and a device revocation proved through such
-/// an enrolment of its key ends nothing (row CARRIER-PROOF-OLD-PARENTS).
+/// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
+/// names it too) outside the line of the enrolment that made it the owner's is refused, and a
+/// device revocation proved through such an enrolment of its key ends nothing (row
+/// CARRIER-PROOF-OLD-PARENTS).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
