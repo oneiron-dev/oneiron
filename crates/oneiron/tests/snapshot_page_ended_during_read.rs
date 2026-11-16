@@ -7,6 +7,7 @@
 //! Needs `--cfg oneiron_test_support`: the door
 //! `test_doors::snapshot_page_accounting` runs one step between the page's
 //! read and its accounting write.
+#![cfg(oneiron_test_support)]
 
 use std::time::Duration;
 
@@ -83,6 +84,20 @@ fn set_bounds_during_next_read(owner: EntityId, bounds: SnapshotReadSettings) {
     });
 }
 
+/// A page of at least four rows, whose bounds `bounds` replace while it is
+/// read; the page as served, or its refusal.
+fn first_page_with_bounds_set_during_read(
+    bounds: SnapshotReadSettings,
+) -> Result<MemoryResult<SnapshotPage>, Box<dyn std::error::Error>> {
+    let (_dir, vault) = open_vault()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    put_people(&vault, 4)?;
+    let handle = open_people(&memory, None)?;
+    set_bounds_during_next_read(owner, bounds);
+    Ok(first_page(&memory, &handle))
+}
+
 fn refused_as_lowered(refused: &MemoryError) {
     assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
     assert!(
@@ -130,20 +145,10 @@ fn a_page_whose_handle_ended_while_it_was_read_is_refused() -> TestResult {
 
 #[test]
 fn a_page_past_rows_per_snapshot_lowered_while_it_was_read_is_refused() -> TestResult {
-    let (_dir, vault) = open_vault()?;
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    put_people(&vault, 4)?;
-    let handle = open_people(&memory, None)?;
-
-    set_bounds_during_next_read(
-        owner,
-        SnapshotReadSettings {
-            handle_rows: 2,
-            ..SnapshotReadSettings::DEFAULT
-        },
-    );
-    match first_page(&memory, &handle) {
+    match first_page_with_bounds_set_during_read(SnapshotReadSettings {
+        handle_rows: 2,
+        ..SnapshotReadSettings::DEFAULT
+    })? {
         Ok(served) => Err(format!(
             "a page of {} rows was served past the 2 rows per snapshot the owner set while it was read",
             served.rows.len()
@@ -157,40 +162,30 @@ fn a_page_past_rows_per_snapshot_lowered_while_it_was_read_is_refused() -> TestR
 }
 
 #[test]
-fn a_page_past_rows_or_bytes_per_page_lowered_while_it_was_read_is_refused() -> TestResult {
-    let (_dir, vault) = open_vault()?;
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    put_people(&vault, 4)?;
-    let handle = open_people(&memory, None)?;
-
-    set_bounds_during_next_read(
-        owner,
-        SnapshotReadSettings {
-            page_rows: 1,
-            ..SnapshotReadSettings::DEFAULT
-        },
-    );
-    match first_page(&memory, &handle) {
-        Ok(served) => {
-            return Err(format!(
-                "a page of {} rows was served past the 1 row per page the owner set while it was read",
-                served.rows.len()
-            )
-            .into());
+fn a_page_past_rows_per_page_lowered_while_it_was_read_is_refused() -> TestResult {
+    match first_page_with_bounds_set_during_read(SnapshotReadSettings {
+        page_rows: 1,
+        ..SnapshotReadSettings::DEFAULT
+    })? {
+        Ok(served) => Err(format!(
+            "a page of {} rows was served past the 1 row per page the owner set while it was read",
+            served.rows.len()
+        )
+        .into()),
+        Err(refused) => {
+            refused_as_lowered(&refused);
+            Ok(())
         }
-        Err(refused) => refused_as_lowered(&refused),
     }
+}
 
-    // Bytes: one served row is larger than 64 bytes (its version and view).
-    set_bounds_during_next_read(
-        owner,
-        SnapshotReadSettings {
-            page_bytes: 64,
-            ..SnapshotReadSettings::DEFAULT
-        },
-    );
-    match first_page(&memory, &handle) {
+#[test]
+fn a_page_past_bytes_per_page_lowered_while_it_was_read_is_refused() -> TestResult {
+    // Each served row is larger than 64 bytes (its version and view).
+    match first_page_with_bounds_set_during_read(SnapshotReadSettings {
+        page_bytes: 64,
+        ..SnapshotReadSettings::DEFAULT
+    })? {
         Ok(served) => Err(format!(
             "a page of {} rows was served past the 64 bytes per page the owner set while it was read",
             served.rows.len()
@@ -205,21 +200,11 @@ fn a_page_past_rows_or_bytes_per_page_lowered_while_it_was_read_is_refused() -> 
 
 #[test]
 fn a_page_within_bounds_lowered_while_it_was_read_is_served() -> TestResult {
-    let (_dir, vault) = open_vault()?;
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    put_people(&vault, 4)?;
-    let handle = open_people(&memory, None)?;
-
-    set_bounds_during_next_read(
-        owner,
-        SnapshotReadSettings {
-            page_rows: 100,
-            handle_rows: 1_000,
-            ..SnapshotReadSettings::DEFAULT
-        },
-    );
-    let served = first_page(&memory, &handle)?;
+    let served = first_page_with_bounds_set_during_read(SnapshotReadSettings {
+        page_rows: 100,
+        handle_rows: 1_000,
+        ..SnapshotReadSettings::DEFAULT
+    })??;
     assert!(served.rows.len() >= 4, "{} rows", served.rows.len());
     assert_eq!(
         served.served,
