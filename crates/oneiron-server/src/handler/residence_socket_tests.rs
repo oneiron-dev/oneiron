@@ -175,7 +175,17 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
     })
     .await
     .unwrap();
-    assert!(manager.loaded_keys().is_empty(), "no full window on enrol");
+    assert!(
+        manager.loaded_keys().is_empty(),
+        "no full window on enrol: loaded {:?}, server windows {:?}, test window {}",
+        manager
+            .loaded_keys()
+            .iter()
+            .map(|key| key.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        client.server_windows(),
+        window.as_str()
+    );
     let count = client.fetch_current_index(now).await.unwrap();
     assert!(count >= 2);
     let row = device
