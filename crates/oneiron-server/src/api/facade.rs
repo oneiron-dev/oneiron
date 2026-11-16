@@ -248,6 +248,7 @@ mod web_connector_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;
+mod world_vectors_doors;
 
 pub(crate) use admission_doors::{
     admission_observer, call_verb, carrying_admission_observer, tracker_observer, tracks_admission,
