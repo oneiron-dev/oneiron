@@ -76,7 +76,6 @@ pub(crate) async fn vault_calendar_instances_move(
 use oneiron::calendar::connectors::door::{
     self as connector, CalendarConnectorConfigureRequest, CalendarConnectorKillRequest,
     CalendarConnectorRegistration, CalendarConnectorRequest, CalendarConnectorWriteRequest,
-    CalendarImipTransportConfig,
 };
 use oneiron::calendar::{CalDavConnector, CalendarSyncOutcome, RemoteWriteReceipt};
 use oneiron::consent::AuthenticatedOwner;
@@ -232,34 +231,6 @@ pub(crate) async fn calendar_connector_write(
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))
         },
-    )
-    .await
-}
-
-pub(crate) async fn calendar_imip_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarImipTransportConfig,
-) -> Listed<CalendarImipTransportConfig> {
-    as_owner(
-        server,
-        auth,
-        "calendar.imip.configure",
-        move |_, memory, owner| connector::configure_imip(&memory, &owner, &input),
-    )
-    .await
-}
-
-pub(crate) async fn calendar_imip_get(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    _input: oneiron::task_verb::sdk::EmptyRequest,
-) -> Listed<Option<CalendarImipTransportConfig>> {
-    as_owner(
-        server,
-        auth,
-        "calendar.imip.get",
-        move |_, memory, owner| connector::get_imip(&memory, &owner),
     )
     .await
 }
