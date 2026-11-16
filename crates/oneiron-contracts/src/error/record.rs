@@ -80,7 +80,7 @@ impl std::fmt::Display for ErasedHoldTarget {
 
 /// A 32-byte revision as a surface shows it: 64 lower-case hex.
 fn revision_hex(revision: &[u8; 32]) -> String {
-    revision.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(revision)
 }
 
 /// What the owner runs when decision seal standing cannot be verified (FIX

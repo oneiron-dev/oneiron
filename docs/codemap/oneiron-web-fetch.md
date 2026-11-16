@@ -26,3 +26,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_fetch/render.rs` | src | m | 15 crate-vis | — | Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential… |
 | `src/web_fetch/rungs.rs` | src | s | — | — | The built-in rungs' [`Renderer`] impls |
 | `src/web_fetch/tests.rs` | test | XL | — | — | — |
+| `tests/fingerprint_keep_web_fetch.rs` | test | s | 1 const · 1 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.2a: the web fetch content hash keeps its bytes |
