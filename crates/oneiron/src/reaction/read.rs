@@ -182,6 +182,27 @@ pub(crate) fn person_name_in(
     Ok(body_map(vault, txn, person)?.and_then(|body| first_string(&body, &PERSON_NAME_KEYS)))
 }
 
+/// Every name a PERSON's stored body carries: its `display_name`, then its
+/// `name`, each when it is not blank, without repeats.
+pub(crate) fn person_body_names_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<Vec<String>> {
+    let Some(body) = body_map(vault, txn, person)? else {
+        return Ok(Vec::new());
+    };
+    let mut names = Vec::new();
+    for key in PERSON_NAME_KEYS {
+        if let Some(name) = first_string(&body, &[key])
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
+
 fn display_name_in(vault: &Vault, txn: &heed::RoTxn<'_>, person: EntityId) -> Result<String> {
     Ok(person_name_in(vault, txn, person)?.unwrap_or_else(|| person.to_hex()[..8].to_owned()))
 }

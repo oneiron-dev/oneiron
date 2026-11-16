@@ -47,6 +47,31 @@ pub(crate) fn parse_toml<T: DeserializeOwned>(
     })
 }
 
+/// `raw`, the text of a config file the caller's context names, read as
+/// `T`: [`parse_toml`] for a text that comes with no path, such as a
+/// `[models]` body a host hands over.
+pub(crate) fn parse_toml_text<T: DeserializeOwned>(raw: &str) -> Result<T, ConfigParseError> {
+    toml::from_str(raw).map_err(|error: toml::de::Error| ConfigParseError {
+        path: None,
+        location: located(raw, &error),
+    })
+}
+
+/// `raw`, the text of the JSON file at `path`, read as `T`: the JSON twin of
+/// [`parse_toml`] for a file a config refers to (FIX
+/// CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE). A failure keeps only
+/// the file and the parser's line and column; serde_json's message, which
+/// names a key or quotes a value it refused, is dropped here.
+pub(crate) fn parse_json<T: DeserializeOwned>(
+    path: &Path,
+    raw: &str,
+) -> Result<T, ConfigParseError> {
+    serde_json::from_str(raw).map_err(|error: serde_json::Error| ConfigParseError {
+        path: Some(path.to_path_buf()),
+        location: (error.line() > 0).then(|| (error.line(), error.column())),
+    })
+}
+
 /// Where `raw`, the text of a config file the caller's context names, fails
 /// to read as `T`: for a failure met in a table settled from that text,
 /// whose own error names the value it refused and no place, and is dropped
@@ -76,6 +101,74 @@ pub(crate) fn locate_toml_section(raw: &str, section: &str) -> ConfigParseError 
         path: None,
         location: line.map(|line| (line + 1, 1)),
     }
+}
+
+/// The one-based line where `raw`, the text of a config file, sets the root
+/// key `key`: the first line before the file's first table that starts with
+/// the key, bare or quoted, and an `=`. No line when `raw` writes the key
+/// another way. The line helps an operator find the key; whether the key is
+/// set is the parser's to say.
+pub(crate) fn locate_toml_root_key(raw: &str, key: &str) -> Option<usize> {
+    raw.lines()
+        .map(str::trim_start)
+        .take_while(|line| !line.starts_with('['))
+        .position(|line| {
+            let bare = line.strip_prefix(key);
+            let quoted = ['"', '\''].into_iter().find_map(|quote| {
+                line.strip_prefix(quote)?
+                    .strip_prefix(key)?
+                    .strip_prefix(quote)
+            });
+            bare.or(quoted)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        })
+        .map(|line| line + 1)
+}
+
+/// The longest key path `raw`, the text of a config file, sets that `text`
+/// (a refusal) names as a whole word, and the one-based line of its key: what
+/// a refusal of a value set in that file names as the place it was set (FIX
+/// CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE). A path is dotted from the root,
+/// as refusals write it (`limits.git_scan_blob_bytes`, `house_role`); a table
+/// counts as a path, so a refusal that names only its table finds the
+/// table's line. `None` for a text that does not parse or names no key the
+/// file sets. Only the text's keys are compared, never its values.
+pub(crate) fn locate_named_key(raw: &str, text: &str) -> Option<(String, usize)> {
+    let table = toml::de::DeTable::parse(raw).ok()?;
+    let mut keys = Vec::new();
+    key_paths(table.get_ref(), "", &mut keys);
+    keys.into_iter()
+        .filter(|(path, _)| names_key(text, path))
+        .max_by_key(|(path, _)| path.len())
+        .and_then(|(path, offset)| line_and_column(raw, offset).map(|(line, _)| (path, line)))
+}
+
+/// Every key path `table` holds under `prefix`, with the byte offset of its
+/// key: a table's own path, then the paths inside it. An array's tables are
+/// not entered.
+fn key_paths(table: &toml::de::DeTable<'_>, prefix: &str, keys: &mut Vec<(String, usize)>) {
+    for (key, value) in table.iter() {
+        let path = if prefix.is_empty() {
+            key.get_ref().to_string()
+        } else {
+            format!("{prefix}.{}", key.get_ref())
+        };
+        keys.push((path.clone(), key.span().start));
+        if let toml::de::DeValue::Table(inner) = value.get_ref() {
+            key_paths(inner, &path, keys);
+        }
+    }
+}
+
+/// Whether `text` names `path` as a whole word: no key character just
+/// before it, and none just after but a `.` that goes on to a deeper key.
+fn names_key(text: &str, path: &str) -> bool {
+    let key_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-');
+    text.match_indices(path).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + path.len()..].chars().next();
+        !before.is_some_and(|c| key_char(c) || c == '.') && !after.is_some_and(key_char)
+    })
 }
 
 /// The one-based line and column in `raw` of the span `error` gives.
