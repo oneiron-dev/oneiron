@@ -11,6 +11,7 @@ use crate::write_envelope::communication::{
     COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL, COMM_OPT_OUT_REASON_STOP,
     COMM_OPT_OUT_REASON_UNSUBSCRIBE,
 };
+use oneiron_contracts::register::Register;
 use rmpv::Value;
 
 /// Current CounterpartyContactRecord body schema version.
@@ -92,8 +93,9 @@ pub const PREDICATE_COUNTERPARTY_CONTACT_NOTES: &str = "counterparty_contact.not
 ///
 /// The serde derive is wire-only (interlocutor echo, ILD-1); the on-disk
 /// MessagePack body encoding stays `as_str()` based.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("counterparty.first.touch")]
 #[non_exhaustive]
 pub enum CounterpartyFirstTouch {
     UserIntroduction,
@@ -102,15 +104,6 @@ pub enum CounterpartyFirstTouch {
 }
 
 impl CounterpartyFirstTouch {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::UserIntroduction => "user_introduction",
-            Self::InboundFirst => "inbound_first",
-            Self::Public => "public",
-        }
-    }
-
     #[must_use]
     pub const fn receipt_reason(self) -> &'static str {
         match self {
@@ -122,12 +115,7 @@ impl CounterpartyFirstTouch {
 
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "user_introduction" => Some(Self::UserIntroduction),
-            "inbound_first" => Some(Self::InboundFirst),
-            "public" => Some(Self::Public),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

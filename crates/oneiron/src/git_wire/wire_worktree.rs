@@ -3,11 +3,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::argv::FrozenGitArgv;
 use super::failure::invalid;
 use super::record::{
-    StoredGitWireRecord, finish_state, hash_field, new_record, receipt_from_stored,
-    worktree_record_key,
+    StoredGitWireRecord, finish_state, new_record, receipt_from_stored, worktree_record_key,
 };
 use super::{
     GIT_WIRE_DOMAIN, GitOid, GitWire, GitWireCommitOutcome, GitWireFailureClass, GitWireOperation,
@@ -333,13 +334,24 @@ fn normalized_path(path: &Path) -> PathBuf {
     }
 }
 
+/// A worktree handle's scope. The worktree record stores it, so it keeps its
+/// bytes (K, PLAN-UC-04 3.3): each field framed by its length as a u32
+/// big-endian.
 pub(super) fn worktree_scope(path: &Path) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hash_field(&mut hasher, GIT_WIRE_DOMAIN);
-    hash_field(&mut hasher, b"worktree-scope");
-    hash_field(
-        &mut hasher,
-        normalized_path(path).as_os_str().as_encoded_bytes(),
-    );
-    *hasher.finalize().as_bytes()
+    let mut digest = LegacyDigest::new(purposes::git_wire::WORKTREE_SCOPE);
+    let path = normalized_path(path);
+    for field in [
+        GIT_WIRE_DOMAIN,
+        b"worktree-scope".as_slice(),
+        path.as_os_str().as_encoded_bytes(),
+    ] {
+        digest.len_u32_be_saturating(field.len()).raw(field);
+    }
+    digest.finish()
+}
+
+/// Seam for `test_doors::fingerprint_keep_git_wire` (PLAN-UC-04 3.3).
+#[cfg(oneiron_test_support)]
+pub(crate) fn worktree_scope_for_test(path: &Path) -> [u8; 32] {
+    worktree_scope(path)
 }
