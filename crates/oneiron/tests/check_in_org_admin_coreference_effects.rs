@@ -25,6 +25,7 @@ mod owner_apply_fixture;
 use std::collections::BTreeSet;
 
 use oneiron::check_in::ActClass;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     CoreferenceStatus, OrgAdminPolicy, OrgAdminPower, coreference_shared_for_pact,
 };
@@ -134,6 +135,52 @@ fn person(vault: &Vault, id: EntityId) {
         .expect("a live person");
 }
 
+/// Declares the two coreference predicates normal in the stored default
+/// manifest, at its own id (as `agent_interrupt_cut.rs` does for its
+/// binding): the shipped manifest names `core.coreference.*` in no rule, so
+/// the Owner's confirmed link and consent claims, which the coreference doors
+/// write Approved with no owner-authored proof, would pend at the
+/// criticality floor (FIX [COREFERENCE-OWNER-DOORS-PEND-AT-FLOOR]).
+fn declare_coreference_normal(vault: &Vault, owner_proof: &AuthenticatedOwner) {
+    use rmpv::Value;
+
+    let id = oneiron_store::policy_record::default_policy_manifest_id()
+        .expect("the default policy manifest id");
+    let body = vault
+        .get(&id)
+        .expect("the default policy manifest reads")
+        .expect("the default policy manifest is stored");
+    let Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("the manifest decodes")
+    else {
+        panic!("the default policy manifest is a map");
+    };
+    let Some((_, Value::Array(rules))) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+    else {
+        panic!("the default policy manifest has a rules array");
+    };
+    for predicate in ["core.coreference.status", "core.coreference.share_consent"] {
+        rules.push(Value::Map(vec![
+            (Value::from("prefix"), Value::from(predicate)),
+            (Value::from("exact"), Value::Boolean(true)),
+            (
+                Value::from("axes"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+        ]));
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(fields)).expect("the manifest encodes");
+    vault
+        .install_owner_policy_manifest(owner_proof, id, bytes, vault.now_recorded_at())
+        .expect("the Owner declares the coreference predicates normal");
+}
+
 fn share_request(
     local: EntityId,
     other: EntityId,
@@ -150,6 +197,7 @@ fn share_request(
 #[test]
 fn the_owner_applies_an_approved_ask_for_that_share_consent_only() {
     let (_dir, vault, owner, owner_proof) = rooted();
+    declare_coreference_normal(&vault, &owner_proof);
     let (local, other) = (EntityId::now(), EntityId::now());
     person(&vault, local);
     person(&vault, other);

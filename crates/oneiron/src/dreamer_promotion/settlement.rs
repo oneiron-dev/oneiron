@@ -170,7 +170,7 @@ pub(crate) fn land_kept_alternative_in_txn(
         .apply_recording_gate_decisions(txn)
         .inspect_err(|error| keep_as.note_refusal(error))?;
     crate::entity_doc::verify_promotion_evidence_in_txn(vault, txn, &public_refs)?;
-    keep_as.approve_in_txn(vault, txn, candidate.claim_id, run.now_ms)?;
+    keep_as.approve_in_txn(vault, txn, candidate.claim_id, run.now_secs())?;
     // Re-read inside the write: the alternative stands Auto, as written, or
     // Approved by the responder.
     let landed =
