@@ -154,16 +154,17 @@ impl Vault {
     /// approval's own: the consent door's retry once the approval committed
     /// ([`apply_after_consent`]), or the nightly pass (`attempt`). The
     /// approval's own write applied the rung with it, after its door judged
-    /// the settler: `vault.claims.settle` and a conflict Keep ask a person
-    /// for a finding that lifts a restriction. A finding still unapplied here
-    /// did not apply there, and its rung is judged again in this write: a
-    /// contact mapping restricts by its contact's other heads, which can move
-    /// after the approval while the mapping's own body stays. A rung that now
-    /// retracts, weakens or marks stale a claim that restricts someone's
-    /// access applies nothing, and the finding waits approved: it applies at
-    /// a later pass once its target restricts no one, and a person lifts the
-    /// restriction by their own act (RULING
-    /// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
+    /// the settler: for a finding that lifts a restriction,
+    /// `vault.claims.settle` refuses a Grant holder that is no person and a
+    /// conflict Keep refuses a Keep by no person; every other approval door
+    /// is the owner's. A finding still unapplied here did not apply there,
+    /// and its rung is judged again in this write: a contact mapping
+    /// restricts by its contact's other heads, which can move after the
+    /// approval while the mapping's own body stays. A rung that now retracts,
+    /// weakens or marks stale a claim that restricts someone's access applies
+    /// nothing, and the finding waits approved: it applies at a later pass
+    /// once its target restricts no one, and a person lifts the restriction
+    /// by their own act (RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
     ///
     /// # Errors
     ///

@@ -93,7 +93,8 @@ fn retract_value_in(vault: &Vault, txn: &heed::RoTxn<'_>, target: EntityId) -> R
 /// finds a demotion parked on the target), which the nightly pass then
 /// applies. The approval lands as an owner's approval lands
 /// (`ClaimMaterialization::apply_owner_approval`); nothing else of the
-/// settlement runs.
+/// settlement runs, so a tray row the finding has stays open (the nightly
+/// pass reads none).
 ///
 /// # Errors
 ///
