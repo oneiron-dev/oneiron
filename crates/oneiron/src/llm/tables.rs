@@ -19,6 +19,12 @@ crate::side_table::side_tables! {
     DECISION_ASK: VaultMeta b"decision:ask:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::llm::decision::erase_ask_actor_in_txn;
+    /// The owner's learned band for one question version and reversibility class, its version
+    /// and its mode (ARCH-0076 promise-dura-10: they stay in effect after a restart). Key:
+    /// id16(question) + u32be(question version) + u8(reversibility).
+    DECISION_BAND: VaultMeta b"decision:band:v1:" Named
+        // Restore class: the owner's decision policy stands as the live vault holds it.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its
     /// actor/subject/step hash. Key: id16(attempt).
     DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw
