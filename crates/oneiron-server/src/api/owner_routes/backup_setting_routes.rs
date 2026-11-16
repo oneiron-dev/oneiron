@@ -13,7 +13,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::get;
-use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::settings::backup::BackupPolicy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -121,16 +121,7 @@ async fn put(
     let setting = blocking(move || -> OwnerResult<BackupSetting> {
         server.vault().set_setting(
             SettingCaller::Owner(&owner),
-            SetSetting {
-                key: "backup.policy".to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(serde_json::json!(policy)),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
+            SetSetting::vault_value("backup.policy", serde_json::json!(policy)),
         )?;
         Ok(BackupSetting::of(&server, Some(policy)))
     })
