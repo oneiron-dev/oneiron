@@ -3,8 +3,10 @@
 //! with one `tasks/cancel`, which undoes nothing already done. The owner asks
 //! on the call (`POST /v1/owner/connectors/remote-tasks/{intent}/cancel`) or
 //! stops the try that made it; the served poll sends the stop once, records
-//! how it went, never sends it again, and leaves the send Deferred until a
-//! poll reads the task's end. A send whose task keeps no poll is refused as
+//! how it went (`sent`, `uncertain` or `refused`), never sends it again
+//! unless it never reached the connector (unreachable, or a 429: then it is
+//! `requested` again and a later pass sends it), and leaves the send Deferred
+//! until a poll reads the task's end. A send whose task keeps no poll is refused as
 //! `remote_task_unpollable`. On main nothing sends `tasks/cancel`: the route
 //! does not exist and the owner's Stop leaves a Deferred send as it is.
 //!
@@ -22,6 +24,7 @@
 mod engine_stack;
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, Bytes, to_bytes};
@@ -129,19 +132,24 @@ async fn stub_end(State(stub): State<Arc<TaskStub>>) -> StatusCode {
     StatusCode::OK
 }
 
-/// Serves the stub on loopback: its endpoint.
-async fn serve_stub(stub: &Arc<TaskStub>) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+/// A loopback address nothing listens on yet: the stub's, before it serves.
+fn unserved_address() -> SocketAddr {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a free loopback address")
+}
+
+/// Serves the stub on loopback at `address`.
+async fn serve_stub(stub: &Arc<TaskStub>, address: SocketAddr) {
+    let listener = tokio::net::TcpListener::bind(address)
         .await
         .expect("bind the stub connector");
-    let address = listener.local_addr().expect("the stub's address");
     let app = Router::new()
         .route("/mcp", post(stub_answer).delete(stub_end))
         .with_state(Arc::clone(stub));
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve the stub");
     });
-    format!("http://{address}/mcp")
 }
 
 /// The catalog connector `taskstub`, admitted Active by the owner's
@@ -229,6 +237,7 @@ struct CancelFixture {
     slip: CapabilitySlip,
     token: String,
     endpoint: String,
+    address: SocketAddr,
     stub: Arc<TaskStub>,
     // Dropped after the vault.
     _dir: tempfile::TempDir,
@@ -236,11 +245,20 @@ struct CancelFixture {
 
 impl CancelFixture {
     async fn new(cancel_status: StatusCode) -> Self {
+        let fixture = Self::unserved(cancel_status);
+        fixture.serve().await;
+        fixture
+    }
+
+    /// The fixture with its stub not serving yet: every connection to the
+    /// connector is refused until [`Self::serve`].
+    fn unserved(cancel_status: StatusCode) -> Self {
         let stub = Arc::new(TaskStub {
             seen: Mutex::new(Vec::new()),
             cancel_status,
         });
-        let endpoint = serve_stub(&stub).await;
+        let address = unserved_address();
+        let endpoint = format!("http://{address}/mcp");
         let dir = tempfile::tempdir().expect("a temp dir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open a vault"));
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
@@ -278,9 +296,15 @@ impl CancelFixture {
             slip,
             token,
             endpoint,
+            address,
             stub,
             _dir: dir,
         }
+    }
+
+    /// The stub starts serving at the connector's endpoint.
+    async fn serve(&self) {
+        serve_stub(&self.stub, self.address).await;
     }
 
     /// A Deferred send of `attempt` whose task the stub runs, polled with
@@ -436,7 +460,7 @@ fn a_cancel_whose_outcome_is_unknown_is_never_sent_again() {
 }
 
 #[test]
-fn a_cancel_the_connector_refused_stays_claimed_and_is_never_sent_again() {
+fn a_cancel_the_connector_refused_reads_refused_and_is_never_sent_again() {
     run_on_engine_stack("remote_task_cancel_refused", || async {
         let fixture = CancelFixture::new(StatusCode::BAD_REQUEST).await;
         let intent = fixture.deferred_send(0x2B, true);
@@ -446,15 +470,73 @@ fn a_cancel_the_connector_refused_stays_claimed_and_is_never_sent_again() {
         assert_eq!(fixture.stub.cancels(), vec![Some(TASK_ID.to_owned())]);
         assert_eq!(
             fixture.cancel_phase(&intent).await,
-            "sending",
-            "a claimed stop the connector did not take stays claimed"
+            "refused",
+            "the owner reads that the connector refused the stop, not that it is in flight"
         );
 
         fixture.poll_again(&intent).await;
         assert_eq!(
             fixture.stub.cancels().len(),
             1,
-            "a claimed stop is never sent again"
+            "a refused stop is never sent again"
+        );
+        assert_eq!(fixture.state(&intent), Some(IntentState::Deferred));
+    });
+}
+
+#[test]
+fn a_cancel_that_never_reached_the_connector_is_sent_on_a_later_pass() {
+    run_on_engine_stack("remote_task_cancel_unsent", || async {
+        let fixture = CancelFixture::unserved(StatusCode::OK);
+        let intent = fixture.deferred_send(0x2E, true);
+        assert_eq!(fixture.cancel_phase(&intent).await, "requested");
+
+        // The connector refuses every connection on the first pass: no byte
+        // of the stop leaves.
+        fixture.poll_once().await;
+        assert!(
+            fixture.stub.methods().is_empty(),
+            "nothing reached the connector"
+        );
+        assert_eq!(
+            fixture.cancel_phase(&intent).await,
+            "requested",
+            "a stop that never left is asked for again, not left sending"
+        );
+
+        fixture.serve().await;
+        fixture.poll_again(&intent).await;
+        assert_eq!(
+            fixture.stub.cancels(),
+            vec![Some(TASK_ID.to_owned())],
+            "the later pass sends the stop once: {:?}",
+            fixture.stub.methods()
+        );
+        assert_eq!(fixture.cancel_phase(&intent).await, "sent");
+        assert_eq!(fixture.state(&intent), Some(IntentState::Deferred));
+    });
+}
+
+#[test]
+fn a_cancel_the_connector_asked_for_later_is_sent_on_the_next_pass() {
+    run_on_engine_stack("remote_task_cancel_later", || async {
+        let fixture = CancelFixture::new(StatusCode::TOO_MANY_REQUESTS).await;
+        let intent = fixture.deferred_send(0x2F, true);
+        assert_eq!(fixture.cancel_phase(&intent).await, "requested");
+
+        fixture.poll_once().await;
+        assert_eq!(fixture.stub.cancels(), vec![Some(TASK_ID.to_owned())]);
+        assert_eq!(
+            fixture.cancel_phase(&intent).await,
+            "requested",
+            "a 429 took nothing: the stop is asked for again"
+        );
+
+        fixture.poll_again(&intent).await;
+        assert_eq!(
+            fixture.stub.cancels().len(),
+            2,
+            "the next pass sends the stop again"
         );
         assert_eq!(fixture.state(&intent), Some(IntentState::Deferred));
     });
