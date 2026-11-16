@@ -1,10 +1,12 @@
 //! Own-rate advisory thresholds and first-crossing check records.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// What an own-rate window counts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("own.rate.kind")]
 pub enum OwnRateKind {
     /// Task creates and asks by one actor.
     TaskCreate,
@@ -18,12 +20,7 @@ pub enum OwnRateKind {
 
 impl OwnRateKind {
     pub const fn token(self) -> &'static str {
-        match self {
-            Self::TaskCreate => "task_create",
-            Self::AutoWrite => "auto_write",
-            Self::WeaveCorrection => "weave_correction",
-            Self::ConsultFanout => "consult_fanout",
-        }
+        self.as_str()
     }
 }
 

@@ -3,6 +3,7 @@
 use crate::side_table::codec::{CodecError, RawValue};
 use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use oneiron_model::llm::{LlmResponse, ModelId};
 use serde::{Deserialize, Serialize};
 
@@ -70,8 +71,10 @@ pub const DREAMER_STEP_RETRY_BACKOFF_MS: [u64; 3] = [250, 1_000, 4_000];
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("step.progression")]
 pub enum StepProgression {
     Started,
     ResponseReceived,
@@ -80,17 +83,6 @@ pub enum StepProgression {
 }
 
 impl StepProgression {
-    /// Stable progression string used in `dreamer.step` claim values.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Started => "started",
-            Self::ResponseReceived => "response_received",
-            Self::Logged => "logged",
-            Self::Finished => "finished",
-        }
-    }
-
     pub const fn as_u8(self) -> u8 {
         match self {
             Self::Started => 0,
