@@ -787,9 +787,7 @@ pub(in crate::runtime_hooks) fn admit_verb_outcome(
             }
             None => Err("a rewrite has nothing to check its args".to_owned()),
         },
-        HookOutcome::Skip { .. } if verb == COMPACT => {
-            Err("a host.compact pre-hook may not skip".to_owned())
-        }
+        HookOutcome::Skip { .. } if verb == COMPACT => Ok(()),
         HookOutcome::Redact { paths } if paths.is_empty() => {
             Err("a redact names one or more paths".to_owned())
         }
