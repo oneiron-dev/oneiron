@@ -1,29 +1,23 @@
-//! OpenAI-compatible media wires for the `ai.*` calls past text: images
-//! (`/v1/images/generations`, `/v1/images/edits`), video jobs
-//! (`/v1/videos`), speech (`/v1/audio/speech`), transcription
-//! (`/v1/audio/transcriptions`) and embeddings (`/v1/embeddings`). HTTP and
-//! authentication stay host-owned: the host's transport sends one request
-//! per call, so a run's media gate may wrap this backend.
+//! The OpenAI-compatible media wire's shared seam, and its embeddings
+//! (`/v1/embeddings`). One provider's [`OpenAiMediaClient`] sends every media
+//! call; each family's backend speaks its own calls over it (ARCH-0036
+//! `#adapters`): images and video jobs are `oneiron_gen::openai_compat`'s,
+//! speech and transcription `oneiron_speech::{tts, asr}::openai_compat`'s,
+//! and embeddings [`OpenAiEmbedBackend`]'s. HTTP and authentication stay
+//! host-owned: the host's transport sends one request per call, so a run's
+//! media gate may wrap each backend.
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use oneiron::llm::BrokerIsolation;
-use oneiron::llm::image::ImageBytes;
-use oneiron::llm::media::wav::WavClip;
 use oneiron::llm::media::{
-    AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaJobState, MediaPart,
-    MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, ReferenceCompatibility,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaPart, MediaProgressFuture,
+    MediaRequest, MediaResponse, MediaUsage,
 };
-use oneiron::llm::{INFERENCE_CALLS_KEY, InferenceCallReceipt};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
-use serde::Deserialize;
 use serde_json::{Value, json};
-
-use super::image::{
-    OpenAiImageHttpResponse, OpenAiImagePart, decode_response, form_fields, masked_edit_body,
-    reference_part,
-};
 
 // FIX 866: each provider's own embedding shape.
 mod embed_shape;
@@ -31,10 +25,17 @@ mod prepare;
 
 use embed_shape::EmbedDocument;
 pub use embed_shape::EmbedShape;
-use prepare::{
-    PreparedImage, PreparedSpeech, PreparedTranscribe, PreparedVideo, VIDEO_REFERENCE_SLOTS,
-    prepare_embed, prepare_image, prepare_speech, prepare_transcribe, prepare_video,
-};
+use prepare::prepare_embed;
+pub use prepare::{audio_extension, form_fields, only_text, with_params};
+
+/// Multipart parts are distinct so the host sends each ordered reference as `image[]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiImagePart {
+    pub name: &'static str,
+    pub filename: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenAiMediaMethod {
@@ -71,11 +72,16 @@ pub struct OpenAiMediaHttpResponse {
 }
 
 impl OpenAiMediaHttpResponse {
-    fn json(&self) -> Value {
+    /// The body as JSON; `null` when it is not JSON.
+    #[must_use]
+    pub fn json(&self) -> Value {
         serde_json::from_slice(&self.body).unwrap_or(Value::Null)
     }
 
-    fn content_type(&self) -> Option<&str> {
+    /// The media type the reply's `content-type` header names, without its
+    /// parameters.
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
         self.headers
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
@@ -126,35 +132,33 @@ pub trait OpenAiMediaTransport: Send + Sync {
 
 /// One provider's media client. It serves each engine model it was built
 /// for by the name the provider knows it by, at the provider's configured
-/// `endpoint` (its base URL).
-pub struct OpenAiMediaBackend<T> {
+/// `endpoint` (its base URL). Every family backend of the provider sends
+/// through the one client it shares.
+pub struct OpenAiMediaClient<T> {
     transport: T,
     wire_models: BTreeMap<ModelId, String>,
     endpoint: String,
-    /// The shape its embedding endpoint speaks (FIX 866).
-    embed_shape: EmbedShape,
 }
 
-impl<T> OpenAiMediaBackend<T> {
+impl<T> OpenAiMediaClient<T> {
     #[must_use]
     pub fn new(transport: T, wire_models: BTreeMap<ModelId, String>, endpoint: String) -> Self {
         Self {
             transport,
             wire_models,
             endpoint,
-            embed_shape: EmbedShape::default(),
         }
     }
 
-    /// This client with its embedding calls in `shape`, its provider's own
-    /// (FIX 866); vLLM's chat form until one is named.
+    /// The transport every call of this provider goes out on.
     #[must_use]
-    pub fn with_embed_shape(mut self, shape: EmbedShape) -> Self {
-        self.embed_shape = shape;
-        self
+    pub fn transport(&self) -> &T {
+        &self.transport
     }
 
-    fn wire_model(&self, model: &ModelId) -> LlmResult<String> {
+    /// The provider's name for `model`; a model this client was not built
+    /// for is refused.
+    pub fn wire_model(&self, model: &ModelId) -> LlmResult<String> {
         self.wire_models
             .get(model)
             .cloned()
@@ -162,8 +166,9 @@ impl<T> OpenAiMediaBackend<T> {
     }
 }
 
-impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
-    async fn send(
+impl<T: OpenAiMediaTransport> OpenAiMediaClient<T> {
+    /// One exchange; a provider refusal is classified as a chat refusal is.
+    pub async fn send(
         &self,
         method: OpenAiMediaMethod,
         path: String,
@@ -173,7 +178,8 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         self.send_released(method, path, body, lease, None).await
     }
 
-    async fn send_released(
+    /// [`Self::send`] after the caller's release check.
+    pub async fn send_released(
         &self,
         method: OpenAiMediaMethod,
         path: String,
@@ -185,7 +191,8 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             .await
     }
 
-    async fn send_with_headers(
+    /// [`Self::send_released`] with the call's own headers.
+    pub async fn send_with_headers(
         &self,
         method: OpenAiMediaMethod,
         path: String,
@@ -215,207 +222,34 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             None => Ok(reply),
         }
     }
+}
 
-    async fn image(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
-        let wire = self.wire_model(&request.model)?;
-        let PreparedImage { model, fields } = prepare_image(&request, &wire)?;
-        // Every reference goes, in order (FIX 8614): none is dropped or cut.
-        let (path, body) = if let Some(mask) = request.mask {
-            let references = request
-                .references
-                .into_iter()
-                .map(|reference| {
-                    let MediaPart::Image { media_type, bytes } = reference else {
-                        return Err(FatalLlmError::InvalidRequest.into());
-                    };
-                    Ok(ImageBytes { bytes, media_type })
-                })
-                .collect::<LlmResult<Vec<_>>>()?;
-            (
-                "/v1/images/edits",
-                OpenAiMediaBody::Json(masked_edit_body(fields.clone(), references, mask)?),
-            )
-        } else if request.references.is_empty() {
-            let body = Value::Object(fields.clone().into_iter().collect());
-            ("/v1/images/generations", OpenAiMediaBody::Json(body))
-        } else {
-            let files = request
-                .references
-                .into_iter()
-                .enumerate()
-                .map(|(i, reference)| reference_file("image[]", i, reference))
-                .collect::<LlmResult<Vec<_>>>()?;
-            let fields = form_fields(&fields);
-            (
-                "/v1/images/edits",
-                OpenAiMediaBody::Multipart { fields, files },
-            )
-        };
-        let reply = self
-            .transport
-            .execute(
-                OpenAiMediaHttpRequest {
-                    method: OpenAiMediaMethod::Post,
-                    path: path.to_owned(),
-                    headers: BTreeMap::new(),
-                    body,
-                },
-                lease,
-            )
-            .await?;
-        // The reply's raw bytes go once its JSON is read, before the image
-        // is decoded, so the two are never held with the decoded image
-        // (FIX 8615).
-        let json = reply.json();
-        let OpenAiMediaHttpResponse {
-            status,
-            headers,
-            body,
-        } = reply;
-        drop(body);
-        let image = decode_response(
-            OpenAiImageHttpResponse {
-                status,
-                body: json,
-                headers,
-            },
-            model,
-            &fields,
-        )?;
-        let mut response = MediaResponse::from_image(image);
-        // Token-priced image models report tokens; the rest are counted by
-        // the image.
-        if let Some(usage) = response.usage.raw_provider.get("usage") {
-            let count = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
-            response.usage.input_tokens = count("input_tokens");
-            response.usage.output_tokens = count("output_tokens");
+/// One provider's embedding calls over its shared client.
+pub struct OpenAiEmbedBackend<T> {
+    client: Arc<OpenAiMediaClient<T>>,
+    /// The shape its embedding endpoint speaks (FIX 866).
+    embed_shape: EmbedShape,
+}
+
+impl<T> OpenAiEmbedBackend<T> {
+    #[must_use]
+    pub fn new(client: Arc<OpenAiMediaClient<T>>) -> Self {
+        Self {
+            client,
+            embed_shape: EmbedShape::default(),
         }
-        Ok(response)
     }
 
-    async fn speech(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-        release: Option<oneiron::llm::DispatchRelease<'_>>,
-    ) -> LlmResult<MediaResponse> {
-        let wire = self.wire_model(&request.model)?;
-        let PreparedSpeech {
-            body,
-            format,
-            characters,
-        } = prepare_speech(&request, &wire)?;
-        let body = OpenAiMediaBody::Json(body);
-        let reply = self
-            .send_released(
-                OpenAiMediaMethod::Post,
-                "/v1/audio/speech".into(),
-                body,
-                lease,
-                release,
-            )
-            .await?;
-        if reply.body.is_empty() {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        let media_type = reply
-            .content_type()
-            .filter(|kind| kind.starts_with("audio/"))
-            .unwrap_or(format)
-            .to_owned();
-        Ok(MediaResponse {
-            parts: vec![MediaPart::Audio {
-                media_type,
-                bytes: reply.body,
-            }],
-            usage: MediaUsage {
-                characters,
-                ..MediaUsage::default()
-            },
-            model: request.model,
-        })
+    /// This client with its embedding calls in `shape`, its provider's own
+    /// (FIX 866); vLLM's chat form until one is named.
+    #[must_use]
+    pub fn with_embed_shape(mut self, shape: EmbedShape) -> Self {
+        self.embed_shape = shape;
+        self
     }
+}
 
-    async fn transcribe(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-        release: Option<oneiron::llm::DispatchRelease<'_>>,
-    ) -> LlmResult<MediaResponse> {
-        let wire = self.wire_model(&request.model)?;
-        let PreparedTranscribe {
-            fields,
-            filename,
-            media_type,
-        } = prepare_transcribe(&request, &wire)?;
-        // The one audio part the builder checked, taken, not copied.
-        let Some(MediaPart::Audio { bytes, .. }) = request.parts.into_iter().next() else {
-            return Err(FatalLlmError::InvalidRequest.into());
-        };
-        let measured_ms = WavClip::parse(&bytes).map(|clip| clip.duration_ms());
-        let file = OpenAiImagePart {
-            name: "file",
-            filename,
-            media_type,
-            bytes,
-        };
-        let body = OpenAiMediaBody::Multipart {
-            fields,
-            files: vec![file],
-        };
-        let reply = self
-            .send_released(
-                OpenAiMediaMethod::Post,
-                "/v1/audio/transcriptions".into(),
-                body,
-                lease,
-                release,
-            )
-            .await?;
-        let mut reply = reply.json();
-        let text = reply
-            .get("text")
-            .and_then(Value::as_str)
-            .ok_or(FatalLlmError::EmptyResponse)?
-            .to_owned();
-        let raw = reply
-            .get_mut("usage")
-            .map(Value::take)
-            .unwrap_or(Value::Null);
-        let count = |key: &str| raw.get(key).and_then(Value::as_u64).unwrap_or(0);
-        let (input_tokens, output_tokens) = (count("input_tokens"), count("output_tokens"));
-        // A duration-priced model reports seconds; a verbose reply its
-        // length.
-        let seconds = raw
-            .get("seconds")
-            .or_else(|| reply.get("duration"))
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        // A provider that reports neither is charged the length of the WAV
-        // it was sent, read from the audio's own header.
-        let audio_ms = match (seconds.max(0.0) * 1_000.0).ceil() as u64 {
-            0 => measured_ms.unwrap_or(0),
-            reported => reported,
-        };
-        // A worker's inference receipts (FIX 8318) also go where the run
-        // reads them, bound to the model this call was admitted for; its
-        // usage stays as it came.
-        let receipts = transcription_receipts(&raw, &request.model);
-        let mut usage = MediaUsage {
-            input_tokens,
-            output_tokens,
-            audio_ms,
-            raw_provider: json!({ "usage": raw }),
-            ..MediaUsage::default()
-        };
-        usage.put_inference_calls(&receipts);
-        Ok(MediaResponse {
-            parts: vec![MediaPart::Text { text }],
-            usage,
-            model: request.model,
-        })
-    }
-
+impl<T: OpenAiMediaTransport> OpenAiEmbedBackend<T> {
     async fn embed(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         self.embed_released(request, lease, None).await
     }
@@ -426,7 +260,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         lease: &BudgetLease,
         release: Option<oneiron::llm::DispatchRelease<'_>>,
     ) -> LlmResult<MediaResponse> {
-        let wire = self.wire_model(&request.model)?;
+        let wire = self.client.wire_model(&request.model)?;
         // The whole call is checked before its first document is sent.
         let plan = prepare_embed(&request, &wire)?;
         // Texts go as one batch; a call with an image or audio part goes in
@@ -439,6 +273,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         for EmbedDocument { count, path, body } in documents {
             let body = OpenAiMediaBody::Json(Value::Object(body.into_iter().collect()));
             let reply = self
+                .client
                 .send_released(OpenAiMediaMethod::Post, path.into(), body, lease, release)
                 .await?;
             let mut reply = reply.json();
@@ -482,7 +317,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         let mut raw_provider = json!({ "usage": raw, "served_model": served });
         // FIX 8984: what a remote mark of these vectors names when no reply names a device, as
         // the text endpoint names one: the model as sent, at the configured endpoint.
-        raw_provider["remote_runtime"] = json!(format!("{wire}@{}", self.endpoint));
+        raw_provider["remote_runtime"] = json!(format!("{wire}@{}", self.client.endpoint));
         // One mark per request, in request order, as the usage is, when any reply named one.
         if marks.iter().any(|mark| !mark.is_null()) {
             raw_provider["provenance"] = if marks.len() == 1 {
@@ -504,203 +339,30 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             model: request.model,
         })
     }
-
-    async fn submit_job(
-        &self,
-        request: MediaRequest,
-        key: Option<&str>,
-        lease: &BudgetLease,
-    ) -> LlmResult<String> {
-        let wire = self.wire_model(&request.model)?;
-        let PreparedVideo { fields } = prepare_video(&request, &wire)?;
-        // The job's one start frame, when it has one; the builder refused a
-        // call with more, so nothing is cut here.
-        let mut references = request.references;
-        let body = match (references.pop(), references.is_empty()) {
-            (None, _) => OpenAiMediaBody::Json(Value::Object(fields.into_iter().collect())),
-            (Some(reference), true) => OpenAiMediaBody::Multipart {
-                fields: form_fields(&fields),
-                files: vec![reference_file("input_reference", 0, reference)?],
-            },
-            (Some(_), false) => return Err(FatalLlmError::InvalidRequest.into()),
-        };
-        let mut headers = BTreeMap::new();
-        if let Some(key) = key.filter(|key| !key.is_empty()) {
-            headers.insert("idempotency-key".to_owned(), key.to_owned());
-        }
-        let reply = self
-            .send_with_headers(
-                OpenAiMediaMethod::Post,
-                "/v1/videos".into(),
-                body,
-                headers,
-                lease,
-                None,
-            )
-            .await?;
-        reply
-            .json()
-            .get("id")
-            .and_then(Value::as_str)
-            .filter(|id| job_id(id))
-            .map(str::to_owned)
-            .ok_or_else(|| FatalLlmError::EmptyResponse.into())
-    }
-
-    async fn poll_job(
-        &self,
-        model: &ModelId,
-        job: &str,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaJobState> {
-        if !job_id(job) {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let reply = self
-            .send(
-                OpenAiMediaMethod::Get,
-                format!("/v1/videos/{job}"),
-                OpenAiMediaBody::Empty,
-                lease,
-            )
-            .await?;
-        let status = reply.json();
-        let progress = status
-            .get("progress")
-            .and_then(Value::as_u64)
-            .and_then(|progress| u8::try_from(progress.min(100)).ok());
-        let state = status
-            .get("status")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        match state.as_deref() {
-            Some("queued") => Ok(MediaJobState::Queued),
-            Some("completed") => {
-                let content = self
-                    .send(
-                        OpenAiMediaMethod::Get,
-                        format!("/v1/videos/{job}/content"),
-                        OpenAiMediaBody::Empty,
-                        lease,
-                    )
-                    .await?;
-                if content.body.is_empty() {
-                    return Err(FatalLlmError::EmptyResponse.into());
-                }
-                let media_type = content
-                    .content_type()
-                    .filter(|kind| kind.starts_with("video/"))
-                    .unwrap_or("video/mp4")
-                    .to_owned();
-                let seconds = status
-                    .get("seconds")
-                    .and_then(|seconds| {
-                        seconds
-                            .as_f64()
-                            .or_else(|| seconds.as_str().and_then(|s| s.parse().ok()))
-                    })
-                    .unwrap_or(0.0);
-                Ok(MediaJobState::Done {
-                    response: MediaResponse {
-                        parts: vec![MediaPart::Video {
-                            media_type,
-                            bytes: content.body,
-                            uri: None,
-                        }],
-                        usage: MediaUsage {
-                            video_ms: (seconds.max(0.0) * 1_000.0).ceil() as u64,
-                            raw_provider: json!({ "job": job, "status": status }),
-                            ..MediaUsage::default()
-                        },
-                        model: model.clone(),
-                    },
-                })
-            }
-            Some("failed") => {
-                let moderated = status
-                    .pointer("/error/code")
-                    .and_then(Value::as_str)
-                    .is_some_and(|code| code.contains("moderation"));
-                let error = if moderated {
-                    FatalLlmError::ContentFiltered
-                } else {
-                    FatalLlmError::EmptyResponse
-                };
-                Ok(MediaJobState::Failed {
-                    error: error.into(),
-                })
-            }
-            _ => Ok(MediaJobState::Running { progress }),
-        }
-    }
-
-    async fn cancel_job(&self, job: &str, lease: &BudgetLease) -> LlmResult<()> {
-        if !job_id(job) {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        self.send(
-            OpenAiMediaMethod::Delete,
-            format!("/v1/videos/{job}"),
-            OpenAiMediaBody::Empty,
-            lease,
-        )
-        .await?;
-        Ok(())
-    }
 }
 
-impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
-    fn supports_mask(&self) -> bool {
-        true
-    }
-
-    /// A video job carries one `input_reference`; an image call every
-    /// reference.
-    fn reference_compatibility(&self, request: &MediaRequest) -> ReferenceCompatibility {
-        match request.operation {
-            AiOperation::Video => ReferenceCompatibility::Slots {
-                slots: VIDEO_REFERENCE_SLOTS,
-            },
-            _ => ReferenceCompatibility::Whole,
-        }
-    }
-
+/// Serves embeddings alone: every other call is another family's, and is
+/// refused here with `InvalidRequest` before anything is sent.
+impl<T: OpenAiMediaTransport> MediaBackend for OpenAiEmbedBackend<T> {
     /// A model this client was not built for, a call its send's own
-    /// builders refuse (a voice off a speech call, conflicting speech
-    /// params, a param naming a field the adapter sets, an embedding
-    /// document it cannot carry, FIX 8616), or its transport's refusal: all
-    /// before the call's permit starts, so none of them is charged.
+    /// builders refuse (a voice, a param naming a field the adapter sets, an
+    /// embedding document it cannot carry, FIX 8616), or its transport's
+    /// refusal: all before the call's permit starts, so none of them is
+    /// charged.
     fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
         request.validate_image_mask()?;
-        let wire = self.wire_model(&request.model)?;
-        if request.voice.is_some() && request.operation != AiOperation::Speech {
+        let wire = self.client.wire_model(&request.model)?;
+        // A voice is a speech call's alone.
+        if request.voice.is_some() || request.operation != AiOperation::Embed {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        match request.operation {
-            AiOperation::Image => {
-                prepare_image(request, &wire)?;
-            }
-            AiOperation::Speech => {
-                prepare_speech(request, &wire)?;
-            }
-            AiOperation::Transcribe => {
-                prepare_transcribe(request, &wire)?;
-            }
-            AiOperation::Embed => {
-                let plan = prepare_embed(request, &wire)?;
-                self.embed_shape.check(request, plan)?;
-            }
-            AiOperation::Video => {
-                prepare_video(request, &wire)?;
-            }
-            // Text rides the chat wire.
-            AiOperation::Text => return Err(FatalLlmError::InvalidRequest.into()),
-        }
-        self.transport.preflight()
+        let plan = prepare_embed(request, &wire)?;
+        self.embed_shape.check(request, plan)?;
+        self.client.transport().preflight()
     }
 
     fn broker_isolation(&self) -> Option<BrokerIsolation> {
-        self.transport.broker_isolation()
+        self.client.transport().broker_isolation()
     }
 
     fn run<'a>(
@@ -710,18 +372,11 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
             request.validate_image_mask()?;
-            // A voice is a speech call's alone.
-            if request.voice.is_some() && request.operation != AiOperation::Speech {
+            // A voice is a speech call's alone; text rides the chat wire.
+            if request.voice.is_some() || request.operation != AiOperation::Embed {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
-            match request.operation {
-                AiOperation::Image => self.image(request, lease).await,
-                AiOperation::Speech => self.speech(request, lease, None).await,
-                AiOperation::Transcribe => self.transcribe(request, lease, None).await,
-                AiOperation::Embed => self.embed(request, lease).await,
-                // Text rides the chat wire; a video is a job.
-                AiOperation::Text | AiOperation::Video => Err(FatalLlmError::InvalidRequest.into()),
-            }
+            self.embed(request, lease).await
         })
     }
 
@@ -731,94 +386,20 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         lease: &'a BudgetLease,
         release: Option<oneiron::llm::DispatchRelease<'a>>,
     ) -> MediaProgressFuture<'a> {
-        if !matches!(
-            request.operation,
-            AiOperation::Embed | AiOperation::Speech | AiOperation::Transcribe
-        ) {
+        if request.operation != AiOperation::Embed {
             return self.run_progress(request, lease);
         }
         Box::pin(async move {
-            if request.operation != AiOperation::Speech && request.voice.is_some() {
+            if request.voice.is_some() {
                 return Err(InterruptedMediaCall::nothing(
                     FatalLlmError::InvalidRequest.into(),
                 ));
             }
-            let answer = match request.operation {
-                AiOperation::Speech => self.speech(request, lease, release).await,
-                AiOperation::Transcribe => self.transcribe(request, lease, release).await,
-                _ => self.embed_released(request, lease, release).await,
-            };
-            answer.map_err(InterruptedMediaCall::nothing)
+            self.embed_released(request, lease, release)
+                .await
+                .map_err(InterruptedMediaCall::nothing)
         })
     }
-
-    /// Forwards a video's submit key without claiming the provider honours
-    /// it (FIX 2248): this wire still reports that it does not dedupe.
-    fn submit<'a>(
-        &'a self,
-        request: MediaRequest,
-        key: Option<&'a str>,
-        lease: &'a BudgetLease,
-    ) -> MediaFuture<'a, String> {
-        Box::pin(self.submit_job(request, key, lease))
-    }
-
-    fn poll<'a>(
-        &'a self,
-        model: &'a ModelId,
-        job: &'a str,
-        lease: &'a BudgetLease,
-    ) -> MediaFuture<'a, MediaJobState> {
-        Box::pin(self.poll_job(model, job, lease))
-    }
-
-    fn cancel<'a>(
-        &'a self,
-        _model: &'a ModelId,
-        job: &'a str,
-        lease: &'a BudgetLease,
-    ) -> MediaFuture<'a, ()> {
-        Box::pin(self.cancel_job(job, lease))
-    }
-}
-
-/// One reference part as the multipart file part `name`, its bytes taken,
-/// not copied.
-fn reference_file(name: &'static str, index: usize, part: MediaPart) -> LlmResult<OpenAiImagePart> {
-    let MediaPart::Image { media_type, bytes } = part else {
-        return Err(FatalLlmError::InvalidRequest.into());
-    };
-    reference_part(name, index, ImageBytes { bytes, media_type })
-}
-
-/// The inference receipts a transcription's usage carries under
-/// [`INFERENCE_CALLS_KEY`] (a local ASR worker's), each bound to `model`,
-/// the engine model the call was admitted for. A record that does not read
-/// as a receipt is no evidence and is left out.
-fn transcription_receipts(usage: &Value, model: &ModelId) -> Vec<InferenceCallReceipt> {
-    usage
-        .get(INFERENCE_CALLS_KEY)
-        .and_then(Value::as_array)
-        .map(|records| {
-            records
-                .iter()
-                .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
-                .map(|receipt| InferenceCallReceipt {
-                    model: Some(model.clone()),
-                    ..receipt
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// A provider job id is a path segment: letters, digits, `_` and `-` only.
-fn job_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 /// One vector per input, in input order: each index once, each vector
