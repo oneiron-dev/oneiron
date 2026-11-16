@@ -54,3 +54,15 @@ pub fn land_source_bound_artifact(
     })?;
     Ok(SourceBoundRow { policy, row })
 }
+
+/// Whether `actor` reads under the source policy `policy` now: the
+/// source-audience judgment each read of a bound row makes
+/// (`source_audience::actor_reads_in`), with no read lane before it.
+///
+/// # Errors
+///
+/// The store's read errors.
+pub fn actor_reads_source(vault: &Vault, policy: EntityId, actor: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::source_audience::actor_reads_in(vault, &txn, &policy, actor)
+}
