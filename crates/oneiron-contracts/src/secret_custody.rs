@@ -3,13 +3,18 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::register::Register;
+
 // ---------------------------------------------------------------------------
 // Custody classes & tiers
 // ---------------------------------------------------------------------------
 
 /// ARCH-0069 S1 custody classes. Wire strings are canon nouns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "kebab-case")]
+#[register("custody.class")]
 pub enum CustodyClass {
     /// The value may replicate beyond this device (the default reach).
     CustodyPortable,
@@ -21,25 +26,10 @@ pub enum CustodyClass {
 }
 
 impl CustodyClass {
-    /// The canon kebab-case wire noun.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CustodyPortable => "custody-portable",
-            Self::CustodyDeviceBound => "custody-device-bound",
-            Self::CrossVault => "cross-vault",
-        }
-    }
-
     /// Parses the canon kebab-case wire noun.
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "custody-portable" => Some(Self::CustodyPortable),
-            "custody-device-bound" => Some(Self::CustodyDeviceBound),
-            "cross-vault" => Some(Self::CrossVault),
-            _ => None,
-        }
+        <Self as Register>::named(s)
     }
 }
 
