@@ -187,10 +187,12 @@ pub trait DreamerDecisionLender: Send + Sync {
 
     /// Lends the host's write-gate auto-checker for this attempt's commits.
     ///
-    /// The default lends nothing, so attempts without a checker loan keep the gate's
-    /// verdicts without a second opinion. A lender lends the checker's worker and its
-    /// one fair line; the attempt takes its turn before its write opens, and the host
-    /// keeps both.
+    /// The default lends nothing. A commit with no loan brings the claim gate no
+    /// checker: on a vault that names one, a checked claim then waits as checker
+    /// unavailable (an Auto landing is refused, a replacement stays held), and on a
+    /// vault that names none the gate asks none. A lender lends the checker's worker
+    /// and its one fair line; the attempt takes its turn before its write opens, and
+    /// the host keeps both.
     ///
     /// # Errors
     ///

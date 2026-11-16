@@ -129,16 +129,25 @@ pub(crate) fn bounded(head: Arc<FixedChoiceProvider>) -> BoundedAutoChecker {
 }
 
 /// The test lender: it lends `checker` as the attempt's write-gate auto-checker with a
-/// deadline formed at the loan, as the production lender forms it, or none. Settlement is
-/// refused: the commit path never asks for it.
+/// deadline formed at the loan, as the production lender forms it, or none, and counts
+/// each time it is asked. Settlement is refused: the commit path never asks for it.
 pub(crate) struct TestAutoCheckerLender {
     checker: Option<BoundedAutoChecker>,
+    asked: AtomicUsize,
 }
 
 impl TestAutoCheckerLender {
     /// A lender that lends `checker`.
     pub(crate) fn lending(checker: Option<BoundedAutoChecker>) -> Self {
-        Self { checker }
+        Self {
+            checker,
+            asked: AtomicUsize::new(0),
+        }
+    }
+
+    /// How many times a commit asked for the checker so far.
+    pub(crate) fn asked(&self) -> usize {
+        self.asked.load(Ordering::Relaxed)
     }
 }
 
@@ -153,6 +162,7 @@ impl oneiron::dreamer_runner::DreamerDecisionLender for TestAutoCheckerLender {
     }
 
     fn lend_auto_checker(&self) -> oneiron::memory::MemoryResult<Option<BoundedAutoChecker>> {
+        let _ = self.asked.fetch_add(1, Ordering::Relaxed);
         Ok(self
             .checker
             .as_ref()

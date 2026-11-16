@@ -837,6 +837,44 @@ fn a_loan_on_a_vault_that_names_no_checker_lands_unconsulted() -> TestResult<()>
     Ok(())
 }
 
+/// A commit with no checked item asks for no loan: on a checker vault, a binding whose lender
+/// would lend an allowing checker commits one Person item. The PERSON lands, the lender is
+/// never asked and the checker is never consulted. The fixture is
+/// `an_extraction_binding_commits_a_person`. If the commit asked for every extraction batch,
+/// the lender would count one request and the commit would take a turn it never uses.
+#[test]
+fn a_commit_with_no_checked_item_asks_for_no_loan() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    stand_steward_grant(&vault, dreamer(&vault)?, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["Owen chooses green tea"])?;
+    let (attempt_id, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(attempt_id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 1);
+    name_checker(&vault)?;
+    let provider = Arc::new(FixedChoiceProvider::allow());
+    let lender = Arc::new(TestAutoCheckerLender::lending(Some(bounded(
+        provider.clone(),
+    ))));
+    let binding = binding.lend_decisions(lender.clone());
+    let (turn, version) = &turns[0];
+    let spec = json!({"local": "owen", "name": "Owen", "evidence": [{"stored": turn}]});
+    let request = json!({"items": [{"kind": "person", "spec": spec}], "sources": [version]});
+    let answer = binding.invoke(DERIVE_COMMIT_VERB, request, None)?;
+    let item = &answer["items"][0];
+    assert_eq!(item["landed"], true, "{answer}");
+    assert_eq!(item["kind"], "person");
+    let person = EntityId::from_hex(item["rows"][0].as_str().ok_or("the row")?)?;
+    let body = person_body(&vault, person)?.ok_or("the PERSON")?;
+    assert_eq!(body.name.as_deref(), Some("Owen"));
+    assert_eq!(lender.asked(), 0, "a Person commit asks for no loan");
+    assert_eq!(provider.calls(), 0, "and consults nothing");
+    Ok(())
+}
+
 /// T5 two candidates, one turn: one commit with two plain candidates of different subjects
 /// on a checker vault, allowing checker. Both land Auto with two consults, proving the one
 /// turn serves the whole commit.

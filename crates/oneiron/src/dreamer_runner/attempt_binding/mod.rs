@@ -216,10 +216,13 @@ impl DreamerAttemptBinding {
     /// and no claim), and the post-commit receipts are counted once the
     /// write has committed.
     ///
-    /// An extraction commit borrows the host's write-gate auto-checker from the
-    /// lender, when one lends one, and takes its one turn before the write opens:
-    /// that turn serves every consult of the whole commit. With no loan the gates
-    /// answer as before. The Strength and ConflictSettle facets never ask.
+    /// An extraction commit that holds a Candidate or a ConflictResolution item
+    /// borrows the host's write-gate auto-checker from the lender, when one lends
+    /// one, and takes its one turn before the write opens: that turn serves every
+    /// consult of the whole commit. With no loan the gates answer as before. A
+    /// commit of Person and Conflict items alone asks for no loan, since neither
+    /// reaches a gate that consults the checker, and the Strength and
+    /// ConflictSettle facets never ask.
     ///
     /// The stagers judge every grant at the commit's own recorded time: the
     /// batch observes the clock and persists it as the floor inside this
@@ -232,7 +235,14 @@ impl DreamerAttemptBinding {
             attempt: Some(self.lease.attempt()),
             lineage: SourceLineage::of(ClaimSource::Generated),
         };
-        let checker = if self.facet == BoundFacet::Extraction {
+        let consults_checker = self.facet == BoundFacet::Extraction
+            && batch.items.iter().any(|item| {
+                matches!(
+                    item,
+                    DerivationItem::Candidate(_) | DerivationItem::ConflictResolution(_)
+                )
+            });
+        let checker = if consults_checker {
             let loaned = match self.lender.as_ref() {
                 Some(lender) => lender.lend_auto_checker()?,
                 None => None,
