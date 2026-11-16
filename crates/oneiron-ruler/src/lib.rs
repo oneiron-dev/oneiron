@@ -2,7 +2,7 @@
 //!
 //! A ruler is a fixed pack of queries with graded relevance and precomputed
 //! vectors. This crate depends on no engine crate. See [`pack`] for the format
-//! and [`longmemeval`] for the converter.
+//! and [`longmemeval`] and [`trec_collection`] for the converters.
 //! The [`scorecard`] module grades one retrieval run; [`metrics`] holds its pure functions.
 //! Acceptance: [`axes`] reads scorecard axis values, [`bootstrap`] runs the
 //! paired bootstrap, [`ruler_paths`] lists the paths a candidate may not
@@ -18,3 +18,4 @@ pub mod proposal;
 pub mod ruler_paths;
 pub mod scorecard;
 pub mod sealed;
+pub mod trec_collection;

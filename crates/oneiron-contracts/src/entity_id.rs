@@ -1,6 +1,7 @@
 //! `EntityId` + world-id newtypes + id parsing/hex.
 
 use crate::registry::short_id_prefix;
+use oneiron_fingerprint::{LegacyDigest, LegacyHash, LegacyPurpose, TagMode};
 use rand_core::RngCore;
 
 /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
@@ -92,6 +93,44 @@ impl EntityId {
         derive_with(domain, parts, is_reserved_entity_id_bytes)
     }
 
+    /// The legacy material rule, for ids that vaults already hold (PLAN-UC-04's K
+    /// door; it moves here from the store's `entity_id_from_hash_material` in stage
+    /// 2.2, and stage 9 folds it into [`EntityId::derive`] at the launch reset).
+    ///
+    /// Plain BLAKE3: the purpose's tag first, then a u64 little-endian salt, then each
+    /// part as its u64 little-endian length and its bytes. The first 16 bytes are the
+    /// id, with no version-8 stamp; a result in the reserved sentinel range takes the
+    /// next salt. A purpose that is not BLAKE3 with its tag hashed first is refused
+    /// with [`Error::InvariantViolation`](crate::error::Error::InvariantViolation).
+    /// Engine seam: `pub` only so `oneiron-store` and `oneiron` can call it across the
+    /// crate split.
+    #[doc(hidden)]
+    pub fn derive_legacy_material(
+        purpose: LegacyPurpose,
+        parts: &[&[u8]],
+    ) -> crate::error::Result<Self> {
+        if purpose.hash() != LegacyHash::Blake3 || purpose.tag_mode() != TagMode::HashedFirst {
+            return Err(crate::error::Error::InvariantViolation(
+                "a legacy material id takes a BLAKE3 purpose whose tag is hashed first",
+            ));
+        }
+        for salt in 0_u64..=u64::MAX {
+            let mut digest = LegacyDigest::new(purpose);
+            digest.raw(&salt.to_le_bytes());
+            for part in parts {
+                digest.len_u64_le(part.len()).raw(part);
+            }
+            let mut bytes = [0_u8; ENTITY_ID_LEN];
+            bytes.copy_from_slice(&digest.finish()[..ENTITY_ID_LEN]);
+            if !is_reserved_entity_id_bytes(&bytes) {
+                return Ok(Self(bytes));
+            }
+        }
+        Err(crate::error::Error::InvariantViolation(
+            "a legacy material id exhausted the salt space",
+        ))
+    }
+
     /// Whether this id carries the version and variant stamp every
     /// [`EntityId::derive`] output has. A minted id can carry it by chance, so
     /// the stamp only rules derivation out: it never proves it.
@@ -138,17 +177,7 @@ impl EntityId {
 
     /// Parses a 32-char hex string (case-insensitive) into an EntityId.
     pub fn from_hex(s: &str) -> crate::error::Result<Self> {
-        if s.len() != 32 {
-            return Err(crate::error::Error::InvalidKey);
-        }
-        let mut bytes = [0u8; 16];
-        let (chunks, rem) = s.as_bytes().as_chunks::<2>();
-        debug_assert!(rem.is_empty());
-        for (i, &[hi_byte, lo_byte]) in chunks.iter().enumerate() {
-            let hi = hex_nibble(hi_byte).ok_or(crate::error::Error::InvalidKey)?;
-            let lo = hex_nibble(lo_byte).ok_or(crate::error::Error::InvalidKey)?;
-            bytes[i] = (hi << 4) | lo;
-        }
+        let bytes = oneiron_hex::decode_any_case::<16>(s).ok_or(crate::error::Error::InvalidKey)?;
         Self::from_bytes(bytes)
     }
 }
@@ -384,37 +413,16 @@ pub fn parse_short_ref_syntax(reference: &str) -> crate::error::Result<(&str, u8
         .split_once(':')
         .ok_or(crate::error::Error::InvalidKey)?;
     parse_presentation_id(short_id)?;
-    if hash.len() != 2 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(crate::error::Error::InvalidKey);
-    }
-    let content_hash = u8::from_str_radix(hash, 16).map_err(|_| crate::error::Error::InvalidKey)?;
+    let [content_hash] =
+        oneiron_hex::decode_any_case::<1>(hash).ok_or(crate::error::Error::InvalidKey)?;
     Ok((short_id, content_hash))
 }
 
-/// Lowercase hex-encodes an arbitrary byte slice. Shared with the
-/// analyzer manifest hasher so every hex rendering in the crate goes
-/// through one implementation.
+/// Lowercase hex-encodes an arbitrary byte slice: `oneiron_hex::encode`
+/// under the name its callers already use.
 /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
 #[doc(hidden)]
-pub fn bytes_to_hex_lower(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
-/// Converts an ASCII hex character to its nibble value.
-fn hex_nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
+pub use oneiron_hex::encode as bytes_to_hex_lower;
 
 #[cfg(test)]
 mod tests {

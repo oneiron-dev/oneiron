@@ -2,9 +2,8 @@
 
 use std::collections::HashSet;
 
-use sha2::{Digest, Sha256};
-
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::record::SkillRecord;
 use oneiron_contracts::error::ArtifactError;
@@ -17,8 +16,9 @@ pub const SKILL_TREE_PATH_MAX_BYTES: usize = 1024;
 
 /// Domain-separation tag for the canonical skill-tree hash. Versioned so a
 /// future canonicalization change mints a new tag instead of silently
-/// re-keying every stored identity.
-pub const SKILL_TREE_HASH_DOMAIN: &[u8] = b"oneiron.skill.tree.v1\0";
+/// re-keying every stored identity. It is the tag of
+/// `oneiron_contracts::fingerprint::purposes::skill::TREE_HASH`, which writes it.
+pub const SKILL_TREE_HASH_DOMAIN: &[u8] = purposes::skill::TREE_HASH.tag().as_bytes();
 
 /// Canonical skill identity: SHA-256 over the canonicalized file tree
 /// (ARCH-0053 §7, ONE-1735). Recomputable from any source, so the same
@@ -43,37 +43,15 @@ impl SkillContentHash {
     /// Pinned wire form: 64 lowercase hex characters.
     #[must_use]
     pub fn to_hex(&self) -> String {
-        let mut out = String::with_capacity(SKILL_CONTENT_HASH_HEX_LEN);
-        for byte in self.0 {
-            out.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble < 16"));
-            out.push(char::from_digit(u32::from(byte & 0x0F), 16).expect("nibble < 16"));
-        }
-        out
+        oneiron_hex::encode(&self.0)
     }
 
     /// Parses the pinned wire form: exactly 64 lowercase hex characters.
     pub fn parse_hex(hex: &str) -> Result<Self> {
         const CONTEXT: &str = "contentHash must be 64 lowercase hex characters";
-        if hex.len() != SKILL_CONTENT_HASH_HEX_LEN {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)));
-        }
-        let mut bytes = [0_u8; 32];
-        for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-            let hi = hex_nibble(chunk[0])
-                .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)))?;
-            let lo = hex_nibble(chunk[1])
-                .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)))?;
-            bytes[index] = (hi << 4) | lo;
-        }
-        Ok(Self(bytes))
-    }
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
+        oneiron_hex::decode::<32>(hex)
+            .map(Self)
+            .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(CONTEXT)))
     }
 }
 
@@ -128,16 +106,16 @@ where
         }
     }
 
-    let mut hasher = Sha256::new();
-    hasher.update(SKILL_TREE_HASH_DOMAIN);
-    hasher.update((entries.len() as u64).to_be_bytes());
+    let mut digest = LegacyDigest::new(purposes::skill::TREE_HASH);
+    digest.len_u64_be(entries.len());
     for (path, content) in entries {
-        hasher.update((path.len() as u64).to_be_bytes());
-        hasher.update(path.as_bytes());
-        hasher.update((content.len() as u64).to_be_bytes());
-        hasher.update(content);
+        digest
+            .len_u64_be(path.len())
+            .raw(path.as_bytes())
+            .len_u64_be(content.len())
+            .raw(content);
     }
-    Ok(SkillContentHash(hasher.finalize().into()))
+    Ok(SkillContentHash(digest.finish()))
 }
 
 fn validate_skill_tree_path(path: &str) -> Result<()> {

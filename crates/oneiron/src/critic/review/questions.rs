@@ -71,19 +71,8 @@ pub struct ReviewFinding {
     pub out_of_scope: bool,
 }
 
-/// Generated text beside one finding. Every part is optional: a note read
-/// from JSON names only the parts it has.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ReviewNote {
-    pub evidence_refs: Vec<String>,
-    pub suggested_edit: Option<String>,
-    pub prediction: Option<CriticPrediction>,
-    /// The concrete flaw the finding names, if any: its review refuses one
-    /// that names no place in the target as the review's state shows it
-    /// ([`flaw_fits_review_state`]).
-    pub flaw: Option<FlawIdentity>,
-}
+#[doc(hidden)]
+pub use oneiron_records::critic::review::questions::ReviewNote;
 
 /// Generation beside a typed review: evidence refs and a suggested edit per finding, from the
 /// host's own model transport. Each call receives exactly one finding, never sibling
