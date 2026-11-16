@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_contracts::fingerprint::{Fingerprinter, purposes};
 use oneiron_setting_contract::RowKey;
 
 use super::change::record_change_in_txn;
@@ -522,18 +523,16 @@ fn check_in_scope(scope: &SettingScope) -> CheckInScope {
     }
 }
 
-/// The digest of one change: the row's key and the value it would hold. BLAKE3, key derived from
-/// `oneiron setting set v1`.
+/// The digest of one change: the row's key and the value it would hold, a fingerprint under
+/// [`purposes::setting::SET_EFFECT`].
 fn effect_digest(change: &Change<'_>) -> [u8; 32] {
-    let key = change.key.encode();
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron setting set v1");
-    hasher.update(&(key.len() as u64).to_be_bytes());
-    hasher.update(&key);
+    let mut digest = Fingerprinter::new(purposes::setting::SET_EFFECT);
+    digest.part(&change.key.encode());
     match change.value {
-        None => hasher.update(&[0]),
-        Some(value) => hasher.update(&[1]).update(&value.0),
+        None => digest.flag(false),
+        Some(value) => digest.flag(true).part(&value.0),
     };
-    *hasher.finalize().as_bytes()
+    digest.finish().into_bytes()
 }
 
 /// Opens, or finds, the check-in `agent`'s change waits on, under its own live owner Grant that
