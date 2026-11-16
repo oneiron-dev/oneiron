@@ -11,8 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [lib]
-# No doc-comment code fences in these modules (gemini, comfyui, openrouter);
-# skip the doctest compile pass entirely.
+# No doc-comment code fences in these modules (gemini, openai_compat, comfyui,
+# openrouter); skip the doctest compile pass entirely.
 doctest = false
 
 # ARCH-0036 #adapters (MED-1 = A): each wire protocol is a module of this one
@@ -25,12 +25,17 @@ comfyui = ["dep:reqwest", "dep:tokio"]
 
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
-# The Gemini media leg classifies a refused reply as the Gemini text leg does.
+# The Gemini media leg classifies a refused reply as the Gemini text leg does;
+# the OpenAI-compatible leg sends over the provider's shared media client.
 oneiron-llm = { version = "0.1.0", path = "../oneiron-llm" }
 base64 = "0.22"
 serde_json = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls-native-roots"], optional = true }
 tokio = { version = "1", features = ["time"], optional = true }
+
+[dev-dependencies]
+# The OpenAI-compatible tests' budget lease (`BudgetLease::for_test`).
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-hooks"] }
 
 [lints]
 workspace = true
