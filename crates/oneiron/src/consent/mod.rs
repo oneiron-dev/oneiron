@@ -116,7 +116,7 @@ pub use self::doors::{
 };
 pub(crate) use self::effect::CATASTROPHE_FLOOR_ROW_KEY;
 pub use self::effect::{
-    BULK_BLAST_RADIUS_FLOOR, CATASTROPHE_FLOOR_V1, CATASTROPHE_FLOOR_V2, CATASTROPHE_FLOOR_VERSION,
+    BULK_BLAST_RADIUS_FLOOR, CATASTROPHE_FLOOR_V1, CATASTROPHE_FLOOR_V3, CATASTROPHE_FLOOR_VERSION,
     CatastropheClass, CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts,
     EffectPlace, ReversibilityClass, UndoFidelity,
 };
@@ -163,6 +163,7 @@ pub use crate::outbound::{outbound_approve_once_digest, outbound_step_approve_on
 pub use crate::outbound_consent::scoped_mcp_approve_once_digest;
 
 pub(crate) use self::bound::bound_exceeded;
+pub(crate) use self::bypass::covering_bypass_ref_in_txn;
 pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
     DerivedGrantOrigin, DerivedGrantSetting, OwnerAuthoredWrite, active_standing_grant_rows_in_txn,

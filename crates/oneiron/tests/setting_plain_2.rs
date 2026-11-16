@@ -7,8 +7,9 @@
 //! - on a new vault each reader answers the default it answered from its own table;
 //! - the owner's `Vault::set_setting` is what the kept reader returns, and a clear brings the
 //!   default back;
-//! - the automatic cleanup posture stays refused while its rollout blockers are open, and the
-//!   refused change takes no place in the change feed;
+//! - either cleanup posture is the owner's choice: a new vault reads the automatic posture (main
+//!   349eaef4c36, Engine ruling L1-30-AUTO-POSTURE = A), and each change of it is one row of the
+//!   change feed;
 //! - a value of another shape is refused, and the reader keeps the value in force;
 //! - an agent with no Grant changes none of them.
 //!
@@ -27,7 +28,7 @@ use oneiron::setting::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
-use oneiron::{CleanupPosture, EntityId, ErrorKind, Vault, VaultConfig, cleanup_posture};
+use oneiron::{CleanupPosture, EntityId, Vault, VaultConfig, cleanup_posture};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
@@ -133,6 +134,7 @@ impl Fixture {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
     }
@@ -180,7 +182,7 @@ fn defaults() -> InForce {
         },
         DisclosureOfferMode::Auto,
         InboxReviewDial::ExceptionsOnly,
-        CleanupPosture::ProposeFirst,
+        CleanupPosture::AutoWithDigest,
         90,
     )
 }
@@ -256,30 +258,35 @@ fn the_owners_set_is_what_each_reader_returns_and_a_clear_restores_the_default()
 }
 
 #[test]
-fn the_automatic_posture_is_refused_while_its_blockers_are_open() {
+fn either_cleanup_posture_is_the_owners_choice() {
     let fixture = Fixture::rooted();
-    let before = recorded(
-        fixture
-            .set_as_owner(REVIEW_DIAL, json!("approve_all"))
-            .unwrap(),
-    );
-    let error = fixture
-        .set_as_owner(POSTURE, json!("auto_with_digest"))
-        .expect_err("the automatic posture is refused while its rollout blockers are open");
     assert_eq!(
-        error.kind(),
-        ErrorKind::InvariantViolation,
-        "the refusal the owner's cleanup door maps to its propose-first answer: {error}"
+        cleanup_posture(&fixture.vault).unwrap(),
+        CleanupPosture::AutoWithDigest,
+        "a new vault cleans up automatically from birth"
+    );
+    let first = recorded(
+        fixture
+            .set_as_owner(POSTURE, json!("propose_first"))
+            .unwrap(),
     );
     assert_eq!(
         cleanup_posture(&fixture.vault).unwrap(),
         CleanupPosture::ProposeFirst
     );
-    let after = recorded(fixture.clear_as_owner(REVIEW_DIAL).unwrap());
+    let second = recorded(
+        fixture
+            .set_as_owner(POSTURE, json!("auto_with_digest"))
+            .expect("the automatic posture is the owner's choice"),
+    );
     assert_eq!(
-        after,
-        before + 1,
-        "the refused change took no place in the change feed"
+        cleanup_posture(&fixture.vault).unwrap(),
+        CleanupPosture::AutoWithDigest
+    );
+    assert_eq!(
+        second,
+        first + 1,
+        "each change is one row of the change feed"
     );
 }
 

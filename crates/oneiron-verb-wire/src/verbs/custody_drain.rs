@@ -13,6 +13,11 @@ use serde::Serialize;
 pub struct CustodyMemberRef {
     /// The member's id, `<kind>:<name>`, as the set names it.
     pub target_id: String,
+    /// An asker's approved check-in for this drain, 32 hex
+    /// (`custody_drain_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.custody.members.drain.commit`'s input: the member's ack of its
@@ -22,6 +27,11 @@ pub struct CustodyMemberRef {
 pub struct CustodyDrainCommitRequest {
     #[schemars(with = "serde_json::Value")]
     pub ack: DrainAck,
+    /// An asker's approved check-in for this drain of the ack's member, 32
+    /// hex (`custody_drain_effect_digest`): the Owner applies it on their
+    /// own proof, and the answer names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.custody.members.reenrol`'s input: the member the owner drained,
@@ -39,4 +49,9 @@ pub struct CustodyMemberReenrolRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub scope: Option<TargetScope>,
+    /// An asker's approved check-in for this re-enrolment, 32 hex
+    /// (`custody_reenrol_effect_digest`): the Owner applies it on their own
+    /// proof, and the answer names its asker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }

@@ -5,16 +5,18 @@
 //! proposal also reviews slot by slot, with each slot's evidence and full
 //! content, and decides per item in one complete verdict (FIX 1758).
 //!
-//! The job proposes first while ARCH-0066's integrity teeth are open: nothing
-//! is archived until the owner accepts, and the engine refuses the automatic
-//! posture until those teeth close. Archive is the only verb; a record
-//! restored here is the same record, never a copy, and the owner keeps it:
-//! cleanup leaves it alone until it changes.
+//! A vault cleans up automatically from birth (owner 2026-10-18; DEC-0006):
+//! each run takes a snapshot, archives what is still empty and records one
+//! digest, badged with ARCH-0066's integrity teeth as they stood, and the
+//! owner can revert the run. An owner who sets propose-first gets proposals
+//! instead: nothing is archived until he accepts. Archive is the only verb; a
+//! record restored here is the same record, never a copy, and the owner
+//! keeps it: cleanup leaves it alone until it changes.
 
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{Memory, MemoryError};
-use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::vault_cleanup::{
     self, ArchivedEntity, CleanupDecideRequest, CleanupDecideView, CleanupDigest, CleanupKind,
     CleanupPosture, CleanupProposal, CleanupRevertEntry, CleanupRevertReason, CleanupReviewRequest,
@@ -197,6 +199,19 @@ pub(crate) struct Digest {
     /// there were none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) rejected: Vec<String>,
+    /// An automatic run's proof badge: ARCH-0066's integrity teeth as they
+    /// stood when it archived. Absent on an accepted proposal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) integrity_teeth: Option<IntegrityTeeth>,
+}
+
+/// ARCH-0066 teeth #5 and #9 on an automatic run's digest.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct IntegrityTeeth {
+    /// Tooth #5: read/fold verification coverage at consumption.
+    pub(crate) read_fold_coverage_closed: bool,
+    /// Tooth #9: OS-level separation of the vault's files.
+    pub(crate) os_separation_closed: bool,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -332,15 +347,7 @@ pub(crate) fn configure(
             owner,
             "cleanup.posture",
             serde_json::json!(posture.as_str()),
-        )
-        .map_err(|error| match error.kind() {
-            ErrorKind::InvariantViolation => OwnerError::Refused(
-                "cleanup stays propose-first until the integrity checks it waits on close \
-                     (ARCH-0066); accept or reject its proposals instead"
-                    .to_owned(),
-            ),
-            _ => OwnerError::from(error),
-        })?;
+        )?;
     }
     if let Some(days) = settings.task_retention_days {
         set_cleanup_key(
@@ -355,9 +362,7 @@ pub(crate) fn configure(
 
 /// The owner's change of one cleanup key (`cleanup.posture`,
 /// `cleanup.task_retention_days`) through the Setting door, as
-/// `vault.settings.set` makes it: an owner's change lands at once, and the
-/// posture key refuses the automatic posture in its write while the rollout
-/// blockers are open.
+/// `vault.settings.set` makes it: an owner's change lands at once.
 fn set_cleanup_key(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -367,16 +372,7 @@ fn set_cleanup_key(
     vault
         .set_setting(
             SettingCaller::Owner(owner),
-            SetSetting {
-                key: key.to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(value),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
+            SetSetting::vault_value(key, value),
         )
         .map(|_| ())
 }
@@ -497,6 +493,10 @@ fn digest(row: &CleanupDigest) -> Digest {
         archived: slot_hexes(&row.archived),
         skipped: slot_hexes(&row.skipped),
         rejected: slot_hexes(&row.rejected),
+        integrity_teeth: row.integrity_teeth.map(|teeth| IntegrityTeeth {
+            read_fold_coverage_closed: teeth.read_fold_coverage_closed,
+            os_separation_closed: teeth.os_separation_closed,
+        }),
     }
 }
 
@@ -573,7 +573,7 @@ fn revert_entry(entry: &CleanupRevertEntry) -> RevertEntry {
 }
 
 fn bytes_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 fn hexes(ids: &[EntityId]) -> Vec<String> {
@@ -599,9 +599,5 @@ fn none_erased(count: &usize) -> bool {
 }
 
 fn attempt_hex(attempt: oneiron::attempt_queue::AttemptId) -> String {
-    attempt
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    oneiron_hex::encode(attempt.as_bytes())
 }

@@ -20,7 +20,6 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
 };
-use crate::setting::{EncodedValue, SettingChange};
 use crate::store::attempt_id::AttemptId;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::claim::ClaimSource;
@@ -238,9 +237,12 @@ pub fn scan_cleanup_candidates(vault: &Vault) -> Result<Vec<CleanupCandidate>> {
 /// The vault's current cleanup posture: the catalogue key `cleanup.posture`,
 /// which the owner sets through `vault.settings.set`.
 ///
-/// An absent or unreadable row reads as [`CleanupPosture::ProposeFirst`]
-/// (the key's default and strictest value): the auto posture is a decision,
-/// and a decision nobody can read was never made.
+/// An absent row reads as [`CleanupPosture::AutoWithDigest`], the key's
+/// default: a vault cleans up automatically from birth, with a snapshot per
+/// run and the owner's revert (owner 2026-10-18; DEC-0006: no grant step, no
+/// holdout). A stored row reads as stored. A row that does not decode reads as
+/// [`CleanupPosture::ProposeFirst`], the key's strictest value and the safe
+/// reading of a damaged row: the owner may have stored propose-first there.
 ///
 /// # Errors
 ///
@@ -254,37 +256,7 @@ pub(super) fn cleanup_posture_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<CleanupPosture> {
-    if !rollout::auto_enabled(vault, rtxn)? {
-        return Ok(CleanupPosture::ProposeFirst);
-    }
     Ok(POSTURE.read_in_txn(vault, rtxn, &[], None)?.value)
-}
-
-/// The `cleanup.posture` key's hook, in the write of each change: the
-/// automatic posture is refused while its rollout blockers are open, so the
-/// change and its row never land. OWNER ACTION ONLY: the cron never writes
-/// the key.
-///
-/// # Errors
-///
-/// `InvariantViolation` for the automatic posture while a blocker is open;
-/// storage errors.
-pub(super) fn refuse_auto_posture_while_blocked(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    change: &SettingChange,
-) -> Result<()> {
-    let automatic = change
-        .value
-        .as_ref()
-        .and_then(EncodedValue::decode::<CleanupPosture>)
-        == Some(CleanupPosture::AutoWithDigest);
-    if automatic && !rollout::auto_enabled(vault, wtxn)? {
-        return Err(Error::InvariantViolation(
-            "automatic cleanup rollout blockers are open",
-        ));
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +337,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 archived: live_slots(applied.archived),
                 skipped: live_slots(applied.skipped),
                 rejected: Vec::new(),
+                integrity_teeth: Some(rollout::integrity_teeth()),
             };
             put_digest_in_txn(vault, wtxn, &digest)?;
             run_snapshot::record_in_txn(
