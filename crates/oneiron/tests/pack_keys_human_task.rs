@@ -5,8 +5,10 @@
 //! - Once the owner sets `human_task.followup.reminder_after_secs`, `digest_after_secs` and
 //!   `escalation_after_secs`, each due time moves to the owner's value.
 //!
-//! `cargo test --locked -p oneiron --all-features --test pack_keys_human_task`.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
+//! pack_keys_human_task`.
 
+#![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::channel_identity::{
@@ -50,6 +52,13 @@ impl Fixture {
     fn open() -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open fixture vault");
+        // The follow-up goes out on `email`, which a seeded vault refuses until its built-in pack
+        // is installed Active with its connection checked (OF-519): "the channel's built-in pack
+        // is not installed", and the driver then skips the stage. The pack is not what this test
+        // covers, so the vault drops the seed marker, as booking_feed_move_held.rs does. Every
+        // other seeded row stays, so the default manifest still gives the creator its Auto ceiling.
+        oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&vault)
+            .expect("remove the built-in pack seed marker");
         let creator = EntityId::from_bytes(CREATOR_BYTES).expect("creator id");
         vault
             .put_entity(
