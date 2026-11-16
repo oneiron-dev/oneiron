@@ -164,7 +164,9 @@ pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
 /// the claims derived from it cannot. The `rel` decodes as the read gate
 /// decodes it (`claim/scoped_read/access_gate.rs`): a 16-byte binary or a
 /// hex string. A nil `rel`, or one that decodes to no id, names nothing
-/// and is read as unscoped there; it is not judged here.
+/// and is read as unscoped there; it is not judged here. The refusal gives
+/// one answer whatever the id names (no row, or a row of another type), so
+/// it never tells a writer the type of a row it may not read.
 fn require_message_rel_relationship(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -193,7 +195,7 @@ fn require_message_rel_relationship(
         if found != Some(crate::registry::ENTITY_TYPE_RELATIONSHIP) {
             return Err(crate::error::RegistryError::InvalidRelationship {
                 relationship,
-                found,
+                found: None,
             }
             .into());
         }

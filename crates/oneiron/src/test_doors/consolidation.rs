@@ -446,3 +446,11 @@ pub fn invalid_relationship_error(relationship: EntityId) -> Error {
     }
     .into()
 }
+
+/// The cause the wake driver parks an executor error of `error`'s kind
+/// under, and whether that park ends the pass, for
+/// tests/message_rel_relationship_row.rs.
+#[must_use]
+pub fn executor_error_park(error: &Error) -> (crate::dreamer_runner::DreamerParkCause, bool) {
+    crate::dreamer_wake::executor_error_park_for_test(error.kind())
+}

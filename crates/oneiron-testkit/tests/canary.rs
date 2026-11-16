@@ -191,8 +191,9 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
 /// claim extracted from that message inherits its relationship set
 /// (dreamer_consolidation/executor/extraction.rs), and a relationship-stamped
 /// claim lands only over a live RELATIONSHIP row, which no public door mints
-/// (the pending class `claim/relationship`). The rescan of a row the pass
-/// derived waits for that door.
+/// (the pending class `claim/relationship`; the fixture mints the space's row
+/// through `Vault::put_entity`, since a MESSAGE's rel must name one). The
+/// rescan of a row the pass derived waits for that door.
 const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[(
     "04e5a959f9218289a8ba88ec259eec11a090a694637349ccfcb1103f73d527c2",
     r#"{"candidates":[],"persons":[]}"#,

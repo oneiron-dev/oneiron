@@ -76,9 +76,10 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
 /// good, so that no later pass clears it and a Retry would only meet it
 /// again: a relationship id that names no live RELATIONSHIP row (a stored
 /// MESSAGE from before MESSAGE-REL-NAMES = A, FIX
-/// MESSAGE-REL-NOT-RELATIONSHIP-ROW). Such an attempt parks where an
-/// owner-act wait parks, but never ends the pass: it names one attempt's
-/// input, not the vault's standing.
+/// MESSAGE-REL-NOT-RELATIONSHIP-ROW). Such an attempt parks privately
+/// (`Other`), where no later pass resumes it, but never ends the pass: it
+/// names one attempt's input, not the vault's standing, so it is not an
+/// `ExecutorError` park, which the driver reads as the pass's end.
 pub(crate) const fn refuses_attempt_input(kind: ErrorKind) -> bool {
     matches!(kind, ErrorKind::InvalidRelationship)
 }
@@ -139,8 +140,10 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
 
 /// The cause a non-deadline executor error of `kind` parks under.
 pub(super) const fn executor_error_park_cause(kind: ErrorKind) -> DreamerParkCause {
-    if waits_on_owner_act(kind) || refuses_attempt_input(kind) {
+    if waits_on_owner_act(kind) {
         DreamerParkCause::ExecutorError
+    } else if refuses_attempt_input(kind) {
+        DreamerParkCause::Other
     } else {
         DreamerParkCause::Retry
     }
