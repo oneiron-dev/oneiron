@@ -1153,16 +1153,6 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
     ),
     (
         "owner_work_request",
-        &["work", "basis", "roots"],
-        "Always array, including empty",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "roots", "*"],
-        "Crypto root id",
-    ),
-    (
-        "owner_work_request",
         &["work", "basis", "roster"],
         "None -> nil, always key",
     ),
@@ -1170,46 +1160,6 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
         "owner_work_request",
         &["work", "basis", "roster_trusted"],
         "None -> nil, always key",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "anchored"],
-        "Always array of pairs",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "anchored", "*"],
-        "Two-element array",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "anchored", "*", "*"],
-        "anchor key or entry hash",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "bound"],
-        "OMITTED for None",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "parents"],
-        "OMITTED when empty",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "parents", "*"],
-        "Two-element pair",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "parents", "*", "*"],
-        "entry hash or parent-hash array",
-    ),
-    (
-        "owner_work_request",
-        &["work", "basis", "parents", "*", "*", "*"],
-        "Parent hash",
     ),
     (
         "owner_work_request",
@@ -1830,6 +1780,10 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
         &["cloud"],
         "Rule-selecting candidacy flag",
     ),
+    ("full_copy_mark", &[], "operation map"),
+    ("full_copy_mark", &["kind"], "operation discriminator"),
+    ("full_copy_mark", &["machine"], "Opaque machine id"),
+    ("full_copy_mark", &["held"], "Rule-selecting full-copy flag"),
     ("agent_grant_act", &[], "operation map"),
     ("agent_grant_act", &["kind"], "operation discriminator"),
     (

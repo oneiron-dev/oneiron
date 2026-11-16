@@ -9,8 +9,14 @@
 //! crate line; `oneiron` re-exports them crate-internally, and its public
 //! `oneiron::authority` surface is unchanged. Nothing here folds authority, mints a verified
 //! witness or applies an op to fold state.
+//!
+//! The act rule ([`Permitted`], [`Direction`]) is the one judgement that lives here: a pure
+//! table over two readings its callers produce. Its witness [`Admitted`] says that the table
+//! was asked, not that an actor is proved.
 
+mod act_rule;
 mod agent_grant_act;
+mod carrier_signature;
 mod checkpoint_policy;
 mod comm_reach;
 mod confirm;
@@ -24,6 +30,7 @@ mod export_act;
 mod federation_pact;
 mod fold_row;
 mod frontier_join;
+mod full_copy_mark;
 mod grant_travel;
 mod home_candidacy;
 mod home_pick;
@@ -58,7 +65,9 @@ mod wire_encode;
 mod world_key_wraps;
 mod world_privacy;
 
+pub use act_rule::*;
 pub use agent_grant_act::*;
+pub use carrier_signature::*;
 pub use checkpoint_policy::*;
 pub use comm_reach::*;
 pub use confirm::*;
@@ -72,6 +81,7 @@ pub use export_act::*;
 pub use federation_pact::*;
 pub use fold_row::*;
 pub use frontier_join::*;
+pub use full_copy_mark::*;
 pub use grant_travel::*;
 pub use home_candidacy::*;
 pub use home_pick::*;
