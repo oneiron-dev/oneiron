@@ -1,12 +1,12 @@
 import { afterAll, test } from "bun:test";
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
-import { encode } from "@msgpack/msgpack";
+import { decode, encode } from "@msgpack/msgpack";
 import { blake3 } from "@noble/hashes/blake3";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
 import { PublicHttpClient, PublicHttpError, WsClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile, expect, secretHex } from "./support/run.ts";
+import { defineFile, expect, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -1849,3 +1849,486 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
 // Do not treat recovery's existing CLI/HTTP door itself as missing, nor make
 // an app-tier SDK grant operator power merely to unblock this test.
 suite.todo(test, "FEDERATION-08", "waits on typed hosting root/privacy declaration and local managed/relay host fixtures");
+
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry, #inquiry-keep, #inquiry-checkin.
+// Public setup replaces inquiry_federation.rs's in-process shared vault,
+// member seat, host key, TASK mint and clock reads. No private store is opened.
+const FED_INQUIRY_OCCURRED = 1792238400; // Authored past evidence time, not the engine clock.
+const FED_INQUIRY_SHARED_VAULT = 49; // Public logical vault identifier, not a seeded record.
+interface FedInquiry {
+  readonly engine: EngineFixture;
+  readonly member: EngineFixture;
+  readonly companyVault: string;
+  readonly memberVault: string;
+  readonly seat: PairedActor;
+  readonly edge: FacadeResult<"vault.inquiry.edge.mint">;
+  readonly pact: string;
+  readonly agent: PairedActor;
+  readonly routeInput: FacadeInput<"vault.inquiry.route.open">;
+  readonly input: FacadeInput<"vault.inquire">;
+  readonly pending: FacadeResult<"vault.inquire">;
+}
+async function fedInquiryEntity(client: PublicHttpClient, entityRef: string): Promise<Facade.EntityView> {
+  const read = await client.call("vault.get", { entity_ref: entityRef });
+  if (!read.value) throw new Error("Inquiry setup entity has no public readback");
+  return read.value;
+}
+async function fedInquirySeat(engine: EngineFixture, name: string): Promise<{ actor: PairedActor; acceptedAt: number }> {
+  const owner = engine.client;
+  const conversation = await owner.call("vault.conversations.create", {
+    body: {}, occurred_start: FED_INQUIRY_OCCURRED, occurred_end: FED_INQUIRY_OCCURRED,
+    learned_at: FED_INQUIRY_OCCURRED,
+  });
+  expect((await fedInquiryEntity(owner, conversation.id)).kind).toBe("CONVERSATION");
+  const witnessed = await owner.call("vault.witness", {
+    conversation_ref: conversation.id, occurred_at: FED_INQUIRY_OCCURRED,
+    messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
+      content: `The company member is a distinct person named ${name}.` }],
+  });
+  const evidence = await fedInquiryEntity(owner, witnessed.turn_short_id);
+  expect(evidence.kind).toBe("TURN");
+  const created = await owner.call("vault.people.create", {
+    identity: { name }, identity_evidence_refs: [evidence.id_hex], occurred_at: FED_INQUIRY_OCCURRED,
+  });
+  const person = await fedInquiryEntity(owner, created.person.entity_ref);
+  expect(person.kind).toBe("PERSON");
+  expect(person.id_hex).toBe(created.person.id_hex);
+  const seat = await engine.pairActor({ principalRef: person.id_hex, actorClass: "human" });
+  expect((await seat.client.call("self.actor", {})).actor_ref).toBe(person.id_hex);
+  const invited = await owner.call("vault.members.add", {
+    vault_id: String(FED_INQUIRY_SHARED_VAULT), member: person.id_hex, role: "member",
+  });
+  expect((await owner.call("vault.shared.receipt", { receipt_id: invited.id })).change).toEqual(invited.change);
+  const invitations = await seat.client.call("vault.members.invitations", { vault_id: String(FED_INQUIRY_SHARED_VAULT) });
+  const invitation = invitations.find(row => row.invitee === person.id_hex && row.state === "pending");
+  if (!invitation) throw new Error("Inquiry member has no pending company invitation");
+  expect(invitation.role).toBe("member");
+  const accepted = await seat.client.call("vault.members.accept", {
+    vault_id: String(FED_INQUIRY_SHARED_VAULT), invitation: invitation.id,
+  });
+  expect((await owner.call("vault.shared.receipt", { receipt_id: accepted.id })).change).toEqual(accepted.change);
+  const projection = await owner.call("vault.members.projection", {
+    vault_id: String(FED_INQUIRY_SHARED_VAULT), member: person.id_hex,
+  });
+  expect(projection.grants.some(row => row.active && row.role === "member")).toBe(true);
+  return { actor: seat, acceptedAt: accepted.completed_at };
+}
+async function fedInquiryReceipt(
+  engine: EngineFixture, input: FacadeInput<"vault.inquire">, sent: FacadeResult<"vault.inquire">,
+  actor: string,
+): Promise<FacadeResult<"vault.receipts">["receipts"][number]> {
+  const page = await engine.client.call("vault.receipts", { kinds: ["inquiry"], limit: 100 });
+  expect(page.undecodable).toBe(0);
+  const receipt = page.receipts.find(row => row.receipt_ref === sent.receipt_id);
+  if (!receipt) throw new Error("Company inquiry receipt is not publicly listed");
+  expect(receipt.kind).toBe("inquiry");
+  expect(receipt.outcome).toBe(sent.outcome);
+  expect(receipt.actor_ref).toBe(actor);
+  expect(receipt.fields).toMatchObject({
+    job_ref: sent.inquiry_id, trigger_ref: input.task, member: input.member,
+    question: input.question, purpose: input.purpose, keep: sent.keep,
+    expires_at: String(input.expires_at),
+  });
+  return receipt;
+}
+async function fedInquiryTask(engine: EngineFixture, dueAt: number): Promise<string> {
+  // A future watch TASK is open but queues no worker or model call.
+  const task = await engine.client.call("tasks.create", {
+    spec: { title: "Plan the Thursday review" }, label: "inquiry-review", watch: true, due_at: dueAt,
+  });
+  expect(task.approval).toBe("auto");
+  expect(task.effected).toBe(true);
+  if (!task.task_ref) throw new Error("Public task create minted no TASK");
+  const read = await fedInquiryEntity(engine.client, task.task_ref);
+  expect(read.kind).toBe("TASK");
+  return read.id_hex;
+}
+async function fedInquiryStart(engine: EngineFixture, member: EngineFixture): Promise<FedInquiry> {
+  const owner = engine.client;
+  const companyId = await owner.call("vault.federation.connect.identity", {});
+  const memberId = await member.client.call("vault.federation.connect.identity", {});
+  expect(companyId.host_key).toMatch(/^[a-f0-9]{64}$/);
+  expect(companyId.vault).not.toBe(memberId.vault);
+  const plan = await owner.call("vault.shape.plan", {
+    preset: { preset: "org", vault_id: String(FED_INQUIRY_SHARED_VAULT), members: [] },
+  });
+  const approve = plan.items.filter(row => row.change === "create" && row.target.kind === "shared").map(row => row.seq);
+  const applied = await owner.call("vault.shape.apply", { plan, approve });
+  const shared = applied.items.find(row => row.item.target.kind === "shared");
+  expect(shared?.state.state).toBe("landed");
+  const sharedShape = await owner.call("vault.shape.read", {});
+  expect(sharedShape.live.rows.some(row => row.kind === "shared" && row.vault_id === String(FED_INQUIRY_SHARED_VAULT))).toBe(true);
+  const ownerSeat = await owner.call("vault.members.projection", {
+    vault_id: String(FED_INQUIRY_SHARED_VAULT), member: engine.pairedActor.principalRef,
+  });
+  expect(ownerSeat.grants.some(row => row.active && row.role === "owner")).toBe(true);
+  const memberSeat = await fedInquirySeat(engine, "inquiry-member");
+  const seat = memberSeat.actor;
+  const edge = await member.client.call("vault.inquiry.edge.mint", {
+    company_vault: companyId.vault, company_name: "Company inquiry fixture",
+  });
+  expect(edge.check_in_modes).toEqual({ task: "auto", copy: "manual" });
+  expect(edge.keep_allowed).toBe("task");
+  const edgeRead = await fedInquiryEntity(member.client, edge.grant);
+  expect(edgeRead.kind).toBe("FEDERATION_GRANT");
+  expect(edgeRead.body).toMatchObject({ inquiry_terms: {
+    opened_world: edge.opened_world, check_in_mode: { task: "auto", copy: "manual" }, keep_allowed: "task",
+  } });
+  expect((await member.client.call("vault.inquiry.scope.list", { grant: edge.grant })).items).toEqual([]);
+  const reciprocal = await owner.call("vault.inquiry.reciprocal_grant.mint", {
+    member_vault: memberId.vault, member_name: "inquiry-member",
+  });
+  expect((await fedInquiryEntity(owner, reciprocal.grant)).kind).toBe("FEDERATION_GRANT");
+  const offer = await member.client.call("vault.federation.connect.offer", {
+    peer_vault: companyId.vault, grant: edge.grant,
+    outbound: edge.pact_direction, inbound: reciprocal.pact_direction,
+  });
+  const companyAccept = await owner.call("vault.federation.connect.accept", { offer, grant: reciprocal.grant });
+  const memberAccept = await member.client.call("vault.federation.connect.accept", {
+    offer: companyAccept.counter, grant: edge.grant,
+  });
+  expect(memberAccept.status).toBe("Active");
+  for (const side of [engine, member]) {
+    const status = await side.client.call("vault.federation.status", {});
+    expect(status.pacts.find(row => row.pact === offer.pact)).toMatchObject({ status: "Active", epoch: 1 });
+  }
+  // One public server timestamp anchors both expiries; the inquiry input is
+  // saved once so every re-send uses exactly the original fields.
+  const expiresAt = memberSeat.acceptedAt + 600;
+  const slip = await member.client.call("vault.guests.mint_slip", {
+    grant_ref: edge.grant, holder_key: companyId.host_key, expires_at: memberSeat.acceptedAt + 3600,
+  });
+  redactor.add(slip.slip);
+  const routeInput: FacadeInput<"vault.inquiry.route.open"> = {
+    shared_vault_id: FED_INQUIRY_SHARED_VAULT, member: seat.principalRef,
+    member_vault: memberId.vault, member_host: member.url, slip: slip.slip,
+  };
+  const route = await owner.call("vault.inquiry.route.open", routeInput);
+  expect(route).toMatchObject({ shared_vault_id: FED_INQUIRY_SHARED_VAULT, member: seat.principalRef,
+    member_vault: memberId.vault, member_host: member.url, edge_grant: edge.grant, slip_expires_at: slip.expires_at });
+  expect(Object.keys(route)).not.toContain("slip");
+  const agentRef = secretHex(16);
+  await owner.call("vault.agents.create", {
+    agent_def_ref: agentRef,
+    definition: { agent_id: "inquiry-scheduling-agent", display_name: "Inquiry scheduling agent",
+      desc: "Asks the member about an open company task", version: "1" },
+  });
+  expect((await owner.call("vault.agents.get", { agent_def_ref: agentRef })).agent_def_ref).toBe(agentRef);
+  const agent = await engine.pairActor({ principalRef: agentRef, actorClass: "agent" });
+  expect(await agent.client.call("self.actor", {})).toMatchObject({ actor_ref: agentRef, actor_class: "agent" });
+  const taskRef = await fedInquiryTask(engine, memberSeat.acceptedAt + 3600);
+  const input: FacadeInput<"vault.inquire"> = {
+    shared_vault_id: FED_INQUIRY_SHARED_VAULT, member: seat.principalRef,
+    question: "Is the member in the office on Thursday?", task: taskRef,
+    purpose: "Find a time for the review", expires_at: expiresAt,
+  };
+  const pending = await agent.client.call("vault.inquire", input);
+  expect(pending).toMatchObject({ outcome: "pending", statements: [], keep: "task", held: false });
+  // This second door reads back the route/slip/Connect handoff by observing
+  // the delivered inquiry on the other real host, not by reopening the route.
+  const log = await member.client.call("vault.inquiry.list", {});
+  expect(log.entries).toHaveLength(1);
+  expect(log.entries[0]).toMatchObject({ edge: edge.grant, inquiry_id: pending.inquiry_id,
+    asking_vault: companyId.vault, asker: agentRef, asker_role: "agent", task: input.task,
+    purpose: input.purpose, question: input.question, keep: "task", expires_at: expiresAt,
+    answer: { outcome: "pending", statements: [] } });
+  await fedInquiryReceipt(engine, input, pending, agentRef);
+  return { engine, member, companyVault: companyId.vault, memberVault: memberId.vault,
+    seat, edge, pact: offer.pact, agent, routeInput, input, pending };
+}
+async function fedInquiryAnswered(
+  fixture: FedInquiry, words: string, sent = fixture.pending, keep: "task" | "copy" = "task",
+): Promise<FacadeResult<"vault.inquire">> {
+  const { engine, member, agent, edge, input } = fixture;
+  const pending = sent;
+  await member.client.call("vault.inquiry.answer", { grant: edge.grant, inquiry_id: pending.inquiry_id, words });
+  const log = await member.client.call("vault.inquiry.list", {});
+  expect(log.entries.filter(row => row.inquiry_id === pending.inquiry_id)).toHaveLength(1);
+  expect(log.entries.find(row => row.inquiry_id === pending.inquiry_id)).toMatchObject({
+    inquiry_id: pending.inquiry_id, decided_by: "member",
+    answer: { outcome: "answered", statements: [{ text: words, source: "member_word" }], keep } });
+  const scope = await member.client.call("vault.inquiry.scope.list", { grant: edge.grant });
+  expect(scope.items.filter(row => row.statement === words)).toHaveLength(1);
+  const answered = await agent.client.call("vault.inquire", { ...input, inquiry_id: pending.inquiry_id });
+  expect(answered).toEqual({ inquiry_id: pending.inquiry_id, outcome: "answered",
+    statements: [{ text: words, source: "member_word" }], valid_until: input.expires_at,
+    keep, receipt_id: answered.receipt_id, held: keep === "task" });
+  expect(Object.keys(answered).sort()).toEqual([
+    "inquiry_id", "outcome", "statements", "valid_until", "keep", "receipt_id", "held",
+  ].sort());
+  expect(Object.keys(answered.statements[0]!).sort()).toEqual(["source", "text"]);
+  expect(answered.receipt_id).not.toBe(pending.receipt_id);
+  const receipt = await fedInquiryReceipt(engine, input, answered, agent.principalRef);
+  expect(JSON.stringify(receipt)).not.toContain(words);
+  return answered;
+}
+
+function fedInquiryObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Public manifest body is not a map");
+  return value as Record<string, unknown>;
+}
+async function fedInquiryCopyPolicy(engine: EngineFixture): Promise<void> {
+  // The public shape manifest door accepts the complete manifest, unlike
+  // gate.policy.put's write-axis DTO. Precedent: privacy.test.ts anonymousPolicy.
+  const policy = await engine.client.call("vault.policy.owner.get", {});
+  const shape = await engine.client.call("vault.shape.read", {});
+  const manifest = shape.live.rows.find(row => row.kind === "manifest" && row.manifest_ref === policy.manifest_ref);
+  if (!manifest || manifest.kind !== "manifest" || !manifest.body) throw new Error("Owner manifest has no public shape body");
+  const body = fedInquiryObject(decode(Buffer.from(manifest.body, "hex")));
+  expect(body["inquiry"]).toBeUndefined();
+  const configured = { ...body, inquiry: { version: 1, keep: "copy" } };
+  const rows = shape.live.rows.map(row => row === manifest
+    ? { kind: "manifest" as const, manifest_ref: manifest.manifest_ref, json: configured } : row);
+  const plan = await engine.client.call("vault.shape.plan", { seed: { rows } });
+  expect(plan.items.some(row => row.target.kind === "manifest" && row.target.manifest_ref === policy.manifest_ref)).toBe(true);
+  const applied = await engine.client.call("vault.shape.apply", { plan, approve: plan.items.map(row => row.seq) });
+  expect(applied.done).toBe(true);
+  for (const row of applied.items) expect(row.state.state).toBe("landed");
+  const saved = await engine.client.call("vault.shape.read", {});
+  const stored = saved.live.rows.find(row => row.kind === "manifest" && row.manifest_ref === policy.manifest_ref);
+  if (!stored || stored.kind !== "manifest" || !stored.body) throw new Error("Copy policy install has no public readback");
+  expect(fedInquiryObject(decode(Buffer.from(stored.body, "hex")))["inquiry"]).toEqual({ version: 1, keep: "copy" });
+}
+// Expected-id calculation only, never a write or signature. The foreign-world
+// identity contract hashes (source vault, opened world, little-endian counter)
+// in the FOREIGN_WORLD derive-key domain, with length framing and UUIDv8 bits.
+function fedInquiryForeignWorld(sourceVault: string, openedWorld: string): string {
+  for (let counter = 0; counter < 1024; counter++) {
+    const ordinal = Buffer.alloc(8); ordinal.writeBigUInt64LE(BigInt(counter));
+    const framed = [Buffer.from(sourceVault, "hex"), Buffer.from(openedWorld, "hex"), ordinal].flatMap(part => {
+      const length = Buffer.alloc(8); length.writeBigUInt64LE(BigInt(part.length));
+      return [length, part];
+    });
+    const id = blake3(Buffer.concat(framed), { context: new TextEncoder().encode("oneiron.federation.foreign-world.v1") }).slice(0, 16);
+    id[6] = (id[6]! & 0x0f) | 0x80;
+    id[8] = (id[8]! & 0x3f) | 0x80;
+    if (id[0]! >= 0xf0) return Buffer.from(id).toString("hex");
+  }
+  throw new Error("No foreign WORLD in the identity contract's counter bound");
+}
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry, #inquiry-keep, #inquiry-checkin.
+suite.test(test, "FEDERATION-09", "A company agent receives only the member's words for its task, while only the Owner may open the route", async () => {
+  const engine = await EngineFixture.start({ id: "FEDERATION-09", profile, peers: 1 });
+  try {
+    const fixture = await fedInquiryStart(engine, engine.peers[0]!);
+    let refusal: unknown;
+    try { await fixture.agent.client.call("vault.inquiry.route.open", fixture.routeInput); }
+    catch (error) { refusal = error; }
+    if (!(refusal instanceof PublicHttpError)) throw new Error("Company agent must not open the member route");
+    expect(refusal.reply.status).toBe(403);
+    expect(refusal.error?.code).toBe("FORBIDDEN");
+    const receiptRef = refusal.error?.receiptRef;
+    if (typeof receiptRef !== "string") throw new Error("Owner-only refusal has no public call receipt");
+    expect(refusal.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+    const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
+    expect(receipt).toMatchObject({ receipt_ref: receiptRef, actor_ref: fixture.agent.principalRef,
+      actor_class: "agent", verb: "vault.inquiry.route.open", outcome: { refused: { code: "FORBIDDEN" } } });
+    await fedInquiryAnswered(fixture, "Out Thursday");
+  } finally {
+    await engine.close();
+  }
+});
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry, #inquiry-keep.
+// Narrowed: task-kept answers are deliberately not indexed or recallable
+// (inquiry/record.rs); the brief's positive company-search assertion conflicts.
+suite.test(test, "FEDERATION-10", "A member answers Out Thursday without exposing a private health claim or indexing either text at the company", async () => {
+  const engine = await EngineFixture.start({ id: "FEDERATION-10", profile, peers: 1 });
+  try {
+    const member = engine.peers[0]!;
+    const privateWords = "I have chemo on Thursday";
+    redactor.add(privateWords);
+    const scope = await ownerBaseClaimScope(member.client, member.pairedActor.principalRef);
+    const claim = await member.client.call("vault.claims.upsert", {
+      subject_ref: member.pairedActor.principalRef, predicate: "profile.private_health",
+      value: privateWords, confidence: 1, source: "user_stated", sensitivity: 1, scope,
+      occurred_at: FED_INQUIRY_OCCURRED, learned_at: FED_INQUIRY_OCCURRED,
+    });
+    const privateRead = await fedInquiryEntity(member.client, claim.claim_short_id);
+    expect(privateRead.kind).toBe("CLAIM");
+    expect(JSON.stringify(privateRead.body)).toContain(privateWords);
+    const memberSearch = await member.client.call("vault.search.bm25", { query: "chemo", limit: 100 });
+    expect(memberSearch.value.some(row => row.record?.id === privateRead.id_hex || row.short_id === claim.claim_short_id)).toBe(true);
+    const fixture = await fedInquiryStart(engine, member);
+    const answered = await fedInquiryAnswered(fixture, "Out Thursday");
+    expect(JSON.stringify(answered)).not.toContain("chemo");
+    expect(JSON.stringify(answered)).not.toContain(privateRead.id_hex);
+    expect((await engine.client.call("vault.search.bm25", { query: "chemo", limit: 100 })).value).toEqual([]);
+    const companySearch = await engine.client.call("vault.search.bm25", { query: "Out Thursday", limit: 100 });
+    expect(JSON.stringify(companySearch.value)).not.toContain("Out Thursday");
+    const copies = await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 });
+    expect(copies.value).toEqual([]);
+    expect(JSON.stringify((await fedInquiryEntity(member.client, claim.claim_short_id)).body)).toContain(privateWords);
+  } finally {
+    await engine.close();
+  }
+});
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry-keep, #inquiry-copy.
+// Narrowed: the public copy landing is covered; physical task-holder eviction
+// after TASK end still needs a public held-answer read (not a store probe).
+suite.test(test, "FEDERATION-11", "Ending a task stops its answer, while choosing copy recalls one attributed member statement in the company's foreign world", async () => {
+  const engine = await EngineFixture.start({ id: "FEDERATION-11", profile, peers: 1 });
+  try {
+    const fixture = await fedInquiryStart(engine, engine.peers[0]!);
+    // Settle the task-keep control before changing keep; it creates no copy.
+    await fedInquiryAnswered(fixture, "Out Thursday");
+    expect((await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 })).value).toEqual([]);
+    const cancelled = await engine.client.call("cancel", { task_ref: fixture.input.task });
+    // The owner ends their own TASK (ARCH-0067 cancel(h): AUTO the default for
+    // own tasks). On a default policy the external-effect gate proposes it, and
+    // the opener never settles its own proposal, so no public door ends it.
+    if (cancelled.approval !== "auto") {
+      throw new Error(`FEDERATION-11 ENGINE DEFECT 2026-11-15: the owner's soft cancel of its own TASK is proposed, not effected, and the opener never settles its own proposal (FIX-LIST [OWNER-SOFT-CANCEL-PROPOSED]); receipt=${JSON.stringify(cancelled)}`);
+    }
+    let ended: unknown;
+    try { await fixture.agent.client.call("vault.inquire", { ...fixture.input, inquiry_id: fixture.pending.inquiry_id }); }
+    catch (error) { ended = error; }
+    if (!(ended instanceof PublicHttpError)) throw new Error("An ended TASK must not return its held inquiry answer");
+    expect(ended.reply.status).toBe(400);
+    expect(ended.error?.code).toBe("BAD_REQUEST");
+    expect(ended.error?.message).toContain("not an open TASK");
+    const endedReceipt = ended.error?.receiptRef;
+    if (typeof endedReceipt !== "string") throw new Error("Ended-task refusal has no call receipt");
+    expect(ended.reply.headers.get("x-oneiron-receipt-ref")).toBe(endedReceipt);
+    expect((await engine.client.call("vault.receipts.get", { receipt_ref: endedReceipt }))?.outcome)
+      .toEqual({ refused: { code: "BAD_REQUEST" } });
+    expect((await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 })).value).toEqual([]);
+    const copyTask = await fedInquiryTask(engine, fixture.input.expires_at + 3000);
+    const copyFixture = { ...fixture, input: { ...fixture.input, task: copyTask } };
+    await fedInquiryCopyPolicy(engine);
+    const sent = await fixture.agent.client.call("vault.inquire", copyFixture.input);
+    expect(sent).toMatchObject({ outcome: "pending", statements: [], keep: "copy", held: false });
+    expect(sent.inquiry_id).not.toBe(fixture.pending.inquiry_id);
+    const pendingLog = await fixture.member.client.call("vault.inquiry.list", {});
+    expect(pendingLog.entries.find(row => row.inquiry_id === sent.inquiry_id)?.answer.outcome).toBe("pending");
+    await fedInquiryReceipt(engine, copyFixture.input, sent, fixture.agent.principalRef);
+    const words = "The Thursday review can move to Friday";
+    await fedInquiryAnswered(copyFixture, words, sent, "copy");
+    const expectedWorld = fedInquiryForeignWorld(fixture.memberVault, fixture.edge.opened_world);
+    const claims = await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 });
+    expect(claims.value).toHaveLength(1);
+    const claim = claims.value[0]!;
+    expect(claim).toMatchObject({ value: words, world_ref: expectedWorld, source: "imported", approval: "approved" });
+    const entity = await fedInquiryEntity(engine.client, claim.claim_ref);
+    expect(entity.kind).toBe("CLAIM");
+    const evidence = await engine.client.call("vault.consolidation.evidence", { source_refs: [claim.claim_ref] });
+    expect(evidence.value).toHaveLength(1);
+    expect(evidence.value[0]).toMatchObject({ source: "imported", foreign_world_ref: expectedWorld,
+      delivery_history: [{ source_vault: fixture.memberVault, grant_ref: fixture.edge.grant,
+        delivering_pact: fixture.pact, consent_epoch: 1 }] });
+    const recalled = await engine.client.call("vault.recall", {
+      query: words, effort: "light", scope: { world_ref: expectedWorld }, limit: 10,
+    });
+    const recalledWords = recalled.items.filter(item => item.value_text === words);
+    expect(recalledWords).toHaveLength(1);
+    expect(recalledWords[0]).toMatchObject({ kind: "CLAIM", world: expectedWorld });
+    // Re-sending the copy cannot mint a second CLAIM.
+    await fixture.agent.client.call("vault.inquire", { ...copyFixture.input, inquiry_id: sent.inquiry_id });
+    const repeated = await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 });
+    expect(repeated.value.map(row => row.claim_ref)).toEqual([claim.claim_ref]);
+  } finally {
+    await engine.close();
+  }
+});
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry, #inquiry-checkin.
+suite.test(test, "FEDERATION-12", "A member's never setting answers the next task inquiry with no answer and no pending item", async () => {
+  const engine = await EngineFixture.start({ id: "FEDERATION-12", profile, peers: 1 });
+  try {
+    const fixture = await fedInquiryStart(engine, engine.peers[0]!);
+    await fedInquiryAnswered(fixture, "Out Thursday");
+    const changed = await fixture.member.client.call("vault.inquiry.edge.terms.change", {
+      grant: fixture.edge.grant, check_in_modes: { task: "never" },
+    });
+    expect(changed.outcome).toBe("narrowed");
+    const saved = await fedInquiryEntity(fixture.member.client, fixture.edge.grant);
+    expect(saved.body).toMatchObject({ inquiry_terms: {
+      check_in_mode: { task: "never", copy: "manual" }, keep_allowed: "task",
+    } });
+    const next = await fixture.agent.client.call("vault.inquire", fixture.input);
+    expect(next).toMatchObject({ outcome: "no_answer", statements: [], keep: "task", held: false });
+    expect(next.inquiry_id).not.toBe(fixture.pending.inquiry_id);
+    const log = await fixture.member.client.call("vault.inquiry.list", {});
+    expect(log.entries).toHaveLength(2);
+    expect(log.entries.find(row => row.inquiry_id === next.inquiry_id)).toMatchObject({
+      decided_by: "standing_row", answer: { outcome: "no_answer", statements: [] },
+    });
+    expect(log.entries.filter(row => row.answer.outcome === "pending")).toEqual([]);
+    await fedInquiryReceipt(engine, fixture.input, next, fixture.agent.principalRef);
+  } finally {
+    await engine.close();
+  }
+});
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry, #inquiry-keep.
+suite.test(test, "FEDERATION-13", "Revoking an inquiry edge stops new questions without removing the member's opened words", async () => {
+  const engine = await EngineFixture.start({ id: "FEDERATION-13", profile, peers: 1 });
+  try {
+    const fixture = await fedInquiryStart(engine, engine.peers[0]!);
+    await fedInquiryAnswered(fixture, "Out Thursday");
+    const before = await fixture.member.client.call("vault.inquiry.scope.list", { grant: fixture.edge.grant });
+    expect(before.items.map(row => row.statement)).toEqual(["Out Thursday"]);
+    const opened = before.items[0]!;
+    const revoked = await fixture.member.client.call("vault.inquiry.edge.revoke", { grant: fixture.edge.grant });
+    expect(revoked.grant_ref).toBe(fixture.edge.grant);
+    expect(revoked.changed).toBe(true);
+    const status = await fixture.member.client.call("vault.federation.status", {});
+    expect(status.pacts.find(row => row.pact === fixture.pact)?.status).toBe("Disconnected");
+    const next = await fixture.agent.client.call("vault.inquire", fixture.input);
+    expect(next).toMatchObject({ outcome: "unavailable", statements: [], held: false });
+    // The revoked grant is no live inquiry edge, so its scope list refuses; the
+    // opened WORLD and its statements stay the member's (inquiry/edge.rs).
+    let closed: unknown;
+    try { await fixture.member.client.call("vault.inquiry.scope.list", { grant: fixture.edge.grant }); }
+    catch (error) { closed = error; }
+    if (!(closed instanceof PublicHttpError)) throw new Error("A revoked inquiry edge must not list an opened scope");
+    expect(closed.reply.status).toBe(400);
+    expect(closed.error?.code).toBe("BAD_REQUEST");
+    expect(closed.error?.message).toContain("not a live inquiry edge");
+    const kept = await fedInquiryEntity(fixture.member.client, opened.claim);
+    expect(kept.kind).toBe("CLAIM");
+    expect(kept.id_hex).toBe(opened.claim);
+    expect(JSON.stringify(kept.body)).toContain("Out Thursday");
+    const log = await fixture.member.client.call("vault.inquiry.list", {});
+    expect(log.entries).toHaveLength(1);
+    expect(log.entries.some(row => row.inquiry_id === next.inquiry_id)).toBe(false);
+    await fedInquiryReceipt(engine, fixture.input, next, fixture.agent.principalRef);
+  } finally {
+    await engine.close();
+  }
+});
+
+// ASK-YOUR-VAULT = A (11 Nov 13:03); INQUIRE-NEXT-ORDER = A.
+// Canon: /oneiron/federation/#inquiry, #inquiry-checkin.
+suite.test(test, "FEDERATION-14", "A company can reach its connected member but cannot ask a seated member with no inquiry edge or route", async () => {
+  const engine = await EngineFixture.start({ id: "FEDERATION-14", profile, peers: 2 });
+  try {
+    const fixture = await fedInquiryStart(engine, engine.peers[0]!);
+    expect(fixture.pending.outcome).toBe("pending");
+    const isolated = engine.peers[1]!;
+    const { actor: secondSeat } = await fedInquirySeat(engine, "inquiry-isolated-member");
+    expect(secondSeat.principalRef).not.toBe(fixture.seat.principalRef);
+    expect((await isolated.client.call("vault.federation.status", {})).pacts).toEqual([]);
+    expect((await isolated.client.call("vault.inquiry.list", {})).entries).toEqual([]);
+    const input = { ...fixture.input, member: secondSeat.principalRef };
+    const unavailable = await fixture.agent.client.call("vault.inquire", input);
+    expect(unavailable).toMatchObject({ outcome: "unavailable", statements: [], keep: "task", held: false });
+    expect((await isolated.client.call("vault.inquiry.list", {})).entries).toEqual([]);
+    const connectedLog = await fixture.member.client.call("vault.inquiry.list", {});
+    expect(connectedLog.entries).toHaveLength(1);
+    expect(connectedLog.entries[0]?.inquiry_id).toBe(fixture.pending.inquiry_id);
+    expect(connectedLog.entries[0]?.answer.outcome).toBe("pending");
+    await fedInquiryReceipt(engine, input, unavailable, fixture.agent.principalRef);
+  } finally {
+    await engine.close();
+  }
+});
