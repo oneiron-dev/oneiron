@@ -36,15 +36,8 @@ pub struct CutDecision {
     pub reference: bool,
 }
 
-/// Whether one cohort retires, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortDecision {
-    pub cohort: EntityId,
-    pub retire: bool,
-    #[serde(default)]
-    pub reason: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::eval_set::authoring::apply::EvalCohortDecision;
 
 /// The eval-authoring skill's answer for one inventory. The first decision
 /// for an id stands; a later one for the same id is ignored.

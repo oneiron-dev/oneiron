@@ -59,6 +59,7 @@ mod wake;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
+pub(crate) use chain::agent_grant_role_in_txn;
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
@@ -118,3 +119,11 @@ pub use effect::{
     custody_drain_effect_digest, custody_reenrol_effect_digest, root_request_effect_digest,
     step_up_reset_effect_digest,
 };
+// The security-control doors' effects (2k4; P25-SHAPE Q1 = A).
+pub use effect::{
+    CHECK_IN_OPEN_ROUTE_REASON, mail_compliance_set_effect_digest, policy_row_change_effect_digest,
+};
+// The delete doors' effects (2k5; P25-SHAPE Q1 = A).
+pub use effect::{embedding_space_probe_delete_effect_digest, record_delete_effect_digest};
+// The archive attempt delete door's effect (2k5e).
+pub use effect::attempt_archive_delete_effect_digest;

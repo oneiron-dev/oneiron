@@ -512,12 +512,7 @@ impl SyncServer {
             ));
         }
         self.vault().refresh_indexed_at_idle_with_publication(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
+            oneiron_base::unix_millis_now(),
             &provider,
             published,
         )
