@@ -11,6 +11,12 @@
 //! - A credential revoked while the provider call is in flight gets no
 //!   answer and sends no retry; what the call spent is still booked on the
 //!   run's scope.
+//! - [RUN-STEP-TYPED-DECISION-MODE]: the run asks a typed question as a
+//!   decision step (`decision` in place of `request`). The ladder's one
+//!   generation is the run's own model step: it spends once on the run's
+//!   scope, and a retry of the key replays the same typed answer with no
+//!   model call and no spend. Another run of the agent reads no such step,
+//!   and a model the run's definition does not list is refused.
 //!
 //! The run is the seeded default agent's root run, dispatched with a budget
 //! and leased. `oneiron_server::test_doors::live_run_step` registers it as
@@ -44,6 +50,8 @@ use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_pro
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::federation::{Scope as SlipScope, ScopeAxis};
 use oneiron::llm::Scope;
+use oneiron::llm::decision::catalogue::AI_VERDICT;
+use oneiron::llm::decision::{AnswerContract, DecisionAnswer};
 use oneiron::llm::model_step::{
     ModelStepReceipt, ModelStepResult, ModelStepRetryPolicy, ModelStepSubmitRequest,
 };
@@ -79,6 +87,10 @@ const AGENT_SLIP: [u8; 32] = [0x5a; 32];
 const RETRYING: ModelStepRetryPolicy = ModelStepRetryPolicy { max_attempts: 5 };
 /// One attempt and no retry.
 const ONCE: ModelStepRetryPolicy = ModelStepRetryPolicy { max_attempts: 1 };
+/// The typed question the decision tests ask, a yes or no.
+const QUESTION: &str = "Does the note name a deadline?";
+/// A model the provider serves that no run's definition here lists.
+const UNLISTED_MODEL: &str = "paid/other-model@r1";
 
 /// FakeLlm as a paid provider: keyed (`key_env`), so its calls are paid
 /// work, on the operator's own server.
@@ -99,6 +111,7 @@ fn hex(bytes: &[u8]) -> String {
 /// own scope, registered live, and its agent's own credential attached.
 struct Fixture {
     app: Router,
+    server: Arc<SyncServer>,
     host: AiHost,
     vault: Arc<Vault>,
     issuer: HostSlipIssuer,
@@ -113,6 +126,11 @@ struct Fixture {
 impl Fixture {
     /// `script`: the provider's replies, in order; past it, a 500.
     async fn new(script: Vec<Reply>) -> TestResult<Self> {
+        Self::listing(script, MODEL).await
+    }
+
+    /// [`Self::new`], the run's definition listing only the model `listed`.
+    async fn listing(script: Vec<Reply>, listed: &str) -> TestResult<Self> {
         let model = FakeLlm::start(script, None).await;
         let dir = tempfile::tempdir()?;
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
@@ -132,9 +150,9 @@ impl Fixture {
         let (server, host) = AiHost::attach(server, Some(&models)).await;
         let server = Arc::new(server);
 
-        let (leased, actor, mut definition, scope) = leased_run(&vault)?;
+        let (leased, actor, mut definition, scope) = leased_run(&vault, u64::MAX)?;
         definition.models = vec![AgentModel {
-            model_ref: ModelId::new(MODEL)?,
+            model_ref: ModelId::new(listed)?,
             when: "all model steps".to_owned(),
         }];
         let run = EntityId::now();
@@ -165,7 +183,8 @@ impl Fixture {
         let slip = vault.mint_capability_slip(&issuer, claims)?;
 
         let mut fixture = Self {
-            app: build_app(server),
+            app: build_app(Arc::clone(&server)),
+            server,
             host,
             vault,
             issuer,
@@ -236,6 +255,72 @@ impl Fixture {
         .await
     }
 
+    /// `ai.steps.submit` of decision step `key` on the attached run: the yes
+    /// or no [`QUESTION`], asked of `model`, with one attempt. The body is
+    /// written out, so it reads the same on a wire with or without the
+    /// decision input.
+    async fn decide(&self, key: &str, model: &str) -> TestResult<(StatusCode, Value)> {
+        self.post(
+            "/v1/core/facade/ai.steps.submit",
+            json!({
+                "live_run": self.handle,
+                "step_key": key,
+                "decision": {
+                    "model": model,
+                    "question": QUESTION,
+                    "contract": {"kind": "noul"},
+                },
+                "retry": {"max_attempts": 1},
+            }),
+        )
+        .await
+    }
+
+    /// `ai.steps.receipt` of step `key`, on the live run `handle` names.
+    async fn receipt(&self, handle: &str, key: &str) -> TestResult<(StatusCode, Value)> {
+        self.post(
+            "/v1/core/facade/ai.steps.receipt",
+            json!({"live_run": handle, "step_key": key}),
+        )
+        .await
+    }
+
+    /// Another root run of the same agent, leased, registered live and
+    /// attached on the agent's own credential: its handle. Its try is
+    /// claimed at the vault's own clock, so the first run's try, leased at
+    /// the end of time, is never claimed again.
+    async fn attach_another_run(&self) -> TestResult<String> {
+        let (leased, actor, mut definition, scope) =
+            leased_run(&self.vault, self.vault.now_recorded_at())?;
+        definition.models = vec![AgentModel {
+            model_ref: ModelId::new(MODEL)?,
+            when: "all model steps".to_owned(),
+        }];
+        let run = EntityId::now();
+        register_live_run(
+            &self.server,
+            run,
+            actor,
+            &leased,
+            MODEL,
+            definition,
+            Some(scope),
+        )?;
+        let (status, body) = self
+            .post(
+                &format!("/v1/core/live-runs/{}/attach", run.to_hex()),
+                json!({}),
+            )
+            .await?;
+        assert_eq!(status, StatusCode::OK, "the other run attaches: {body}");
+        // The attach answers its handle under either spelling of the key.
+        Ok(body["liveRun"]
+            .as_str()
+            .or_else(|| body["live_run"].as_str())
+            .ok_or("the attach answers a handle")?
+            .to_owned())
+    }
+
     /// What the run's scope has booked.
     fn spent(&self) -> TestResult<u64> {
         Ok(AgentDispatcher::new(&self.vault)
@@ -273,9 +358,11 @@ impl Fixture {
 
 /// The leased try of a root run of the seeded default agent, dispatched
 /// with a budget so it spends under a scope of its own: the try, the run's
-/// actor, its frozen definition and its scope.
+/// actor, its frozen definition and its scope. The try is claimed at
+/// `claim_now`.
 fn leased_run(
     vault: &Vault,
+    claim_now: u64,
 ) -> TestResult<(
     AttemptRecord,
     oneiron::WriteActor,
@@ -309,7 +396,7 @@ fn leased_run(
             DREAMER_RUNNER_ATTEMPT_KIND,
             ClaimAttempt {
                 lease_owner: WORKER.to_owned(),
-                now: u64::MAX,
+                now: claim_now,
             },
         )?
         else {
@@ -471,6 +558,125 @@ fn a_credential_revoked_while_its_call_is_in_flight_gets_no_answer_and_the_call_
             fixture.spent()? > 0,
             "the paid call's spend is booked on the run's scope though the run got no answer"
         );
+        fixture.finish().await;
+        Ok(())
+    })
+}
+
+/// The provider's reply to the ladder's generated read of [`QUESTION`]: `yes`
+/// and `1 - yes` as the weights of its two labels, under the question's id,
+/// as the read's answer format asks for them. The question is the one
+/// `ai.verdict` asks for the same words (`AI_VERDICT`, keyed by its contract).
+fn noul_reply(yes: f64) -> TestResult<Reply> {
+    let contract = AnswerContract::Noul;
+    let key = serde_json::to_vec(&contract)?;
+    let question = AI_VERDICT
+        .question(&[key.as_slice()], QUESTION.to_owned(), contract)
+        .map_err(|_| "the question makes a typed question")?;
+    let mut reply = serde_json::Map::new();
+    reply.insert(question.id.to_hex(), json!({"yes": yes, "no": 1.0 - yes}));
+    Ok(Reply::text(Value::Object(reply).to_string()))
+}
+
+/// The typed decision in `body`: its answer and its probability.
+fn decision_in(body: &Value) -> TestResult<(DecisionAnswer, f64)> {
+    let answer = serde_json::from_value(body["decision"]["answer"].clone())?;
+    let probability = body["decision"]["probability"]
+        .as_f64()
+        .ok_or("the decision names its probability")?;
+    Ok((answer, probability))
+}
+
+#[test]
+fn a_live_runs_typed_decision_step_answers_once_and_replays() -> TestResult {
+    on_engine_stack(|| async {
+        // One reply: a second model call would meet a 500.
+        let fixture = Fixture::new(vec![noul_reply(0.92)?]).await?;
+
+        let (status, first) = fixture.decide("d1", MODEL).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the run's typed question answers: {first}"
+        );
+        let (answer, probability) = decision_in(&first)?;
+        assert_eq!(
+            answer,
+            DecisionAnswer::Noul(true),
+            "the ladder reads the reply's yes: {first}"
+        );
+        assert!(
+            (probability - 0.92).abs() < 1e-9,
+            "P(yes) is the reply's weight: {first}"
+        );
+        assert_eq!(fixture.sent(), 1, "the question went out once");
+        let spent = fixture.spent()?;
+        assert!(
+            spent > 0,
+            "the decision's generation spends on the run's own scope"
+        );
+
+        // A retry of the key replays the saved generation: the same typed
+        // answer, with no model call and no spend.
+        let (status, again) = fixture.decide("d1", MODEL).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the retried decision answers: {again}"
+        );
+        assert_eq!(
+            decision_in(&again)?,
+            (answer, probability),
+            "the retry gives the same typed answer: {again}"
+        );
+        let receipt: ModelStepReceipt = serde_json::from_value(again.clone())?;
+        assert!(
+            matches!(
+                receipt.result,
+                Some(ModelStepResult::Finished { memoized: true, .. })
+            ),
+            "the retry replays the saved step: {again}"
+        );
+        assert_eq!(fixture.sent(), 1, "the retry calls no model");
+        assert_eq!(fixture.spent()?, spent, "the retry spends nothing");
+        fixture.finish().await;
+        Ok(())
+    })
+}
+
+#[test]
+fn another_runs_actor_reads_no_decision_step_and_an_unlisted_model_is_refused() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new(vec![noul_reply(0.92)?]).await?;
+        let (status, body) = fixture.decide("d1", MODEL).await?;
+        assert_eq!(status, StatusCode::OK, "the decision answers: {body}");
+
+        // The run's own actor reads the step's receipt.
+        let (status, body) = fixture.receipt(&fixture.handle, "d1").await?;
+        finished(status, &body)?;
+
+        // Another run of the same agent, on the same credential, reads no
+        // step of the first run's.
+        let other = fixture.attach_another_run().await?;
+        let (status, body) = fixture.receipt(&other, "d1").await?;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "another run's actor reads no decision step of this run's: {body}"
+        );
+        fixture.finish().await;
+
+        // A run whose definition does not list the model the decision asks
+        // is refused before anything goes out.
+        let fixture = Fixture::listing(vec![noul_reply(0.92)?], UNLISTED_MODEL).await?;
+        let (status, body) = fixture.decide("d1", MODEL).await?;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a model the run's definition does not list is refused: {body}"
+        );
+        assert_eq!(fixture.sent(), 0, "the refused decision sends nothing");
+        assert_eq!(fixture.spent()?, 0, "the refused decision spends nothing");
         fixture.finish().await;
         Ok(())
     })
