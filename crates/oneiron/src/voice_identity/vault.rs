@@ -22,14 +22,15 @@ use super::storage_admission::{
 };
 use super::stored::{StoredPrint, StoredSample};
 use super::types::{
-    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState,
-    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintPurpose,
-    VoicePrintRecordV1, VoiceResolvedSegment, VoiceSessionRosterV1, VoiceSpeakerDeparture,
-    VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
+    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentReceipt,
+    VoiceConsentState, VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchRequest,
+    VoicePrintPurpose, VoicePrintRecordV1, VoiceResolvedSegment, VoiceSessionRosterV1,
+    VoiceSpeakerDeparture, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
 };
 
 /// An event ID names one immutable decision. Only the first insertion may
-/// perform a withdrawal's destructive effect; identical redelivery is a replay.
+/// perform its effect, a withdrawal's deletion or a consent's notice;
+/// identical redelivery is a replay.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ConsentEventWrite {
     Inserted,
@@ -37,7 +38,7 @@ enum ConsentEventWrite {
 }
 
 /// The producer of the owner's notice that an agent logged a person's
-/// spoken withdrawal of voice-recognition consent.
+/// spoken voice-recognition consent or its withdrawal on a call.
 const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
 
 /// Both consent doors compare inside the transaction that holds the event
@@ -82,9 +83,8 @@ impl Vault {
             })?;
             return Ok(());
         }
-        CONSENT.encode_value(event)?;
-        self.with_write_txn_grouped(|wtxn| put_consent_event_once(&self.store, wtxn, event))
-            .map(|_| ())
+        self.record_voice_consent_admitted(event, |_| Ok(()), |_, ()| Ok(()))
+            .map(drop)
     }
 
     /// Builds (or rebuilds) one subject's active voice print.
@@ -753,6 +753,163 @@ impl Vault {
             deleted_sample_count: tally.sample_rows,
             deleted_vector_count: tally.vector_rows,
             deleted_active_pointer: tally.active_pointer,
+        })
+    }
+
+    /// Logs voice-recognition consent at a door, under the acting person's
+    /// proof (VOICE-CONSENT-LOG-WHO = A): the event append, for the purposes
+    /// named. It enrols no print; enrolment stays engine-only.
+    ///
+    /// The acting person records the consent. With no `subject`, or their own,
+    /// it logs their own voice, and a live person's proof suffices, owner of
+    /// the vault or not. A consent that names another subject is an act of
+    /// owner authority: a counterparty holds no credential here, and the owner
+    /// logs their word. Either check runs inside the consent's write
+    /// transaction, so a proof that stopped holding while the request waited
+    /// appends nothing.
+    pub fn record_voice_consent_as(
+        &self,
+        proof: &AuthenticatedOwner,
+        subject: Option<EntityId>,
+        event_id: String,
+        occurred_at: u64,
+        purposes: Vec<VoicePrintPurpose>,
+        basis: VoiceConsentBasis,
+    ) -> Result<VoiceConsentReceipt> {
+        // Names the recorder only; the authority is the revalidation below.
+        let actor = proof.actor_for_read(self)?;
+        let subject = subject.unwrap_or(actor);
+        let event = VoiceConsentEventV1 {
+            event_id: event_id.clone(),
+            subject_ref: subject,
+            recorded_by_ref: actor,
+            occurred_at,
+            purposes: purposes.clone(),
+            basis,
+            state: VoiceConsentState::Granted,
+        };
+        let replayed = self.record_voice_consent_admitted(
+            &event,
+            |txn| {
+                if subject == actor {
+                    proof.revalidate_person_in_txn(self, txn).map(drop)
+                } else {
+                    proof.revalidate_in_txn(self, txn).map(drop)
+                }
+            },
+            |_, ()| Ok(()),
+        )?;
+        Ok(VoiceConsentReceipt {
+            consent_event_ref: event_id,
+            subject_ref: subject,
+            purposes,
+            replayed,
+        })
+    }
+
+    /// Logs a counterparty's spoken voice-recognition consent for `agent`, on
+    /// a call (VOICE-CONSENT-LOG-WHO = A; oneiron-arch-0061 "the agent logs
+    /// who/when/what"): the event append, recorded by the agent.
+    /// `admit_agent` runs first inside the write transaction and answers the
+    /// Grant the agent acts under, so a refusal, or a Grant revoked while the
+    /// request waited, appends nothing. On the first insertion each live owner
+    /// is told in the same transaction, naming who agreed, for which purposes,
+    /// and the agent and Grant that logged it; a replay tells no one again.
+    /// It enrols no print.
+    pub(crate) fn record_voice_consent_logged_by_agent<E: From<Error>>(
+        &self,
+        agent: EntityId,
+        subject: EntityId,
+        event_id: String,
+        occurred_at: u64,
+        purposes: Vec<VoicePrintPurpose>,
+        basis: VoiceConsentBasis,
+        admit_agent: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<EntityId, E>,
+    ) -> std::result::Result<VoiceConsentReceipt, E> {
+        let event = VoiceConsentEventV1 {
+            event_id: event_id.clone(),
+            subject_ref: subject,
+            recorded_by_ref: agent,
+            occurred_at,
+            purposes: purposes.clone(),
+            basis,
+            state: VoiceConsentState::Granted,
+        };
+        let replayed = self.record_voice_consent_admitted(&event, admit_agent, |wtxn, grant| {
+            self.tell_owners_of_logged_consent_in_txn(wtxn, &event, grant)
+        })?;
+        Ok(VoiceConsentReceipt {
+            consent_event_ref: event_id,
+            subject_ref: subject,
+            purposes,
+            replayed,
+        })
+    }
+
+    /// One notice per live owner that `event.recorded_by_ref`, an agent under
+    /// `grant`, logged `event`'s spoken voice-recognition consent. Told again
+    /// under the same event, a row is found, not written twice.
+    fn tell_owners_of_logged_consent_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        event: &VoiceConsentEventV1,
+        grant: EntityId,
+    ) -> Result<()> {
+        let subject = event.subject_ref.to_hex();
+        let name = crate::reaction::person_name_in(self, wtxn, event.subject_ref)?
+            .unwrap_or_else(|| format!("person {}", &subject[..8]));
+        let purposes = event
+            .purposes
+            .iter()
+            .map(|purpose| purpose.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let detail = format!(
+            "{name} agreed to voice recognition on a call ({purposes}; logged by agent {} under Grant {})",
+            event.recorded_by_ref.to_hex(),
+            grant.to_hex()
+        );
+        let now = self.instant_in_txn(wtxn)?.secs();
+        for owner in crate::policy_model::owners_in_txn(self, wtxn)? {
+            self.record_notification_in_txn(
+                wtxn,
+                &NotificationEvent {
+                    kind: NotificationKind::VoiceRecognitionConsented,
+                    source: NotificationSource {
+                        producer: VOICE_RECOGNITION_NOTIFICATION_PRODUCER.to_owned(),
+                        event: format!("{subject}:{}:{}", event.event_id, owner.to_hex()),
+                        result: Some(event.event_id.clone()),
+                        detail: Some(detail.clone()),
+                        ..NotificationSource::default()
+                    },
+                    subject_refs: Vec::new(),
+                    recipient: Some(owner),
+                    created_at: now,
+                    origin_conversation: None,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The consent-log transaction: `admit` runs first inside it, so a
+    /// refusal appends nothing, then the event append, and only on its first
+    /// insertion `on_insert`, handed what `admit` answered. It answers whether
+    /// the consent was already recorded. It enrols nothing.
+    fn record_voice_consent_admitted<A, E: From<Error>>(
+        &self,
+        event: &VoiceConsentEventV1,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<A, E>,
+        on_insert: impl FnOnce(&mut heed::RwTxn<'_>, A) -> Result<()>,
+    ) -> std::result::Result<bool, E> {
+        CONSENT.encode_value(event)?;
+        self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
+            let admitted = admit(wtxn)?;
+            if put_consent_event_once(&self.store, wtxn, event)? == ConsentEventWrite::Replayed {
+                return Ok(true);
+            }
+            on_insert(wtxn, admitted)?;
+            Ok(false)
         })
     }
 }
