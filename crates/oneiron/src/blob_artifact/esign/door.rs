@@ -108,7 +108,8 @@ pub struct EsignSigningRequest {
     /// ceremony's authority; a credential the call also presents only
     /// classes the caller (an agent's Complete is an automated sign act).
     pub token: String,
-    /// Load, save one field, complete with consent, or reject.
+    /// Load, save one field, review, complete with consent after a review
+    /// that still stands, or reject.
     pub action: super::SigningAction,
 }
 
