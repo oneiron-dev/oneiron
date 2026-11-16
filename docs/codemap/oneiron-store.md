@@ -238,10 +238,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate_decision.rs` | src | s | 5 mod | — | Store-layer modules of core `store::gate_decision`; core re-exports each one at its old path |
 | `src/gate_decision/keys.rs` | src | s | 5 fn · 6 const | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/gate_decision/retention_policy.rs` | src | s | 2 enum | GateRetentionOverrideCeiling, GateRetentionPrecedence | Append-time decision ancestry and retention-policy values |
-| `src/gate_decision/types.rs` | src | s | 4 struct · 1 enum · 6 fn · 11 const | GateClaimIndexBackfill, GateDecisionId, GateEnginePart, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
+| `src/gate_decision/types.rs` | src | s | 4 struct · 1 enum · 5 fn · 11 const | GateClaimIndexBackfill, GateDecisionId, GateEnginePart, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
 | `src/gate_decision/vet.rs` | src | s | 3 fn · 1 const | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/gate_decision/write_mode.rs` | src | s | 1 struct | GateWriteMode | Claim-write decision recording and pending-consent mode |
-| `src/gate_reason.rs` | src | m | 4 enum · 11 fn · 3 const | GateMetricReasonClass, GateOutcome, GateReasonCode, GateReceiptOutcome | Gate outcomes, stable reason codes, and pure metric classification |
+| `src/gate_reason.rs` | src | m | 4 enum · 9 fn · 2 const | GateMetricReasonClass, GateOutcome, GateReasonCode, GateReceiptOutcome | Gate outcomes, stable reason codes, and pure metric classification |
 | `src/git_wire.rs` | src | s | 23 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
 | `src/git_wire/argv.rs` | src | s | 6 fn | — | Frozen typed argv: one constructor per git verb plus the token validators |
 | `src/git_wire/bridge.rs` | src | s | 3 fn | — | `repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction |
@@ -670,6 +670,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `tests/fingerprint_keep_skill_tree.rs` | test | s | 1 struct · 1 fn · 2 const · 1 crate-vis | SkillContentHash | K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes |
 | `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
+| `tests/gate_engine_part_names.rs` | test | s | — | — | `GateEnginePart`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names… |
 | `tests/gate_receipt_outcome_tokens.rs` | test | s | — | — | UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2) |
 | `tests/msgpack_store_rows.rs` | test | s | — | — | PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the… |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |
