@@ -482,6 +482,19 @@ impl Vault {
         cause: DataKeyGenerationCause,
         ways: &DataKeyGenerationWays<'_>,
     ) -> Result<DataKeyGenerationOutcome> {
+        self.start_data_key_generation_across(authority, cause, ways, || {})
+    }
+
+    /// [`Self::start_data_key_generation_as`], running `between` after the
+    /// act's reads outside its write and before the write, where another
+    /// writer's commit (a recovery preset switch) can land.
+    pub(crate) fn start_data_key_generation_across(
+        &self,
+        authority: &ActAuthority,
+        cause: DataKeyGenerationCause,
+        ways: &DataKeyGenerationWays<'_>,
+        between: impl FnOnce(),
+    ) -> Result<DataKeyGenerationOutcome> {
         if matches!(authority, ActAuthority::Agent(_)) {
             return Err(refused(
                 "only the owner starts a new data-key generation; an agent may propose it",
@@ -499,6 +512,7 @@ impl Vault {
         let custody_policy = self.store.custody_policy_guard();
         let draft = self.prepare_data_key_generation(ways)?;
         let transition = self.begin_wrap_transition()?;
+        between();
         // The door can answer an error after its commit is durable (an owed
         // federation sweep, a claim VAD it pays). The act finishes at the
         // commit, before that work: the new key is held before snapshot

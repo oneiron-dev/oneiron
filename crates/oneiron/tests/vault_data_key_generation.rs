@@ -7,7 +7,9 @@
 //! publication after the act seals the head again under the new key, and a
 //! pass that read its recipients before the act seals nothing under the
 //! replaced key. An unconfirmed way, and a presented password or passkey
-//! that does not open its wrap, refuse the act and write nothing.
+//! that does not open its wrap, refuse the act and write nothing. A recovery
+//! preset switch committed between the act's reads and its write refuses the
+//! act, so the kit pieces it issued still name the vault's key.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -22,6 +24,7 @@ use oneiron::authority::{ActAuthority, ActSurface};
 use oneiron::dreamer_wake::ProjectorPolicy;
 use oneiron::federation::EngineControlActor;
 use oneiron::recovery::checkpoint::{CheckpointKey, RestoreReason};
+use oneiron::recovery::{CodeKeeping, KitIssue, PassphraseCost, PieceHome};
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
@@ -29,9 +32,11 @@ use oneiron::test_doors::data_key_custody_head::{
     open_custody_head_with_checkpoint_key, publish_custody_with_recipients_read_before,
     read_published_head,
 };
+use oneiron::test_doors::data_key_preset_switch::start_generation_across;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
-    DataKeyGenerationCause, DataKeyGenerationWays, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
+    DataKeyGenerationCause, DataKeyGenerationWays, KitPasskey, RecoveryPreset, VaultKeyStatus,
+    VaultKeyUnlock, escrow_recipient,
 };
 use oneiron::{Vault, VaultConfig};
 use zeroize::Zeroizing;
@@ -635,5 +640,88 @@ fn a_presented_passkey_that_does_not_open_its_wrap_refuses_the_act() {
         vault.vault_key_wraps().expect("the wraps after"),
         wraps,
         "a refused act changes no wrap"
+    );
+}
+
+#[test]
+fn a_recovery_preset_switch_committed_before_the_acts_write_refuses_the_act() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
+    let device = device_wrap(&vault);
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint before the act");
+    let mut confirmed = BTreeSet::new();
+    for id in wrap_ids(&vault) {
+        if id.starts_with("device:") && id != device {
+            confirmed.insert(id);
+        }
+    }
+    let act_owner = owner(&vault).expect("owner proof for the act");
+    let switch_owner = owner(&vault).expect("owner proof for the switch");
+    let prf = Zeroizing::new([6u8; 32]);
+    let mut switched = None;
+
+    // The act reads the Standard preset; "any 2 pieces" commits before its
+    // write, issuing pieces of the key the act would replace. The outcome
+    // has no Debug impl, so the refusal is matched.
+    let Err(error) = start_generation_across(
+        &vault,
+        &ActAuthority::Owner(act_owner, ActSurface::ThisInstall),
+        DataKeyGenerationCause::OwnerRequest,
+        &DataKeyGenerationWays {
+            password: None,
+            passkeys: Vec::new(),
+            escrows: Vec::new(),
+            confirmed_removals: confirmed,
+        },
+        || {
+            switched = Some(vault.set_recovery_preset_any_two_as(
+                &switch_owner,
+                &KitIssue {
+                    vault_id: vault.vault_key_vault_id(),
+                    homes: [
+                        PieceHome::RecoveryCode(CodeKeeping::Paper),
+                        PieceHome::Passkey,
+                        PieceHome::TrustedPerson,
+                    ],
+                    passphrase: None,
+                    cost: PassphraseCost::DEFAULT,
+                    only_machine: false,
+                },
+                Some(KitPasskey {
+                    credential: "phone",
+                    prf: &prf,
+                }),
+                |_| Ok(()),
+            ));
+        },
+    ) else {
+        panic!("a preset switch committed before the act's write must refuse the act");
+    };
+    let switched = switched
+        .expect("the switch ran between the act's reads and its write")
+        .expect("the owner turns on \"any 2 pieces\"");
+    assert_eq!(switched.change.preset, RecoveryPreset::NobodyButMeAnyTwo);
+    assert!(
+        error.to_string().contains("recovery settings switch"),
+        "the act is refused for the preset, not for another reason: {error}"
+    );
+    assert_eq!(
+        vault.recovery_preset().expect("the preset after"),
+        RecoveryPreset::NobodyButMeAnyTwo
+    );
+
+    let after = directory.path().join("after");
+    vault
+        .snapshot_checkpoint(&after, 101)
+        .expect("seal a checkpoint after the refused act");
+    assert_eq!(
+        commitment_of(&after),
+        commitment_of(&before),
+        "the key the kit pieces were issued of is still the vault's key"
     );
 }
