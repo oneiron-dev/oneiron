@@ -479,10 +479,10 @@ fn claimed_lease_record_in_txn(
 /// upserted, never silently dropped. N = device count (tiny).
 ///
 /// MISUSE SURFACE (ONE-1140): callers MUST wrap this in the SAME write txn as
-/// the `d:root` persist (`server_state::persist_root_snapshot_in_txn`) so the
-/// root snapshot and its `ls:` mirror commit or roll back together. Using it
-/// outside that atomic boundary re-opens the split-write bug. The cross-crate
-/// caller is `oneiron-server`'s lease registrar.
+/// the `d:root` persist so the root snapshot and its `ls:` mirror commit or
+/// roll back together, and pass the root that persist wrote. Using it outside
+/// that atomic boundary re-opens the split-write bug.
+/// `server_state::persist_root_with_lease_mirror_in_txn` does both.
 #[doc(hidden)]
 pub fn mirror_leases_from_root_in_txn(
     vault: &Vault,
