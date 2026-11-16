@@ -3,9 +3,11 @@
 //! systems resolves to one EVENT with one passport per system, and only an
 //! admitted passport carries authority: a pending revision is recorded in
 //! `vault.calendar.passports.history` but is never the
-//! `vault.calendar.passports.read` head. Only the owner's ICS import (or a
-//! feed poll) mints a passport; `vault.claims.seed` cannot, because a
-//! passport's `content_hash` must be msgpack Binary.
+//! `vault.calendar.passports.read` head. The admitted head stays the head
+//! until its revision is approved, and a rejected revision leaves it admitted
+//! (FIX CAL-PASSPORT-PENDING-REVISION-SUPERSEDES-AT-IMPORT). Only the owner's
+//! ICS import (or a feed poll) mints a passport; `vault.claims.seed` cannot,
+//! because a passport's `content_hash` must be msgpack Binary.
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
@@ -31,6 +33,12 @@ const PASSPORT_PREDICATE: &str = "calendar.passport";
 const PENDING: &str = "proposed";
 /// A settled claim's approval (`ClaimApprovalStatus::as_str`).
 const ADMITTED: &str = "approved";
+/// A declined claim's approval (`ClaimApprovalStatus::as_str`).
+const REJECTED: &str = "rejected";
+/// A live claim's lifecycle (`ClaimLifecycleStatus::as_str`).
+const ACTIVE: &str = "active";
+/// A replaced claim's lifecycle (`ClaimLifecycleStatus::as_str`).
+const SUPERSEDED: &str = "superseded";
 
 /// The facade's generated dispatch polls a frame of several MiB in a dev
 /// build, more than a test thread's default stack, so each test runs on
@@ -43,6 +51,11 @@ fn same_uid_from_two_systems_resolves_one_event() {
 #[test]
 fn pending_passport_revision_is_recorded_but_never_the_head() {
     run_on_engine_stack("passport-pending-head", pending_revision_never_head);
+}
+
+#[test]
+fn rejected_passport_revision_leaves_the_admitted_head() {
+    run_on_engine_stack("passport-rejected-revision", rejected_revision_keeps_head);
 }
 
 /// One owner-signed facade call and its status, error code and body.
@@ -227,6 +240,27 @@ async fn approve(caller: &OwnerCaller, claim_ref: &str) {
         (status, code.as_deref()),
         (StatusCode::OK, None),
         "settle {claim_ref}: {body}"
+    );
+}
+
+/// Reviews then rejects `claim_ref` the owner way; both calls answer 200.
+async fn reject(caller: &OwnerCaller, claim_ref: &str) {
+    let input = json!({"claim_ref": claim_ref});
+    let (status, code, body) = caller.call("vault.claims.review", &input).await;
+    assert_eq!(
+        (status, code.as_deref()),
+        (StatusCode::OK, None),
+        "review {claim_ref}: {body}"
+    );
+    let review_id = body["review_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("review id: {body}"));
+    let input = json!({"claim_ref": claim_ref, "review_id": review_id, "decision": "reject"});
+    let (status, code, body) = caller.call("vault.claims.settle", &input).await;
+    assert_eq!(
+        (status, code.as_deref()),
+        (StatusCode::OK, None),
+        "reject {claim_ref}: {body}"
     );
 }
 
@@ -489,34 +523,139 @@ async fn pending_revision_never_head() {
     let seq = newest["passport"]["last_sequence"].as_u64();
     assert_eq!(seq, Some(1), "the revision carries SEQUENCE 1: {history}");
 
+    // While rev1 waits, rev0 keeps its authority: the pending revision
+    // stages its supersession and closes nothing (FIX
+    // CAL-PASSPORT-PENDING-REVISION-SUPERSEDES-AT-IMPORT).
     let head = passport_read(&caller, &event, "work-calendar", uid).await;
-    let shown = &head["value"];
-    eprintln!("pending revision head: {shown}");
-    if !head["value"].is_null() {
-        let got = &head["value"];
-        assert_ne!(
-            got["claim_ref"].as_str(),
-            Some(rev1.as_str()),
-            "a pending revision is recorded but never the admitted head: {head}"
-        );
-        assert_ne!(
-            got["passport"]["last_sequence"].as_u64(),
-            Some(1),
-            "a pending revision is recorded but never the admitted head: {head}"
-        );
-    }
+    eprintln!("pending revision head: {}", head["value"]);
+    assert_head(&head, &rev0, 0, "rev0 is still the head while rev1 waits");
+    let history = passport_history(&caller, &event, "work-calendar", uid).await;
+    assert_revision(&history, &rev0, ADMITTED, ACTIVE, "rev0 stays admitted");
 
     approve(&caller, &rev1).await;
     let head = passport_read(&caller, &event, "work-calendar", uid).await;
-    let got = &head["value"];
+    assert_head(&head, &rev1, 1, "the approval makes rev1 the head");
+    let history = passport_history(&caller, &event, "work-calendar", uid).await;
+    assert_revision(
+        &history,
+        &rev0,
+        ADMITTED,
+        SUPERSEDED,
+        "the approval closes rev0",
+    );
+}
+
+/// A rejected revision leaves the admitted head as it was, the same content
+/// is not proposed again, and a later revision that replaces a pending one
+/// still closes the admitted head only when it is approved.
+async fn rejected_revision_keeps_head() {
+    let caller = serve("passport-rejected-revision").await;
+    let uid = "review-91c2@example.test";
+    let system = "home-calendar";
+
+    let (blob, version) = upload_ics(&caller, "home.ics", &ics_feed(uid, 0, "Review")).await;
+    let first = import_ics(&caller, system, &blob, version).await;
+    let event = receipt_event_ref(&first).to_owned();
+    let rev0 = passport_claim_ref(&first, &[]);
+    approve(&caller, &rev0).await;
+
+    let revised = ics_feed(uid, 1, "Review (moved)");
+    let (blob, version) = upload_ics(&caller, "home-1.ics", &revised).await;
+    let second = import_ics(&caller, system, &blob, version).await;
+    let rev1 = passport_claim_ref(&second, &[rev0.clone()]);
+    let head = passport_read(&caller, &event, system, uid).await;
+    assert_head(&head, &rev0, 0, "rev0 is still the head while rev1 waits");
+
+    reject(&caller, &rev1).await;
+    let head = passport_read(&caller, &event, system, uid).await;
+    assert_head(&head, &rev0, 0, "a rejected revision leaves rev0 the head");
+    let history = passport_history(&caller, &event, system, uid).await;
+    assert_revision(&history, &rev0, ADMITTED, ACTIVE, "rev0 stays admitted");
+    assert_revision(&history, &rev1, REJECTED, ACTIVE, "rev1 is rejected");
+
+    // The feed still says SEQUENCE 1: the rejected content is not proposed
+    // again.
+    let (blob, version) = upload_ics(&caller, "home-1-again.ics", &revised).await;
+    import_ics(&caller, system, &blob, version).await;
+    let history = passport_history(&caller, &event, system, uid).await;
     assert_eq!(
-        got["claim_ref"].as_str(),
-        Some(rev1.as_str()),
-        "the head is rev1: {head}"
+        revisions(&history).len(),
+        2,
+        "the rejected content files no new revision: {history}"
+    );
+
+    let (blob, version) = upload_ics(&caller, "home-2.ics", &ics_feed(uid, 2, "Review (2)")).await;
+    let third = import_ics(&caller, system, &blob, version).await;
+    let rev2 = passport_claim_ref(&third, &[rev0.clone(), rev1.clone()]);
+    let (blob, version) = upload_ics(&caller, "home-3.ics", &ics_feed(uid, 3, "Review (3)")).await;
+    let fourth = import_ics(&caller, system, &blob, version).await;
+    let rev3 = passport_claim_ref(&fourth, &[rev0.clone(), rev1.clone(), rev2.clone()]);
+    let head = passport_read(&caller, &event, system, uid).await;
+    assert_head(&head, &rev0, 0, "rev0 is still the head while rev3 waits");
+    let history = passport_history(&caller, &event, system, uid).await;
+    assert_revision(
+        &history,
+        &rev2,
+        PENDING,
+        SUPERSEDED,
+        "rev3 replaces the pending rev2",
+    );
+    assert_revision(
+        &history,
+        &rev1,
+        REJECTED,
+        SUPERSEDED,
+        "rev2 replaces the rejected rev1",
+    );
+
+    approve(&caller, &rev3).await;
+    let head = passport_read(&caller, &event, system, uid).await;
+    assert_head(&head, &rev3, 3, "the approval makes rev3 the head");
+    let history = passport_history(&caller, &event, system, uid).await;
+    assert_revision(
+        &history,
+        &rev0,
+        ADMITTED,
+        SUPERSEDED,
+        "the approval closes rev0",
     );
     assert_eq!(
+        revisions(&history).len(),
+        4,
+        "four revisions are recorded: {history}"
+    );
+}
+
+/// Asserts the admitted head is `claim_ref` at SEQUENCE `sequence`.
+fn assert_head(head: &Value, claim_ref: &str, sequence: u64, what: &str) {
+    let got = &head["value"];
+    assert_eq!(got["claim_ref"].as_str(), Some(claim_ref), "{what}: {head}");
+    assert_eq!(
         got["passport"]["last_sequence"].as_u64(),
-        Some(1),
-        "is SEQUENCE 1: {head}"
+        Some(sequence),
+        "{what} (SEQUENCE {sequence}): {head}"
+    );
+}
+
+/// The recorded revisions of a history read.
+fn revisions(history: &Value) -> &[Value] {
+    history["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("revisions: {history}"))
+}
+
+/// Asserts the recorded revision `claim_ref` has `approval` and `lifecycle`.
+fn assert_revision(history: &Value, claim_ref: &str, approval: &str, lifecycle: &str, what: &str) {
+    let revision = revisions(history)
+        .iter()
+        .find(|revision| revision["claim_ref"].as_str() == Some(claim_ref))
+        .unwrap_or_else(|| panic!("{what}: {claim_ref} is recorded: {history}"));
+    assert_eq!(
+        (
+            revision["approval"].as_str(),
+            revision["lifecycle"].as_str()
+        ),
+        (Some(approval), Some(lifecycle)),
+        "{what}: {history}"
     );
 }
