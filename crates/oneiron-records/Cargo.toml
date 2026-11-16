@@ -25,6 +25,7 @@ oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
 oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
