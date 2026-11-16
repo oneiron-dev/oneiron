@@ -22,8 +22,12 @@
 //!   only on its own claim or task, so its press addresses no one).
 //! - The claim the Retry took holds the root for B, and its receipt names
 //!   owen, who pressed Retry.
+//! - Under `--cfg oneiron_test_support`: erasing the person who pressed Retry
+//!   leaves no claim row, and no carried copy of one, naming that person
+//!   (HOMERETRY-CLAIM-AUTHOR = B, Engine 16 Nov 23:32).
 //!
-//! Public paths only.
+//! The first three use public paths only; the erase case reads and plants
+//! claim rows through `oneiron::test_doors::room_claim_erase`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test room_home_retry_claim`.
 
 use std::collections::BTreeSet;
@@ -531,4 +535,139 @@ fn the_claim_a_home_room_retry_takes_holds_the_root_for_the_agent_and_names_the_
         format!("{RETRY_CLAIM_RECEIPT_PREFIX}{}", origin.owen.to_hex())
     );
     Ok(())
+}
+
+/// The erase case beside test 3 (HOMERETRY-CLAIM-AUTHOR = B): erasing the
+/// person who pressed Retry leaves no claim row, and no carried copy of one,
+/// naming that person. Claim rows are planted and read raw through the test
+/// door, and carried copies merge as replica sync merges them.
+#[cfg(oneiron_test_support)]
+mod erase {
+    use std::sync::Arc;
+
+    use oneiron::receipt::ERASED_CALL_IDENTITY;
+    use oneiron::registry::ENTITY_TYPE_PERSON;
+    use oneiron::test_doors::room_claim_erase::{
+        merge_carried_room_claim, put_room_claim, room_claim,
+    };
+    use oneiron::workspace_roster::RoomClaimReceipt;
+    use oneiron::{DeleteReason, EntityId, TimeRange, Vault, VaultConfig};
+
+    use super::{RETRY_CLAIM_RECEIPT_PREFIX, TestResult, home_room};
+
+    /// A live PERSON the hard erase accepts.
+    fn person(vault: &Vault) -> TestResult<EntityId> {
+        let id = EntityId::now();
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+        Ok(id)
+    }
+
+    /// The claim a Retry pressed by `author` took on `turn` for `holder`.
+    fn retry_claim(
+        room: EntityId,
+        turn: EntityId,
+        holder: EntityId,
+        author: &str,
+        at: u64,
+    ) -> RoomClaimReceipt {
+        RoomClaimReceipt {
+            room_id: room.to_hex(),
+            turn_id: turn.to_hex(),
+            actor: holder.to_hex(),
+            receipt_ref: format!("{RETRY_CLAIM_RECEIPT_PREFIX}{author}"),
+            at,
+        }
+    }
+
+    /// `turn`'s claim row.
+    fn held(vault: &Vault, turn: EntityId) -> TestResult<RoomClaimReceipt> {
+        Ok(room_claim(vault, turn)?.ok_or_else(|| format!("no claim on {}", turn.to_hex()))?)
+    }
+
+    #[test]
+    fn erasing_the_presser_leaves_no_claim_row_or_carried_copy_naming_them() -> TestResult {
+        let directory = tempfile::tempdir()?;
+        let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
+        let owen = vault.ensure_embedded_owner_actor()?;
+        let room = home_room(&vault, owen, &[])?;
+        let presser = person(&vault)?;
+        let named = presser.to_hex();
+        let erased_author = format!("{RETRY_CLAIM_RECEIPT_PREFIX}{ERASED_CALL_IDENTITY}");
+        // A person this vault never erased, whose erased form another
+        // machine carries.
+        let elsewhere = EntityId::now();
+        let agent = EntityId::now();
+        let retried = EntityId::now();
+        let own = EntityId::now();
+        let carried_before = EntityId::now();
+        let carried_forms = EntityId::now();
+        let carried_after = EntityId::now();
+
+        put_room_claim(&vault, &retry_claim(room, retried, agent, &named, 7))?;
+        let own_claim = RoomClaimReceipt {
+            room_id: room.to_hex(),
+            turn_id: own.to_hex(),
+            actor: named.clone(),
+            receipt_ref: format!("rooms.claim:{}", EntityId::now().to_hex()),
+            at: 8,
+        };
+        put_room_claim(&vault, &own_claim)?;
+        assert_eq!(
+            merge_carried_room_claim(&vault, &retry_claim(room, carried_before, agent, &named, 9))?,
+            "written"
+        );
+        // The same receipt's two author forms meet: the erased form wins, as
+        // a carried holder's does (REVIEW-4366 round 4).
+        put_room_claim(
+            &vault,
+            &retry_claim(room, carried_forms, agent, &elsewhere.to_hex(), 10),
+        )?;
+        assert_eq!(
+            merge_carried_room_claim(
+                &vault,
+                &retry_claim(room, carried_forms, agent, ERASED_CALL_IDENTITY, 10)
+            )?,
+            "written"
+        );
+        assert_eq!(held(&vault, carried_forms)?.receipt_ref, erased_author);
+
+        // Every delete signs as this install first.
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        vault.delete_entity_with_reason(&presser, DeleteReason::UserHardDelete)?;
+
+        // This vault's rows: the Retry's claim keeps its holder and names
+        // its author as erased; the person's own claim names no holder.
+        let retried_row = held(&vault, retried)?;
+        assert_eq!(retried_row.actor, agent.to_hex());
+        assert_eq!(retried_row.receipt_ref, erased_author);
+        let own_row = held(&vault, own)?;
+        assert_eq!(own_row.actor, ERASED_CALL_IDENTITY);
+        assert_eq!(own_row.receipt_ref, own_claim.receipt_ref);
+        assert_eq!(held(&vault, carried_before)?.receipt_ref, erased_author);
+        // Carried copies after the erase: the copy of a row already scrubbed
+        // is held as scrubbed, and a new one lands scrubbed.
+        assert_eq!(
+            merge_carried_room_claim(&vault, &retry_claim(room, retried, agent, &named, 7))?,
+            "held"
+        );
+        assert_eq!(
+            merge_carried_room_claim(&vault, &retry_claim(room, carried_after, agent, &named, 11))?,
+            "written"
+        );
+        assert_eq!(held(&vault, carried_after)?.receipt_ref, erased_author);
+        for turn in [retried, own, carried_before, carried_forms, carried_after] {
+            let row = held(&vault, turn)?;
+            assert!(
+                !row.actor.contains(&named) && !row.receipt_ref.contains(&named),
+                "a claim row still names the erased presser: {row:?}"
+            );
+        }
+        Ok(())
+    }
 }

@@ -42,6 +42,11 @@ pub(crate) struct RoomRegenerationPermit {
     pub(crate) source: RoomTurn,
     /// The answer RESPONSE holds for the claimed parent.
     slot: EntityId,
+    /// The claim the Retry takes on a parent that holds none
+    /// (HOMERETRY-AUTHORITY = C), until its reply's write lands it.
+    takes: Option<super::retry_claim::RetryClaim>,
+    /// The parent whose claim this permit's write took.
+    took: Option<EntityId>,
 }
 
 impl RoomRegenerationPermit {
@@ -50,7 +55,10 @@ impl RoomRegenerationPermit {
     /// action's conversation holding its MESSAGE, `actor` and the requester
     /// both still read its thread, `actor` still holds the parent's claim,
     /// and the MESSAGE's `regenerates` lineage, each step `actor`'s live
-    /// answer to the same parent in the same thread, reaches the slot.
+    /// answer to the same parent in the same thread, reaches the slot. A
+    /// parent that holds no claim is claimed by the Retry itself when the
+    /// claim door's checks admit it (HOMERETRY-AUTHORITY = C): the source is
+    /// then the slot, and [`Self::take_claim_in_txn`] writes the claim.
     pub(crate) fn prove_in(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
@@ -73,18 +81,31 @@ impl RoomRegenerationPermit {
         }
         let parent = EntityId::from_hex(old.reply_to.as_deref().ok_or_else(invalid)?)?;
         let parent_row = turn_in(vault, txn, parent)?;
-        let claim = CLAIMS
-            .get(&vault.store, txn, &parent)?
-            .ok_or_else(invalid)?;
-        if parent_row.room_id != old.room_id
-            || claim.room_id != old.room_id
-            || claim.actor != old.actor
-        {
+        if parent_row.room_id != old.room_id {
             return Err(invalid());
         }
-        let slot = RESPONSE
-            .get(&vault.store, txn, &parent)?
-            .ok_or_else(invalid)?;
+        let (slot, takes) = match CLAIMS.get(&vault.store, txn, &parent)? {
+            Some(claim) => {
+                if claim.room_id != old.room_id || claim.actor != old.actor {
+                    return Err(invalid());
+                }
+                let slot = RESPONSE
+                    .get(&vault.store, txn, &parent)?
+                    .ok_or_else(invalid)?;
+                (slot, None)
+            }
+            None => {
+                let claim = super::retry_claim::RetryClaim::admit_in(
+                    vault,
+                    txn,
+                    action,
+                    actor,
+                    parent,
+                    &parent_row,
+                )?;
+                (claim.slot(), Some(claim))
+            }
+        };
         let edge = |message: &EntityId, kind: EdgeKind| {
             crate::memory::sole_edge_target(&vault.store, txn, message, kind, "message")
                 .map_err(|_| invalid())
@@ -120,10 +141,47 @@ impl RoomRegenerationPermit {
             }
             if turn == slot {
                 count.defer(&vault.store);
-                return Ok(Self { source: old, slot });
+                return Ok(Self {
+                    source: old,
+                    slot,
+                    takes,
+                    took: None,
+                });
             }
             cursor = edge(&cursor, EdgeKind::Regenerates)?.ok_or_else(invalid)?;
         }
+    }
+
+    /// The parent this permit's Retry claims, while its claim is not yet
+    /// written: both the agent and the requester must read it, as a
+    /// claimant reads the turn it claims.
+    pub(crate) fn claimed_parent(&self) -> Option<EntityId> {
+        self.takes
+            .as_ref()
+            .map(super::retry_claim::RetryClaim::parent)
+    }
+
+    /// The parent whose claim this permit's write took, once
+    /// [`Self::take_claim_in_txn`] wrote it: its live windows take the claim
+    /// after the write commits (FIX 1794).
+    pub(crate) const fn took_claim(&self) -> Option<EntityId> {
+        self.took
+    }
+
+    /// Writes the claim this permit's Retry takes, if any, at `at` in `txn`,
+    /// the write that lands its reply, before the room's witness admits the
+    /// reply (HOMERETRY-AUTHORITY = C).
+    pub(crate) fn take_claim_in_txn(
+        &mut self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        at: u64,
+    ) -> Result<()> {
+        if let Some(claim) = self.takes.take() {
+            claim.take_in_txn(vault, txn, at)?;
+            self.took = Some(claim.parent());
+        }
+        Ok(())
     }
 
     /// Whether `actor`'s answer in `room` to `reply_to`, in `thread_of`,
@@ -138,7 +196,8 @@ impl RoomRegenerationPermit {
         mentions: &BTreeSet<String>,
         prior: EntityId,
     ) -> bool {
-        self.slot == prior
+        self.takes.is_none()
+            && self.slot == prior
             && self.source.room_id == room.to_hex()
             && self.source.actor == actor.to_hex()
             && self.source.reply_to == reply_to.map(|id| id.to_hex())

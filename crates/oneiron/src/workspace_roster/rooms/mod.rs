@@ -13,6 +13,7 @@ mod audience_notices;
 mod audience_overlay;
 mod backfill;
 mod carrier_erase;
+mod claim_erase;
 mod fact_subject;
 mod history;
 mod hosting;
@@ -30,6 +31,7 @@ mod participation;
 mod pins;
 mod private_threads;
 mod replica;
+mod retry_claim;
 mod speaking;
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
 #[cfg(any())]
@@ -94,6 +96,9 @@ pub(crate) use backfill::backfill_room_turns_on_open;
 pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
+#[cfg(oneiron_test_support)]
+pub(crate) use claim_erase::doors as claim_erase_doors;
+pub(crate) use claim_erase::erase_claim_actor_in_txn;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;

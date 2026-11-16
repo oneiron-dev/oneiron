@@ -167,12 +167,14 @@ fn home_room_source_in(
 
 /// The room regeneration permit `agent` answers a Retry `action` under, in
 /// `txn` (FIX 3149), when its source is an indexed turn of a project's home
-/// room. That room's witness lets an agent answer only a claim, so there a
-/// source whose parent holds none is refused here, before any reply is
-/// queued, as before. `None` in every other room, where a Retry of any
-/// turn, rowed or not, claimed or not, takes its DAG path, as a plain
-/// reply's (THREAD-TASK-NATIVE-AGENT-RETRY). A room that no longer lets the
-/// agent answer its claimed turn again refuses as an invalid state.
+/// room. That room's witness lets an agent answer only a claim. A source
+/// whose parent holds none takes the claim itself when the claim door's
+/// checks admit it, the requester's press being the agent's address
+/// (HOMERETRY-AUTHORITY = C); the reply's write lands it. `None` in every
+/// other room, where a Retry of any turn, rowed or not, claimed or not,
+/// takes its DAG path, as a plain reply's (THREAD-TASK-NATIVE-AGENT-RETRY).
+/// A room that no longer lets the agent answer its turn again refuses as an
+/// invalid state.
 fn room_regeneration_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -184,12 +186,18 @@ fn room_regeneration_in(
     }
     RoomRegenerationPermit::prove_in(vault, txn, action, agent)
         .map(Some)
-        .map_err(|error| match error {
-            Error::InvalidConfig(_) => {
-                invalid_state("the room no longer lets its agent answer this turn again")
-            }
-            error => error.into(),
-        })
+        .map_err(regeneration_refusal)
+}
+
+/// A room's refusal of a Retry's answer: an invalid state when the room no
+/// longer lets the agent answer the turn again.
+fn regeneration_refusal(error: Error) -> MemoryError {
+    match error {
+        Error::InvalidConfig(_) => {
+            invalid_state("the room no longer lets its agent answer this turn again")
+        }
+        error => error.into(),
+    }
 }
 
 impl Memory<'_> {
@@ -359,7 +367,18 @@ impl Memory<'_> {
                 return Err(gone());
             }
         }
-        room_regeneration_in(vault, txn, action, self.actor())
+        let permit = room_regeneration_in(vault, txn, action, self.actor())?;
+        // A claim the Retry takes names who holds the parent, so the agent
+        // and the requester both read it, as a claimant reads the turn it
+        // claims (HOMERETRY-AUTHORITY = C).
+        if let Some(parent) = permit
+            .as_ref()
+            .and_then(RoomRegenerationPermit::claimed_parent)
+            && (!reads_all(requester, txn, &[parent])? || !reads_all(writer, txn, &[parent])?)
+        {
+            return Err(gone());
+        }
+        Ok(permit)
     }
 
     /// A Retry's terminal step, in the write that lands its reply (FIX
@@ -370,7 +389,8 @@ impl Memory<'_> {
     /// or, in a thread, a reply to the old turn itself, HEAD left where it
     /// is; its append keeps the TURN's room row. A project's home room's
     /// indexed source lands no TURN here: the permit returned admits the
-    /// reply's room row. The requester never names the agent that answers.
+    /// reply's room row, and the claim its Retry takes on an unclaimed
+    /// parent lands here. The requester never names the agent that answers.
     pub(crate) fn prepare_action_retry_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -381,7 +401,13 @@ impl Memory<'_> {
         requester: &ScopedRead<'_>,
     ) -> MemoryResult<Option<RoomRegenerationPermit>> {
         let vault = self.vault();
-        if let Some(permit) = self.check_action_retry_in(txn, action, writer, requester)? {
+        if let Some(mut permit) = self.check_action_retry_in(txn, action, writer, requester)? {
+            // The claim the Retry takes lands in this write, before the
+            // room's witness admits its reply, so a refused Retry leaves
+            // none (HOMERETRY-AUTHORITY = C).
+            permit
+                .take_claim_in_txn(vault, txn, at)
+                .map_err(regeneration_refusal)?;
             return Ok(Some(permit));
         }
         if !crate::conversation_dag::keeps_dag_topology(&vault.store, txn, &action.conversation)? {

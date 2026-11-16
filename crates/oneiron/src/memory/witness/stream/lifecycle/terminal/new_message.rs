@@ -30,13 +30,25 @@ pub(super) fn write_new_message_terminal(
             refused.set(true);
             Err(error.into())
         }
-        Ok(lanes) => memory
-            .witness_with_route_prepare_and_txn_effect(
+        Ok(lanes) => {
+            let claimed = std::cell::Cell::new(None);
+            let landed = memory.witness_with_route_prepare_and_txn_effect(
                 turn,
                 None,
                 callback,
                 || {},
-                |txn| prepare_retry_in_txn(vault, memory, seed, lanes.as_ref(), gate, refused, txn),
+                |txn| {
+                    prepare_retry_in_txn(
+                        vault,
+                        memory,
+                        seed,
+                        lanes.as_ref(),
+                        gate,
+                        refused,
+                        &claimed,
+                        txn,
+                    )
+                },
                 |txn| -> MemoryResult<()> {
                     // The new MESSAGE keeps its words inline: its document
                     // is born at its first later edit (FIX 4840).
@@ -68,15 +80,29 @@ pub(super) fn write_new_message_terminal(
                     storage::finish(vault, txn, seed, receipt)?;
                     Ok(())
                 },
-            )
-            .map(|_| ())
-            .map_err(MessageStreamError::from),
+            );
+            // FIX 1794: the claim a Retry took on its parent, and the facts
+            // it recorded, reach the live windows that carry them
+            // (HOMERETRY-AUTHORITY = C).
+            #[cfg(feature = "sync")]
+            if landed.is_ok()
+                && let Some(parent) = claimed.get()
+            {
+                vault.refresh_room_turn_facts_in_live_windows(parent);
+            }
+            landed.map(|_| ()).map_err(MessageStreamError::from)
+        }
     }
 }
 
 /// A Retry's reply names the reply it answers again, and the Retry is proven
 /// again, in the transaction that writes it: its TURN lands here, or its room
-/// regeneration permit admits its room row.
+/// regeneration permit admits its room row. `claimed` takes the parent whose
+/// claim the Retry took in this write.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the Retry's proof joins its seed, its reads, its gate and what its write took"
+)]
 fn prepare_retry_in_txn(
     vault: &Vault,
     memory: &Memory<'_>,
@@ -84,6 +110,7 @@ fn prepare_retry_in_txn(
     lanes: Option<&(crate::claim::ScopedRead<'_>, crate::claim::ScopedRead<'_>)>,
     gate: TerminalGate<'_>,
     refused: &std::cell::Cell<bool>,
+    claimed: &std::cell::Cell<Option<crate::EntityId>>,
     txn: &mut heed::RwTxn<'_>,
 ) -> MemoryResult<Option<crate::workspace_roster::RoomRegenerationPermit>> {
     admit_terminal(gate, txn)?;
@@ -103,6 +130,9 @@ fn prepare_retry_in_txn(
     };
     if retry.is_err() && seed.action.is_some() {
         refused.set(true);
+    }
+    if let Ok(Some(permit)) = &retry {
+        claimed.set(permit.took_claim());
     }
     retry
 }

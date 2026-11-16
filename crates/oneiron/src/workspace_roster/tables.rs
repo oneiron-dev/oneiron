@@ -104,7 +104,8 @@ crate::side_table::side_tables! {
     /// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16
     /// (turn id).
     ROOMS_CLAIM: VaultMeta b"rooms.claim.v1/" LegacyJson
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::store::actor_scrubs::erase_claim_actor_in_txn;
     /// Chronological index of non-branch (thread-root) turns, walked in reverse for the canonical
     /// room head. Key: id16 (room) + u64be (at) + id16 (turn).
     ROOMS_HEADS: VaultMeta b"rooms.heads.v1/" Raw

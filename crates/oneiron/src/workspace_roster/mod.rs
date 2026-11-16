@@ -287,6 +287,8 @@ pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 #[cfg(oneiron_test_support)]
 pub(crate) use rooms::backfill_doors as room_turn_backfill_doors;
 pub(crate) use rooms::backfill_room_turns_on_open;
+#[cfg(oneiron_test_support)]
+pub(crate) use rooms::claim_erase_doors as room_claim_erase_doors;
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]
 pub(crate) use rooms::erased_side_row_here;
@@ -305,7 +307,8 @@ pub(crate) use rooms::{
     replicated_turn_in,
 };
 pub(crate) use rooms::{
-    erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
+    erase_claim_actor_in_txn, erase_host_pin_actor_in_txn, erase_offer_actor_in_txn,
+    erase_turn_actor_in_txn,
 };
 pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
 pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};

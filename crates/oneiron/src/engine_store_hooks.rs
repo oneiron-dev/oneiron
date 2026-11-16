@@ -543,6 +543,15 @@ impl StoreActorScrubs for EngineActorScrubs {
         crate::workspace_roster::erase_turn_actor_in_txn(vault, wtxn, actor)
     }
 
+    fn erase_claim_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_claim_actor_in_txn(vault, wtxn, actor)
+    }
+
     fn erase_companion_principal_actor_in_txn(
         &self,
         vault: &crate::Vault,

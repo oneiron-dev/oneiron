@@ -615,6 +615,13 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             {
                 carried.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
             }
+            // A Retry's claim names its author no more than its holder
+            // (HOMERETRY-CLAIM-AUTHOR = B).
+            if let Some(author) = super::claim_erase::retry_claim_author(&carried.receipt_ref)
+                && vault.carrier_actor_erased_in_txn(txn, &author)?
+            {
+                super::claim_erase::erase_claim_actor(&mut carried, &author);
+            }
             let claim = &carried;
             let turn = EntityId::from_hex(&claim.turn_id)?;
             if TURNS
@@ -630,18 +637,24 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                 // REVIEW-4366 round 4: the same receipt's two actor
                 // forms meet here; the erased form wins where the copies
                 // meet, as a carried turn's actor does, whether or not
-                // this vault holds the actor's marker.
-                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref)
+                // this vault holds the actor's marker. A Retry's author
+                // merges the same way.
+                if held.at == claim.at
+                    && let Some(receipt_ref) = super::claim_erase::merged_receipt_ref(
+                        &held.receipt_ref,
+                        &claim.receipt_ref,
+                    )
                     && let Some(actor) = crate::deletion::carrier_actor_merged(
                         held.actor.as_str(),
                         claim.actor.as_str(),
                         crate::receipt::ERASED_CALL_IDENTITY,
                     )
                     .map(str::to_owned)
-                    && actor != held.actor
+                    && (actor != held.actor || receipt_ref != held.receipt_ref)
                 {
                     let mut merged = held.clone();
                     merged.actor = actor;
+                    merged.receipt_ref = receipt_ref;
                     CLAIMS.put(store, txn, &turn, &merged)?;
                     return Ok(SideMerge::Written);
                 }
