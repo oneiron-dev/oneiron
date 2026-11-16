@@ -26,8 +26,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
+use oneiron::authority::HostSlipIssuer;
 use oneiron::check_in::CheckInDecision;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
@@ -35,6 +35,7 @@ use oneiron::memory::{MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::test_support::{bind_host_actor, bind_host_owner, provision_act_carrier};
 use oneiron::workspace_roster::{
     PrivateThreadDeleteReceipt, PrivateThreadDeleteRequest, ProjectRecord,
 };
@@ -79,6 +80,7 @@ fn accept(vault: &Vault, member: EntityId, role: Role) {
 struct Org {
     _dir: tempfile::TempDir,
     vault: Vault,
+    issuer: HostSlipIssuer,
     owner: EntityId,
     deputy: EntityId,
     admin: EntityId,
@@ -92,9 +94,9 @@ impl Org {
         let dir = tempfile::tempdir().expect("tempdir");
         // `open_owned` holds the writer lease the owner's doors ask for.
         let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("vault");
-        // A delete signs its receipt with this install's key.
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        // A delete signs its receipt with this install's key, and a
+        // membership giving signs its act there: the install carries acts.
+        let (issuer, owner) = provision_act_carrier(&vault);
         let [deputy, admin, member] = std::array::from_fn(|_| EntityId::now());
         for id in [deputy, admin, member] {
             person(&vault, id);
@@ -132,6 +134,7 @@ impl Org {
         let org = Self {
             _dir: dir,
             vault,
+            issuer,
             owner,
             deputy,
             admin,
@@ -181,13 +184,22 @@ impl Org {
         root
     }
 
-    /// `person`'s `vault.rooms.thread_delete` of the thread rooted at `root`.
+    /// `person`'s `vault.rooms.thread_delete` of the thread rooted at `root`:
+    /// the owner's on their own binding, anyone else's while the host key is
+    /// bound to them.
     fn delete(&self, person: EntityId, root: EntityId) -> MemoryResult<PrivateThreadDeleteReceipt> {
-        self.vault
-            .memory(person, EdgeActorClass::Human)
-            .rooms_thread_delete(&PrivateThreadDeleteRequest {
-                thread_ref: root.to_hex(),
-            })
+        let request = PrivateThreadDeleteRequest {
+            thread_ref: root.to_hex(),
+        };
+        let memory = self.vault.memory(person, EdgeActorClass::Human);
+        if person == self.owner {
+            return memory.rooms_thread_delete(&request);
+        }
+        bind_host_actor(&self.vault, &self.issuer, person, "human")
+            .expect("the host key bound to the caller for its delete");
+        let answer = memory.rooms_thread_delete(&request);
+        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("the owner's binding again");
+        answer
     }
 
     fn deleted(&self, root: EntityId) -> bool {
