@@ -269,8 +269,10 @@ fn object(pairs: &[(&str, JsonValue)]) -> BTreeMap<String, JsonValue> {
         .collect()
 }
 
-/// Requests that differ in each part their JSON holds: messages of every role and part,
-/// tools, params, provider options, the model and each envelope field serde writes.
+/// Requests that differ in each part their JSON holds: messages of every role, with text,
+/// reasoning, tool-call and tool-result parts (no image or audio part); tools, params,
+/// provider options and the model; and the envelope's purpose, class, response format and
+/// locality (`seat_effort` and `scope` keep one value).
 fn requests() -> Vec<(&'static str, LlmRequest)> {
     let mut cases = vec![
         ("empty", request(Vec::new())),
