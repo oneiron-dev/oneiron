@@ -9,7 +9,7 @@
 //! whichever of the two rows went: the discarded row's content stayed in
 //! the persisted window. The projection now defers the window. A correct
 //! whole row places as before, and bytes that read as no row prove no
-//! other row: they place by their key, as before.
+//! other row: they are kept under no one, as before.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
 use oneiron::EntityId;
@@ -100,7 +100,7 @@ fn correct_whole_rows_place_as_before() {
 }
 
 /// Bytes under a turn key that read as no turn row prove no other row:
-/// the projection places them by their key, as before, and keeps them.
+/// the projection keeps them under no one, as before, whichever row goes.
 #[test]
 fn undecodable_whole_row_keeps_todays_placement() {
     let keyed = EntityId::now();
