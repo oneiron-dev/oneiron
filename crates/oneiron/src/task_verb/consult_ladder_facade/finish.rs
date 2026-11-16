@@ -273,7 +273,7 @@ fn from_opener_lineage(
 
 /// Keeps the record of one Finish, in `wtxn`, the transaction it landed in:
 /// the engine time it was recorded at, the time the caller claimed it
-/// finished, whether the consult's deadline had passed and whether the
+/// finished, whether the consult's deadline had come and whether the
 /// claimed time is later than the engine's, and what its consent came to.
 /// Every claimed time is accepted as before; these only say what was true.
 /// Kept in a savepoint of its own: a record that does not land is logged
@@ -300,9 +300,11 @@ pub(super) fn record_finish_in(
         "finished_at".to_owned(),
         finish.terminal.finished_at.to_string(),
     );
+    // Overdue from the deadline's own second: a consult's TTL is reached at
+    // `now >= deadline_at`, as every consult door reads it (UC-12).
     if finish
         .deadline_at
-        .is_some_and(|deadline| deadline < recorded_at)
+        .is_some_and(|deadline| deadline <= recorded_at)
     {
         fields.insert("overdue".to_owned(), "true".to_owned());
     }

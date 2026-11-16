@@ -468,6 +468,10 @@ fn switching_back_to_standard_changes_no_roster_and_released_1_serves() {
         .expect("the switch back");
     assert_eq!(back.previous, RecoveryPreset::NobodyButMe);
     assert_eq!(back.preset, RecoveryPreset::Standard);
+    assert!(
+        back.box_recovery_needs_new_kit,
+        "the answer says sign-in and the PIN restore nothing until a new kit"
+    );
     assert!(fixture.live(&gen1), "generation 1 stays live");
     assert!(!fixture.live(&gen0), "generation 0 stays revoked");
 
@@ -763,13 +767,15 @@ fn switching_with_another_kit_while_live_is_refused_as_not_this_vaults() {
 /// Records each box hold call. On the first `hold_kit_only(true)` it runs
 /// `race` once: an act that lands between the door's no-write checks and its
 /// write. With `fail_release`, `hold_kit_only(false)` records the call and
-/// answers an `Err`. With `vault` attached, each call also records what
+/// answers an `Err`; with `fail_hold`, `hold_kit_only(true)` does (a hold
+/// whose answer was lost). With `vault` attached, each call also records what
 /// `recovery_box_hold_pending` reads at that point in `seen`.
 #[derive(Default)]
 struct RecordingBoxHold<'a> {
     calls: RefCell<Vec<bool>>,
     race: RefCell<Option<Box<dyn FnOnce() + 'a>>>,
     fail_release: bool,
+    fail_hold: bool,
     seen: RefCell<Vec<Option<RecoveryBoxHoldPending>>>,
     vault: Option<&'a Vault>,
 }
@@ -796,8 +802,67 @@ impl RecoveryBoxHold for RecordingBoxHold<'_> {
                 "the recovery box release failed",
             )));
         }
+        if kit_only && self.fail_hold {
+            return Err(oneiron::Error::Io(std::io::Error::other(
+                "the recovery box hold failed",
+            )));
+        }
         Ok(())
     }
+}
+
+/// A hold that answers `Err` may still have reached the box (a lost answer,
+/// a timeout): the switch is refused with the hold's error and writes no
+/// roster row, it sends one best-effort release while the vault still reads
+/// `Standard`, and the box-hold-pending marker stays for a managed boot,
+/// since a late hold can land after that release (REVIEW2 #8799 P3-1).
+#[test]
+fn a_hold_that_answers_an_error_is_released_once_and_keeps_the_marker() {
+    let fixture = fixture();
+    let hold = RecordingBoxHold {
+        fail_hold: true,
+        ..Default::default()
+    };
+    let before_roster = fixture.vault.authority_fold().expect("the fold").roster;
+    let refused = fixture
+        .vault
+        .set_recovery_preset_with_kit_as(
+            &fixture.authority(),
+            RecoveryPreset::NobodyButMe,
+            &fixture.kit_refs(),
+            None,
+            |_| Ok(()),
+            &hold,
+        )
+        .expect_err("a hold error refuses the switch");
+    assert!(
+        refused.to_string().contains("the recovery box hold failed"),
+        "the hold's error is the answer: {refused}"
+    );
+    assert_eq!(
+        *hold.calls.borrow(),
+        vec![true, false],
+        "held, then released once, best effort"
+    );
+    assert_eq!(
+        fixture.vault.recovery_preset().expect("the preset"),
+        RecoveryPreset::Standard,
+        "the preset is still Standard"
+    );
+    assert_eq!(
+        fixture.vault.authority_fold().expect("the fold").roster,
+        before_roster,
+        "the roster is unchanged"
+    );
+    let marker = fixture
+        .vault
+        .recovery_box_hold_pending()
+        .expect("the marker reads");
+    assert_eq!(
+        marker.map(|pending| pending.target_kit_only),
+        Some(true),
+        "the marker stays for a managed boot"
+    );
 }
 
 #[test]
@@ -1032,6 +1097,10 @@ fn a_standard_call_while_standard_writes_no_marker() {
         )
         .expect("setting Standard while Standard");
     assert!(!change.box_release_pending);
+    assert!(
+        !change.box_recovery_needs_new_kit,
+        "staying on Standard leaves the box's way back as it was"
+    );
     assert_eq!(*hold.calls.borrow(), vec![false]);
     assert_eq!(*hold.seen.borrow(), vec![None]);
     assert_eq!(

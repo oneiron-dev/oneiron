@@ -323,6 +323,13 @@ pub struct RecoveryPresetChange {
     /// Never an error; only the switch back sets it. The marker
     /// [`RecoveryBoxHoldPending`] stays set, and a managed boot resends the hold.
     pub box_release_pending: bool,
+    /// The change left "Nobody but me" for `Standard`: the recovery box
+    /// holds no seed of a live recovery-authority key (the switch into
+    /// kit-only revoked the generation it held, or none was live), so
+    /// sign-in and the recovery PIN restore no owner control until a new
+    /// kit's activation deposits its seed. The kit itself still serves.
+    /// The switch back changes no roster (REVIEW2 #8799 P3-3).
+    pub box_recovery_needs_new_kit: bool,
 }
 
 /// What turning on "any 2 pieces" did: the preset's change, and the kit its
@@ -488,8 +495,9 @@ impl Vault {
         // Target kit-only writes the box-hold-pending marker in its own write
         // before it holds the box, after the no-write checks pass; the switch's
         // own write clears it, and a failure after the hold releases the box
-        // again on a vault still on `Standard`. A hold error refuses with the
-        // marker set for a managed boot to heal.
+        // again on a vault still on `Standard`. A hold error releases the box
+        // once, best-effort, and refuses with the marker set for a managed
+        // boot to heal.
         let held_box = preset.is_nobody_but_me();
         let hold_attempt = if held_box {
             let attempt = fresh_box_hold_attempt()?;
@@ -498,7 +506,7 @@ impl Vault {
                 attempt,
             };
             self.with_write_txn(|txn| self.put_recovery_box_hold_pending_in_txn(txn, &pending))?;
-            box_hold.hold_kit_only(true)?;
+            self.hold_recovery_box_kit_only(box_hold)?;
             Some(attempt)
         } else {
             None
@@ -532,6 +540,7 @@ impl Vault {
                 retired: Vec::new(),
                 mirror_pending: false,
                 box_release_pending: false,
+                box_recovery_needs_new_kit: false,
             };
             if state.recovery == preset {
                 return Ok((change, None));
@@ -569,6 +578,7 @@ impl Vault {
             // put; staying on Standard writes no marker.
             let mut leave_marker: Option<u64> = None;
             if preset == RecoveryPreset::Standard && state.recovery.is_nobody_but_me() {
+                change.box_recovery_needs_new_kit = true;
                 if let Some(attempt) = leave_attempt {
                     self.put_recovery_box_hold_pending_in_txn(
                         txn,

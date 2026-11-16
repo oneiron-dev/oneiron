@@ -13,8 +13,8 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
-    load_whole_body, read_body_row_range,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, finish_output_sourced, load_whole_body,
+    read_body_row_range,
 };
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
@@ -168,7 +168,6 @@ impl SessionBinding<'_> {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
         Ok(next_generation)
@@ -888,6 +887,17 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.limit_watch(),
             Self::Session(binding) => binding.session.limit_watch(),
+        }
+    }
+
+    /// The owner's `code_run.result_search.max_context` on the vault this
+    /// run's storage is on.
+    pub(crate) fn result_search_max_context(&self) -> Result<usize> {
+        match self {
+            Self::Canonical(vault) => {
+                crate::code_run::setting_keys::result_search_max_context(vault)
+            }
+            Self::Session(binding) => binding.session.result_search_max_context(),
         }
     }
 

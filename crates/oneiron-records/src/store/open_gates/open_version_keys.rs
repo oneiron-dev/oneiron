@@ -3,32 +3,41 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v36 (OPUS-WAYBACK, the box recovery's wait): stored authority-log rows
+/// v37 (OPUS-WAYBACK, the box recovery's wait): stored authority-log rows
 /// keep their bytes and meaning, and a stored checkpoint image written before
 /// it no longer decodes (it has no memory of which keys were the recovery
-/// root's authority key R). The authority fold schema moves 43 -> 44 with it.
+/// root's authority key R). The authority fold schema moves 44 -> 45 with it.
 /// No old-meaning reader or migration is provided (the lead's M-1
 /// stored-change rule, path "loud"). The number is this branch's base + 1;
 /// the PR takes main's + 1 at its train.
 ///
-/// v35 (the owner's ruling AUTH-5, the owner-key ratchet): stored
+/// v36 (the owner's ruling AUTH-5, the owner-key ratchet): stored
 /// authority-log rows keep their bytes and change meaning, and a stored
 /// checkpoint image written before it no longer decodes (it has no memory of
 /// the owner keys the vault held). A vault that has ever held an owner key
 /// asks for one after its last key is removed, so a carried act that landed
 /// there with no proof folds as waiting, until the owner switches the vault
-/// back to web sign-in. The authority fold schema moves 42 -> 43 with it. No
+/// back to web sign-in. The authority fold schema moves 43 -> 44 with it. No
 /// old-meaning reader or migration is provided (the lead's M-1 stored-change
 /// rule, path "loud").
 ///
-/// v34 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
-/// authority fold schema moves 41 -> 42, and a stored checkpoint image
+/// v35 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
+/// authority fold schema moves 42 -> 43, and a stored checkpoint image
 /// written before it no longer decodes. The fold names a roster with no live
 /// root key (`NoRootKey`), and it counts a root appointment that the pinned
 /// root's anchor signed: the appointment's line folds as its own ancestry's
 /// fold did. Stored authority-log rows keep their bytes. No old-meaning
 /// reader or migration is provided (the lead's M-1 stored-change rule, path
 /// "loud").
+///
+/// v34 (row HOSTED-ROOT-REVOKES-OWNER-KEY): stored authority-log rows keep
+/// their bytes and change meaning. A `RevokeDevice` of an owner key counts
+/// only with an owner key's proof, as its signer or a cosign, so a revoke the
+/// custodial root signed alone (a hosted membership move's, or one written by
+/// hand) is refused, the key stays live, and every row above the revoke is
+/// refused with it (a refused revoke is no row the fold crosses). The
+/// authority fold schema moves 41 -> 42 with it. No old-meaning reader or
+/// migration is provided (the lead's M-1 stored-change rule, path "loud").
 ///
 /// v33 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
 /// authority-log rows keep their bytes and change meaning. A carried machine
@@ -201,7 +210,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 36;
+pub const STORAGE_ABI_VERSION: u16 = 37;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

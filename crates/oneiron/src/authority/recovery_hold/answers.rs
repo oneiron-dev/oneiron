@@ -8,18 +8,25 @@ impl Vault {
     /// install's held live owner key: the device unlock is the confirm
     /// sheet, and the surface stays audit-only. The key is any key this
     /// install holds that may answer ([`answers_recovery_holds`]: a live
-    /// owner device key, never an admin's or a host's), is not the hold's
-    /// successor and is not the root's authority kind; R's held seed
-    /// answers nothing. The answer is marked for the live mirror and
+    /// owner device key, never an admin's or a host's), is the acting
+    /// owner's own (`key_is_the_owners`: a co-owner's key this install
+    /// holds never answers for the actor), is not the hold's successor and
+    /// is not the root's authority kind; R's held seed answers nothing.
+    /// `ItIsMe` is the hold's owner's alone: another owner's is refused with
+    /// [`ANSWER_NOT_HOLD_OWNER`] before any key is read, while any owner of
+    /// this vault may `Cancel`, which only denies
+    /// (WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B; the hold view
+    /// names who cancelled). The answer is marked for the live mirror and
     /// announced, so the door install sees it at the next mirror pass. An
     /// unknown hold is [`HOLD_NOT_LIVE`]; a terminal one too, once no held
     /// key speaks for it first.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act, a
-    /// hold that is not live, a held key that is the successor or the root's
-    /// key, and this install holding no live owner key; an answer the fold
-    /// does not count; the store's, the clock's and the keystore's.
+    /// hold that is not live, another owner's `ItIsMe`, a held key that is
+    /// the successor or the root's key, and this install holding no live
+    /// owner key of the actor's; an answer the fold does not count; the
+    /// store's, the clock's and the keystore's.
     pub fn answer_recovery_hold_as(
         &self,
         authority: &ActAuthority,
@@ -43,12 +50,15 @@ impl Vault {
             }
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let view = self
             .recovery_holds_in_txn(&txn)?
             .into_iter()
             .find(|found| found.hold == hold)
             .ok_or_else(|| authority_refused(HOLD_NOT_LIVE))?;
+        if answer == RecoveryHoldAnswerKind::ItIsMe && actor != view.owner {
+            return Err(authority_refused(ANSWER_NOT_HOLD_OWNER));
+        }
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let enrolled = self.enrolled_owner_keys_in_txn(&txn)?;
@@ -60,9 +70,16 @@ impl Vault {
                     && listed.kind == EnrolledOwnerKeyKind::RecoveryAuthority
             })
         };
-        let answered = candidates
-            .iter()
-            .find(|(key, _)| *key != view.successor_key && !is_root_kind(key) && live_owner(key));
+        let actors_own = |key: &AuthorityKey| {
+            let enrolled_owner = enrolled
+                .iter()
+                .find(|listed| AuthorityKey::Ed25519(listed.public_key) == *key)
+                .map(|listed| listed.owner);
+            super::hold_view::key_is_the_owners(&fold, enrolled_owner, key, actor)
+        };
+        let answered = candidates.iter().find(|(key, _)| {
+            *key != view.successor_key && !is_root_kind(key) && live_owner(key) && actors_own(key)
+        });
         let Some((key, answered)) = answered else {
             if candidates.iter().any(|(key, _)| *key == view.successor_key) {
                 return Err(authority_refused(ANSWER_KEY_IS_SUCCESSOR));
