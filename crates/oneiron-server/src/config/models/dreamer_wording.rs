@@ -294,14 +294,15 @@ impl DreamerWordingFile {
         let extraction_file =
             super::levels::prompt_file(extraction_field, self.extraction_prompt_file, base)?;
         let extraction_prompt = extraction_file
+            .as_ref()
             .map(|(path, text)| {
                 // The engine's own read keeps the parser's message, which can
                 // name a key or quote a value: the text is read here first,
                 // so a text that does not read names only the file and the
                 // place (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
-                crate::config::diagnostics::parse_json::<ExtractionPrompt>(&path, &text)
+                crate::config::diagnostics::parse_json::<ExtractionPrompt>(path, text)
                     .context(extraction_field)?;
-                ExtractionPrompt::from_json(&text)
+                ExtractionPrompt::from_json(text)
                     .map_err(|error| anyhow::anyhow!("{extraction_field}: {error}"))
             })
             .transpose()?;
@@ -309,7 +310,8 @@ impl DreamerWordingFile {
         let consolidation_file =
             super::levels::prompt_file(consolidation_field, self.consolidation_wording_file, base)?;
         let consolidation = consolidation_file
-            .map(|(path, text)| ConsolidationWording::from_json(consolidation_field, &path, &text))
+            .as_ref()
+            .map(|(path, text)| ConsolidationWording::from_json(consolidation_field, path, text))
             .transpose()?
             .unwrap_or_default();
         Ok(DreamerWording {
@@ -331,9 +333,13 @@ impl DreamerWordingFile {
             coach_heal_route,
             coach_health_draft,
             extraction_prompt,
-            extraction_prompt_source: wording_source(extraction_file.as_deref()),
+            extraction_prompt_source: wording_source(
+                extraction_file.as_ref().map(|(_, text)| text.as_str()),
+            ),
             consolidation,
-            consolidation_wording_source: wording_source(consolidation_file.as_deref()),
+            consolidation_wording_source: wording_source(
+                consolidation_file.as_ref().map(|(_, text)| text.as_str()),
+            ),
         })
     }
 }
