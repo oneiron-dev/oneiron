@@ -14,6 +14,7 @@
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test booking_token_digest_rows`.
+#![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::booking::{
