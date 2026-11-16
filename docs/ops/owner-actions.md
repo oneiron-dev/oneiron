@@ -1474,6 +1474,12 @@ with other people only their own messages drop. Agents' own work always counts. 
 does not allow opt-outs the `PUT` is refused (409, "this vault does not allow opt-outs") and a
 choice already made is kept but ignored.
 
+Leaving their messages out works from any machine. Letting them back in (`"leave_out": false`)
+widens what is shared, so the vault asks for more: once the vault holds an owner key, a machine
+that is not the owner's and holds no owner key refuses it (409, state `owner_key_required`) and
+stores nothing; the person makes that choice on an owner device. A vault with no owner key takes
+it from any machine, as before.
+
 Turning the setting off, or opting out, stops new sharing: held offers are refused at release, and
 nothing already shared is withdrawn; it follows the intake's retention. A deleted conversation or
 message, a world turned private and a person's erasure still withdraw what was shared.
@@ -2271,8 +2277,10 @@ change to another install's root through your request and that target install.
 On the install you are signed in on, while its server runs:
 
 - `GET /v1/owner/roots` shows the root this install pins, one page of the foreign roots it sees
-  (each with how many machines it admits), the root a pin awaits and whether it has arrived, and
-  this install's `machine`. Pass `limit` for a larger page (100 by default) and `after` set to
+  (each with how many machines it admits), the root it awaits and whether it has arrived, and
+  this install's `machine`. An awaited root with a `request` is one a pending root request asks
+  for (see below): unless it is the root already pinned, you never pinned it here. Without
+  `request` it is your own earlier pin. Pass `limit` for a larger page (100 by default) and `after` set to
   the page's `next` to read the next page.
 - `POST /v1/owner/roots/pin` with `root` (64 hex) pins that root here and re-wraps the keys this
   machine may still read. A root this install does not store yet is awaited, and `GET
@@ -2310,9 +2318,18 @@ Another install's root changes through your request and its target install:
   the change names them. The request carries ids only. Its receipt says "recorded, awaiting a
   holder" until the target acts, or why nothing was recorded (the target is this install, or not
   a linked one).
-- The target lists what waits for it at `GET /v1/owner/roots/requests`.
+- The target lists what waits for it at `GET /v1/owner/roots/requests`. Each entry names the
+  machine the request says carried it (`carrier`), the role this install's own records give the
+  key that signed the request on that machine (`carrier_role`), and whether this install trusts
+  that key as one of your machines (`carrier_is_yours`). The machine id is the request's own
+  claim. Read who asked from `carrier_role` and `carrier_is_yours`: when `carrier_role` is
+  absent, this install's records tie that machine to no key they read, so treat the asker as
+  unknown.
 - `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
-- A pin needs no kit: the target makes it on its own.
+- A pin needs no kit. A pin of the root the target already pins runs on its own. A pin of any
+  other root waits on the target for your confirm there: `GET /v1/owner/roots` shows that root as
+  awaited with the request's id, and you confirm it with `POST /v1/owner/roots/pin` on the
+  target, or decline it with the cancel below.
 - `POST /v1/owner/roots/requests/cancel` with `request` cancels one, from any install you are
   signed in on. It carries ids only and takes effect on the target whenever it syncs, however long
   it was offline. A newer request on the same target also replaces an older one. The target never

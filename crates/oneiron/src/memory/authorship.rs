@@ -4,7 +4,8 @@ use crate::claim::ClaimBody;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -314,6 +315,42 @@ pub(super) fn require_authorship_in_txn(
     ))
 }
 
+/// Whether `actor` closing or replacing `body` would lift a restriction
+/// below the owner: the row restricts someone's access or authority
+/// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
+/// exited `campaign.member`, a do-not-contact bar, an opt-out, an
+/// unreachable channel, a delivery window, ...), and `actor` is neither a
+/// live owner nor the engine's System writer. Lifting a restriction is a
+/// widening, a live owner's alone, whoever wrote the row (the lead's RULING
+/// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
+/// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
+/// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+///
+/// # Errors
+///
+/// The contact and owner census reads' own errors.
+pub(crate) fn lifts_restriction_below_owner_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    body: &ClaimBody,
+) -> Result<bool> {
+    if actor.actor_class() == EdgeActorClass::System
+        || !crate::federation::claim_removal_widens_in(vault, txn, body)?
+    {
+        return Ok(false);
+    }
+    Ok(!(actor.actor_class() == EdgeActorClass::Human
+        && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor.entity_ref())?))
+}
+
+/// The edit check of a write at `target`'s id: an existing claim there is its
+/// author's to edit (or a delegated System writer's), and one that restricts
+/// someone only a live owner's ([`lifts_restriction_below_owner_in`]). The
+/// write puts over the row, or closes it behind a successor (a code run's
+/// `vault.claims.put`, `Vault::put_claim_candidate_with_landing_returning_actual`),
+/// so the restriction leaves every fold that reads it (Astra review on #8153
+/// F1). A System writer with no claim there needs its delegated create.
 pub(crate) fn guard_existing_claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -322,6 +359,11 @@ pub(crate) fn guard_existing_claim_in_txn(
 ) -> Result<()> {
     if let Some(body) = vault.get_claim_in_txn(txn, &target)? {
         require_claim_self_grant_in_txn(vault, txn, actor, target, &body, "memory.claim.edit")?;
+        if lifts_restriction_below_owner_in(vault, txn, actor, &body)? {
+            return Err(authority_denied(
+                "a write over a claim that restricts someone's access is a live vault owner's act",
+            ));
+        }
     } else if actor.actor_class() == EdgeActorClass::System {
         require_authorship_in_txn(vault, txn, actor, target, None, "memory.claim.create")?;
     }
@@ -382,34 +424,28 @@ impl super::Memory<'_> {
     }
 }
 
+/// A memory settlement's Gate receipt draft: `actor` decided `outcome` on
+/// `kind` for `reason`, about `target`. It reads no policy; a caller that
+/// judged against a frontier sets `basis`. The store mints the id and the
+/// time.
 pub(super) fn decision(
     actor: WriteActor,
-    kind: &str,
-    outcome: &str,
+    kind: &'static str,
+    outcome: GateReceiptOutcome,
     reason: &str,
     target: Option<EntityId>,
     digest: Vec<u8>,
-    now: u64,
-) -> GateDecisionRecord {
-    GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: outcome.to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: target.map(|id| *id.as_bytes()),
-        grant_ref: None,
-        diff_handle: digest,
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    }
+) -> GateReceipt {
+    let mut receipt = GateReceipt::new(
+        outcome,
+        kind,
+        reason,
+        ReceiptActor::Row(actor),
+        digest,
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = target;
+    receipt
 }
 
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
@@ -422,7 +458,6 @@ pub(crate) fn explicit_claim_override_in_txn(
     actor: WriteActor,
     target: EntityId,
     body: &ClaimBody,
-    now: u64,
 ) -> Result<()> {
     verify_live_actor(vault, txn, actor)?;
     let owns = claim_author(body) == Some(actor.entity_ref())
@@ -448,11 +483,11 @@ pub(crate) fn explicit_claim_override_in_txn(
     let receipt = decision(
         actor,
         "memory_claim_override",
-        "approved",
+        GateReceiptOutcome::Approved,
         "gate.memory.explicit_owner_override",
         Some(target),
         blake3::hash(&bytes).as_bytes().to_vec(),
-        now,
     );
-    vault.store.append_gate_decision_in_txn(txn, &receipt)
+    vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+    Ok(())
 }
