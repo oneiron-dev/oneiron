@@ -60,7 +60,6 @@ fn retention_archives_only_old_completed_tasks_and_resolver_restores_same_bytes(
             kind: CleanupKind::CompletedTask
         }]
     );
-    super::rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest)?;
     let report = run_vault_cleanup(&vault, &crate::attempt_queue::AttemptId::now())?;
     assert_eq!(report.archived, vec![Some(ids[0])]);
@@ -129,6 +128,7 @@ fn archive_purge_previews_bytes_requires_owner_and_returns_erase_receipts() -> c
             b"archived summary",
         )?;
     }
+    set_cleanup_posture(&vault, CleanupPosture::ProposeFirst)?;
     let run = run_vault_cleanup(&vault, &crate::attempt_queue::AttemptId::now())?;
     accept_cleanup_proposal(&vault, &run.proposal.unwrap())?;
     assert!(
@@ -204,6 +204,7 @@ fn completed_attempt_retention_is_reversible_and_never_changes_queue_bytes() -> 
         assert!(scan_cleanup_candidates(&vault)?.is_empty());
     }
     vault.set_task_retention_days(Some(90))?;
+    set_cleanup_posture(&vault, CleanupPosture::ProposeFirst)?;
     let report = run_vault_cleanup(&vault, &crate::attempt_queue::AttemptId::now())?;
     assert!(report.archived.is_empty());
     assert_eq!(

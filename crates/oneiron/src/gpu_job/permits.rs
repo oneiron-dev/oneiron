@@ -15,7 +15,13 @@ use crate::llm::run_admission::{CallOutcome, RunDenied, RunPermit};
 /// reservation as a failed call.
 #[derive(Default)]
 pub struct GpuJobPermits {
-    live: Mutex<HashMap<EntityId, RunPermit>>,
+    live: Mutex<HashMap<EntityId, HeldPermit>>,
+}
+
+/// One job's permit and the idempotency key of the chunk it pays.
+struct HeldPermit {
+    chunk_key: String,
+    permit: RunPermit,
 }
 
 impl std::fmt::Debug for GpuJobPermits {
@@ -49,24 +55,35 @@ impl GpuJobPermits {
         let permits: Vec<_> = self.lock().drain().collect();
         permits
             .into_iter()
-            .map(|(job, permit)| (job, permit.settle(CallOutcome::Kept)))
+            .map(|(job, held)| (job, held.permit.settle(CallOutcome::Kept)))
             .collect()
     }
 
-    pub(super) fn hold(&self, job: EntityId, permit: RunPermit) {
-        let previous = self.lock().insert(job, permit);
+    /// Holds `permit` for the job's chunk under `chunk_key`.
+    pub(super) fn hold(&self, job: EntityId, chunk_key: String, permit: RunPermit) {
+        let previous = self.lock().insert(job, HeldPermit { chunk_key, permit });
         if let Some(previous) = previous {
             // One chunk runs at a time; a second permit for the job replaces
             // the first without charging it.
-            let _ = previous.settle(CallOutcome::Kept);
+            let _ = previous.permit.settle(CallOutcome::Kept);
         }
     }
 
     pub(super) fn take(&self, job: &EntityId) -> Option<RunPermit> {
-        self.lock().remove(job)
+        self.lock().remove(job).map(|held| held.permit)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<EntityId, RunPermit>> {
+    /// The job's permit, taken only when it pays the chunk under
+    /// `chunk_key`: a later chunk's permit stays held.
+    pub(super) fn take_for_chunk(&self, job: &EntityId, chunk_key: &str) -> Option<RunPermit> {
+        let mut live = self.lock();
+        if live.get(job)?.chunk_key != chunk_key {
+            return None;
+        }
+        live.remove(job).map(|held| held.permit)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<EntityId, HeldPermit>> {
         self.live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

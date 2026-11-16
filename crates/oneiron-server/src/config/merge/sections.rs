@@ -342,6 +342,9 @@ impl PartialServeConfig {
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
         }
+        if let Some(value) = self.phonetic_embedder {
+            resolved.phonetic_embedder = Some(value);
+        }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }

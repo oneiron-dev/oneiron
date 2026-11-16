@@ -20,13 +20,8 @@ pub struct TrialCaseInput {
     pub source_frontier: [u8; 32],
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TrialObservation {
-    pub answer: EntityId,
-    pub incumbent: TrialReading,
-    pub candidate: TrialReading,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::model_trials::types::{BackendQualityPin, TrialObservation};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,19 +53,4 @@ pub struct ModelTrial {
     pub resent_arms: Vec<TrialArmProgress>,
     pub evidence: Option<TrialEvidence>,
     pub receipt: Option<ModelTrialReceipt>,
-}
-
-/// A picker reads the measured pin beside the current backend price. A pin
-/// for one router, serving revision or question cannot qualify another.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackendQualityPin {
-    pub backend: PricedModelBackend,
-    pub question: EntityId,
-    pub question_version: u32,
-    pub trial: EntityId,
-    pub set: TrialSetPin,
-    pub brier_loss: f64,
-    pub cost_per_thousand: f64,
-    pub measured_at: u64,
 }

@@ -21,12 +21,13 @@ impl Vault {
     /// and pays its own end; if that no longer fits, it runs on unpaid and
     /// says so (`admission_lost`), since a running chunk is never cut for
     /// money (`#gpu-chunks`). `offer` is the offer the job was quoted on, and
-    /// `admission` the job's own run.
+    /// `admission` the job's own run. A resource a lost write left on the job
+    /// is asked to terminate first, live chunk or not.
     ///
     /// # Errors
     ///
     /// [`GpuJobError::Connector`] when the provider did not answer; nothing
-    /// of this step was written, and the next step asks again.
+    /// of this step's chunk was written, and the next step asks again.
     pub fn gpu_job_step(
         &self,
         id: &EntityId,
@@ -37,6 +38,9 @@ impl Vault {
         now_ms: u64,
     ) -> Result<GpuJobStepReport, GpuJobError> {
         let mut job = self.load_gpu_job(id)?;
+        if !job.orphaned_resources.is_empty() {
+            job = self.terminate_orphaned_resources(job, connector, now_ms)?;
+        }
         if !job.state.is_live() {
             return Ok(GpuJobStepReport::of(&job));
         }
@@ -58,7 +62,9 @@ impl Vault {
                                 &job.id,
                                 &key,
                                 Some(resource),
+                                permits,
                                 connector,
+                                now_ms,
                             )?;
                             return Ok(GpuJobStepReport::of(&stored));
                         }
@@ -214,7 +220,9 @@ impl Vault {
         })?;
         let Some(notices) = notices else {
             // Another write came first: this step's view is stale.
-            return Ok(GpuJobStepReport::of(&self.load_gpu_job(&job.id)?));
+            let key = job.chunk_mut()?.idempotency_key.clone();
+            let stored = self.stored_after_lost_step(&job.id, &key, permits)?;
+            return Ok(GpuJobStepReport::of(&stored));
         };
         let mut report = if matches!(job.state, GpuJobState::Ending { .. }) {
             self.end_gpu_chunk(job, permits, connector, now_ms)?.1
@@ -302,7 +310,8 @@ impl Vault {
             .map(Some)
         })?;
         let Some(notices) = notices else {
-            let current = self.load_gpu_job(&job.id)?;
+            let key = job.chunk_mut()?.idempotency_key.clone();
+            let current = self.stored_after_lost_step(&job.id, &key, permits)?;
             let report = GpuJobStepReport::of(&current);
             return Ok((current, report));
         };
@@ -377,6 +386,7 @@ fn take_up_gpu_chunk(
     if chunk.admission_lost {
         return Ok(false);
     }
+    let key = chunk.idempotency_key.clone();
     let binding = PaidConnector {
         unit_cost: chunk.quote.unit_cost,
         cost_unit: chunk.quote.unit.clone(),
@@ -391,7 +401,7 @@ fn take_up_gpu_chunk(
         chunk.admission_lost = true;
         return Ok(true);
     }
-    permits.hold(id, permit);
+    permits.hold(id, key, permit);
     Ok(false)
 }
 

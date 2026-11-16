@@ -4,26 +4,15 @@
 pub use oneiron_store::embedding::*;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::settings::ReadDestination;
-use oneiron_base::config::VectorEvidenceFloors;
 use oneiron_base::machine_destination::PeerMachine;
 pub use oneiron_store::embedding_vocabulary::InputKind;
 pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
 pub use oneiron_store::embedding_vocabulary::{EmbeddingDevice, EmbeddingProvenance};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
-/// Where an embedder runs relative to the vault owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EmbedderLocality {
-    /// Runs on the same device as the vault.
-    OnDevice,
-    /// Runs on infrastructure controlled by the vault owner.
-    OwnerServer,
-    /// Runs on a third-party service.
-    ThirdParty,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::embedding::EmbedderLocality;
 
 /// Host-injected retrieval embedder.
 ///
