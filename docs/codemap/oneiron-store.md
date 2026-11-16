@@ -238,10 +238,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate_decision.rs` | src | s | 5 mod | — | Store-layer modules of core `store::gate_decision`; core re-exports each one at its old path |
 | `src/gate_decision/keys.rs` | src | s | 5 fn · 6 const | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/gate_decision/retention_policy.rs` | src | s | 2 enum | GateRetentionOverrideCeiling, GateRetentionPrecedence | Append-time decision ancestry and retention-policy values |
-| `src/gate_decision/types.rs` | src | s | 4 struct · 5 fn · 11 const | GateClaimIndexBackfill, GateDecisionId, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
+| `src/gate_decision/types.rs` | src | s | 4 struct · 1 enum · 6 fn · 11 const | GateClaimIndexBackfill, GateDecisionId, GateEnginePart, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
 | `src/gate_decision/vet.rs` | src | s | 3 fn · 1 const | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/gate_decision/write_mode.rs` | src | s | 1 struct | GateWriteMode | Claim-write decision recording and pending-consent mode |
-| `src/gate_reason.rs` | src | m | 3 enum · 7 fn · 2 const | GateMetricReasonClass, GateOutcome, GateReasonCode | Gate outcomes, stable reason codes, and pure metric classification |
+| `src/gate_reason.rs` | src | m | 4 enum · 11 fn · 3 const | GateMetricReasonClass, GateOutcome, GateReasonCode, GateReceiptOutcome | Gate outcomes, stable reason codes, and pure metric classification |
 | `src/git_wire.rs` | src | s | 23 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
 | `src/git_wire/argv.rs` | src | s | 6 fn | — | Frozen typed argv: one constructor per git verb plus the token validators |
 | `src/git_wire/bridge.rs` | src | s | 3 fn | — | `repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction |
@@ -283,7 +283,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/human_task/storage.rs` | src | s | 14 fn · 15 const | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
 | `src/inbox.rs` | src | s | 3 mod | — | Store-layer modules of core `inbox`; core re-exports each one at its old path |
-| `src/inbox/model.rs` | src | s | 3 struct · 3 enum · 4 fn · 14 const | InboxBulkVerb, InboxCheckInException, InboxExceptionClass, InboxPointerRow, InboxReviewDial, InboxSubCluster | Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants |
+| `src/inbox/model.rs` | src | s | 3 struct · 3 enum · 4 fn · 13 const | InboxBulkVerb, InboxCheckInException, InboxExceptionClass, InboxPointerRow, InboxReviewDial, InboxSubCluster | Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants |
 | `src/inbox/notification_recipient.rs` | src | s | 1 enum · 4 fn | NotificationRecipientScope | Who a pending notification is delivered to: the recipient markers its stored body carries, read one way… |
 | `src/inbox/view_values.rs` | src | s | 3 struct · 1 enum · 1 const | AgentInboxDiaryReview, AgentInboxItemKind, AgentInboxParticipant, InboxImpact | Inbox item kinds, ordering impact, diary-review input and receiving participants |
 | `src/index_keys.rs` | src | s | 3 fn | — | Byte layouts of the edge, temporal and type index keys |
@@ -310,7 +310,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/known_value_index/forms.rs` | src | m | 1 struct · 11 fn · 1 const | View | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/known_value_index/rolling.rs` | src | s | 3 struct · 11 fn | RollingKey, RollingScan, RollingSets | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/l2_evidence.rs` | src | s | 2 struct · 4 fn | L2BaseCache, L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
-| `src/lib.rs` | src | s | 223 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 224 mod | — | The store layer of the oneiron engine |
 | `src/live_speaker_calls.rs` | src | s | 1 struct · 3 fn | LiveSpeakers | Per-room live voice-call registration index |
 | `src/local_queue_budget.rs` | src | s | 1 fn | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
@@ -382,12 +382,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/held.rs` | src | s | 2 struct · 1 trait · 8 fn | AtDiskFloor, HeldBytes, SpillFloor | Bytes of one exchange held whole before they move on: a push's command section, read ahead of the backend to… |
 | `src/origin/smart_http/hooks.rs` | src | m | 2 fn · 1 const | — | The per-request door-owned hook directory and the vetted pre-receive script it carries |
 | `src/origin/smart_http/maintain.rs` | src | s | 1 struct · 2 enum · 1 fn · 3 const | Gc, Run, ServedRepositoryMaintenance | Maintenance of the served repositories |
-| `src/origin/smart_http/paths.rs` | src | s | 6 fn · 24 const | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
+| `src/origin/smart_http/paths.rs` | src | s | 5 fn · 24 const | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
 | `src/origin/smart_http/push_paths.rs` | src | s | 1 fn · 1 type | — | A checkout push's changed paths (FIX 6867, G1-PUSH): the stream the vetted hook lists while the objects are… |
 | `src/origin/smart_http/retained_reasons.rs` | src | s | 1 struct · 5 fn · 2 const | RetainedReasons | A push refusal's reasons, bounded where they are kept (FIX 5942) |
 | `src/origin/smart_http/serve_cmd.rs` | src | s | 1 struct · 6 fn | ServeRequest | The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle |
 | `src/outbound_outcome.rs` | src | s | 1 enum · 1 fn | OutboundDispatchOutcome | Stable outcome vocabulary for outbound dispatch observations |
-| `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 8 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
+| `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 9 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
 | `src/overlay_bookkeeping.rs` | src | s | 3 const | — | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
 | `src/overlay_db/accessors.rs` | src | m | 2 struct · 33 fn · 3 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
@@ -424,6 +424,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction_predicate.rs` | src | s | 1 const | — | Reaction outcome predicate stored by event-outcome projections |
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/receipt_identity.rs` | src | s | 1 fn · 2 const | — | The identity marker carried after receipt attribution is erased |
+| `src/receipt_ref.rs` | src | s | 1 struct · 1 enum · 8 fn | ReceiptRef, ReceiptRefError | A receipt reference: a receipt's kind and its id, in the one text form `{kind}:{lowercase hex}` (fable pass… |
 | `src/receipt_row.rs` | src | s | 1 enum · 6 fn · 38 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
 | `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/record_links/blocks.rs` | src | m | 1 struct · 1 enum · 2 fn | Blocks, Line | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
@@ -547,7 +548,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings/web_connector/provider.rs` | src | s | 1 struct · 3 enum · 3 fn · 1 const | FetchRoute, ResultRetention, WebProvider, WebProviderProfile | The provider registry: which providers may serve a web call, on whose key, at what declared price, and how… |
 | `src/side_table.rs` | src | s | 2 mod | — | Store-layer modules of core `side_table`; core re-exports each one at its old path |
 | `src/side_table/codec.rs` | src | s | 1 enum · 1 trait · 1 fn · 1 type | CodecError, RawValue | The value codecs a side table may declare |
-| `src/side_table/key.rs` | src | s | 1 struct · 2 trait | FixedSideKey, HexId, SideKey | Key types: what a table's key contributes after its declared prefix |
+| `src/side_table/key.rs` | src | m | 4 struct · 4 trait · 1 re-export | FieldSpelling, FixedSideKey, HexId, HexLower, HexU32, HexU64, LengthPrefix, SideKey | Key types: what a table's key contributes after its declared prefix |
 | `src/skill_attribution.rs` | src | s | 1 mod | — | Store-layer modules of core `skill_attribution`; core re-exports each one at its old path |
 | `src/skill_attribution/codec.rs` | src | s | 14 fn · 7 const | — | Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode |
 | `src/skill_hub_predicates.rs` | src | s | 2 const | — | The claim predicates the skill hub attaches |
@@ -569,11 +570,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/typed_body/live_pin.rs` | src | s | 1 struct | LivePin | A live office body's pinned frontier and commit count |
 | `src/vault.rs` | src | s | 3 mod | — | Store-layer modules of core `vault`; core re-exports each one at its old path |
 | `src/vault/entity_revision.rs` | src | s | 1 mod | — | Store-layer modules of core `vault::entity_revision`; core re-exports each one at its old path |
-| `src/vault/entity_revision/types.rs` | src | s | 5 struct · 1 enum · 3 fn · 1 re-export | EntityRevisionChange, IndexedPublication, IndexedRefreshReport, PinnedCitation, ReadMode, ResolvedCitation | Exact read frontiers and idle refresh contracts for editable entity text |
+| `src/vault/entity_revision/types.rs` | src | s | 6 struct · 1 enum · 5 fn · 1 re-export | EntityRevisionChange, IndexedPublication, IndexedRefreshReport, MemoryFrontier, PinnedCitation, ReadMode, ResolvedCitation | Exact read frontiers and idle refresh contracts for editable entity text |
 | `src/vault/entity_view.rs` | src | s | 1 struct | EntityView | Read-facing entity metadata and decoded body projection |
 | `src/vault/speculative_passes.rs` | src | s | 1 struct | SpeculativePasses | Per-vault admission state for speculative retrieval passes |
 | `src/vault_cleanup.rs` | src | s | 3 mod | — | Store-layer modules of core `vault_cleanup`; core re-exports each one at its old path |
-| `src/vault_cleanup/cleanup_types.rs` | src | m | 7 struct · 3 enum · 8 fn · 32 const | ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture +2 | Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs |
+| `src/vault_cleanup/cleanup_types.rs` | src | m | 8 struct · 3 enum · 8 fn · 37 const | ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupImpactPreview, CleanupIntegrityTeeth, CleanupKind +3 | Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs |
 | `src/vault_cleanup/review_types.rs` | src | s | 7 struct · 4 enum | CleanupAcceptEffect, CleanupDecideRequest, CleanupDecideView, CleanupItemChoice, CleanupItemDecision, CleanupItemOutcome, CleanupItemResult, CleanupItemState +3 | The per-item cleanup review and decision vocabulary (FIX 1758): what the owner reads about each slot of one… |
 | `src/vault_cleanup/run_snapshot.rs` | src | s | 2 struct · 1 fn · 6 const | CleanupRunSnapshot, CleanupSnapshotEntry | What each cleanup run archived, kept on the run's own RUN row (OF-449) |
 | `src/vault_page_seal.rs` | src | s | 3 struct · 1 enum · 17 fn · 1 const | SealOrigin, VaultDataKey, VaultPageSeal, WrapDigest | The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under… |
@@ -667,8 +668,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 1 fn · 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/fingerprint_keep_skill_tree.rs` | test | s | 1 struct · 1 fn · 2 const · 1 crate-vis | SkillContentHash | K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes |
+| `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
+| `tests/gate_receipt_outcome_tokens.rs` | test | s | — | — | UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2) |
+| `tests/msgpack_store_rows.rs` | test | s | — | — | PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the… |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |
 | `tests/phonetic_ipa.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): the readings of a name and the Normalized… |
+| `tests/receipt_ref.rs` | test | s | — | — | PLAN-UC-04 2.4a: `ReceiptRef`, the one text form `{kind}:{lowercase hex}` of a receipt reference |
 | `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
 | `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |
 | `tests/shared_path_acl.rs` | test | s | — | — | Census row L6-04 item A (ARCH-0038 #restore-path-open): the check of a restore's path reads each macOS… |
+| `tests/side_key_derive.rs` | test | m | — | — | UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace |
+| `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
+| `tests/side_key_pins.rs` | test | m | — | — | UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read… |

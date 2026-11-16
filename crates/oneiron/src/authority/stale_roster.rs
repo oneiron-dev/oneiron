@@ -90,7 +90,10 @@ fn stale_roster_approval_deadlines<E: LogRow>(
         let Some(hash) = row.entry_hash() else {
             continue;
         };
-        if !fold.valid_entries.contains(&hash) {
+        // A device revocation the fold applied as a verified fact counts
+        // where its row did not stay valid (Sol review F1 on #8608).
+        if !fold.valid_entries.contains(&hash) && !fold.verified_device_revocations.contains(&hash)
+        {
             continue;
         }
         let Some(seen) = first_seen.get(&hash).copied() else {
