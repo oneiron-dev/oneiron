@@ -74,9 +74,9 @@ pub(crate) use check_exhaust::QueueCheckFieldToken;
 // The restart driver and overlap handoff (FIX 6868, G2 PR2).
 pub(crate) use driver_types::QueueStageOverlap;
 pub use driver_types::{
-    QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason,
-    QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView, QueueDriverTarget,
-    QueueSurvivorLink, QueueWork,
+    QueueBatchDrive, QueueConflictLink, QueueConflictResolver, QueueConflictView, QueueDriveHold,
+    QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView,
+    QueueDriverTarget, QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 // A queue entry's admission and completion receipts (FIX 4338) and the

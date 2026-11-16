@@ -149,6 +149,23 @@ impl MergeQueue<'_> {
         batches: &[&MergeBatch],
         review: Option<&ContractReviewEvidence>,
     ) -> Result<()> {
+        self.save_then(state, batches, |txn| match review {
+            Some(evidence) => self
+                .vault
+                .route_contract_review_in_txn(txn, evidence)
+                .map(|_| ()),
+            None => Ok(()),
+        })
+    }
+    /// [`Self::save`] that runs `then` in the same writer after the queue
+    /// and batch rows are put, before it commits: one write lands them all
+    /// or none.
+    pub(super) fn save_then(
+        &self,
+        state: &QueueRecord,
+        batches: &[&MergeBatch],
+        then: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         check_row_size(&QUEUE_STATE.encode_value(state)?)?;
         let mut txn = self.vault.store.env.write_txn()?;
         QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
@@ -164,10 +181,7 @@ impl MergeQueue<'_> {
             )?;
             put_batch_index(&self.vault.store, &mut txn, &repo_hex, batch)?;
         }
-        if let Some(evidence) = review {
-            self.vault
-                .route_contract_review_in_txn(&mut txn, evidence)?;
-        }
+        then(&mut txn)?;
         txn.commit()?;
         // The queue driver wakes on a committed queue write (FIX 6868), on
         // its own wake (FIX 7306).
