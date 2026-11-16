@@ -169,11 +169,11 @@ function roomJoinHoldNotice(value: unknown): RoomJoinHold | undefined {
     : undefined
 }
 
-/** Narrows the optional block to the engine's pending shape. */
+/** Narrows the optional block to the engine's one pending kind, a check-in wait. */
 function pendingBlock(value: unknown): MemoryPending | undefined {
   if (typeof value !== "object" || value === null) return undefined
   const block = value as Record<string, unknown>
-  return typeof block.kind === "string" && typeof block.check_in === "string"
+  return block.kind === "check_in" && typeof block.check_in === "string"
     ? (value as MemoryPending)
     : undefined
 }
