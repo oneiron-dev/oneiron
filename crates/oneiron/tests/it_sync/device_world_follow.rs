@@ -36,7 +36,7 @@ pub(super) const FIXTURE_HOST_SECRET: &[u8] = b"device-world-follow";
 pub(super) struct Device {
     _dir: tempfile::TempDir,
     pub(super) vault: Arc<Vault>,
-    owner: AuthenticatedOwner,
+    pub(super) owner: AuthenticatedOwner,
     pub(super) founder: EntityId,
     pub(super) granted: EntityId,
     kept_home: EntityId,
