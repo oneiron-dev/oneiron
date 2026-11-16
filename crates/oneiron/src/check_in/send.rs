@@ -30,8 +30,11 @@
 //! The row does not reach these sends; the Gate gives them no check-in:
 //! * a person's own send: "a send from the actor's own identity is go"
 //!   (ARCH-0082 #role-defaults); only the `agent` actor class checks in, so a
-//!   mail-pack reply, which goes as its mailbox's person, keeps that person's
-//!   press;
+//!   mail-pack reply its mailbox's person approves, which goes as that
+//!   person, keeps that person's press. Its drafter's send
+//!   (`Memory::mail_reply_send`, PLAN L3-35 D6) is the drafter's own agent
+//!   send and checks in; its door dispatches only a reply from a mailbox of
+//!   the vault's Owner sent as the mailbox's own account;
 //! * a send from a member mailbox, a delegated identity: that mailbox is its
 //!   person's (ARCH-0082 #data-owner-consent; Engine ruling L3-35-PRINCIPAL =
 //!   A), and the engine records no principal on it, so its press per send

@@ -125,10 +125,12 @@ pub use pack::{
 };
 pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
-    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
+    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest, MailReplySendRequest,
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+#[cfg(oneiron_test_support)]
+pub(crate) use reply_ask::reply_ask_open;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};

@@ -28,6 +28,7 @@ pub use crate::mail_pack::reply::MailReplyDraftRequest;
 pub use crate::mail_pack::reply::MailReplyDraftState;
 pub use crate::mail_pack::reply::MailReplyDraftView;
 pub use crate::mail_pack::reply::MailReplyDraftsRequest;
+pub use crate::mail_pack::reply::MailReplySendRequest;
 pub use crate::mail_pack::search::MailSearchReport;
 pub use crate::mail_pack::search::MailSourceSearchRequest;
 pub use crate::mail_pack::share::MailThreadShareReceipt;

@@ -8,7 +8,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MailReplyDraftState {
-    /// Drafted, waiting for the owner's approval of this revision.
+    /// Drafted: its drafter may send this revision under the vault's send
+    /// grant, else it waits for the mailbox's person to approve it.
     Proposed,
     /// Approved; its send was dispatched and its outcome is not known yet,
     /// or the send was held: approving it again dispatches it again, and the
@@ -101,6 +102,16 @@ pub struct MailReplyDraftRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MailReplyApproveRequest {
+    /// 32-hex.
+    pub draft_ref: String,
+    pub revision: u64,
+}
+
+/// `vault.mail.reply.send`'s input: the draft and the revision its drafter
+/// sends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplySendRequest {
     /// 32-hex.
     pub draft_ref: String,
     pub revision: u64,

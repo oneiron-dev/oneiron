@@ -1,11 +1,14 @@
 //! Drafted replies (FIX 12559 row 5, fix list row 15420): an agent drafts a
-//! reply to a mail thread it reads; the draft stays local, and only the
-//! vault's owner, whose own mailbox it is, sends it, by approving that exact
-//! revision. Never auto-sent: the draft door freezes the provider send plan
-//! and dispatches nothing, and the approve door mints the one approve-once
-//! proof for exactly that plan before it dispatches it through the common
-//! recorded dispatcher. A changed draft is a new revision with its own plan;
-//! an approval names the revision it saw.
+//! reply to a mail thread it reads; the draft stays local until it is sent
+//! under the vault's send grant or the mailbox's own person approves that
+//! exact revision. The draft door freezes the provider send plan and
+//! dispatches nothing. The drafter's send door (PLAN L3-35 D6) dispatches the
+//! revision as its drafter, and the Gate's send check-in decides: a grant
+//! that releases the drafter's send sends it, any other holds it for the
+//! mailbox's person. The approve door mints the one approve-once proof for
+//! exactly that plan before it dispatches it through the common recorded
+//! dispatcher. A changed draft is a new revision with its own plan; a send
+//! or an approval names the revision it saw.
 //!
 //! A reply is one plain-text message to the answered message's `Reply-To`,
 //! else its sender, threaded by `In-Reply-To`, `References` and the
@@ -34,7 +37,16 @@
 //!
 //! Each new revision asks the mailbox's person in their inbox (fix list
 //! row 17644, `reply_ask`); the Ask clears when that revision is
-//! approved, discarded or drafted again.
+//! approved, sent, discarded or drafted again.
+//!
+//! The vault's send grant reaches a drafter's send only from a mailbox of
+//! the vault's Owner sent as that mailbox's own account (IMAP, Microsoft
+//! 365): a member's mailbox is that person's (ARCH-0082
+//! #data-owner-consent; Engine ruling L3-35-PRINCIPAL = A), and a Google
+//! reply sends through the mailbox's delegated identity, which keeps its
+//! person's press per send (`check_in::send`; Engine ruling
+//! L335-REPLY-GMAIL = A). The send door dispatches neither; each waits for
+//! its person's approval.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,7 +60,7 @@ use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatu
 use super::state::{
     MailOccurrence, MailPresence, MailReplyHeaders, MailReplyRecipients, OCCURRENCES,
 };
-use super::wire::{MailAddressHeaders, MailProviderWire};
+use super::wire::{MailAddressHeaders, MailProviderWire, MailSyncSource};
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailReplyThread, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
@@ -57,11 +69,12 @@ use crate::entity_id::derived_domains;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger, OutboundRecipient, OutboundRecipientRole,
+    OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundRecipient, OutboundRecipientRole,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Result, Vault, source_audience};
+use crate::{EdgeActorClass, EntityId, Result, Vault, source_audience};
 
 /// Each drafted reply, by its draft id.
 const DRAFTS: SideTable<EntityId, MailReplyDraftRow, Named> =
@@ -75,7 +88,7 @@ const MAX_REQUEST_KEY_BYTES: usize = 200;
 #[doc(hidden)]
 pub use oneiron_verb_wire::mail_pack::reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
-    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
+    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest, MailReplySendRequest,
 };
 
 /// One stored draft.
@@ -501,8 +514,10 @@ pub(crate) fn approved_source_reply_in_txn(
     let Some(send_ref) = effect.send_ref.as_deref() else {
         return Ok(false);
     };
+    // The Gate's send ref is the dispatch's intent ref, the draft's own
+    // `mail-reply:<draft>:<revision>` (`request_for`).
     let Some(draft) = send_ref
-        .strip_prefix("outbound:mail-reply:")
+        .strip_prefix("mail-reply:")
         .and_then(|rest| rest.split_once(':'))
         .and_then(|(draft, _)| EntityId::from_hex(draft).ok())
     else {
@@ -524,7 +539,7 @@ pub(crate) fn approved_source_reply_in_txn(
         || row.message.is_none()
         || row.state != MailReplyDraftState::Approved
         || row.approved_at.is_none()
-        || send_ref != format!("outbound:{}", row.send_ref)
+        || send_ref != row.send_ref
         || effect.provenance.mail_recipients != row.recipients
         || !addressed
     {
@@ -573,6 +588,78 @@ fn request_for(
         Some(identity) => request.channel_identity_ref(identity),
         None => request,
     }
+}
+
+/// What a reply's dispatch `answer` makes of its revision: `Sent` once the
+/// provider took it, `Unsettled` once its outcome is uncertain or it failed,
+/// `None` when it was held or refused (the revision stands as it was); and
+/// the outcome its reader sees.
+fn dispatch_settlement<E: std::fmt::Display>(
+    answer: &std::result::Result<OutboundDispatchResult, E>,
+) -> (Option<MailReplyDraftState>, String) {
+    match answer {
+        Ok(result) => match result.outcome {
+            OutboundDispatchOutcome::DeliveredToChannel => (
+                Some(MailReplyDraftState::Sent),
+                result.outcome.as_str().to_owned(),
+            ),
+            OutboundDispatchOutcome::Held => (
+                None,
+                format!("held: {}", result.gate_reason_codes.join(", ")),
+            ),
+            _ => (
+                Some(MailReplyDraftState::Unsettled),
+                result.outcome.as_str().to_owned(),
+            ),
+        },
+        Err(error) => (None, format!("refused: {error}")),
+    }
+}
+
+/// Whether `person`, a mailbox's own person, is the vault's Owner: a live
+/// owner the vault records, or the person the embedded owner of a vault with
+/// no authority root stands for. The vault's send grant reaches only the
+/// Owner's mailboxes (Engine ruling L3-35-PRINCIPAL = A).
+///
+/// # Errors
+///
+/// Storage failures.
+fn is_vault_owner_mailbox_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<bool> {
+    if crate::policy_model::owners_in_txn(vault, txn)?.contains(&person) {
+        return Ok(true);
+    }
+    let embedded = crate::vault::embedded_owner_actor_id()?;
+    Ok(source_audience::embedded_owner_person_in(vault, txn, embedded)? == Some(person))
+}
+
+/// Records on revision `revision` of the draft `id`, while it stands
+/// proposed, that the drafter's send left it for its mailbox's person
+/// (`held: <reason>`), and gives its view. Nothing was dispatched.
+///
+/// # Errors
+///
+/// Storage failures.
+fn reply_waits_for_person(
+    vault: &Vault,
+    id: EntityId,
+    revision: u64,
+    reason: &str,
+) -> MemoryResult<MailReplyDraftView> {
+    let unknown = || MemoryError::not_found("no reply draft by that ref");
+    let row = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
+        let mut held = DRAFTS.get(&vault.store, txn, &id)?.ok_or_else(unknown)?;
+        if held.revision == revision && held.state == MailReplyDraftState::Proposed {
+            held.outcome = Some(format!("held: {reason}"));
+            held.updated_at = crate::unix_seconds_now();
+            DRAFTS.put(&vault.store, txn, &id, &held)?;
+        }
+        Ok(held)
+    })?;
+    Ok(view(id, &row))
 }
 
 impl Memory<'_> {
@@ -837,6 +924,154 @@ impl Memory<'_> {
         let owner = self.embedded_owner("vault.mail.reply.approve")?;
         self.vault().approve_mail_reply(&owner, input)
     }
+
+    /// `vault.mail.reply.send` (PLAN L3-35 D6): the agent that drafted a
+    /// reply sends its current revision under the vault's send grant. The
+    /// revision is dispatched as its drafter through the common recorded
+    /// dispatcher, and the Gate's send check-in decides: a grant that
+    /// releases the drafter's send sends it; any other holds it, and the
+    /// revision stays proposed with its Ask, for the mailbox's person to
+    /// approve. A reply from a mailbox that is not the vault Owner's, or one
+    /// that sends through the mailbox's delegated identity, is not
+    /// dispatched: it waits for its person (module doc). Sending again after
+    /// a held send dispatches it again, and the ledger replays what it
+    /// recorded rather than sending twice.
+    ///
+    /// # Errors
+    ///
+    /// The caller no agent; the draft unknown, not the caller's, of another
+    /// revision, approved, discarded or uncertain; the mailbox unable to
+    /// send; the dispatch refused.
+    pub fn mail_reply_send(
+        &self,
+        input: &MailReplySendRequest,
+    ) -> MemoryResult<MailReplyDraftView> {
+        self.mail_reply_send_into(input, None::<&mut ReplySink<'_>>)
+    }
+
+    /// [`Self::mail_reply_send`], its provider send made through
+    /// `account_sink` when one is given (a test door's), else through the
+    /// mailbox's own account.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::mail_reply_send`].
+    pub(crate) fn mail_reply_send_into<S: OutboundExecutionSink>(
+        &self,
+        input: &MailReplySendRequest,
+        account_sink: Option<&mut S>,
+    ) -> MemoryResult<MailReplyDraftView> {
+        let vault = self.vault();
+        let actor = self.actor();
+        let id = EntityId::from_hex(&input.draft_ref)?;
+        let unknown = || MemoryError::not_found("no reply draft by that ref");
+        if self.actor_class() != EdgeActorClass::Agent {
+            return Err(MemoryError::bad_request(
+                "a drafter's send is an agent's; the mailbox's person sends by approving",
+            ));
+        }
+        let (row, source, owners_mailbox) = {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            super::pack::require_pack_active_in(vault, &txn)?;
+            let row = DRAFTS.get(&vault.store, &txn, &id)?.ok_or_else(unknown)?;
+            // Only its drafter sends a draft; to any other caller it is
+            // unknown.
+            if row.drafted_by != Some(actor) {
+                return Err(unknown());
+            }
+            let source = SOURCES
+                .get(&vault.store, &txn, &row.source)?
+                .ok_or_else(unknown)?;
+            let owners_mailbox = match source.owner {
+                Some(person) => is_vault_owner_mailbox_in(vault, &txn, person)?,
+                None => false,
+            };
+            (row, source, owners_mailbox)
+        };
+        if row.revision != input.revision {
+            return Err(invalid_state(
+                "the draft changed since it was read; send its current revision",
+            ));
+        }
+        match row.state {
+            MailReplyDraftState::Proposed => {}
+            MailReplyDraftState::Sent => return Ok(view(id, &row)),
+            MailReplyDraftState::Approved => {
+                return Err(invalid_state(
+                    "the mailbox's person approved this revision; their approval sends it",
+                ));
+            }
+            MailReplyDraftState::Unsettled => {
+                return Err(invalid_state(
+                    "the send's outcome is uncertain; the ledger holds it",
+                ));
+            }
+            MailReplyDraftState::Discarded => {
+                return Err(invalid_state("the draft was discarded; it never sends"));
+            }
+        }
+        // The vault's send grant reaches the Owner's mailboxes only; a
+        // member's waits for that member.
+        if !owners_mailbox {
+            return reply_waits_for_person(vault, id, row.revision, "mailbox_person_approves");
+        }
+        // The reply leaves the way its draft froze, while the mailbox still
+        // sends that way.
+        let (transport, message) = match (reply_route(&source)?, row.identity, &row.message) {
+            (ReplyRoute::Account(transport), None, Some(message)) => (transport, message.clone()),
+            (ReplyRoute::Gmail(identity), Some(drafted), None) if identity == drafted => {
+                return reply_waits_for_person(
+                    vault,
+                    id,
+                    row.revision,
+                    "delegated_identity_keeps_person_press",
+                );
+            }
+            _ => {
+                return Err(invalid_state(
+                    "the mailbox now sends another way or through another identity; draft again",
+                ));
+            }
+        };
+        let request = request_for(
+            id,
+            &row,
+            OutboundDispatchActor::agent(actor),
+            crate::unix_seconds_now(),
+        );
+        let answer = match account_sink {
+            Some(sink) => vault.dispatch_outbound_intent_recorded(request, sink),
+            None => {
+                let mail_source = vault.mail_sync_source(row.source)?.ok_or_else(unknown)?;
+                let mut sink = ReplySink::new(vault, mail_source, message, transport);
+                vault.dispatch_outbound_intent_recorded(request, &mut sink)
+            }
+        };
+        // Sent or unsettled, the revision no longer waits for its person;
+        // held or refused, it stays proposed for them. A revision redrafted,
+        // approved or discarded meanwhile keeps its own state.
+        let (settled, outcome) = dispatch_settlement(&answer);
+        let row = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
+            let mut held = DRAFTS.get(&vault.store, txn, &id)?.ok_or_else(unknown)?;
+            if held.revision == row.revision && held.state == MailReplyDraftState::Proposed {
+                if let Some(state) = settled {
+                    held.state = state;
+                    clear_reply_ask_in_txn(vault, txn, &id, held.revision)?;
+                }
+                held.outcome = Some(outcome);
+                held.updated_at = crate::unix_seconds_now();
+                DRAFTS.put(&vault.store, txn, &id, &held)?;
+            }
+            Ok(held)
+        })?;
+        vault.store.notify_notification_updates();
+        if let Err(error) = answer {
+            return Err(MemoryError::bad_request(format!(
+                "the reply did not dispatch: {error}"
+            )));
+        }
+        Ok(view(id, &row))
+    }
 }
 
 impl Vault {
@@ -861,6 +1096,22 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         input: &MailReplyApproveRequest,
+    ) -> MemoryResult<MailReplyDraftView> {
+        self.approve_mail_reply_into(owner, input, None::<&mut ReplySink<'_>>)
+    }
+
+    /// [`Self::approve_mail_reply`], the provider send of a reply sent as the
+    /// mailbox's own account made through `account_sink` when one is given
+    /// (a test door's), else through that account.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::approve_mail_reply`].
+    pub(crate) fn approve_mail_reply_into<S: OutboundExecutionSink>(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &MailReplyApproveRequest,
+        account_sink: Option<&mut S>,
     ) -> MemoryResult<MailReplyDraftView> {
         let id = EntityId::from_hex(&input.draft_ref)?;
         let unknown = || MemoryError::not_found("no reply draft by that ref");
@@ -989,27 +1240,14 @@ impl Vault {
                 let mut sink = GmailSendSink::new(self, &adapter, identity, wire);
                 adapter.dispatch_send_recorded(self, request, &mut sink)
             }
-            ReplyDispatcher::Account(mut sink) => {
-                self.dispatch_outbound_intent_recorded(request, sink.as_mut())
-            }
-        };
-        let (state, outcome) = match &answer {
-            Ok(result) => match result.outcome {
-                OutboundDispatchOutcome::DeliveredToChannel => (
-                    MailReplyDraftState::Sent,
-                    result.outcome.as_str().to_owned(),
-                ),
-                OutboundDispatchOutcome::Held => (
-                    MailReplyDraftState::Approved,
-                    format!("held: {}", result.gate_reason_codes.join(", ")),
-                ),
-                _ => (
-                    MailReplyDraftState::Unsettled,
-                    result.outcome.as_str().to_owned(),
-                ),
+            ReplyDispatcher::Account(mut sink) => match account_sink {
+                Some(account_sink) => self.dispatch_outbound_intent_recorded(request, account_sink),
+                None => self.dispatch_outbound_intent_recorded(request, sink.as_mut()),
             },
-            Err(error) => (MailReplyDraftState::Approved, format!("refused: {error}")),
         };
+        // Held or refused, the approved revision stays approved.
+        let (settled, outcome) = dispatch_settlement(&answer);
+        let state = settled.unwrap_or(MailReplyDraftState::Approved);
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             let mut held = DRAFTS.get(&self.store, txn, &id)?.ok_or_else(unknown)?;
             if held.revision == row.revision {
