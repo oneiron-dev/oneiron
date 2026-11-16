@@ -202,7 +202,13 @@ impl AiHost {
         recover_dead_leases(&vault);
         let budgets = budgets.unwrap_or_else(crate::models::ModelHostBudgets::unhosted);
         // Its ladders read chat replies on the vault's line (FIX 10626).
-        let rests = OfferCooldowns::in_vault_with(Arc::clone(&vault), budgets.clone());
+        // A down provider's offers rest as the host's `[models]` says (FIX
+        // 11226).
+        let rests = OfferCooldowns::in_vault_with(
+            Arc::clone(&vault),
+            budgets.clone(),
+            crate::models::HealthRestSettings::of(models),
+        );
         let mut runtime =
             ModelRuntime::build_hosted_on(models, broker, rests, &budgets, vault.privacy_posture())
                 .with_receipts(receipts)

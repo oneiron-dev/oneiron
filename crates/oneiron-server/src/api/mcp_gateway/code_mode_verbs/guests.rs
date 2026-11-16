@@ -502,7 +502,7 @@ impl RunGuests {
         }
         // The row's hooks' own decisions count in the run's evidence (FIX
         // 8042): they run on this thread, and are recorded, never capped.
-        let (pre, mut decided) = crate::hook_verdict::collect_hook_decisions(|| {
+        let (pre, mut decided) = crate::hook_decisions::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::browser_row_pre(
                 memory,
                 &oneiron::verbs::VERB_TABLE,
@@ -535,7 +535,7 @@ impl RunGuests {
         let hook_pre = held
             .as_ref()
             .and_then(|_| oneiron::runtime_hooks::VerbHookPreSnapshot::from_pre(&hooks));
-        let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
+        let (post, mut after) = crate::hook_decisions::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         });
         decided.append(&mut after);
