@@ -3,6 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v30 (row WEB-PASSKEY-OWNER-KEY, owner passkeys): stored authority-log rows
+/// keep their bytes and meaning. The authority fold gains each enrolled
+/// passkey's assertion contexts, each key a passkey vouched for and each such
+/// key a second vouch confirmed, so the authority fold schema moves with it: a
+/// stored checkpoint image written before it no longer decodes, and an older
+/// build refuses an image that carries them rather than dropping the passkey
+/// limits. No old-meaning reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud").
+///
 /// v29 (FIX CONFIRM-COLLISION-SUBTREE-ROLLBACK, device revocation): stored
 /// authority-log rows keep their bytes and change meaning. A `RevokeDevice`
 /// proved on its own signed branch now holds as a revoke fact when a
@@ -140,7 +149,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 29;
+pub const STORAGE_ABI_VERSION: u16 = 30;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
