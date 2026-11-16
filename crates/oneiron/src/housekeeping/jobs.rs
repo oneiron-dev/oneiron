@@ -1,4 +1,4 @@
-//! The engine's 19 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
+//! The engine's 20 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
 //!
 //! Each engine sweep is one [`JobSpec`] whose trigger is its cadence key
 //! ([`super::setting_keys`]): the engine arms it at a handle's first pass and in the write that
@@ -152,6 +152,8 @@ sweep_jobs! {
     MODEL_PACK_RETIREMENT_JOB = "housekeeping.model_pack_retirement", SWEEP_MODEL_PACK_RETIREMENT, at_open: false;
     /// The OAuth server's rows past their lifetime.
     OAUTH_EXPIRY_JOB = "housekeeping.oauth_expiry", SWEEP_OAUTH_EXPIRY, at_open: false;
+    /// Signing links past their hard expiry (ARCH-0064 SGN-09).
+    ESIGN_TOKEN_EXPIRY_JOB = "housekeeping.esign_token_expiry", SWEEP_ESIGN_TOKEN_EXPIRY, at_open: false;
 }
 
 /// The code of `sweep`'s job.
@@ -307,10 +309,21 @@ fn run_deadline_job(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result
     })
 }
 
-/// Whether any erasure obligation (an `h:` row, or a `hw:` withdrawn generation's) is queued.
+/// Whether any erasure obligation (an `h:` row, a `hw:` withdrawn
+/// generation's, or an `hc:` window compaction an erase or a refused late
+/// re-put owes) is queued. Each one gets the hourly cadence and the idle
+/// window unload (ARCH-0005a `#housekeeping-built`, census L6-05).
 pub(super) fn erase_obligation_waiting(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    for prefix in [HARD_ERASE_SWEEP_PREFIX, WITHDRAWN_GENERATION_SWEEP_PREFIX] {
+    // Only the sync build raises `hc:` rows.
+    #[cfg(feature = "sync")]
+    let owed = Some(crate::deletion::owed_window_compaction::OWED_COMPACTION_PREFIX);
+    #[cfg(not(feature = "sync"))]
+    let owed: Option<&[u8]> = None;
+    for prefix in [HARD_ERASE_SWEEP_PREFIX, WITHDRAWN_GENERATION_SWEEP_PREFIX]
+        .into_iter()
+        .chain(owed)
+    {
         let mut rows = vault.store.sync_queue.prefix_iter(&txn, prefix)?;
         if rows.next().transpose()?.is_some() {
             return Ok(true);
