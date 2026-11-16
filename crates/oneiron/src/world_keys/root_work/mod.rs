@@ -74,10 +74,11 @@ use super::{
     OwnerWorkReceipt, OwnerWorkUnassigned, RecoveryRootSeed, RootRestore, WorldKitRestore,
 };
 use crate::authority::{
-    ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody,
-    OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootBasisCheck, RootChange, check_root_basis, end_request_wait_in_txn,
-    ended_request_wait, invalid_authority, read_pin_row_in_txn, write_awaited_root_in_txn,
+    ActSurface, AuthorityEntryHash, AuthorityFold, CarrierReading, MachineEnrolmentRequest,
+    OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
+    RecoveryRootId, RequestCode, RootBasisCheck, RootChange, check_root_basis,
+    end_request_wait_in_txn, ended_request_wait, invalid_authority, read_pin_row_in_txn,
+    write_awaited_root_in_txn,
 };
 use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision, owner_act_decision_in_txn};
 use crate::consent::AuthenticatedOwner;
@@ -169,6 +170,24 @@ pub(super) enum RootRecheck {
     Runs,
     /// Final: the refused result it signs closes the request.
     Refused(OwnerWorkRefusal),
+}
+
+/// One root request pending on this install, as its surface lists it for
+/// the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedRootRequest {
+    /// The request's signed entry: what a cancel names.
+    pub entry: AuthorityEntryHash,
+    pub change: RootChange,
+    pub receipt: OwnerWorkReceipt,
+    /// The machine the request names as its carrier, with this install's
+    /// reading of the key that signed it ([`AuthorityFold::carrier_reading`]).
+    /// A surface names the asker from the reading's role and `is_mine`; a
+    /// reading with no role ties the named machine to no key this install
+    /// reads, and a surface names no machine by its id. The owner the request
+    /// names and its surface are that carrier's word
+    /// (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A).
+    pub carrier: CarrierReading,
 }
 
 /// The cancel door's refusal for a request this install folds as no root
@@ -435,21 +454,46 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
     ) -> Result<Vec<(AuthorityEntryHash, RootChange, OwnerWorkReceipt)>> {
+        Ok(self
+            .pending_root_request_listing(owner)?
+            .into_iter()
+            .map(|listed| (listed.entry, listed.change, listed.receipt))
+            .collect())
+    }
+
+    /// [`Self::pending_root_requests`] as the target's surface lists them
+    /// for the owner: each with the machine that carried it, read by the
+    /// key that signed its stored row, in one snapshot with the fold
+    /// (FIX [CARRIED-PIN-ASKER-UNSERVED]). A prompt names the asker from
+    /// this reading alone. An owner's read: the proof is revalidated.
+    pub fn pending_root_request_listing(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Vec<ListedRootRequest>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let Some(me) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(Vec::new());
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        Ok(fold
-            .pending_owner_work_for(me)
-            .filter_map(|(hash, request)| match request.work {
-                OwnerWorkBody::Root { change, .. } => {
-                    OwnerWorkReceipt::of(&fold, hash).map(|receipt| (hash, change, receipt))
-                }
-                _ => None,
-            })
-            .collect())
+        let mut listed = Vec::new();
+        for (entry, request) in fold.pending_owner_work_for(me) {
+            let OwnerWorkBody::Root { change, .. } = request.work else {
+                continue;
+            };
+            let Some(receipt) = OwnerWorkReceipt::of(&fold, entry) else {
+                continue;
+            };
+            let carrier =
+                self.stored_carrier_reading_in_txn(&txn, &fold, request.carrier, &entry)?;
+            listed.push(ListedRootRequest {
+                entry,
+                change,
+                receipt,
+                carrier,
+            });
+        }
+        Ok(listed)
     }
 
     /// The pickup's arm for the root request signed as entry `hash`, naming
