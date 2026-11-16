@@ -193,7 +193,7 @@ pub(crate) fn pinned_judge_rubric_in_txn(
     Ok(Some(JudgeRubric {
         skill: *skill,
         version: record.version,
-        digest: *blake3::hash(text.as_bytes()).as_bytes(),
+        digest: oneiron_contracts::fingerprint::ContentHash::of(text.as_bytes()).into_bytes(),
         text,
     }))
 }
