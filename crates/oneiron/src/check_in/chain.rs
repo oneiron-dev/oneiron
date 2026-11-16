@@ -392,6 +392,19 @@ pub(super) fn grant_role(
     }
 }
 
+/// The role `agent`'s `grant` reads in check-in ([`grant_role`]), its
+/// membership read from the live roster of the vault the grant names. The
+/// agent erase proposal labels its ask by it (UNBUILT-05; P24-SHAPE Q1 = A).
+pub(crate) fn agent_grant_role_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    grant: &FederationGrant,
+) -> Result<RolePreset> {
+    let membership = membership_role_in_txn(vault, txn, agent, &grant.scope)?;
+    Ok(grant_role(grant, membership))
+}
+
 /// The grantor of the asker's `grant`. For an ask from a spawned child's
 /// run, it is the agent that spawned it ([`PendingCheckIn::spawn_parent`]):
 /// canon's "the parent of a spawned child", which comes before the owner
