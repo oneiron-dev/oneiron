@@ -909,6 +909,26 @@ fn new_kit_keeps_the_binding_the_root_door_signed(kit_change_at: u64) {
 /// standing is still live and the next owner act stands.
 #[test]
 fn switching_to_kit_only_keeps_the_kit_restored_machine_standing() {
+    kit_only_switch_keeps_the_kit_restored_machine_standing(T0);
+}
+
+/// Test 3, aged (Sol carry F1): the switch comes at `AGED`, so the roster
+/// row generation 0 signed at the restore is older than the window when the
+/// switch revokes generation 0, and goes stale at that moment.
+///
+/// Red at the carry chosen after the revocation (6112de42889e): that fold
+/// already reads the head stale, so nothing carried it. The switch then
+/// fails where a later step needs this install's roster standing, or the
+/// post-24 h liveness assertion fails. Green when the carry is chosen before
+/// the revoke: generation 1 signs the next revision, and 24 h later the
+/// standing is still live.
+#[test]
+fn switching_to_kit_only_keeps_an_aged_kit_restored_machine_standing() {
+    kit_only_switch_keeps_the_kit_restored_machine_standing(AGED);
+}
+
+/// Test 3's body, the switch at `kit_change_at` (`T0` or `AGED`).
+fn kit_only_switch_keeps_the_kit_restored_machine_standing(kit_change_at: u64) {
     let source = source();
     let issued = source.issue();
     let confirmed = source.confirm(&issued);
@@ -920,6 +940,11 @@ fn switching_to_kit_only_keeps_the_kit_restored_machine_standing() {
         .restore(&issued, confirmed.activated.root)
         .expect("the kit restores on the fresh machine");
     fresh.assert_on_roster_by(&gen0);
+    if kit_change_at > T0 {
+        advance_to(&fresh.vault, &fresh.clock, kit_change_at);
+        // Generation 0 is live, so its aged row still stands.
+        fresh.assert_on_roster_by(&gen0);
+    }
     fresh.unlock_data_key();
 
     let pieces: Vec<&KitPiece> = issued.pieces.iter().take(2).collect();
@@ -938,7 +963,11 @@ fn switching_to_kit_only_keeps_the_kit_restored_machine_standing() {
     assert_ne!(gen1, gen0, "the switch rotates R");
     assert!(!fresh.is_live(&gen0), "generation 0 is revoked");
 
-    advance_past_window(&fresh.vault, &fresh.clock);
+    advance_to(
+        &fresh.vault,
+        &fresh.clock,
+        kit_change_at + WINDOW_SECS + MARGIN_SECS,
+    );
 
     let (machine, _) = fresh.me();
     let roster = fresh
