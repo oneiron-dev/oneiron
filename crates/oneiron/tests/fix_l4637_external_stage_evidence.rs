@@ -370,3 +370,37 @@ fn held_outcome_cited_by_event_advances() {
         .unwrap(),
     );
 }
+
+#[test]
+fn held_outcome_after_a_non_claim_ref_advances() {
+    let (_dir, vault) = evidence_vault();
+    walk_to_call_booked(&vault);
+    let outcome_claim = record_event_outcome(
+        &vault,
+        test_id(EVENT_SEED),
+        &EventOutcomeClaimValue {
+            outcome: EventOutcome::Held,
+            basis: EventOutcomeBasis::Machine,
+            recorded_at: OUTCOME_AT,
+        },
+        ClaimSource::Observed,
+    )
+    .unwrap();
+
+    // A stored PERSON cited before the held outcome claim is skipped, not
+    // decoded as a claim: the order of the references does not decide.
+    advanced(
+        apply_external_stage_evidence(
+            &vault,
+            &ladder(),
+            &hook(
+                CALL_HELD,
+                StageEvidenceClass::CalendarEventOutcome,
+                vec![test_id(PERSON_SEED), outcome_claim],
+                OUTCOME_AT,
+            ),
+            PromotionMode::Auto,
+        )
+        .unwrap(),
+    );
+}

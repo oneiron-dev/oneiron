@@ -12,7 +12,7 @@ use crate::calendar::claims::decode_event_outcome_value;
 use crate::calendar::outcome::{EventOutcome, PREDICATE_CALENDAR_EVENT_OUTCOME};
 use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageEvidenceClass, StageKey};
 use crate::claim::claim_surfaceable;
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MESSAGE};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_MESSAGE};
 use crate::{EntityId, Result, Vault};
 
 pub use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
@@ -172,22 +172,30 @@ fn evidence_has_entity_type(
 
 /// Whether any cited reference carries a live `held` outcome: the outcome
 /// claim itself, or an EVENT one of its claims is that claim.
+///
+/// The stored type picks the read: only a CLAIM is decoded as a claim, so a
+/// cited EVENT (or any other stored entity) never fails the claim decode and
+/// the answer does not depend on the order of the references.
 fn evidence_has_held_outcome(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     evidence_refs: &[EntityId],
 ) -> Result<bool> {
     for reference in evidence_refs {
-        if is_held_outcome_claim(vault, txn, reference)? {
-            return Ok(true);
-        }
-        if vault.get_entity_type_in_txn(txn, reference)? != Some(ENTITY_TYPE_EVENT) {
-            continue;
-        }
-        for claim_ref in vault.claims_for_subject_in_txn(txn, reference)? {
-            if is_held_outcome_claim(vault, txn, &claim_ref)? {
-                return Ok(true);
+        match vault.get_entity_type_in_txn(txn, reference)? {
+            Some(ENTITY_TYPE_CLAIM) => {
+                if is_held_outcome_claim(vault, txn, reference)? {
+                    return Ok(true);
+                }
             }
+            Some(ENTITY_TYPE_EVENT) => {
+                for claim_ref in vault.claims_for_subject_in_txn(txn, reference)? {
+                    if is_held_outcome_claim(vault, txn, &claim_ref)? {
+                        return Ok(true);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(false)
