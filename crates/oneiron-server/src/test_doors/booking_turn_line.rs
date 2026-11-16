@@ -205,7 +205,10 @@ pub async fn hold_dropped_during_its_write(
 /// A hold's write as the executor runs it once admitted
 /// (`api::booking::lifecycle::run_booking_verb`): `write` on the blocking
 /// pool through the executor's own [`write_holding_line_place`], which holds
-/// the turn's place in the line until `write` returns.
+/// the turn's place in the line until `write` returns. The executor's
+/// hand-off of the place to it (`execute.rs` `Turn::take_place`, then
+/// `execute_hold` and `run_booking_verb`) is not run here: a real hold write
+/// needs a published booking page.
 async fn hold_write(
     mut turn: BookingTurn<'_>,
     write: impl FnOnce() + Send + 'static,
