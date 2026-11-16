@@ -13,7 +13,8 @@
 //! (VOICE-WITHDRAW-AGENT-ON-CALL, VOICE-CONSENT-LOG-WHO = A), under its own
 //! Grant naming the consent-log verb (`VOICE_RECOGNITION_CONSENT_VERB`); the
 //! engine checks that Grant in each write and tells each live owner there,
-//! on its first insertion.
+//! on its first insertion. It never logs a live member's consent, and a live
+//! member whose withdrawal it logs is told too (VOICE-CONSENT-LOG-MEMBERS).
 //!
 //! Each lists its rows (`host_door_lists`): the subject and the recorder its
 //! receipt names. The consent log and the print rows are side tables, which

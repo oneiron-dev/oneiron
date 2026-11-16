@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::Vault;
-use crate::authority::EffectiveRead;
+use crate::authority::{ActorBindingStatus, EffectiveRead};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -38,8 +38,13 @@ enum ConsentEventWrite {
 }
 
 /// The producer of the owner's notice that an agent logged a person's
-/// spoken voice-recognition consent or its withdrawal on a call.
+/// spoken voice-recognition consent or its withdrawal on a call, and of the
+/// member's own notice of a logged withdrawal.
 const VOICE_RECOGNITION_NOTIFICATION_PRODUCER: &str = "voice_recognition";
+
+/// The actor class of a person's credential: a slip or an actor binding of
+/// this class marks a member ([`Vault::holds_live_human_credential_in_txn`]).
+const HUMAN_ACTOR_CLASS: &str = "human";
 
 /// How far past this vault's clock a consent logged at a door may be dated:
 /// the recorder's clock skew. Enrolment counts a withdrawal only when it is
@@ -645,7 +650,10 @@ impl Vault {
     /// or a Grant revoked while the request waited, appends and deletes
     /// nothing. On the first insertion each live owner is told in the same
     /// transaction, naming who asked, which consent it was, and the agent and
-    /// Grant that logged it; a replay tells no one again.
+    /// Grant that logged it, and so is the subject when they hold a
+    /// credential in this vault (VOICE-CONSENT-LOG-MEMBERS: a live member's
+    /// withdrawal stands, and the member hears of it); a replay tells no one
+    /// again.
     pub(crate) fn withdraw_voice_consent_logged_by_agent<E: From<Error>>(
         &self,
         agent: EntityId,
@@ -667,15 +675,16 @@ impl Vault {
             basis,
         };
         self.withdraw_voice_consent_admitted(&request, admit_agent, |wtxn, grant| {
-            self.tell_owners_of_logged_withdrawal_in_txn(wtxn, &request, grant)
+            self.tell_of_logged_withdrawal_in_txn(wtxn, &request, grant)
         })
     }
 
     /// One notice per live owner that `request.recorded_by_ref`, an agent
     /// under `grant`, logged `request`'s spoken withdrawal of
-    /// voice-recognition consent. Told again under the same event, a row is
-    /// found, not written twice.
-    fn tell_owners_of_logged_withdrawal_in_txn(
+    /// voice-recognition consent, and one to the subject when they hold a
+    /// credential in this vault ([`Self::holds_live_human_credential_in_txn`]).
+    /// Told again under the same event, a row is found, not written twice.
+    fn tell_of_logged_withdrawal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         request: &VoiceWithdrawalRequest,
@@ -691,26 +700,93 @@ impl Vault {
             grant.to_hex()
         );
         let now = self.instant_in_txn(wtxn)?.secs();
-        for owner in crate::policy_model::owners_in_txn(self, wtxn)? {
+        let owners = crate::policy_model::owners_in_txn(self, wtxn)?;
+        let member = !owners.contains(&request.subject_ref)
+            && self.holds_live_human_credential_in_txn(wtxn, request.subject_ref)?;
+        let member_notice = if member {
+            let who = crate::reaction::person_name_in(self, wtxn, request.recorded_by_ref)?
+                .unwrap_or_else(|| "An agent".to_owned());
+            Some((
+                NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject,
+                request.subject_ref,
+                format!(
+                    "{who} recorded that you asked to stop voice recognition on a call \
+                     (recognition consent withdrawn; logged by agent {} under Grant {})",
+                    request.recorded_by_ref.to_hex(),
+                    grant.to_hex()
+                ),
+            ))
+        } else {
+            None
+        };
+        let owner_notices = owners.into_iter().map(|owner| {
+            (
+                NotificationKind::VoiceRecognitionWithdrawn,
+                owner,
+                detail.clone(),
+            )
+        });
+        for (kind, recipient, detail) in owner_notices.chain(member_notice) {
             self.record_notification_in_txn(
                 wtxn,
                 &NotificationEvent {
-                    kind: NotificationKind::VoiceRecognitionWithdrawn,
+                    kind,
                     source: NotificationSource {
                         producer: VOICE_RECOGNITION_NOTIFICATION_PRODUCER.to_owned(),
-                        event: format!("{subject}:{}:{}", request.event_id, owner.to_hex()),
+                        event: format!("{subject}:{}:{}", request.event_id, recipient.to_hex()),
                         result: Some(request.event_id.clone()),
-                        detail: Some(detail.clone()),
+                        detail: Some(detail),
                         ..NotificationSource::default()
                     },
                     subject_refs: Vec::new(),
-                    recipient: Some(owner),
+                    recipient: Some(recipient),
                     created_at: now,
                     origin_conversation: None,
                 },
             )?;
         }
         Ok(())
+    }
+
+    /// Whether `person` holds a live human credential in this vault, the
+    /// mark of a member (VOICE-CONSENT-LOG-MEMBERS): a live human-class slip
+    /// minted to them, or an active human actor binding that speaks for
+    /// them. A counterparty an agent hears on a call holds neither.
+    pub(crate) fn holds_live_human_credential_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        let holder = person.to_hex();
+        let (bound, slips) = {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let bound = fold.actor_bindings.values().any(|binding| {
+                binding.actor_ref == person
+                    && binding.actor_class == HUMAN_ACTOR_CLASS
+                    && binding.status == ActorBindingStatus::Active
+            });
+            let slips: Vec<[u8; 32]> = fold
+                .slips
+                .mints
+                .iter()
+                .filter(|(_, mint)| {
+                    let claims = &mint.action.claims;
+                    claims.holder_ref == holder
+                        && claims.actor_class.as_deref() == Some(HUMAN_ACTOR_CLASS)
+                })
+                .map(|(id, _)| *id)
+                .collect();
+            (bound, slips)
+        };
+        if bound {
+            return Ok(true);
+        }
+        for id in slips {
+            if self.capability_slip_id_is_live_in_txn(txn, &id)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// The withdrawal transaction: `admit` runs first inside it, so a
