@@ -922,6 +922,9 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
         .vault
         .put_edge(&holder, oneiron::EdgeKind::About, &about, 1.0)
         .unwrap();
+    // The holder reads the question TURN and the PERSON its answer names
+    // (FIX 9917); the fixture's own grant covers the owner only.
+    put_actor_read_grant(&server.vault, holder, None);
     let (handle, answered) =
         oneiron::test_support::settle_outcome_ask(&server.vault, owner, holder, Some("about"))
             .unwrap();
@@ -942,6 +945,15 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
             .put_claim(&EntityId::now(), &body, occurred, at)
             .unwrap();
     }
+    // The asker is no live owner of this vault, so a fact's arrival labels
+    // nothing (FIX OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE): a
+    // projection judges both facts under the asker's saved lane.
+    oneiron::llm::decision::questions::project_bound_outcomes(
+        &server.vault,
+        owner,
+        handle.group_ref,
+    )
+    .unwrap();
     let here = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     assert_eq!(here.tasks_ask_outcomes(&handle).unwrap().len(), 2);
     let outcomes = |page: Value| {

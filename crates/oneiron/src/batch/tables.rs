@@ -211,7 +211,8 @@ crate::side_table::side_tables! {
         [restore: live] [family: unclassified] [tier: canonical];
     /// Owner policy-row change receipt, in sequence order. Key: u64be sequence.
     OWNER_POLICY_CHANGE_RECEIPT: VaultMeta b"owner_policy:change:receipt:v1:" Raw Admitted
-        [restore: live] [family: unclassified] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::policy_model::erase_change_receipt_requester_in_txn;
     /// The owner's `secrets: on | off` switch for the write-door secret scan. Key: ().
     OWNER_POLICY_SECRET_SCAN_MODE: VaultMeta b"owner_policy:secret_scan:mode:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];

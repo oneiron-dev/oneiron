@@ -290,7 +290,8 @@ fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
     assert_eq!(facet_of(&a1)?, at_home);
     replay_project(&vault, a, &a0, 4)?;
     assert_eq!(facet_of(&a1)?, at_home);
-    // A and B name each other past a bound of one world: dark, no facet.
+    // A and B name each other past a bound of one world: dark, so their
+    // rooms read nothing (L7-39-OLDER-PEER).
     let slice = crate::llm::Scope {
         facet: Some(home),
         ..slice
@@ -308,7 +309,7 @@ fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
     let (_, companion) = revisions_of_row(b, &b1)?.pop().ok_or_else(invalid)?;
     put_companion(&vault, &companion, 7)?;
     assert!(!lit(&vault, a)? && !lit(&vault, b)?);
-    assert_eq!(facet_of(&a2)?, None);
-    assert_eq!(facet_of(&b0)?, None);
+    assert_eq!(facet_of(&a2)?, Some(ScopeAxis::Bottom));
+    assert_eq!(facet_of(&b0)?, Some(ScopeAxis::Bottom));
     Ok(())
 }
