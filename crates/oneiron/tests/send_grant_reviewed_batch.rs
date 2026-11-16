@@ -1,17 +1,25 @@
 //! PLAN L3-35 PR 3 (ARCH-0046 #send-grant: "A send needs a press per send,
-//! one press for a reviewed batch, or no press"; Engine ruling L3-35-BATCH =
-//! A, Sat 14 Nov 03:02): one press for a reviewed batch, under the vault's
-//! send grant.
+//! one press for a reviewed batch, or no press"; Engine rulings L3-35-BATCH =
+//! A, Sat 14 Nov 03:02, and L335-BATCH-REACH = A, Mon 16 Nov 12:11): one
+//! press for a reviewed batch, under the vault's send grant.
 //!
-//! - Under a `manual` row with `ask_per: batch`, one Owner press approves
-//!   exactly the reviewed sends: one approve-once proof per send, each the
-//!   digest that send's own per-send press names (the digest its held result
-//!   carries), and no other send's.
+//! The batch tests send in a family whose single press releases a send
+//! today: an agent's native-mail cold sends, which the vault's default mail
+//! row holds for the Owner's press, set up as the native-mail adapter's own
+//! once-press test sets them up (channel_identity_provider/native_mail/tests.rs:
+//! an Active self-held `mail-<id>@` sender bound to the agent, the default
+//! mail row and the self-held sender posture).
+//!
+//! - Under a `manual` row with `ask_per: batch`, one Owner press releases
+//!   exactly the reviewed sends: each is delivered once and replays after,
+//!   and a send outside the batch stays held.
 //! - Under a press per send (`manual` with no `ask_per`, or no send row at
 //!   all), a batch of more than one send is refused and nothing is minted;
-//!   one press still covers one send.
+//!   one press still releases one send.
 //! - A batch that is not exactly the reviewed sends, once each, is refused
 //!   and nothing is minted.
+//! - A send whose family pins its target takes the digest its held result
+//!   names (an agent `email/send` with no sender identity).
 //! - The bundle card's "Approve these sends" press of several sends answers
 //!   a no-op under a press per send, and a grant-mint intent for exactly
 //!   those sends under `ask_per: batch`.
@@ -19,17 +27,16 @@
 //! On PR 2's head this file does not build: `Vault::approve_outbound_batch`
 //! and `ConsentActionDecision::NoopPerSendGrant` do not exist.
 //!
-//! The sends are agent `email/send`s with no sender identity, as the send-row
-//! tests send them: they pin their target, so each has a per-send press
-//! digest. Whether a press then releases a held send is its family's rule
-//! (the mail and artifact-publish presses do), which a batch does not change.
-//!
 //! `cargo test --locked -p oneiron --all-features --test send_grant_reviewed_batch`.
 #![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
 
+use oneiron::channel_identity::{
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
+    SelfHeldShape,
+};
 use oneiron::consent::{AuthenticatedOwner, ConsentGrant, ConsentReceipt, EffectDigest};
 use oneiron::genui::{
     BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentActionDecision,
@@ -38,9 +45,9 @@ use oneiron::genui::{
 };
 use oneiron::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
-    outbound_approve_once_digest,
+    OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionOutcome,
+    OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
+    OutboundIntentTrigger, outbound_approve_once_digest,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -50,8 +57,10 @@ const CHANNEL: &str = "email";
 const VERB: &str = "send";
 const COUNTERPARTY: &str = "noor@example.com";
 const OWNER_PRINCIPAL: &str = "principal:owner";
+const NATIVE_MAIL_DOMAIN: &str = "mail.example.test";
 
 const POLICY_SEED: u8 = 0x73;
+const SENDER_SEED: u8 = 0xD7;
 
 #[derive(Default)]
 struct RecordingSink {
@@ -89,8 +98,13 @@ fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
 
 /// The policy every test runs under: an Auto ceiling for `actor` and the
 /// `check_in` row, and no scoped grant, so nothing covers the agent's send.
-fn send_manifest(actor: EntityId, check_in: Value) -> Vec<u8> {
-    let manifest = json!({
+/// With `native_mail`, also what a native-mail send needs, as the
+/// native-mail once-press test installs it: the vault's default mail row (a
+/// recipient with no introduction is cold, and a cold send holds for the
+/// press) and the self-held sender posture (ONE-1970: silence about it
+/// denies the send).
+fn send_manifest(actor: EntityId, check_in: Value, native_mail: bool) -> Vec<u8> {
+    let mut manifest = json!({
         "schema_version": "1.2",
         "pack_id": "send-grant-reviewed-batch",
         "pack_version": "v1",
@@ -102,13 +116,37 @@ fn send_manifest(actor: EntityId, check_in: Value) -> Vec<u8> {
         ],
         "check_in": check_in,
     });
+    if native_mail {
+        manifest["native_mail_policy"] = json!([{
+            "scope": "vault",
+            "holder": null,
+            "identity": null,
+            "known_first_touch": ["user_introduction", "inbound_first"],
+            "cold_posture": "hold_to_proposal",
+            "max_complaint_rate": 0.002,
+            "max_bounce_rate": 0.02,
+            "max_spam_labels": 0,
+            "allowed_attestation": ["a", "b"],
+            "allowed_warmup": ["established"],
+            "precedence": "nested_narrowing_holder_capped_at_vault",
+        }]);
+        manifest["scoped_grants"] = json!([]);
+        manifest["act_policy"] = json!([{
+            "act_class": "channel_identity.outbound_send",
+            "subject_class": "self_held",
+            "posture": "require_capability",
+        }]);
+    }
     rmp_serde::to_vec_named(&manifest).expect("a manifest body")
 }
 
 /// A vault, the agent that sends and the Owner's proof, under
 /// [`send_manifest`] with `check_in`, opened as the send-row tests open
 /// theirs.
-fn vault_under(check_in: Value) -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwner) {
+fn open_vault(
+    check_in: Value,
+    native_mail: bool,
+) -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("a temp dir");
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).expect("open the vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -125,11 +163,49 @@ fn vault_under(check_in: Value) -> (tempfile::TempDir, Vault, EntityId, Authenti
     oneiron::test_support::put_policy_manifest_bytes(
         &vault,
         EntityId::from_bytes([POLICY_SEED; 16]).expect("the manifest id"),
-        &send_manifest(actor, check_in),
+        &send_manifest(actor, check_in, native_mail),
     )
     .expect("put the policy manifest");
     let owner = owner_proof(&vault);
     (dir, vault, actor, owner)
+}
+
+/// [`open_vault`] for sends with no sender identity.
+fn vault_under(check_in: Value) -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwner) {
+    open_vault(check_in, false)
+}
+
+/// [`open_vault`] with the mail policy, and the agent's Active native-mail
+/// sender (a self-held `mail-<id>@` address, bound to the agent).
+fn native_vault_under(
+    check_in: Value,
+) -> (
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    AuthenticatedOwner,
+    EntityId,
+) {
+    let (dir, vault, actor, owner) = open_vault(check_in, true);
+    let sender = EntityId::from_bytes([SENDER_SEED; 16]).expect("the sender id");
+    let row = ChannelIdentity::requested(
+        CHANNEL,
+        format!("mail-{}@{NATIVE_MAIL_DOMAIN}", sender.to_hex()),
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(actor),
+        1,
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        1,
+    )
+    .expect("bind the sender")
+    .step(ChannelIdentityStep::Fulfill, 1)
+    .expect("fulfil the sender");
+    vault
+        .create_channel_identity(&sender, &row)
+        .expect("create the native-mail sender");
+    (dir, vault, actor, owner, sender)
 }
 
 /// The send grant at one press for a reviewed batch.
@@ -162,7 +238,8 @@ fn no_send_row() -> Value {
     })
 }
 
-/// One agent `email/send`, as the send-row tests dispatch it.
+/// One agent `email/send` with no sender identity, as the send-row tests
+/// dispatch it.
 fn send(actor: EntityId, intent_ref: &str) -> OutboundDispatchRequest {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(actor.to_hex(), VERB, CHANNEL, COUNTERPARTY)
@@ -181,11 +258,62 @@ fn send(actor: EntityId, intent_ref: &str) -> OutboundDispatchRequest {
     .counterparty_ref(COUNTERPARTY)
 }
 
-/// The digest `request`'s own per-send press names.
-fn press_digest(vault: &Vault, request: &OutboundDispatchRequest) -> EffectDigest {
-    outbound_approve_once_digest(vault, request)
-        .expect("the send prepares")
-        .expect("an email send pins its target, so it has a press digest")
+/// One agent native-mail send from `sender` to `recipient`, a cold
+/// recipient, as the native-mail once-press test sends it.
+fn native_send(
+    actor: EntityId,
+    sender: EntityId,
+    intent_ref: &str,
+    recipient: &str,
+) -> OutboundDispatchRequest {
+    let intent = OutboundIntent::from_trigger(
+        OutboundIntentDraft::new(actor.to_hex(), VERB, CHANNEL, recipient)
+            .content_ref("draft:reviewed"),
+        OutboundIntentTrigger::agent_immediate("session:send-grant"),
+    );
+    OutboundDispatchRequest::new(
+        format!("outbound:{intent_ref}"),
+        intent_ref,
+        intent,
+        OutboundDispatchActor::agent(actor),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1_000,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    )
+    .channel_identity_ref(sender)
+}
+
+/// Three native-mail sends from `sender`, each to its own cold recipient.
+fn three_native_sends(actor: EntityId, sender: EntityId) -> [OutboundDispatchRequest; 3] {
+    [
+        ("intent:one", "noor@example.org"),
+        ("intent:two", "yuki@example.org"),
+        ("intent:three", "owen@example.org"),
+    ]
+    .map(|(intent_ref, recipient)| native_send(actor, sender, intent_ref, recipient))
+}
+
+fn dispatch(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    sink: &mut RecordingSink,
+) -> OutboundDispatchResult {
+    vault
+        .dispatch_outbound_intent(request.clone(), sink)
+        .expect("the dispatch runs")
+}
+
+/// Dispatches each of `requests` and asserts it is held for its press.
+fn assert_held(vault: &Vault, requests: &[OutboundDispatchRequest], sink: &mut RecordingSink) {
+    for request in requests {
+        let held = dispatch(vault, request, sink);
+        assert_eq!(
+            held.outcome.as_str(),
+            "held",
+            "{} waits for its press: {held:?}",
+            request.intent_ref
+        );
+    }
 }
 
 fn refs(intent_refs: &[&str]) -> Vec<String> {
@@ -206,110 +334,87 @@ fn approved_digest(receipt: &ConsentReceipt) -> EffectDigest {
     }
 }
 
-/// Whether `digest` is still unpressed: the Owner's own approve-once press on
-/// it lands. A digest a batch already approved refuses as spent.
-fn unpressed(vault: &Vault, owner: &AuthenticatedOwner, digest: EffectDigest) -> bool {
-    vault.approve_once(owner, digest).is_ok()
-}
-
 #[test]
-fn one_press_approves_exactly_the_reviewed_batch() {
-    let (_dir, vault, actor, owner) = vault_under(batch_row());
-    let sends = ["intent:one", "intent:two", "intent:three"].map(|named| send(actor, named));
+fn one_press_releases_exactly_the_reviewed_batch() {
+    let (_dir, vault, actor, owner, sender) = native_vault_under(batch_row());
+    let sends = three_native_sends(actor, sender);
     let mut sink = RecordingSink::default();
-    let digests = sends
-        .iter()
-        .map(|request| {
-            let held = vault
-                .dispatch_outbound_intent(request.clone(), &mut sink)
-                .expect("the dispatch runs");
-            assert_eq!(
-                held.gate_outcome, "pending",
-                "the row holds the send: {held:?}"
-            );
-            let digest = press_digest(&vault, request);
-            assert_eq!(
-                held.approval_digest.as_deref(),
-                Some(digest.to_hex().as_str()),
-                "the held send names the digest its own press carries"
-            );
-            digest
-        })
-        .collect::<Vec<_>>();
+    assert_held(&vault, &sends, &mut sink);
     assert_eq!(sink.calls, 0, "a held send never reaches the transport");
 
     let receipts = vault
         .approve_outbound_batch(&owner, &refs(&["intent:two", "intent:one"]), &sends[..2])
         .expect("one press approves the reviewed batch");
-
     assert_eq!(
-        receipts.iter().map(approved_digest).collect::<Vec<_>>(),
-        digests[..2].to_vec(),
-        "one approve-once proof per reviewed send, each its own press's digest"
+        receipts.len(),
+        2,
+        "one approve-once proof per reviewed send"
     );
-    for digest in &digests[..2] {
-        assert!(
-            !unpressed(&vault, &owner, *digest),
-            "the batch spent each reviewed send's press"
+
+    for request in &sends[..2] {
+        let sent = dispatch(&vault, request, &mut sink);
+        assert_eq!(
+            sent.outcome.as_str(),
+            "delivered_to_channel",
+            "the batch press releases {}: {sent:?}",
+            request.intent_ref
         );
     }
-    assert!(
-        unpressed(&vault, &owner, digests[2]),
-        "a send the holder did not review keeps its own press"
+    assert_eq!(sink.calls, 2);
+    assert_held(&vault, &sends[2..], &mut sink);
+    let again = dispatch(&vault, &sends[0], &mut sink);
+    assert_eq!(again.outcome.as_str(), "delivered_to_channel", "{again:?}");
+    assert_eq!(
+        sink.calls, 2,
+        "a released send replays and is never sent twice"
     );
 }
 
 #[test]
-fn a_press_per_send_refuses_a_batch_and_mints_nothing() {
-    let (_dir, vault, actor, owner) = vault_under(per_send_row());
-    let sends = ["intent:one", "intent:two"].map(|named| send(actor, named));
+fn a_per_send_row_refuses_a_batch_press() {
+    let (_dir, vault, actor, owner, sender) = native_vault_under(per_send_row());
+    let sends = three_native_sends(actor, sender);
+    let mut sink = RecordingSink::default();
+    assert_held(&vault, &sends[..2], &mut sink);
 
     let refused =
-        vault.approve_outbound_batch(&owner, &refs(&["intent:one", "intent:two"]), &sends);
-
+        vault.approve_outbound_batch(&owner, &refs(&["intent:one", "intent:two"]), &sends[..2]);
     assert!(
         refused.is_err(),
         "a per-send grant takes no batch press: {refused:?}"
     );
-    for request in &sends {
-        assert!(
-            unpressed(&vault, &owner, press_digest(&vault, request)),
-            "a refused batch mints no approval"
-        );
-    }
+    assert_held(&vault, &sends[..2], &mut sink);
+
+    vault
+        .approve_outbound_batch(&owner, &refs(&["intent:one"]), &sends[..1])
+        .expect("one press still releases one send");
+    let sent = dispatch(&vault, &sends[0], &mut sink);
+    assert_eq!(sent.outcome.as_str(), "delivered_to_channel", "{sent:?}");
+    assert_held(&vault, &sends[1..2], &mut sink);
+    assert_eq!(sink.calls, 1);
 }
 
 #[test]
-fn with_no_send_row_a_batch_is_refused_and_one_send_is_pressed() {
-    let (_dir, vault, actor, owner) = vault_under(no_send_row());
-    let sends = ["intent:one", "intent:two"].map(|named| send(actor, named));
+fn with_no_send_row_a_batch_press_is_refused() {
+    let (_dir, vault, actor, owner, sender) = native_vault_under(no_send_row());
+    let sends = three_native_sends(actor, sender);
+    let mut sink = RecordingSink::default();
 
     let refused =
-        vault.approve_outbound_batch(&owner, &refs(&["intent:one", "intent:two"]), &sends);
+        vault.approve_outbound_batch(&owner, &refs(&["intent:one", "intent:two"]), &sends[..2]);
+
     assert!(
         refused.is_err(),
         "the shipped defaults ask a press per send: {refused:?}"
     );
-
-    let receipts = vault
-        .approve_outbound_batch(&owner, &refs(&["intent:one"]), &sends[..1])
-        .expect("one press covers one send under any grant");
-    assert_eq!(
-        receipts.iter().map(approved_digest).collect::<Vec<_>>(),
-        vec![press_digest(&vault, &sends[0])]
-    );
-    assert!(
-        unpressed(&vault, &owner, press_digest(&vault, &sends[1])),
-        "the other send keeps its own press"
-    );
+    assert_held(&vault, &sends[..2], &mut sink);
+    assert_eq!(sink.calls, 0);
 }
 
 #[test]
 fn a_batch_press_must_name_exactly_the_reviewed_sends() {
-    let (_dir, vault, actor, owner) = vault_under(batch_row());
-    let one = send(actor, "intent:one");
-    let two = send(actor, "intent:two");
-    let three = send(actor, "intent:three");
+    let (_dir, vault, actor, owner, sender) = native_vault_under(batch_row());
+    let [one, two, three] = three_native_sends(actor, sender);
 
     let other_send = vault.approve_outbound_batch(
         &owner,
@@ -329,10 +434,46 @@ fn a_batch_press_must_name_exactly_the_reviewed_sends() {
     let empty = vault.approve_outbound_batch(&owner, &[], &[]);
     assert!(empty.is_err(), "an empty batch: {empty:?}");
 
-    for request in [&one, &two, &three] {
+    let mut sink = RecordingSink::default();
+    assert_held(&vault, &[one, two, three], &mut sink);
+    assert_eq!(sink.calls, 0, "a refused batch mints no approval");
+}
+
+#[test]
+fn a_pinned_target_send_takes_the_digest_its_held_result_names() {
+    let (_dir, vault, actor, owner) = vault_under(batch_row());
+    let sends = ["intent:one", "intent:two"].map(|intent_ref| send(actor, intent_ref));
+    let mut sink = RecordingSink::default();
+    let named = sends
+        .iter()
+        .map(|request| {
+            let held = dispatch(&vault, request, &mut sink);
+            assert_eq!(held.gate_outcome, "pending", "{held:?}");
+            let digest = outbound_approve_once_digest(&vault, request)
+                .expect("the send prepares")
+                .expect("an email send with no sender pins its target");
+            assert_eq!(
+                held.approval_digest.as_deref(),
+                Some(digest.to_hex().as_str()),
+                "the held send names the digest its own press carries"
+            );
+            digest
+        })
+        .collect::<Vec<_>>();
+
+    let receipts = vault
+        .approve_outbound_batch(&owner, &refs(&["intent:one", "intent:two"]), &sends)
+        .expect("one press approves the reviewed batch");
+
+    assert_eq!(
+        receipts.iter().map(approved_digest).collect::<Vec<_>>(),
+        named,
+        "each send's proof is the digest its held result names"
+    );
+    for digest in named {
         assert!(
-            unpressed(&vault, &owner, press_digest(&vault, request)),
-            "a refused batch mints no approval"
+            vault.approve_once(&owner, digest).is_err(),
+            "the batch spent that press"
         );
     }
 }
