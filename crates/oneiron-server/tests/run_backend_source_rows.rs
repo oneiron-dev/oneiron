@@ -98,7 +98,7 @@ async fn admitted_rows(call: Call) -> Vec<Option<Vec<EntityId>>> {
         .seat(ModelRole::GenerativeReasoner)
         .expect("the reasoner's seat");
     let receipts = Arc::new(MemoryReceipts::default());
-    let run = undeclared_run("run-backend-rows", budget(), None, Arc::clone(&receipts));
+    let run = undeclared_run("run-backend-rows", budget(), None, receipts.clone());
     let backend = RunBackend::new(Arc::clone(&seat.ladder), run);
     // The caller's lease is the caller's own meter's: the backend sends on
     // its run's permits.
