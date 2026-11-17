@@ -562,6 +562,7 @@ pub(super) fn fold_entry_state(
                 state
                     .passkey_vouch_confirmations
                     .insert(enroll.device.key.clone());
+                super::owner_proof::remember_owner_key(&mut state, &enroll.device.key);
             }
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);

@@ -366,8 +366,9 @@ pub(super) struct FoldState {
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
     /// Every key the fold ever held as the owner's, merged by union (the
     /// owner's ruling AUTH-5): each roster key that proved for the owner when
-    /// it joined the roster ([`super::owner_proof::remember_owner_key`]). It
-    /// only grows. A roster row cannot serve as this memory: a revoke keeps
+    /// it joined the roster, or, for a key only a passkey vouched for, when
+    /// it was confirmed ([`super::owner_proof::remember_owner_key`]). It only
+    /// grows. A roster row cannot serve as this memory: a revoke keeps
     /// the row, but a second enrolment of the key on another branch narrows
     /// its roles or marks it as the host's, and the row then reads as a key
     /// that never proved.

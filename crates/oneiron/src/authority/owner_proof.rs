@@ -112,10 +112,12 @@ fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
 
 /// Remembers `key` as one the fold held as the owner's, when it can give the
 /// owner's proof in `state` ([`gives_owner_proof`]): the roster's writer
-/// calls it for each row it writes, in the state that then holds the row. A
-/// key gains its proof only by joining the roster (roles only narrow, a
-/// custody mark only spreads, a revoke is for good), so no later row needs a
-/// look.
+/// calls it for each row it writes, in the state that then holds the row,
+/// and the confirmation of a passkey's vouch calls it once the key is
+/// confirmed. A key gains its proof only by joining the roster, or, for a
+/// key only a passkey vouched for, by that confirmation (roles only narrow,
+/// a custody mark only spreads, a revoke is for good, a passkey's vouch is
+/// recorded before the key's roster row), so no other row needs a look.
 pub(super) fn remember_owner_key(state: &mut FoldState, key: &AuthorityKey) {
     if gives_owner_proof(state, key) {
         state.owner_keys_ever.insert(key.clone());
