@@ -76,6 +76,7 @@ pub mod conversation_membership_index;
 pub mod conversation_training_fold;
 pub mod credit_decay_fit;
 pub mod curator_finding;
+pub mod custody_numbered_input;
 pub mod dag_append;
 pub mod data_key_custody_head;
 pub mod data_key_preset_switch;
