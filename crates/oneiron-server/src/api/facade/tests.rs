@@ -207,6 +207,9 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
             b"holder",
         )
         .unwrap();
+    // The holder reads the question TURN through a read grant (FIX 9917,
+    // validate_task_answer_unit); the review grant below is no read.
+    crate::api::tests::put_actor_read_grant(&vault, second, None);
     let token = |actor: EntityId, scope: &str| {
         format!(
             "{}scope={scope};principal_ref={};actor_class=human",

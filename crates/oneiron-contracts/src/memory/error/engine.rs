@@ -11,6 +11,9 @@ impl From<Error> for MemoryError {
         if let Error::CheckInPending(check_in) = &err {
             return Self {
                 reason_codes: vec![format!("{CHECK_IN_PENDING_REASON_PREFIX}{check_in}")],
+                pending: Some(Box::new(MemoryPending::CheckIn {
+                    check_in: check_in.clone(),
+                })),
                 ..Self::new(
                     MEMORY_CODE_CHECK_IN_PENDING,
                     err.to_string(),
