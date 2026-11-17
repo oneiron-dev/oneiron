@@ -102,8 +102,8 @@ pub use client::{
     SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
-    ResidenceModeChange, SyncConnection,
+    ConnectionConfig, DeviceResidence, FetchConditions, HomeNodeTopology, HomeRoute, HomeSearch,
+    LocalUpdate, ResidenceModeChange, SyncConnection,
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;

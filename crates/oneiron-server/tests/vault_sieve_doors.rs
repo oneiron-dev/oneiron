@@ -319,6 +319,7 @@ fn witness_turn(
             quote: None,
         }],
         assertions: Default::default(),
+        project: None,
     };
     fixture
         .vault

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::reopen_after_restart::{oneiron, stdout};
 
-const ENGINE_SWEEPS: [&str; 19] = [
+const ENGINE_SWEEPS: [&str; 20] = [
     "secret_lease_expiry",
     "critical_confirm_expiry",
     "symbol_lease_expiry",
@@ -24,6 +24,7 @@ const ENGINE_SWEEPS: [&str; 19] = [
     "drafter_corpus_sweep",
     "model_pack_retirement",
     "oauth_expiry",
+    "esign_token_expiry",
 ];
 
 fn outcomes(report: &Value) -> Vec<(String, String)> {

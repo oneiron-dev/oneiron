@@ -169,11 +169,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
         }
-        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
-        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
-        // withdrawal admits.
-        Proof::RecognitionWithdrawer => {
-            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
+        // The recognition consent and withdrawal doors (VOICE-CONSENT-LOG-WHO = A,
+        // VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as `SharedPerson`, or an
+        // agent whose own Grant naming the consent-log verb the engine's recorder admits.
+        Proof::RecognitionRecorder => {
+            crate::api::facade::voice_recognition_doors::recorder_admits(server, auth, verb)
         }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
@@ -218,6 +218,14 @@ pub(in crate::api::facade) fn door_admits(
         // their own slip, bound to it, as the door answers under.
         Proof::CheckInHolder => {
             crate::api::facade::check_in_doors::holder_proof(server, auth, verb).map(drop)
+        }
+        // `vault.cleanup.decide` (RESTRICTION-WAVE-10 C43): the owner's proof, or a credential
+        // bound to an agent, which the door admits only while the owner's
+        // vault_cleanup.decide.owner_only is off, on a Grant naming the verb, and when the
+        // credential is bound to no invitation, record or channel. Any other caller keeps the
+        // owner refusal.
+        Proof::CleanupDecider => {
+            crate::api::facade::cleanup_doors::decider(server, auth, verb).map(drop)
         }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own

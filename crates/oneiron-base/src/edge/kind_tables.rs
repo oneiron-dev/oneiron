@@ -43,6 +43,9 @@ pub const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         // CMT-4 (ONE-1541): a brief discharging an obligation says nothing
         // about retrieval relevance, so neither ruled direction is traversed.
         EdgeKind::Fulfills | EdgeKind::DischargedBy => None,
+        // A summary's carried working set orders a rehydration seed; it is
+        // no retrieval relevance.
+        EdgeKind::Carries => None,
         EdgeKind::DerivedFrom => Some(0.2),
         EdgeKind::Mentions => Some(0.6),
         EdgeKind::About => Some(0.5),
@@ -120,6 +123,8 @@ pub fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         | EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo
         // A Retry reply's link is written with the reply, by its stream.
         | EdgeKind::Regenerates
+        // An epoch summary's carried working set is written by its mint.
+        | EdgeKind::Carries
         // ONE-1414: `same_as` is structural and its writes belong to the
         // federation coreference door (`put_coreference_link`), which writes
         // the link and its status Claim in ONE transaction under an actor

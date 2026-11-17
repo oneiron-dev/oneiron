@@ -446,6 +446,7 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
     };
     let mut gateway = McpGatewayError::new(code, error.code().as_str(), error.message());
     gateway.room_join_hold = error.room_join_hold().cloned().map(Box::new);
+    gateway.pending = error.pending().cloned().map(Box::new);
     if let ApiErrorDetails::BadRequest { field } = error.details()
         && let Some(field) = field
     {
@@ -690,6 +691,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("room_join_hold".to_owned(), json!(*room_join_hold));
+    }
+    if let Some(pending) = error.pending
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("pending".to_owned(), json!(*pending));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
