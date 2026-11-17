@@ -257,7 +257,15 @@ impl Vault {
                     && grant.role == crate::federation::FederationGrantRole::Owner
                     && grant.scope == FederationGrantScope::vault(creation.vault_id)
                     && grant.confers_at(now)
-            }) && crate::federation::shared_grant_row_in_fold(&fold, id, &body, now).is_some()
+            }) && crate::federation::shared_grant_row_in_fold(
+                &self.store,
+                &fold,
+                txn,
+                id,
+                &body,
+                now,
+            )?
+            .is_some()
             {
                 return Ok(true);
             }

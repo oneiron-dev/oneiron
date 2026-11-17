@@ -705,8 +705,16 @@ impl crate::Vault {
             else {
                 continue;
             };
-            let Some(row) =
-                crate::federation::grant_row_in_fold(&fold, id, &body, shared_scope.as_ref(), now)
+            let Some(row) = crate::federation::grant_row_in_fold(
+                &self.store,
+                &fold,
+                txn,
+                id,
+                &body,
+                shared_scope.as_ref(),
+                &owners,
+                now,
+            )?
             else {
                 continue;
             };

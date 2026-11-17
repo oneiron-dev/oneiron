@@ -14,9 +14,9 @@
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::{invoke, project_goal_get_as_owner};
-use oneiron::test_doors::coach::{coach, define_agent, write_root_goal};
+use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERBS, coach, define_agent, write_root_goal};
 use oneiron::test_doors::steward::{
-    STEWARD_READ_VERB, STEWARD_VERBS, open_owner_carrier_vault, owner, stand_steward_grant,
+    STEWARD_READ_VERB, open_owner_carrier_vault, owner, stand_steward_grant,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use serde_json::{Value, json};
@@ -72,16 +72,13 @@ fn a_read_holder_reads_the_goal_and_others_are_refused() {
     assert_eq!(goal_text(&answer), Some(goal.as_str()));
 
     // The Coach reads it through its own grant, and the grant is checked at
-    // each call: narrowed to verbs without `read`, it reads nothing.
+    // each call: narrowed to its engine controls, without `read`, it reads
+    // nothing. A Coach row naming verbs beyond its default table counts for
+    // nothing (pass 28 R4), so the narrowing stays inside that table.
     let coach = coach(&vault).expect("the Coach");
     stand_steward_grant(&vault, coach, &[STEWARD_READ_VERB]).expect("the Coach's read");
     let answer = goal_get(&vault, coach, EdgeActorClass::System, project).expect("the Coach reads");
     assert_eq!(goal_text(&answer), Some(goal.as_str()));
-    let without_read: Vec<&str> = STEWARD_VERBS
-        .iter()
-        .copied()
-        .filter(|verb| *verb != STEWARD_READ_VERB)
-        .collect();
-    stand_steward_grant(&vault, coach, &without_read).expect("narrowed off read");
+    stand_steward_grant(&vault, coach, &ENGINE_CONTROLS_VERBS).expect("narrowed off read");
     assert_refused(goal_get(&vault, coach, EdgeActorClass::System, project));
 }

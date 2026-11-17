@@ -248,7 +248,9 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
     let (_dir, server) = test_server();
     let key = "1970-01";
     let id = entity_id(90);
-    let member = entity_id(91);
+    // R4: the bare Member row stands for nothing; the update runs as the vault's live owner
+    // on the own-device Grant (Member scope kept, role/preset Owner).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     server
         .vault
         .put_entity(
@@ -260,12 +262,14 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         )
         .unwrap();
     let grant_id = entity_id(92);
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         selector_grant_scope(),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 1).unwrap();
     let server_doc = server
         .get_or_create_window(&WindowKey::new(key))
@@ -299,7 +303,7 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
     let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
@@ -309,7 +313,7 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={};actor_class=human",
-            member.to_hex()
+            owner.to_hex()
         ),
     );
     let bind = crate::livequery::test_wire::request(
@@ -1018,14 +1022,18 @@ async fn selector_vv_request_sends_filtered_update_only() {
     let window_key = WindowKey::new(key);
     let server_doc = server.get_or_create_window(&window_key).await.unwrap();
 
-    let member = entity_id(0x31);
+    // R4: the bare Viewer row stands for nothing; the fetch runs as the vault's live owner
+    // on the own-device Grant (ReadOnly scope kept, role/preset Owner).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Viewer,
         oneiron::federation::FederationGrantPreset::ReadOnly,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
 
@@ -1114,7 +1122,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
         vec![
@@ -1129,7 +1137,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member).await;
+    bind_selector_test_auth(&server, &mut conn_state, owner).await;
     handle_window_sync(
         &server,
         1,
@@ -1172,20 +1180,24 @@ async fn selector_connection_rejects_full_window_bypass() {
         .unwrap();
     server_doc.commit();
 
-    let member = entity_id(0x41);
+    // R4: the bare Viewer row stands for nothing; the fetch runs as the vault's live owner
+    // on the own-device Grant (ReadOnly scope kept, role/preset Owner).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Viewer,
         oneiron::federation::FederationGrantPreset::ReadOnly,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
@@ -1196,7 +1208,7 @@ async fn selector_connection_rejects_full_window_bypass() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member).await;
+    bind_selector_test_auth(&server, &mut conn_state, owner).await;
     handle_window_sync(
         &server,
         1,
@@ -1316,13 +1328,19 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
     let server_doc = server.get_or_create_window(&window_key).await.unwrap();
 
     let member = entity_id(0x62);
+    // R4: the bare Viewer row stands for nothing; the fetch runs as the vault's live owner
+    // on the own-device Grant (ReadOnly scope kept, role/preset Owner). The claim stays about
+    // the member.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Viewer,
         oneiron::federation::FederationGrantPreset::ReadOnly,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
 
@@ -1360,7 +1378,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet_allowed],
         vec![
@@ -1375,7 +1393,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member).await;
+    bind_selector_test_auth(&server, &mut conn_state, owner).await;
     handle_window_sync(
         &server,
         1,
@@ -1395,7 +1413,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let narrowed_selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
@@ -2947,19 +2965,24 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
         },
     )
     .unwrap();
-    let member = entity_id(0x45);
+    // R4: the bare Viewer row stands for nothing; the burst runs as the vault's live owner
+    // on the own-device Grant (ReadOnly scope kept, role/preset Owner). The impostor stays a
+    // different principal.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Viewer,
         oneiron::federation::FederationGrantPreset::ReadOnly,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
@@ -2969,13 +2992,13 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
             .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut state, member).await;
+    bind_selector_test_auth(&server, &mut state, owner).await;
     // Holder proofs are dated by the held store clock but checked against the
     // authority clock, which keeps real time: bind every connection up front.
     let mut impostor = test_selector_conn_state();
     bind_selector_test_auth(&server, &mut impostor, entity_id(0x46)).await;
     let mut reconnected = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut reconnected, member).await;
+    bind_selector_test_auth(&server, &mut reconnected, owner).await;
     let mut saw_defer = false;
     // More than the retired 64-window quota. Every valid request completes,
     // either immediately or by redeeming its durable response identity.
@@ -3145,18 +3168,23 @@ async fn document_batch_exchange(version: u8) {
             .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
             .unwrap();
     }
-    let member = oneiron::EntityId::now();
+    // R4: the bare Member row stands for nothing; the exchange runs as the vault's live
+    // owner on the own-device Grant (Member scope kept, role/preset Owner). The impostor stays a
+    // different principal.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = oneiron::EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         test_selector_scope(),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&server.vault, &grant_id, &grant, 1).unwrap();
     let selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
@@ -3173,7 +3201,7 @@ async fn document_batch_exchange(version: u8) {
     }
     let empty_selector = oneiron::sync::SyncSelector::new(
         grant_id,
-        member,
+        owner,
         oneiron::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
@@ -3223,7 +3251,7 @@ async fn document_batch_exchange(version: u8) {
         Err(ProtocolError::InvalidPayload(_))
     ));
     assert!(replies.try_recv().is_err());
-    bind_selector_test_auth(&server, &mut state, member).await;
+    bind_selector_test_auth(&server, &mut state, owner).await;
     handle_sync_message(
         &server,
         1,
@@ -3273,7 +3301,7 @@ async fn document_batch_exchange(version: u8) {
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={}",
-            member.to_hex()
+            owner.to_hex()
         ),
     ));
     handle_sync_message(

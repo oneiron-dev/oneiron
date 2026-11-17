@@ -190,7 +190,15 @@ impl Vault {
         // guest's on its Active pact too), and none whose line a counted act ended.
         Ok(
             if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
-                super::shared_grant_row_in_fold(&context.fold, id, &body, context.now).is_some()
+                super::shared_grant_row_in_fold(
+                    &self.store,
+                    &context.fold,
+                    txn,
+                    id,
+                    &body,
+                    context.now,
+                )?
+                .is_some()
             } else {
                 super::guest_grant_in_fold(&context.fold, id, &body, context.now).is_some()
             },

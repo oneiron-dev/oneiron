@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
+use oneiron::authority::MachineRole;
 use oneiron::conversation_dag::{ScopePath, ScopeSelector};
 use oneiron::dreamer_consolidation::ScopeSummaryExecutor;
 use oneiron::dreamer_runner::{
@@ -43,8 +44,8 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
-    put_selector_test_federation_grant,
 };
+use oneiron::test_doors::grant_act::give_member_grant_as_writer;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallPurpose, ContentPart,
     DreamerAttemptExecution, DreamerAttemptExecutor, EdgeActorClass, EntityId, FinishReason,
@@ -444,7 +445,14 @@ fn a_selector_window_carries_no_summary_words_its_member_does_not_read() {
         FederationGrantPreset::Member,
     );
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now).expect("federation grant");
+    // Pass 28 R4: a member's row stands only on its counted giving, which the owner gives as
+    // the membership writer does, so this install carries acts.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("FIXTURE: a live serving-install profile to carry the owner's giving");
+    give_member_grant_as_writer(&vault, grant_id, &grant, owner)
+        .expect("FIXTURE: the owner gives the member's grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, grant_scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");

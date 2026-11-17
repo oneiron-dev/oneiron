@@ -98,8 +98,8 @@ mod own_device;
 mod pending_act;
 mod shared_act;
 mod shared_creation;
-pub(crate) use own_device::is_own_device_grant;
 pub use own_device::own_device_residence_scope;
+pub(crate) use own_device::{is_own_device_grant, is_provisioned_own_device_row};
 pub(crate) mod vault_id_decimal;
 pub use pending_act::{
     ActExecution, NOTIFICATION_PRODUCER_POLICY_CHANGE, PendingActMatured, PendingActStarted,
@@ -229,7 +229,6 @@ pub(crate) use system_agent_grant::SystemAgentGrantState;
 #[cfg(feature = "sync")]
 pub(crate) use system_agent_grant::SystemAgentNarrowingRows;
 pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
-pub(crate) use system_agent_grant::is_system_agent_steward_grant;
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use system_agent_grant::standing_steward_verbs_in;
 pub use system_agent_grant::{
@@ -240,6 +239,7 @@ pub(crate) use system_agent_grant::{
     StewardRows, SystemAgent, holds_system_agent_grant, steward_grant_of_in, steward_reach_in,
     steward_rows_rewrite,
 };
+pub(crate) use system_agent_grant::{is_engine_default_row, is_system_agent_steward_grant};
 mod engine_controls;
 mod substrate_reads;
 pub(crate) use engine_controls::erase_engine_control_actor_in_txn;

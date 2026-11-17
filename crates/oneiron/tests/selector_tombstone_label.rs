@@ -45,6 +45,7 @@
 #![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
+use oneiron::authority::MachineRole;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
@@ -57,7 +58,9 @@ use oneiron::sync::{
     put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::grant_act::give_member_grant_as_writer;
 use oneiron::test_doors::label_writers::open_member_vault;
+use oneiron::test_support::test_host_issuer;
 use oneiron::write_envelope::claim_body::relationship_scope_of;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DeleteReason,
@@ -68,6 +71,26 @@ use rmpv::Value;
 
 /// The shared vault the federation grant names.
 const SHARED_VAULT_ID: u64 = 7;
+
+/// Stands `grant` at `grant_id` as its holder's own flow stands it (pass 28 R4): the live
+/// owner's own-device Grant is a row no act gives, which the engine derives; any other
+/// holder's row stands only on its counted giving, which `owner` gives here as the
+/// membership writer does.
+fn stand_grant(
+    vault: &Vault,
+    grant_id: EntityId,
+    grant: &FederationGrant,
+    owner: EntityId,
+    now: u64,
+) {
+    if grant.member_ref == owner {
+        put_selector_test_federation_grant(vault, &grant_id, grant, now)
+            .expect("FIXTURE: the owner's own-device grant");
+    } else {
+        give_member_grant_as_writer(vault, grant_id, grant, owner)
+            .expect("FIXTURE: the owner gives the member's grant");
+    }
+}
 
 fn at(time: u64) -> TimeRange {
     TimeRange {
@@ -164,13 +187,22 @@ fn export_through(
 
     let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
     let grant_id = EntityId::now();
-    let mut grant = FederationGrant::new(scope, member, role, preset);
-    // Both roles export under the same Scope, so the role is the only
-    // difference between the two tests.
+    // Pass 28 R4: a row no act gives stands over the residence only as the live owner's
+    // own-device Grant, so the Owner case runs as the owner, and the member's row stands on
+    // the owner's counted giving.
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    vault
+        .ensure_serving_install_profile(&test_host_issuer(), MachineRole::Unanswered)
+        .expect("FIXTURE: a live serving-install profile to carry the owner's giving");
+    let holder = match role {
+        FederationGrantRole::Owner => owner,
+        _ => member,
+    };
+    let mut grant = FederationGrant::new(scope, holder, role, preset);
+    // Both roles export under the same Scope.
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
-        .expect("the member's federation grant");
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    stand_grant(&vault, grant_id, &grant, owner, now);
+    let selector = SyncSelector::new(grant_id, holder, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");
 
@@ -365,6 +397,15 @@ fn a_selector_window_carries_no_tombstone_beside_a_case_shifted_relationship_row
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
         .expect("fixture vault");
+    // The member's row stands on the owner's counted giving (pass 28 R4), so this install
+    // carries acts.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    vault
+        .ensure_serving_install_profile(&test_host_issuer(), MachineRole::Unanswered)
+        .expect("FIXTURE: a live serving-install profile to carry the owner's giving");
     let now = vault.now_recorded_at();
     vault
         .put_entity(
@@ -393,8 +434,7 @@ fn a_selector_window_carries_no_tombstone_beside_a_case_shifted_relationship_row
         FederationGrantPreset::Member,
     );
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
-        .expect("the member's federation grant");
+    stand_grant(&vault, grant_id, &grant, owner, now);
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");

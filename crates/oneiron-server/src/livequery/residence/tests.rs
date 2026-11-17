@@ -37,17 +37,21 @@ fn reply_with_cache(
 /// A window holding two PERSON rows, `[item, other]`, whose bodies carry an unsynced canary, and
 /// the actor's credential and encoded selector under a member grant on it.
 async fn granted_window(server: &SyncServer) -> (CoreAuth, WindowKey, String, [EntityId; 2]) {
-    let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
+    // R4: the bare Member row stands for nothing; the window is granted to the vault's live
+    // owner on the own-device Grant (Member scope kept, role/preset Owner).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let item = EntityId::now();
     let other = EntityId::now();
     let grant_id = EntityId::now();
     let scope = crate::handler::selector_grant_scope();
-    let grant = FederationGrant::new(
+    let mut grant = FederationGrant::new(
         scope,
-        actor,
+        owner,
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
     );
+    grant.role = FederationGrantRole::Owner;
+    grant.preset = FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(
         &server.vault,
         &grant_id,
@@ -75,10 +79,16 @@ async fn granted_window(server: &SyncServer) -> (CoreAuth, WindowKey, String, [E
     }
     let window = WindowKey::from_timestamp(production_tests::AT);
     server.get_or_create_window(&window).await.unwrap();
-    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(encode_sync_selector(&selector).unwrap());
-    let auth = crate::test_credentials::authenticate(server, &production_tests::token("human"));
+    let auth = crate::test_credentials::authenticate(
+        server,
+        &format!(
+            "scope=core:read;principal_ref={};actor_class=human;jti=residence-owner-human",
+            owner.to_hex()
+        ),
+    );
     (auth, window, encoded, [item, other])
 }
 
@@ -172,14 +182,18 @@ async fn a_touch_past_the_live_document_row_is_waited_out() {
 async fn home_search_requires_a_bound_grant_and_never_claims_local_completeness() {
     let (_dir, server) = production_tests::server();
     production_tests::witness(&server, "residencecanary unique search text");
-    let principal = EntityId::from_hex(production_tests::ACTOR).unwrap();
+    // R4: the bare Member row stands for nothing; the search runs as the vault's live owner
+    // on the own-device Grant (Member scope kept, role/preset Owner).
+    let principal = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = EntityId::now();
-    let grant = FederationGrant::new(
+    let mut grant = FederationGrant::new(
         crate::handler::selector_grant_scope(),
         principal,
         FederationGrantRole::Member,
         FederationGrantPreset::Member,
     );
+    grant.role = FederationGrantRole::Owner;
+    grant.preset = FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(
         &server.vault,
         &grant_id,
@@ -194,7 +208,13 @@ async fn home_search_requires_a_bound_grant_and_never_claims_local_completeness(
     let selector = SyncSelector::new(grant_id, principal, SyncSelectorWorld::All, vec![], vec![]);
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(encode_sync_selector(&selector).unwrap());
-    let actor = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
+    let actor = crate::test_credentials::authenticate(
+        &server,
+        &format!(
+            "scope=core:read;principal_ref={};actor_class=human;jti=residence-owner-human",
+            principal.to_hex()
+        ),
+    );
     let request = |selector: &str| {
         json!({
             "query":"residencecanary", "limit":10, "selector":selector,
@@ -256,17 +276,22 @@ pub(crate) async fn cross_the_index(
     callers: usize,
 ) -> crate::admission::Crossing {
     let (_dir, server) = production_tests::server();
-    let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
+    // R4: the bare Member row stands for nothing; the index read runs as the vault's live
+    // owner on the own-device Grant (Member scope kept, role/preset Owner).
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = EntityId::now();
+    let mut grant = FederationGrant::new(
+        crate::handler::selector_grant_scope(),
+        owner,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.role = FederationGrantRole::Owner;
+    grant.preset = FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(
         &server.vault,
         &grant_id,
-        &FederationGrant::new(
-            crate::handler::selector_grant_scope(),
-            actor,
-            FederationGrantRole::Member,
-            FederationGrantPreset::Member,
-        ),
+        &grant,
         production_tests::AT,
     )
     .unwrap();
@@ -289,10 +314,16 @@ pub(crate) async fn cross_the_index(
     }
     let window = WindowKey::from_timestamp(production_tests::AT);
     server.get_or_create_window(&window).await.unwrap();
-    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(encode_sync_selector(&selector).unwrap());
-    let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
+    let auth = crate::test_credentials::authenticate(
+        &server,
+        &format!(
+            "scope=core:read;principal_ref={};actor_class=human;jti=residence-owner-human",
+            owner.to_hex()
+        ),
+    );
     let budgets = ResidenceOperationBudgets {
         index_page_limit: 1,
         max_index_pages: 1,

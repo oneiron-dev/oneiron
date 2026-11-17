@@ -356,9 +356,10 @@ fn asker_grant_in_txn(
 /// Grant reads only while the fold stands behind it (pass 28 R3), never as a
 /// row alone: one over this shared vault on its counted giving, the owner's
 /// agent Grant on his counted mint, a guest's Grant on its counted giving
-/// (R3c; a Connect guest's on its Active pact too); a personal vault's
-/// own-device residence rows are read from themselves until R4
-/// ([`crate::federation::grant_row_in_fold`]).
+/// (R3c; a Connect guest's on its Active pact too); of the rows no act gives,
+/// an own-device Grant while the fold names its holder a live Owner and a base
+/// agent's engine-default Steward Grant within the build's default table
+/// (R4, [`Vault::grant_row_at_in_txn`]).
 pub(super) fn grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -371,16 +372,9 @@ pub(super) fn grant_in_txn(
     else {
         return Ok(None);
     };
-    let shared_scope = vault.shared_vault_scope_in_txn(txn)?;
-    let fold = vault.authority_view_readonly_in_txn(txn)?;
-    Ok(crate::federation::grant_row_in_fold(
-        &fold,
-        *id,
-        &body,
-        shared_scope.as_ref(),
-        vault.store.clock.now_recorded_at(),
-    )
-    .map(|row| row.into_parts().1))
+    Ok(vault
+        .grant_row_at_in_txn(txn, *id, &body, vault.store.clock.now_recorded_at())?
+        .map(|row| row.into_parts().1))
 }
 
 /// `member`'s live membership role on the vault `scope` names, delegate
