@@ -189,6 +189,7 @@ fn turn(turn_ref: Option<String>, messages: Vec<WitnessMessage>) -> WitnessTurn 
         messages,
         occurred_at: NOW,
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     }
 }
@@ -1947,6 +1948,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
                 ..message(0, "room")
             }],
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("room");
