@@ -40,7 +40,7 @@ pub(super) fn apply_in_txn(
             .into_iter()
             .collect();
         let result = crate::vault::entity_revision::redact_claim_value_fields_in_txn(
-            vault, txn, id, &fields, actor,
+            vault, txn, id, &fields,
         )?;
         receipts.push(CooperativeLocalRedaction {
             applied_by: actor,

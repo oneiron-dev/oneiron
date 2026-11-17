@@ -84,10 +84,10 @@ pub(super) fn apply_provider_delete(
     let forget = row.on_provider_delete == MailProviderDeleteSetting::ForgetToo;
     let artifacts = if forget {
         let artifacts = super::attachments::message_artifacts(vault, source, provider_id)?;
-        // A held record refuses before anything goes: a forget a legal hold
-        // stops leaves the copy whole and live, for the next try, never half
-        // erased. The thread's CONVERSATION counts when this is its last
-        // message.
+        // A held record refuses before anything goes: a forget a cooperative
+        // restriction stops leaves the copy whole and live, for the next try,
+        // never half erased. The thread's CONVERSATION counts when this is
+        // its last message.
         let txn = vault.store.env.read_txn()?;
         let mut held = artifacts.clone();
         held.extend(occurrence.messages.iter().copied());
@@ -95,11 +95,7 @@ pub(super) fn apply_provider_delete(
         if !conversation_holds_others_in(vault, &txn, &key, &occurrence.conversation)? {
             held.push(occurrence.conversation);
         }
-        vault.store.reject_legal_holds_in_txn(
-            &txn,
-            &held,
-            &crate::store::legal_hold::HoldActor::UNATTRIBUTED,
-        )?;
+        vault.store.reject_restricted_records_in_txn(&txn, &held)?;
         artifacts
     } else {
         Vec::new()

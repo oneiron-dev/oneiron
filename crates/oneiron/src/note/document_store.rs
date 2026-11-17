@@ -538,7 +538,7 @@ impl Memory<'_> {
                 // A held note keeps its history (OF-470).
                 self.vault()
                     .store
-                    .reject_legal_hold_in_txn(txn, note.as_bytes())?;
+                    .reject_restricted_record_in_txn(txn, note.as_bytes())?;
                 let receipt_id = self.vault().new_entity_id()?;
                 crate::entity_doc::admit_history_erase_in_txn(
                     self.vault(),

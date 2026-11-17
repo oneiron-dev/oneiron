@@ -48,10 +48,12 @@ impl Vault {
 /// an erase's `entity_ids`: a Gate decision's owed scrub, a relayed ask
 /// intent's owed retirement (FIX 20468), a birth or window carrier one of
 /// them made, or a stamp token naming one of them. Only a cooperative
-/// restriction keeps a birth, a token or a carrier, and the birth read scans
-/// every `ROW_BIRTH` row, so it runs only while a restriction row stands. What
-/// a lifted restriction kept waits for the next settle pass
-/// ([`Vault::settle_held_scrubs`]); this read does not see it.
+/// restriction keeps a birth, a token or a carrier, but a lift deletes its
+/// row and settles nothing, so what a lifted restriction kept stays until the
+/// next settle pass ([`Vault::settle_held_scrubs`]) and keeps the erase owed
+/// until then. These reads therefore run whether or not a restriction row
+/// stands (review P1 on #8424); the birth read scans every `ROW_BIRTH` row,
+/// and runs only for a receipt whose every other part is final.
 pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -83,9 +85,6 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     }
     if super::super::erase::held_ask_forward_intents_owed_in_txn(vault, txn, &sources)? {
         return Ok(true);
-    }
-    if !crate::store::legal_hold::any_cooperative_restriction_in_txn(&vault.store, txn)? {
-        return Ok(false);
     }
     if crate::provenance::birth::births_made_by_in_txn(&vault.store, txn, &ids)? {
         return Ok(true);

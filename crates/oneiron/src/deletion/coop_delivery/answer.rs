@@ -4,10 +4,11 @@
 //! (FIX 9784). A legal hold choice places its customer hold there, on this
 //! pact's recipient copies the ask covers only (FIX 2927), and links it to
 //! the answer and the ask (FIX 2924). A delete choice names each record once
-//! (FIX 2925), is refused there before anything is deleted when a legal hold
-//! keeps any of its records, and saves its operation with the answer (FIX
-//! 2926). Its deletes then run one by one through the owner's own delete
-//! rail, outside that writer, each one's observed state saved as it goes.
+//! (FIX 2925), is refused there before anything is deleted when a
+//! cooperative restriction keeps any of its records, and saves its operation
+//! with the answer (FIX 2926). Its deletes then run one by one through the
+//! owner's own delete rail, outside that writer, each one's observed state
+//! saved as it goes.
 
 use std::collections::BTreeSet;
 
@@ -21,7 +22,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::deletion::SafeDeleteReason;
 use crate::deletion::{LegalHold, LegalHoldKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
-use crate::store::legal_hold::{self as hold_store, HoldActor};
+use crate::store::legal_hold as hold_store;
 use crate::{EntityId, Error, Result, Vault};
 
 /// A filed ask's key: its pact, then its nonce.
@@ -37,22 +38,22 @@ impl Vault {
     /// hold is linked to the answer and the ask, and an earlier choice's hold
     /// stays linked and standing (FIX 2924). A delete choice names each
     /// record once, in the order first named; an empty one deletes nothing
-    /// and is recorded (FIX 2925). A legal hold on any of its records, on a
-    /// pad's world or on a redirect shell its erase takes refuses the whole
-    /// choice in that writer, before anything is deleted, naming the held
-    /// records; otherwise the choice and its operation are saved before the
-    /// first delete runs (FIX 2926). The same delete choice again resumes the
-    /// records still pending. Retain-under-basis records only this ask's
-    /// copies still present here, with the owner's basis and retention-class
-    /// codes; non-copies and missing records are left out. Its existing B2
-    /// clamp keeps retained copies out of shared retrieval. Other non-delete
-    /// choices keep their reason code and review date. A restrict choice
-    /// places an independent storage-only state; only explicit owner-attested
-    /// prior external notice lifts this ask's restrictions. A later choice
-    /// alone never lifts them. Review dates do not
-    /// schedule reminders or change retention. Redact can remove exact
-    /// value-map keys from covered ordinary CLAIM copies and their local
-    /// retained history. Its receipts do not claim peer/export convergence.
+    /// and is recorded (FIX 2925). A cooperative restriction on any of its
+    /// records, on a pad's world or on a redirect shell its erase takes
+    /// refuses the whole choice in that writer, before anything is deleted,
+    /// naming the held records; otherwise the choice and its operation are
+    /// saved before the first delete runs (FIX 2926). The same delete choice
+    /// again resumes the records still pending. Retain-under-basis records only
+    /// this ask's copies still present here, with the owner's basis and
+    /// retention-class codes; non-copies and missing records are left out. Its
+    /// existing B2 clamp keeps retained copies out of shared retrieval. Other
+    /// non-delete choices keep their reason code and review date. A restrict
+    /// choice places an independent storage-only state; only explicit
+    /// owner-attested prior external notice lifts this ask's restrictions. A
+    /// later choice alone never lifts them. Review dates do not schedule
+    /// reminders or change retention. Redact can remove exact value-map keys
+    /// from covered ordinary CLAIM copies and their local retained history. Its
+    /// receipts do not claim peer/export convergence.
     pub fn answer_cooperative_deletion_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -113,7 +114,7 @@ impl Vault {
             }
             let delete_operation = match &delete {
                 Some(records) => {
-                    preflight_delete_in_txn(self, txn, actor, records)?;
+                    preflight_delete_in_txn(self, txn, records)?;
                     let saved = filed
                         .disposition
                         .as_ref()
@@ -456,23 +457,22 @@ fn check_hold_records(answer: &CooperativeDeletionAnswer) -> Result<()> {
 }
 
 /// Every record of a delete choice, in the answer's writer, before any is
-/// deleted (FIX 2926): a legal hold on it, on its world when it is a pad, or
-/// on a redirect shell its hard erase takes with it refuses the whole
-/// choice. The refusal is the hold's own, naming the held records; each is
-/// logged once the writer ends. Each delete's own writers check again.
+/// deleted (FIX 2926): a cooperative restriction on it, on its world when
+/// it is a pad, or on a redirect shell its hard erase takes with it refuses
+/// the whole choice. The refusal is the restriction's own, naming the held
+/// records; each is logged once the writer ends. Each delete's own writers
+/// check again.
 fn preflight_delete_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    actor: EntityId,
     records: &[EntityId],
 ) -> Result<()> {
-    let who = HoldActor::owner(actor);
     let mut held = Vec::new();
     let mut refusal = None;
     for id in records {
         let checked = vault
             .store
-            .reject_legal_holds_in_txn(txn, &[*id], &who)
+            .reject_restricted_records_in_txn(txn, &[*id])
             .and_then(|()| {
                 crate::world_keys::reject_held_pad_world_in_txn(&vault.store, txn, &[*id])
             })

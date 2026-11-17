@@ -356,7 +356,7 @@ impl Vault {
             // A held record keeps its history, and so does a pad whose world
             // or sealed claim is held (OF-470).
             self.store
-                .reject_legal_hold_in_txn(txn, entity.as_bytes())?;
+                .reject_restricted_record_in_txn(txn, entity.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, txn, &[*entity])?;
             let receipt_id = EntityId::now();
             super::admit_history_erase_in_txn(

@@ -6,7 +6,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
-use crate::store::legal_hold::HoldActor;
 
 use super::super::erase::{ProvenanceCapture, sweep_extras};
 use super::super::gate::{
@@ -60,13 +59,9 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
-        crate::world_keys::reject_held_pad_world_as_in_txn(
-            &self.store,
-            &wtxn,
-            &[*id],
-            &HoldActor::UNATTRIBUTED,
-        )?;
+        self.store
+            .reject_restricted_record_in_txn(&wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }
