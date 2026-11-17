@@ -257,6 +257,13 @@ objc2-core-ml = { version = "=0.3.2", default-features = false, features = [
     "MLMultiArray", "MLMultiArrayConstraint",
 ] }
 
+# The field editor's save to a draft roots its server on a `MemoryKeystore`, and sends its
+# document through `oneiron::test_support::mark_esign_sent`.
+[[test]]
+name = "esign_editor_draft_fields"
+path = "tests/esign_editor_draft_fields.rs"
+required-features = ["oneiron/test-support"]
+
 # The console echo guard (`commands/owner/secret_input.rs`, FIX 11387),
 # through the binding the workspace already locks; no SDK at build time.
 [target.'cfg(windows)'.dependencies]
@@ -311,6 +318,13 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 [[test]]
 name = "self_desktop_doors"
 path = "tests/self_desktop_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# The model door promises root on a `MemoryKeystore` (`oneiron/test-support`); the trial fixture is
+# the cfg door `oneiron::test_doors::model_binding_proposer`.
+[[test]]
+name = "vault_models_owner_doors"
+path = "tests/vault_models_owner_doors.rs"
 required-features = ["oneiron/test-support"]
 
 # Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
@@ -410,6 +424,13 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 name = "artifact_pinned_document_cache"
 path = "tests/artifact_pinned_document_cache.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# Stores the owner's Daytona key in custody on a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`).
+[[test]]
+name = "sandbox_vendor_daytona"
+path = "tests/sandbox_vendor_daytona.rs"
+required-features = ["oneiron/test-support"]
 
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.

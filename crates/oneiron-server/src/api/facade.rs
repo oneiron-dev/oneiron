@@ -207,6 +207,7 @@ pub(super) mod run_read_doors;
 mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
+mod sandbox_provider_doors;
 mod saved_query_doors;
 // The Schedule primitive's verbs (DESIGN 15-setting-primitive, stage 0.2).
 mod schedule_doors;
@@ -251,6 +252,7 @@ mod support_grant_doors;
 mod sync_quarantine_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod training_run_doors;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
 mod uncertain_send_doors;

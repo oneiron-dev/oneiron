@@ -25,6 +25,7 @@ pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
+pub mod lost_training_waiter;
 pub mod mcp_carrier_release;
 pub mod mcp_code_mode_verbs;
 pub mod mcp_page_mint;
@@ -47,6 +48,8 @@ pub mod refusal_wire;
 pub mod replay_admission;
 pub mod residence_connection;
 pub mod resident_pump;
+#[cfg(target_os = "linux")]
+pub mod sandbox_vendor;
 pub mod seal_judge;
 pub mod signing_session;
 pub mod siwc_seat;

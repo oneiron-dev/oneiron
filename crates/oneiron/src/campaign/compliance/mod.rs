@@ -54,6 +54,7 @@ pub use self::contracts::{
     ComplianceOwnerStamp, CompliancePendingProposal, ComplianceReceipt, ComplianceResult,
     ComplianceResultRequest, ComplianceRowVerification, ComplianceVerifyRequest,
 };
+pub use self::doors::{COMPLIANCE_INSTALL_VERB, COMPLIANCE_REJECT_VERB};
 pub use self::evaluate::{
     ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,
     HydratedListProvenance, evaluate_dispatch_compliance,

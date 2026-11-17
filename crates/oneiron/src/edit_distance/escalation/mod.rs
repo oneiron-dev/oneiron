@@ -59,6 +59,7 @@
 //! ruling covered — and [`StandingPolicy::covers_ask`] is the one place that
 //! comparison happens, so ES-07 consults a decision rather than re-deriving it.
 
+pub(crate) mod archive_restore;
 mod explicit;
 mod ledger;
 mod policy;

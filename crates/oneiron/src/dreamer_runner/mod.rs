@@ -49,7 +49,10 @@ pub(crate) use self::admission::AdmittedBudgetLine;
 pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 
 // Untangle 6.9c PR 3: a strength attempt's in-process credential.
-pub use self::attempt_binding::DreamerAttemptBinding;
+pub use self::attempt_binding::{
+    DreamerAttemptBinding, DreamerDecisionLender, ExtractionDecisionLoan, ExtractionStepLoan,
+    ExtractionStepRequest,
+};
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
@@ -109,7 +112,8 @@ pub use self::program::{
 };
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
-    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
+    ReleaseTurnProgramHoldRequest, release_turn_program_hold_as_delegate,
     release_turn_program_hold_as_owner,
 };
 // FIX 11429: the waking actor's rebind of a turn program to a live slip.

@@ -14,6 +14,18 @@ mod partition_run;
 mod partition_window;
 mod root_bridge;
 
+// The shared verdict execution the bound extraction read runs beside native.
+pub(crate) use decisions::evidence_version_for_row;
+pub(super) use decisions::{
+    ChargeSink, StatePart, VerdictRead, ask_route_for, decide_pack_with_charges,
+    label_questions_with,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use decisions::{
+    NativeFixtureMember, NativePackOutcome, NativeResolutionFixture,
+    native_resolution_pack_for_test,
+};
+
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};

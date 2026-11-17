@@ -467,6 +467,8 @@ pub(crate) use body_envelope::{
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
     response_owners_bound_in_txn, settle_shared_response_in_txn, stamp_opaque_erased,
 };
+#[cfg(all(unix, oneiron_test_support))]
+pub(crate) use body_store::session_spill_name_for_test;
 #[cfg(unix)]
 pub(crate) use body_store::{
     BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,
@@ -494,6 +496,8 @@ pub(crate) use key_custody::ForkedCustodyDir;
 pub use key_custody::custody_container_path;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::custody_entry_reads_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use key_custody::drain_ack_digest_for_test;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
 pub(crate) use key_custody::{

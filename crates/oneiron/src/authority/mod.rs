@@ -138,6 +138,7 @@ mod op_apply;
 mod origin_cut;
 mod owner_act;
 mod owner_choice;
+mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_key_move_confirm;
@@ -419,6 +420,10 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub(crate) use owner_delegate::{
+    OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
+};
+pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
     OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment,
@@ -502,6 +507,8 @@ pub(crate) use checkpoint_adopt::{
     adopted_image_row_key, adopted_pin_row_key, cached_adopted_authority_checkpoint_in_txn,
     cached_adopted_evidence_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use claim_write::row_causal_admitted_cached;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
@@ -569,12 +576,12 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, machine_claim_needs_history,
-    machine_claim_needs_history_observing, machine_claim_read_admitted,
-    machine_claim_signer_bound_in_txn, machine_history_authority_descends,
-    machine_history_authority_descends_with_image, machine_history_host_context,
-    resign_machine_claim_after_mask_in_txn, sign_retained_machine_claim_for_store_in_txn,
-    verify_machine_claim_in_txn,
+    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, history_control_read_admitted,
+    machine_claim_needs_history, machine_claim_needs_history_observing,
+    machine_claim_read_admitted, machine_claim_signer_bound_in_txn,
+    machine_history_authority_descends, machine_history_authority_descends_with_image,
+    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
+    sign_retained_machine_claim_for_store_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

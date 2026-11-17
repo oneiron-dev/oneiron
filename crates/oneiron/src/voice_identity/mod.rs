@@ -31,6 +31,7 @@
 //! corroboration: an authenticated session remains the sole path to an
 //! `Owner`-class interlocutor entry.
 
+pub(crate) mod archive_restore;
 mod codec_core;
 mod codec_records;
 // The law an enrollment is made under, as the trusted host resolved it (FIX 10218).

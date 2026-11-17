@@ -4,10 +4,13 @@
 //! cannot be forged through generic claim writes. Envelope handles are content
 //! addressed and immutable; posture is a pointer, never permission by itself.
 
+pub mod api;
 mod autonomy;
 mod codec;
 mod envelopes;
 mod graduation;
+// The owner's pile of ramp offers: listing, INBOX rows, acceptance.
+mod graduation_offers;
 mod types;
 
 pub use self::types::{
@@ -22,6 +25,8 @@ pub use self::types::{
 
 use self::codec::invalid_autonomy;
 pub(crate) use self::envelopes::AutonomyReader;
+pub use self::graduation_offers::RAMP_OFFER_ITEM_PREFIX;
+pub(crate) use self::graduation_offers::graduation_offer_inbox_items;
 
 #[cfg(test)]
 mod tests;

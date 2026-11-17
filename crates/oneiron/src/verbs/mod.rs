@@ -42,6 +42,7 @@ mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
 mod explain;
+mod extraction_verdict;
 mod fanout_launch;
 mod federation;
 #[cfg(feature = "sync")]
@@ -92,6 +93,7 @@ mod repo_copy_edit;
 mod repo_manifest_conflict;
 mod research;
 mod research_advance;
+mod research_authoring;
 mod research_root;
 mod reservoir_sources;
 mod residence;
@@ -132,6 +134,8 @@ mod support_grant;
 mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
+// ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
+mod training_runs;
 mod trusted_contact;
 mod uncertain_send;
 mod verb_table;
@@ -394,6 +398,7 @@ pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
+pub use self::extraction_verdict::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
 #[cfg(feature = "sync")]
@@ -441,6 +446,7 @@ pub use self::repo_copy_edit::*;
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::research_advance::*;
+pub use self::research_authoring::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -477,6 +483,7 @@ pub use self::support_grant::*;
 pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
+pub use self::training_runs::*;
 pub use self::trusted_contact::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;

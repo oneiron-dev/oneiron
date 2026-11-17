@@ -63,6 +63,7 @@ pub use setup_session::{
 };
 pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
 pub use slack_install::{SlackInstallHold, SlackInstallRedeemed};
+pub(crate) use source::is_script_or_hook_path;
 pub use source::{PackSection, PackSource};
 pub use verb_class_pack::VERB_CLASS_TABLE_FILE;
 

@@ -528,6 +528,7 @@ fn map_intent_ledger_error(error: IntentLedgerError) -> Error {
         IntentLedgerError::InvalidRecord(_)
         | IntentLedgerError::InvalidTransition { .. }
         | IntentLedgerError::InvalidInput(_)
+        | IntentLedgerError::Calendar(_)
         | IntentLedgerError::InvalidBoundActor
         | IntentLedgerError::FailureResultIneligible
         | IntentLedgerError::Step(_) => Error::CorruptedIndex(ERR_INTENT_LEDGER_ROW),
