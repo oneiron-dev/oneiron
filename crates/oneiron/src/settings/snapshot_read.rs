@@ -6,6 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -221,4 +227,25 @@ impl Vault {
             bounds,
         )
     }
+}
+
+/// Lands one archived snapshot-bounds envelope under the owner permit:
+/// [`SnapshotReadSettings::validate`], then an absent-key exact-bytes install, never the
+/// holder-only lower clamp and never an engine-control receipt.
+pub(super) fn land_archived_snapshot_read_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&SETTINGS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&SETTINGS, vault, txn, permit, &key, row)
 }
