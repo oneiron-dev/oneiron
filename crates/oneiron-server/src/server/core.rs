@@ -66,6 +66,9 @@ pub struct SyncServer {
     pub(crate) standing_block_cache: Mutex<oneiron::persona_snapshot::standing::StandingBlockCache>,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
+    /// The connection sessions holding a `broadcast_tx` subscriber now; the
+    /// host's own subscribers are not among them (FIX 23314).
+    pub(crate) broadcast_sessions: crate::broadcast::BroadcastSessions,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
     pub(crate) next_conn_id: AtomicU32,
     /// Serializes lease-registry mutations (ONE-1140, OD-3): two concurrent
@@ -372,6 +375,7 @@ const _: fn(&SyncServer) = |server| {
     fields! {
         vault, invocation_claims, root_doc, ephemeral_store, message_scopes, dreamer_progress,
         standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
+        broadcast_sessions,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
