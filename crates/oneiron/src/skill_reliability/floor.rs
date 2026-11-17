@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -14,47 +15,37 @@ use crate::error::{Error, Result};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::learning::project::StoredEstimateClaim;
 use crate::ports::EntityStoreRead;
-use crate::side_table::{self, Raw, RawValue, SideTable};
+use crate::setting::SettingValue;
 use crate::temporal::TimeRange;
 
 use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
 use super::posterior::{KEY_ALPHA, KEY_BETA};
 use super::read::{active_claims_in_txn, active_reliability_heads_in_txn, posterior_from_estimate};
+use super::setting_keys::RELIABILITY_FLOOR;
 
 /// The floor-crossing PROPOSAL predicate. A proposal to quarantine is a ROW,
 /// never a lifecycle state (`skill.rs` lifecycle machine): the record stays
 /// `active` until a human rules on this claim.
 pub const PREDICATE_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
 
-/// `vault_meta` key of the reliability floor dial. Kept as a public constant for crate
-/// consumers (re-exported from [`crate::skill_reliability`]); `FLOOR` is this module's own
-/// door onto the row and owns the read/write path below.
-pub const SKILL_RELIABILITY_FLOOR_KEY: &[u8] = b"settings:skill:v1:reliability_floor";
+/// The reliability floor: the posterior lower bound a skill must hold to stay out of the
+/// quarantine-proposal path. The catalogue key `skills.reliability_floor` holds it
+/// ([`super::setting_keys::RELIABILITY_FLOOR`]).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct ReliabilityFloor(pub f32);
 
-/// The reliability floor dial. Key: ().
-const FLOOR: SideTable<(), ReliabilityFloorRow, Raw> =
-    SideTable::new(&side_table::SKILL_RELIABILITY_FLOOR);
-
-/// `FLOOR`'s row: four big-endian bytes, finite and within `[0, 1]`. Any other shape is a
-/// corrupted dial rather than a silently-defaulted one.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct ReliabilityFloorRow(f32);
-
-impl RawValue for ReliabilityFloorRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        Ok(self.0.to_be_bytes().to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        let bytes: [u8; 4] = bytes
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("skill reliability floor"))?;
-        let floor = f32::from_be_bytes(bytes);
-        if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
-            return Err(Error::CorruptedIndex("skill reliability floor").into());
+impl SettingValue for ReliabilityFloor {
+    /// A floor is finite and within `[0, 1]`.
+    fn check(self) -> Result<Self> {
+        if self.0.is_finite() && (0.0..=1.0).contains(&self.0) {
+            Ok(self)
+        } else {
+            Err(Error::InvalidConfig(
+                "the reliability floor is finite and within [0, 1]".into(),
+            ))
         }
-        Ok(Self(floor))
     }
 }
 
@@ -83,27 +74,21 @@ const KEY_FLOOR: &str = "floor";
 // Floor crossing
 // ---------------------------------------------------------------------------
 
-/// Reads the reliability floor dial (default [`DEFAULT_SKILL_RELIABILITY_FLOOR`]).
+/// Reads the reliability floor (default [`DEFAULT_SKILL_RELIABILITY_FLOOR`]).
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on a stored floor that does not decode.
 pub fn skill_reliability_floor(vault: &Vault) -> Result<f32> {
     let rtxn = vault.store.env.read_txn()?;
     floor_in_txn(vault, &rtxn)
 }
 
 fn floor_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<f32> {
-    Ok(FLOOR
-        .get(&vault.store, rtxn, &())?
-        .map_or(DEFAULT_SKILL_RELIABILITY_FLOOR, |row| row.0))
-}
-
-/// Sets the reliability floor dial.
-pub fn set_skill_reliability_floor(vault: &Vault, floor: f32) -> Result<()> {
-    if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
-        return Err(invalid("reliability floor must be finite in [0, 1]"));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        FLOOR.put(&vault.store, wtxn, &(), &ReliabilityFloorRow(floor))?;
-        Ok(())
-    })
+    Ok(RELIABILITY_FLOOR
+        .read_in_txn(vault, rtxn, &[], None)?
+        .value
+        .0)
 }
 
 /// Mints a quarantine PROPOSAL when the skill's posterior lower bound has

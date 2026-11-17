@@ -53,23 +53,8 @@ crate::side_table::side_tables! {
     /// Cached capability-surface projection for a hub-derived skill entity. Key: id16.
     SKILL_HUB_CAPABILITY: VaultMeta b"skill_hub/capability/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Owner switch (`0` off, `1` on) turning a dependency advisory hit into one owner ask on a
-    /// ready marketplace fit; an absent row is on. Key: ().
-    SKILL_HUB_MARKETPLACE_ADVISORY_ASK: VaultMeta b"skill_hub/marketplace-advisory-ask/v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Owner blocking rule (`0` off, `1` on) on one canonical marketplace content hash. Key: hash32.
     SKILL_HUB_MARKETPLACE_BLOCKED_HASH: VaultMeta b"skill_hub/marketplace-blocked-hash/v1\0" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Revision (u64be) of the owner's code auto-install switch, bound into each change's consent.
-    /// Key: ().
-    SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION: VaultMeta b"skill_hub/marketplace-code-auto-install-revision/v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner switch (`0` off, `1` on) for auto-installing code-bearing marketplace folders. Key: ().
-    SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL: VaultMeta b"skill_hub/marketplace-code-auto-install/v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner setting (`0` rule fit, `1` owner-asked fit) choosing the fit an ordinary skill install
-    /// runs; an absent row is the rule fit. Key: ().
-    SKILL_HUB_MARKETPLACE_SKILL_FIT: VaultMeta b"skill_hub/marketplace-skill-fit/v1" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
     /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.

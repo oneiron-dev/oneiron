@@ -1,4 +1,5 @@
 //! Source receipts and admitted-publisher ingress beside content dedup, never in place of it.
+use super::setting_keys::{ADVISORY_ASK, CODE_AUTO_INSTALL};
 use super::{
     ForeignSkillPublisher, HubPackage, HubRef, SkillCapabilitySurface, SkillHubAdapter,
     install_transition::{
@@ -20,26 +21,15 @@ pub use rule_fit::{CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSettin
 /// of the source ref string).
 const IMPORT_RECEIPT: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_IMPORT_RECEIPT);
-/// Owner switch for auto-installing code-bearing marketplace folders; an
-/// absent row is off. `pub(super)` for the transport tests' read-back.
-pub(super) const CODE_AUTO_INSTALL: SideTable<(), MarketplaceSwitch, Raw> =
-    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL);
-/// Revision of the code auto-install switch, bound into each change's consent.
-const CODE_AUTO_INSTALL_REVISION: SideTable<(), u64, Raw> =
-    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION);
 /// Owner blocking rule on one canonical content hash; an absent row is off.
 const BLOCKED_HASH: SideTable<[u8; 32], MarketplaceSwitch, Raw> =
     SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_BLOCKED_HASH);
-/// Owner switch for turning a dependency advisory hit into one owner ask on
-/// a ready marketplace fit; an absent row is on.
-const ADVISORY_ASK: SideTable<(), MarketplaceSwitch, Raw> =
-    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_ADVISORY_ASK);
 /// The analysis bound a [`MarketplaceFitDecision`] keeps.
 const FIT_ANALYSIS_BYTES: usize = 512;
 
-/// One owner-set marketplace switch byte: `0` off, `1` on.
+/// One owner blocking rule byte: `0` off, `1` on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct MarketplaceSwitch(bool);
+struct MarketplaceSwitch(bool);
 
 impl RawValue for MarketplaceSwitch {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -177,43 +167,16 @@ pub(crate) fn marketplace_hash_blocked_in_txn(
         .is_some_and(|MarketplaceSwitch(blocked)| blocked))
 }
 
+/// Whether the owner turned on auto-install of code-bearing marketplace
+/// folders, in `txn`: off unless the owner turned it on.
+pub(super) fn code_auto_install_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(CODE_AUTO_INSTALL.read_in_txn(vault, txn, &[], None)?.value)
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_hub::import_receipt::HubImportReceipt;
 
 impl Vault {
-    /// Owner-controlled code policy. Disabled by default. Hosts should enable it
-    /// only after sandbox install tests pass; this flag does not run those tests.
-    /// Importing a code-bearing folder while disabled leaves it Candidate.
-    pub fn set_marketplace_code_auto_install(
-        &self,
-        owner: &AuthenticatedOwner,
-        enabled: bool,
-    ) -> Result<ConsentReceipt> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let revision = CODE_AUTO_INSTALL_REVISION
-                .get(&self.store, txn, &())?
-                .unwrap_or(0);
-            let next = revision
-                .checked_add(1)
-                .ok_or(crate::error::Error::IndexOverflow(
-                    "marketplace code policy revision",
-                ))?;
-            let effect = ComposedEffect::new(EffectFacts::new(format!(
-                "skill.marketplace.code-auto-install:{revision}:{enabled}"
-            ))?)
-            .digest();
-            let receipt = self.approve_once_in_txn(txn, owner, effect)?;
-            let authorization =
-                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
-                    .ok_or_else(|| invalid("code auto-install consent missing"))?;
-            CODE_AUTO_INSTALL.put(&self.store, txn, &(), &MarketplaceSwitch(enabled))?;
-            CODE_AUTO_INSTALL_REVISION.put(&self.store, txn, &(), &next)?;
-            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
-            Ok(receipt)
-        })
-    }
-
     /// An owner-maintained blocking rule on canonical content, independent of
     /// advisory scanner risk or a hub's declared governance value.
     pub fn set_marketplace_blocked_hash(
@@ -250,35 +213,7 @@ impl Vault {
     /// one owner ask: on unless the owner turned it off.
     pub fn marketplace_advisory_ask(&self) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        Ok(ADVISORY_ASK
-            .get(&self.store, &txn, &())?
-            .is_none_or(|MarketplaceSwitch(enabled)| enabled))
-    }
-
-    /// The owner sets whether a dependency advisory hit asks him once before
-    /// a ready marketplace install lands. The change is his own act,
-    /// consented once and spent in the same writer.
-    pub fn set_marketplace_advisory_ask(
-        &self,
-        owner: &AuthenticatedOwner,
-        enabled: bool,
-    ) -> Result<ConsentReceipt> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let nonce = self.store.clock.entity_id()?;
-            let effect = ComposedEffect::new(EffectFacts::new(format!(
-                "skill.marketplace.advisory-ask:{enabled}:{}",
-                nonce.to_hex()
-            ))?)
-            .digest();
-            let receipt = self.approve_once_in_txn(txn, owner, effect)?;
-            let authorization =
-                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
-                    .ok_or_else(|| invalid("marketplace advisory ask consent missing"))?;
-            ADVISORY_ASK.put(&self.store, txn, &(), &MarketplaceSwitch(enabled))?;
-            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
-            Ok(receipt)
-        })
+        Ok(ADVISORY_ASK.read_in_txn(self, &txn, &[], None)?.value)
     }
 
     /// Fetches from a configured source and checks the publisher again at commit.
@@ -426,11 +361,7 @@ impl Vault {
                 .files
                 .iter()
                 .any(|file| file.path.starts_with("scripts/"));
-            if has_code
-                && !CODE_AUTO_INSTALL
-                    .get(&self.store, txn, &())?
-                    .is_some_and(|MarketplaceSwitch(enabled)| enabled)
-            {
+            if has_code && !code_auto_install_in_txn(self, txn)? {
                 return Err(invalid("code auto-install is disabled"));
             }
             let effect = ComposedEffect::new(EffectFacts::new(format!(

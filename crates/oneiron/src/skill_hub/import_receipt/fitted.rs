@@ -6,8 +6,8 @@
 //! marketplace import runs these same two halves; there is no second import
 //! path.
 use super::{
-    CODE_AUTO_INSTALL, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
-    MarketplaceSwitch, marketplace_hash_blocked_in_txn, permission_labels,
+    MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator, code_auto_install_in_txn,
+    marketplace_hash_blocked_in_txn, permission_labels,
 };
 use crate::skill_hub::install_transition::{InstallBinding, InstallPlan};
 use crate::skill_hub::package_codec::invalid;
@@ -107,9 +107,9 @@ impl Vault {
     /// The fit stage: fetches from the configured source, parses and scans
     /// the folder, with `advisories` queries the bytes' OSV receipts, then
     /// runs `fit` and binds the advisory hits into it: each is named in the
-    /// analysis, and while the owner's advisory ask is on
-    /// ([`Vault::set_marketplace_advisory_ask`]) a hit turns a ready fit into
-    /// one owner ask. It writes nothing.
+    /// analysis, and while the owner's advisory ask is on (the setting
+    /// `skills.advisory_ask`) a hit turns a ready fit into one owner ask. It
+    /// writes nothing.
     #[expect(
         clippy::too_many_arguments,
         reason = "the marketplace import plus an optional dependency advisory transport"
@@ -223,9 +223,7 @@ impl Vault {
             .files
             .iter()
             .any(|file| file.path.starts_with("scripts/"));
-        let code_enabled = CODE_AUTO_INSTALL
-            .get(&self.store, txn, &())?
-            .is_some_and(|MarketplaceSwitch(enabled)| enabled);
+        let code_enabled = code_auto_install_in_txn(self, txn)?;
         let record = self.read_skill_record_in_txn(txn, &entity)?;
         let plan = InstallPlan::marketplace(
             &record,

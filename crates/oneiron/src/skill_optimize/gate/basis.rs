@@ -582,11 +582,33 @@ impl SkillEditCycle {
     }
 }
 
+/// K, the accepted edits one Dreamer cycle may admit: the catalogue key
+/// `skills.optimize.edit_cycle_cap` ([`crate::skill_optimize::setting_keys::EDIT_CYCLE_CAP`]).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct SkillEditCycleCap(pub u32);
+
+impl crate::setting::SettingValue for SkillEditCycleCap {
+    /// K is above zero: a cap of nothing is a disabled loop expressed as a dial, and the honest
+    /// way to stop the loop is to stop scheduling it.
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            Err(Error::InvalidConfig(
+                "skill edit cycle cap must be > 0: a zero cap disables the loop by accident".into(),
+            ))
+        } else {
+            Ok(self)
+        }
+    }
+}
+
 /// Reads K (default [`DEFAULT_SKILL_EDIT_CYCLE_CAP`]).
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors; [`Error::CorruptedIndex`] on a stored K that does not decode.
 pub fn skill_edit_cycle_cap(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     cycle_cap_in_txn(vault, &rtxn)
@@ -602,27 +624,10 @@ pub(super) fn cycle_cap_sourced_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<(u32, Option<Vec<EntityId>>)> {
-    let Some(bytes) = SKILL_EDIT_CYCLE_CAP.get(&vault.store, rtxn, &())? else {
-        return Ok((DEFAULT_SKILL_EDIT_CYCLE_CAP, Some(Vec::new())));
-    };
-    Ok((u32::from_be_bytes(bytes), None))
-}
-
-/// Sets K.
-///
-/// # Errors
-///
-/// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when `cap` is zero: a cap of nothing is a
-/// disabled loop expressed as a dial, and the honest way to stop the loop is to
-/// stop scheduling it.
-pub fn set_skill_edit_cycle_cap(vault: &Vault, cap: u32) -> Result<()> {
-    if cap == 0 {
-        return Err(invalid(
-            "skill edit cycle cap must be > 0: a zero cap disables the loop by accident",
-        ));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        SKILL_EDIT_CYCLE_CAP.put(&vault.store, wtxn, &(), &cap.to_be_bytes())?;
-        Ok(())
+    let read =
+        crate::skill_optimize::setting_keys::EDIT_CYCLE_CAP.read_in_txn(vault, rtxn, &[], None)?;
+    Ok(match read.source {
+        crate::setting::SettingSource::Default => (read.value.0, Some(Vec::new())),
+        _ => (read.value.0, None),
     })
 }

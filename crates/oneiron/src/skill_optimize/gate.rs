@@ -164,10 +164,10 @@ pub use admission::{
     resolve_skill_edit_tradeoff_in_cycle,
 };
 pub use basis::{
-    HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle, dev_receipts,
-    held_out_receipt_set_digest, held_out_receipts, held_out_receipts_sourced, receipt_is_held_out,
-    register_held_out_replay_scorer, set_skill_edit_cycle_cap, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_score_call_purpose,
+    HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle,
+    SkillEditCycleCap, dev_receipts, held_out_receipt_set_digest, held_out_receipts,
+    held_out_receipts_sourced, receipt_is_held_out, register_held_out_replay_scorer,
+    skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_score_call_purpose,
 };
 pub use decision::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
@@ -258,16 +258,6 @@ use measurement::{anchor_score, measure, validate_measurements, world_labels_dig
 // ---------------------------------------------------------------------------
 // Dials + pinned strings
 // ---------------------------------------------------------------------------
-
-/// `vault_meta` key holding K, the accepted edits one Dreamer cycle may admit.
-///
-/// The `SKILL_OPTIMIZE_MIN_OUTCOMES_KEY` house pattern — a per-feature engine
-/// dial over `vault_meta`, not a `settings.rs` UI preference.
-pub const SKILL_EDIT_CYCLE_CAP_KEY: &[u8] = b"settings:skill_optimize:v1:cycle_cap";
-
-/// K: a singleton row.
-pub(super) const SKILL_EDIT_CYCLE_CAP: SideTable<(), [u8; 4], Raw> =
-    SideTable::new(&side_table::SKILL_EDIT_CYCLE_CAP);
 
 /// K when the dial has never been set.
 ///
