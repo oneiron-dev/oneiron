@@ -22,8 +22,9 @@ use oneiron::{EntityId, Vault, VaultConfig};
 use serde_json::json;
 
 /// A vault whose agent tightened `world` under a Grant, read warm with the
-/// tighten in effect, and then the Grant deleted by a plain delete: no
-/// authority act, so the cached authority view stays at its generation.
+/// tighten in effect, and then the Grant deleted by a plain delete, which
+/// ends its line by a counted act in the delete's transaction (pass 28 R2c,
+/// GRANT-ROW-DELETE-NO-END = A).
 fn warm_view_of_a_deleted_agent_grant() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
@@ -137,12 +138,12 @@ fn warm_view_of_a_deleted_agent_grant() -> (tempfile::TempDir, Vault, EntityId) 
         vault.delete_entity(&grant).expect("public Grant deletion"),
         "the live Grant was deleted",
     );
-    assert_eq!(
+    assert_ne!(
         vault
             .authority_log_head()
             .expect("generation after deletion"),
         generation,
-        "precondition: plain Grant deletion appends no authority act",
+        "precondition: the Grant's deletion appends its counted end",
     );
     (dir, vault, world)
 }
