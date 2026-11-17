@@ -135,6 +135,7 @@ pub mod home_handoff_retire;
 pub mod home_pick_fold;
 #[cfg(feature = "sync")]
 pub mod home_sections;
+pub mod host_cancel_refund;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
 pub mod host_root_loss;
