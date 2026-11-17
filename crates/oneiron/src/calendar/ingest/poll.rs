@@ -32,7 +32,7 @@ pub(crate) fn calendar_ics_feed_cursor_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<IcsFeedCursor, LegacyJson>(bytes)
 }
 
-/// Actor string stamped on pause interventions.
+/// Actor string stamped on pause and uninstall interventions.
 const ICS_POLL_INTERVENTION_ACTOR: &str = "calendar.ics.poll";
 
 #[doc(hidden)]
@@ -294,6 +294,41 @@ fn pending_poll_record_in_txn(
     Ok(None)
 }
 
+/// The poll half of uninstalling a feed, in the write that uninstalls it: its cursor goes (and
+/// with it any pause exception), and each pending row of its chain (queued, scheduled or
+/// paused) is cancelled. A row a worker holds is left to settle: its poll reads the feed
+/// installed no more and writes nothing.
+pub(crate) fn uninstall_feed_polls_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    config: &IcsFeedPollConfig,
+    now: u64,
+) -> crate::Result<()> {
+    CURSOR.delete(&vault.store, txn, &ics_feed_cursor_digest(config))?;
+    let dedupe_key = ics_feed_poll_dedupe_key(config);
+    let queue = AttemptQueue::new(vault);
+    for record in queue.kind_working_rows_in_txn(&*txn, ICS_POLL_ATTEMPT_KIND)? {
+        if is_feed_poll_row(&record, &dedupe_key)
+            && matches!(
+                record.state,
+                AttemptState::Queued | AttemptState::Scheduled | AttemptState::Paused
+            )
+        {
+            queue.intervene_in_txn(
+                txn,
+                InterveneAttempt {
+                    id: record.id,
+                    kind: AttemptInterventionKind::Cancel,
+                    actor: ICS_POLL_INTERVENTION_ACTOR.to_owned(),
+                    note: Some("ICS feed uninstalled".to_owned()),
+                    now,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// True when an attempt row belongs to this feed's poll chain — the bare
 /// setup key or any generation-scoped key derived from it.
 fn is_feed_poll_row(record: &AttemptRecord, dedupe_key: &str) -> bool {
@@ -386,6 +421,14 @@ pub(super) fn run_feed_poll(
     // calendar admission turn; the fetch above does not hold it. The cursor
     // is read again under the turn: another poll may have moved it since.
     let _turn = super::admission_turn(vault)?;
+    // An installed feed is read again under the turn: its owner may have uninstalled it while
+    // the fetch was out, and then this poll writes nothing.
+    if installed_owner.is_some() {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        if !super::feed_door::installed_in_txn(vault, &txn, config)? {
+            return Err(ingest("ICS feed is not installed"));
+        }
+    }
     let cursor = read_cursor(vault, &cursor_digest)?.unwrap_or_else(|| IcsFeedCursor::new(config));
     match response {
         IcsFetchResponse::NotModified { .. } => {

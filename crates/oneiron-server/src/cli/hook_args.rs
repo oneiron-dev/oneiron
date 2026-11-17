@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
+use oneiron_contracts::register::Register;
 
 #[derive(Args, Clone, Debug)]
 pub struct HookArgs {
@@ -17,8 +18,10 @@ pub struct HookArgs {
 
 /// The harness whose hook runs (`docs/ops/client-session-hooks.md`). Every
 /// host's event is read for the same fields; the host decides how a reply
-/// is printed and which `oneiron import` reads its session log.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+/// is printed and which `oneiron import` reads its session log. Its names
+/// (`HookHost::as_str`, from the Register) are the ones `--host` takes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Register)]
+#[register("hook.host", rename_all = "kebab-case")]
 pub enum HookHost {
     /// Claude Code (`plugins/claude-code/hooks/hooks.json`): plain text on
     /// stdout joins the session's context; its logs are Claude Code sessions.
@@ -41,18 +44,6 @@ pub enum HookHost {
 }
 
 impl HookHost {
-    /// The name `--host` takes.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-            Self::Cursor => "cursor",
-            Self::Copilot => "copilot",
-            Self::Hermes => "hermes",
-        }
-    }
-
     /// The harness's own name, as a person reads it.
     #[must_use]
     pub const fn product_name(self) -> &'static str {
