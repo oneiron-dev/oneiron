@@ -374,7 +374,7 @@ pub(super) fn revert_in_txn(
 
 impl DreamerRunnerStore<'_> {
     /// One action-mode run per owner per wake key, while a policy is set.
-    pub(super) fn enqueue_action_mode_in_txn(
+    pub(crate) fn enqueue_action_mode_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         parent_attempt: Option<crate::attempt_queue::AttemptId>,
@@ -418,11 +418,22 @@ pub(super) fn run(
     attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<Option<EntityId>> {
+    land_mode(vault, attempt, now, true)
+}
+
+/// [`run`] over the owner's index as it stands, unrefreshed, when `refresh`
+/// is false: the test door's pass over an index it derived itself.
+pub(crate) fn land_mode(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+    now: u64,
+    refresh: bool,
+) -> Result<Option<EntityId>> {
     let subject = EntityId::from_hex(attempt.status.payload.input.as_str().ok_or_else(invalid)?)?;
     let attempt = attempt.status.attempt.id;
     proposals::land(vault, ACTION_MODE_FACET, attempt, |landing| {
         vault.with_write_txn_grouped(|txn| {
-            let projection = vault.project_action_mode_in_txn(txn, &subject, now, true)?;
+            let projection = vault.project_action_mode_in_txn(txn, &subject, now, refresh)?;
             let Some(rule) = projection.mode else {
                 return Ok(None);
             };

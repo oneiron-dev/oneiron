@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod access_request_seed;
+pub mod action_mode_pass;
 pub mod advisory_rate_window;
 pub mod agent_definition_scans;
 pub mod agent_health;
