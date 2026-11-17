@@ -37,6 +37,7 @@ use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::{IllegalTransition, Lifecycle};
 
 /// Sub-tag for durable write-outbox rows.
 pub(super) const OUTBOX_ROW_TAG: &[u8] = b"row:";
@@ -890,6 +891,16 @@ fn write_outbox_row_in_txn(
         }
     } else if actual_prior != expected {
         return Err(literal::invalid());
+    }
+    if let Some(prior) = prior.as_ref()
+        && prior.state != row.state
+        && !prior.state.may_transition_to(&row.state)
+    {
+        return Err(IllegalTransition {
+            from: prior.state,
+            to: row.state,
+        }
+        .into());
     }
     let instance = match row.carrier.as_ref() {
         Some(held) => held.instance,
