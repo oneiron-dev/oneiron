@@ -662,7 +662,7 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
         // "no artifacts at all" assertion stays absolute — a control delete in
         // the same vault would leave a legitimate receipt and pt: row.
         let (control_dir, control_vault) = open_nonpublishing_delete_vault();
-        let control_owner = put_person(&control_vault, 0x50);
+        let control_owner = put_owner(&control_vault);
         let control_subject = put_person(&control_vault, 0x51);
         root_vault_binding(&control_vault, 0x52, control_owner, "human");
         facade_for(&control_vault, control_owner)
@@ -676,7 +676,7 @@ fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
         drop(control_dir);
 
         let (_dir, vault) = open_nonpublishing_delete_vault();
-        let owner = put_person(&vault, 0x53);
+        let owner = put_owner(&vault);
         let subject = put_person(&vault, 0x54);
         // The soft erase deletes the vector row too, so a surviving vector is
         // independent evidence that the scrub itself rolled back — not merely
@@ -844,7 +844,7 @@ fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
     for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
         let case = format!("{reason:?}");
         let (_dir, vault) = open_nonpublishing_delete_vault();
-        let owner = put_person(&vault, 0x57);
+        let owner = put_owner(&vault);
         let revoke = root_binding_with_pending_revocation(&vault, 0x58, owner);
         let subject = EntityId::from_bytes([0x59; 16]).expect("subject id");
         vault

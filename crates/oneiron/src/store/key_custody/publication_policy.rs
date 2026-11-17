@@ -60,7 +60,8 @@ impl TargetRecipients {
     /// root by id, the worlds each leaves the pads of out, then the
     /// credentials whose keys each may carry (KS-6), then each world's
     /// admitted pad recipients (FIX 6706), in order, then the `carried` set's
-    /// digest (PAD-3).
+    /// digest (PAD-3), then the data key's commitment from its first new
+    /// generation on.
     fn policy(&self, carried: Option<[u8; 32]>) -> [u8; 32] {
         policy_digest(
             &[
@@ -72,6 +73,9 @@ impl TargetRecipients {
             [&self.own, &self.hosted].map(|group| group.root.as_ref().map(|(id, _)| *id)),
             [&self.own.pad_worlds, &self.hosted.pad_worlds],
             carried,
+            self.own
+                .data_key_commitment
+                .or(self.hosted.data_key_commitment),
         )
     }
 }
@@ -81,6 +85,7 @@ fn policy_digest(
     roots: [Option<[u8; 32]>; 2],
     pads: [&BTreeMap<EntityId, PadRecipients>; 2],
     carried: Option<[u8; 32]>,
+    data_key: Option<[u8; 32]>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(POLICY_CONTEXT);
@@ -134,6 +139,15 @@ fn policy_digest(
     if let Some(carried) = carried {
         hasher.update(b"carried-world-pads");
         hasher.update(&carried);
+    }
+    // The data key's commitment once the vault started a new data-key
+    // generation: a generation alone seals every head again under the new
+    // key, so no head only a replaced key opens stays the current one.
+    // Hashed only from the first new generation, so a vault that never
+    // started one keeps the digest it has.
+    if let Some(commitment) = data_key {
+        hasher.update(b"data-key-generation");
+        hasher.update(&commitment);
     }
     *hasher.finalize().as_bytes()
 }

@@ -129,6 +129,8 @@ pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
+#[cfg(oneiron_test_support)]
+pub(crate) use participation::fact_key_pin_for_test;
 pub(super) use participation::record_bound_task_in_txn;
 pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
@@ -389,6 +391,30 @@ pub(crate) fn room_join_audience_in(
     Ok(participation::joined(receipt)?.is_some())
 }
 
+/// The live vault owner who alone reads the ordinary room `room`, or `None`:
+/// no project room, one current member, that member a live vault owner, and
+/// no Ready join filed for anyone else in the room or its threads. An
+/// unplaced voice speaker's entry (OF-365) is keyed by its speaker, not by
+/// room, and is not seen here.
+pub(crate) fn room_sole_owner_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<EntityId>> {
+    if project_room_audience_in(vault, txn, room, &[])?.is_some() {
+        return Ok(None);
+    }
+    let [owner] = vault.members_in_txn(txn, room)?[..] else {
+        return Ok(None);
+    };
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
+        || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(owner))
+}
+
 /// The validated project room `room` is, or `None` for an ordinary
 /// Conversation, whose membership ledger stays authoritative.
 fn project_room_of(
@@ -450,7 +476,8 @@ impl Vault {
     }
 
     /// [`Self::room_audience_members`] as `read` reads the room, in one
-    /// snapshot: a room `read` cannot read is a missing room, unless
+    /// snapshot: a room `read` cannot read, its row or its own admission
+    /// ([`Self::room_structure_admitted`], L9-52), is a missing room, unless
     /// `member` is one of its members, who reads its roster by membership as
     /// its room turns do. Membership never widens the credential: one
     /// narrowed on any read axis or whose records leave the room out, or a
@@ -464,7 +491,9 @@ impl Vault {
         read.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&txn)?;
-        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)?
+            && self.room_structure_admitted_in_txn(read, &txn, &room)?
+        {
             return self.room_audience_members_in_txn(&txn, room);
         }
         if !read.reaches_by_membership_in(&txn, &room)? {

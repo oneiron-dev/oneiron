@@ -61,11 +61,11 @@ pub(crate) use self::lifetime::{
 
 pub use self::types::{
     VOICE_MATCH_THRESHOLD_DEFAULT, VOICE_MATCH_THRESHOLD_MAX, VOICE_MATCH_THRESHOLD_MIN,
-    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState,
-    VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest,
-    VoiceEnrollmentSampleV1, VoiceMatchPolicy, VoiceMatchRequest, VoicePrintCalibration,
-    VoicePrintPurpose, VoicePrintRecordV1, VoiceResolvedSegment, VoiceRunCoverage,
-    VoiceSegmentEmbeddingInput, VoiceSessionRosterV1, VoiceSpeakerDeparture,
+    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentReceipt,
+    VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchPolicy, VoiceMatchRequest,
+    VoicePrintCalibration, VoicePrintPurpose, VoicePrintRecordV1, VoiceResolvedSegment,
+    VoiceRunCoverage, VoiceSegmentEmbeddingInput, VoiceSessionRosterV1, VoiceSpeakerDeparture,
     VoiceWithdrawalReceipt, VoiceWithdrawalRequest, WHOLE_RECORDING_RUN_AUTHORITATIVE,
 };
 

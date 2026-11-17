@@ -7,8 +7,7 @@
   "scope": "Read",
   "act_class": "read",
   "admission": {
-    "lane_record_scope": true,
-    "validate": "crate::snapshot_read::validate_evidence_spans(&input)?;"
+    "lane_record_scope": true
   },
   "section": false,
   "mcp_scope": "filtered"
