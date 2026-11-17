@@ -37,6 +37,7 @@ pub mod openapi_document;
 pub mod owner_backup;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
+pub mod question_heads;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod replay_admission;
