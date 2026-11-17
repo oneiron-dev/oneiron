@@ -100,7 +100,7 @@ impl SyncServer {
         request_memory.materialized(0, input.query.capacity() as u64);
         let detail = recall_effort_name(input.effort);
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
-        let rerank = self.door_rerank(effort, actor, class)?;
+        let rerank = self.door_rerank(effort, actor, class, false)?;
         let media = self.recall_media(&input)?;
         let mut query_memory = self.memory.empty_lease();
         let embed = self.recall_embed_media(input.effort, media, payer, &mut query_memory);
@@ -342,6 +342,7 @@ impl SyncServer {
             room,
             input,
             HomeRecallCaller::none(),
+            false,
         )
         .await
     }
@@ -355,7 +356,9 @@ impl SyncServer {
     /// from the local items, which stay as ranked. A pack cut at its
     /// deadline or a refused recall asks nothing; a home out of reach, or a
     /// recall the home cannot answer, leaves the pack local-only and
-    /// `partial`.
+    /// `partial`. An `off_record` recall serves a caller whose off-record
+    /// session keeps no model-call record: its reranker's runs name no rows
+    /// (census L5-25).
     #[expect(
         clippy::too_many_arguments,
         reason = "the recall door's parameters plus the caller it asks the home for"
@@ -369,6 +372,7 @@ impl SyncServer {
         room: Option<EntityId>,
         input: RecallRequest,
         home: HomeRecallCaller,
+        off_record: bool,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let destination: ReadDestination = destination.into();
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
@@ -382,7 +386,7 @@ impl SyncServer {
                 input.request.deadline_ms,
                 self.vault.call_mode_deadline(),
             )?;
-            let rerank = self.door_rerank(effort, actor, class)?;
+            let rerank = self.door_rerank(effort, actor, class, off_record)?;
             let media = self.recall_media(&input.request)?;
             // Bind the ask last so it drops before its query-storage lease.
             let (mut ask_memory, ask) = (

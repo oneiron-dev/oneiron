@@ -369,6 +369,8 @@ fn frame(rows: &[(&'static str, String, Vec<u8>)]) -> Vec<u8> {
 #[test]
 fn link_answer_waits_for_a_late_group_or_person_and_lands_on_recovery() {
     use crate::sync_harness::map_get_bytes;
+    use oneiron::edge::EdgeKind;
+    use oneiron::sync::bridge::format_edge_key;
     use oneiron::sync::quarantine::quarantined_records;
     for person_last in [false, true] {
         let mut a = TestNode::with_config("late-origin", 31, VaultConfig::default());
@@ -512,7 +514,31 @@ fn link_answer_waits_for_a_late_group_or_person_and_lands_on_recovery() {
                 }
             }
         }
-        assert_eq!(word.len(), 2, "the word and its About edge");
+        // The word is a TASK fact, so it is born with its facet_of edge to the
+        // vault default facet (#7324: every TASK carries its facet as its
+        // facet_of birth edge), and that edge travels in the word's frame.
+        let mut word_rows: Vec<(&str, String)> = word
+            .iter()
+            .map(|(map, key, _)| (*map, key.clone()))
+            .collect();
+        word_rows.sort();
+        let default_facet = a.vault.default_facet().expect("default facet");
+        let mut expected = vec![
+            ("entities", word_hex.clone()),
+            (
+                "edges",
+                format_edge_key(&answer.word_ref, EdgeKind::About, &ask.group_ref),
+            ),
+            (
+                "edges",
+                format_edge_key(&answer.word_ref, EdgeKind::FacetOf, &default_facet),
+            ),
+        ];
+        expected.sort();
+        assert_eq!(
+            word_rows, expected,
+            "the word, its About edge and its facet_of birth edge"
+        );
         let newer = WindowKey::from_timestamp(now);
         let middle = WindowKey::from_timestamp(now - 40 * 86_400);
         let older = WindowKey::from_timestamp(now - 80 * 86_400);

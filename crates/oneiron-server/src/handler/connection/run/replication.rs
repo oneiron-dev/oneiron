@@ -91,7 +91,8 @@ pub(super) async fn handle_connection(
     };
 
     // Subscribe to broadcast channel for outbound messages
-    let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
+    let mut subscriber =
+        BroadcastSubscriber::new(conn_id, &server.broadcast_tx, &server.broadcast_sessions);
 
     // Phase 1: Send root doc snapshot to client.
     // Root doc is server-authoritative — client only reads it.
@@ -444,9 +445,10 @@ pub(super) async fn handle_connection(
                     break;
                 };
                 // A queued selector answer leaves only while the grant and
-                // the authority it was made under stand, judged once per
-                // answer before any part of it leaves (SELECTOR-RELEASE-POINT
-                // = B), and again by its send after each wait on the peer.
+                // the authority it was made under stand, judged at the
+                // answer's first frame before any part of it leaves
+                // (SELECTOR-RELEASE-POINT = B), and again by the send of each
+                // frame before its bytes leave and after each wait on the peer.
                 let answer = crate::selector_release::queued_answer_frame(&data).map(|answer| {
                     (
                         conn_state.selector_answers.release(server.vault(), &answer),

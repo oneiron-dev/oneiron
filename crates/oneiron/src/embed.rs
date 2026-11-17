@@ -21,6 +21,7 @@ mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
 mod session_media;
+pub(crate) mod setting_keys;
 mod space;
 mod space_card;
 mod space_move;
@@ -48,7 +49,7 @@ pub use evidence::EmbeddingMatchEvidence;
 pub use gpu_pod_hours::{PodHoursClock, PodHoursWait};
 pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
-pub(crate) use media::text_vector_sources_in_txn;
+pub(crate) use media::media_source_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
@@ -66,6 +67,8 @@ pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;
 pub(crate) use space::checkpoint;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use space::install_media_vector_replica_in_txn;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
     KindSlotBindings, MediaRefused,
@@ -80,6 +83,8 @@ pub(crate) use space::{
 pub(crate) use space::{
     embedding_setup_rests_on_sibling, install_replicated_embedding_setup_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use space::{put_pins_media_refusal_in_txn, put_pins_media_vector_in_txn};
 pub use space_move::{
     CohortProbe, KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_FILL_DEADLINE_SECS,
     SPACE_MOVE_NOTE_PRODUCER, SPACE_MOVE_UNDO_WINDOW_SECS, SPACE_PROBE_DEPTH,
