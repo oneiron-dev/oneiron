@@ -23,9 +23,9 @@ mod slack_adapter;
 mod slack_personas;
 mod slack_validate;
 pub mod stalwart;
-pub mod workspace_connector;
 #[cfg(test)]
 mod tests;
+pub mod workspace_connector;
 
 pub use self::email_adapter::{
     DevEmailIdentityAdapter, DevEmailIdentityAdapterConfig, MockChannelIdentityProviderAdapter,

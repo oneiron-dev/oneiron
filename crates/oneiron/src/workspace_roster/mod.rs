@@ -50,8 +50,6 @@
 //! contracts and writes only its own `vault_meta` prefixes plus the entities
 //! the intent explicitly names.
 
-use std::io::Cursor;
-
 use rmpv::Value;
 
 use crate::Vault;
@@ -86,6 +84,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod codec;
+#[cfg(oneiron_test_support)]
+pub(crate) use codec::roster_required_for_test;
 mod companion_bind;
 mod house_link;
 mod intent;

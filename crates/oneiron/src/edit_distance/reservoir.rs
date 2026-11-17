@@ -748,7 +748,7 @@ fn stored_candidate(pair: &TrainingPair) -> StoredCandidate {
 
 /// Rows serialize through the house canonical-JSON door, so a row's bytes are a
 /// function of its values rather than of map iteration order.
-fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
+fn encode_row_json<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
     crate::llm::canonical_json_bytes(row).map_err(|_| Error::CorruptedIndex(label))
 }
 
@@ -772,7 +772,7 @@ fn decode_export(raw: &[u8]) -> Result<StoredExport> {
 
 impl RawValue for StoredCandidate {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, CANDIDATE_ROW_LABEL)?)
+        Ok(encode_row_json(self, CANDIDATE_ROW_LABEL)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
@@ -782,7 +782,7 @@ impl RawValue for StoredCandidate {
 
 impl RawValue for StoredExport {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, EXPORT_RECEIPT_ROW_LABEL)?)
+        Ok(encode_row_json(self, EXPORT_RECEIPT_ROW_LABEL)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {

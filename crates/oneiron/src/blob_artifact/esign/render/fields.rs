@@ -75,6 +75,14 @@ pub(super) fn burn_fields(
 ) -> Result<Vec<Operation>> {
     let font_name = resource(resources, b"Font", font)?;
     let mut ops = Vec::new();
+    let mut target = leaf::BurnTarget {
+        out,
+        resources,
+        crop,
+        font_name: &font_name,
+        rasters: request.signature_images,
+        images,
+    };
     for &field in fields {
         let presentation = present_field(
             field,
@@ -95,19 +103,8 @@ pub(super) fn burn_fields(
                 image_ref: image_ref.as_str(),
             }),
         };
-        leaf::burn_field(
-            &mut ops,
-            out,
-            resources,
-            crop,
-            &font_name,
-            &geometry,
-            value,
-            request.signature_images,
-            images,
-            &NoAdmission,
-        )
-        .map_err(map_leaf)?;
+        leaf::burn_field(&mut ops, &mut target, &geometry, value, &NoAdmission)
+            .map_err(map_leaf)?;
     }
     if request.state.rejection.is_some() {
         let Ok(()) = leaf::stamp_rejected(&mut ops, &font_name, crop, &NoAdmission);

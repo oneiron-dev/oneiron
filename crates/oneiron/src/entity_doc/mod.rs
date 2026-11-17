@@ -83,6 +83,7 @@ pub(crate) use forks::{
     erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
 };
 pub use history_erase::TextHistoryErase;
+pub(crate) use history_erase::TextHistoryEraseRange;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
