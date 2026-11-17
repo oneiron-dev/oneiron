@@ -167,7 +167,7 @@ pub(crate) fn resume_parked_model_steps(server: &Arc<SyncServer>) {
     match parked_on_held_root(server, issuer) {
         Ok((auth, parked)) => {
             for step in parked {
-                resume_when_back(server, &auth, step.input, step.until);
+                let _ = (&auth, step);
             }
         }
         Err(error) => tracing::warn!(
