@@ -306,7 +306,8 @@ pub struct WholeVaultImportReceipt {
     /// The archived rows among `omitted_entities` that this vault's state kept
     /// out, beyond the manifest's `import_omissions`: an archived
     /// `vault.default_facet` outside the owner's restore into a fresh vault
-    /// (`TargetDefaultFacetKept`).
+    /// (`TargetDefaultFacetKept`), and a claim about a link the import did not
+    /// bring back before it (`ClaimSubjectEdgeNotRestored`).
     pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
