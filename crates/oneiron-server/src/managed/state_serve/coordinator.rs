@@ -318,6 +318,9 @@ async fn serve_with_handles(
     // Bulk campaign email names this host's one-click unsubscribe links
     // (ARCH-0059 #opt-out), as plain serve installs them.
     crate::api::install_one_click_unsubscribe_origin(&sync_server);
+    // A one-liner `tasks.create` is composed by this server's
+    // `[models.roles.local_reasoner]` seat, once the seats are built (L8-07).
+    crate::ai_host::HostTaskBriefModel::install(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain

@@ -65,6 +65,7 @@ pub mod comm_widen_standing;
 pub mod compaction;
 pub mod compaction_request;
 pub mod companion_grant_index;
+pub mod composed_lens_world;
 pub mod connector_key_suspend;
 pub mod consent_graduation_demotion;
 pub mod consent_graduation_ramp_rows;
@@ -273,6 +274,7 @@ pub mod sync_parted_row_binding;
 #[cfg(feature = "sync")]
 pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
+pub mod task_brief_compose;
 pub mod task_refusal_output;
 #[cfg(feature = "sync")]
 pub mod training_corpus;

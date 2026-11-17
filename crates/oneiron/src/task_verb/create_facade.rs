@@ -92,7 +92,7 @@ impl Memory<'_> {
         if !self.has_task_work_turn() {
             return self.task_work_memory().tasks_create(spec);
         }
-        if spec.brief.is_some() || spec.intent_key.is_some() {
+        if spec.brief.is_some() || spec.intent_key.is_some() || spec.one_liner.is_some() {
             return self.post_create_spec(spec);
         }
         self.tasks_create_with_engine_rate_limit(spec, TaskCreateRateLimit::default())

@@ -48,6 +48,10 @@ pub struct TaskCreateSpec {
     pub brief: Option<super::brief::QueueTaskBrief>,
     /// The caller's idempotency key for a briefed create.
     pub intent_key: Option<String>,
+    /// L8-07: the one-liner and lens refs the engine composes this post's
+    /// brief from, in place of `brief`, with the intent key. A composed
+    /// post always parks as a proposal.
+    pub one_liner: Option<super::compose::OneLinerBrief>,
     /// DOOR-113: the TASK this one files under, by one checked `ChildOf`
     /// edge its landing transaction writes. The nesting matrix decides, so
     /// a Task nests under a Milestone; absent is a root.
@@ -77,6 +81,7 @@ impl TaskCreateSpec {
             type_ref: None,
             brief: None,
             intent_key: None,
+            one_liner: None,
             parent_ref: None,
         }
     }
@@ -90,6 +95,24 @@ impl TaskCreateSpec {
     ) -> Self {
         self.intent_key = Some(intent_key.into());
         self.brief = Some(brief);
+        self
+    }
+
+    /// Makes this create a composed post (L8-07): the engine composes its
+    /// brief from `one_liner` and the rows `lens_refs` names, under one
+    /// intent key.
+    #[must_use]
+    pub fn with_one_liner(
+        mut self,
+        intent_key: impl Into<String>,
+        one_liner: impl Into<String>,
+        lens_refs: Vec<EntityId>,
+    ) -> Self {
+        self.intent_key = Some(intent_key.into());
+        self.one_liner = Some(super::compose::OneLinerBrief {
+            one_liner: one_liner.into(),
+            lens_refs,
+        });
         self
     }
 

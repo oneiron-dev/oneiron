@@ -39,7 +39,7 @@ impl Memory<'_> {
                 .task_work_memory()
                 .tasks_create_from_message(source_ref, spec);
         }
-        if spec.brief.is_some() || spec.intent_key.is_some() {
+        if spec.brief.is_some() || spec.intent_key.is_some() || spec.one_liner.is_some() {
             return Err(approval_routed());
         }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
