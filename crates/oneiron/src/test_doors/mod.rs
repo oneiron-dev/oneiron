@@ -156,6 +156,7 @@ pub mod job_kind_rows;
 pub mod label_writers;
 pub mod learning_claim_value;
 pub mod learning_setting_sourced;
+pub mod lib_rows_b_repeated_key;
 pub mod lifted_text;
 pub mod linkedin_seat_settings;
 pub mod live_run_claim_put;
