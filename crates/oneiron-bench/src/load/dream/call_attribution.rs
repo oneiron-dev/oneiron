@@ -4,9 +4,10 @@
 //! inside the sending step's `model_step` span (its attempt and 16 hex of
 //! its step hash). The proxy keeps the same digest of the body it relayed,
 //! so a record joins its send line by digest; nothing new goes on the wire.
-//! A body that two different steps sent joins neither (`ambiguous`; never
-//! picked by time), and a record no line names stays unattributed: a body
-//! cut off in transit, or a send outside a durable step.
+//! A body that two different senders sent (two steps, or a step and a send
+//! outside any step) joins neither (`ambiguous`; never picked by time). A
+//! record whose body only sends outside a step carry, or that no line names
+//! (a body cut off in transit), stays unattributed.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -15,7 +16,7 @@ use serde_json::{Value, json};
 
 use super::call_proxy::{self, CallRecord};
 
-/// The `attempt` of a record whose body two different steps sent.
+/// The `attempt` of a record whose body two different senders sent.
 const AMBIGUOUS: &str = "ambiguous";
 
 /// The attempt and the step that one send line names.
@@ -25,10 +26,12 @@ struct Sender {
     step: String,
 }
 
-/// Who sent one body: one step, or more than one.
+/// Who sent one body: one step, only sends outside any step, or more than
+/// one sender (two steps, or a step and a send outside a step).
 #[derive(Debug, PartialEq, Eq)]
 enum Senders {
     One(Sender),
+    Unscoped,
     Ambiguous,
 }
 
@@ -38,34 +41,34 @@ pub(super) struct Attributed {
     pub(super) records: Vec<Value>,
     /// The calls' summary per attempt (`call_proxy::summary`, all the run).
     pub(super) by_attempt: Value,
-    /// Records no send line names.
+    /// Records no step's send line names alone: no line names the body,
+    /// or only sends outside any step did.
     pub(super) unattributed: usize,
-    /// Records whose body two different steps sent.
+    /// Records whose body two different senders sent.
     pub(super) ambiguous: usize,
 }
 
 /// Each sent body's digest and who sent it, from the report's `model_sends`
-/// lines; a line with no step span names no one.
+/// lines; a line with no step span is a send outside any step.
 fn senders(sends: &Value) -> BTreeMap<String, Senders> {
     let mut by_body = BTreeMap::new();
     for line in sends.as_array().into_iter().flatten() {
-        let (Some(body), Some(attempt), Some(step)) = (
-            line["body"].as_str(),
-            line["attempt"].as_str(),
-            line["step"].as_str(),
-        ) else {
+        let Some(body) = line["body"].as_str() else {
             continue;
         };
-        let sender = Sender {
-            attempt: attempt.to_owned(),
-            step: step.to_owned(),
+        let sender = match (line["attempt"].as_str(), line["step"].as_str()) {
+            (Some(attempt), Some(step)) => Senders::One(Sender {
+                attempt: attempt.to_owned(),
+                step: step.to_owned(),
+            }),
+            _ => Senders::Unscoped,
         };
         match by_body.entry(body.to_owned()) {
             Entry::Vacant(slot) => {
-                slot.insert(Senders::One(sender));
+                slot.insert(sender);
             }
             Entry::Occupied(mut slot) => {
-                if *slot.get() != Senders::One(sender) {
+                if *slot.get() != sender {
                     slot.insert(Senders::Ambiguous);
                 }
             }
@@ -95,7 +98,7 @@ pub(super) fn attributed(calls: &[CallRecord], sends: &Value) -> Attributed {
                 record["attempt"] = json!(AMBIGUOUS);
                 ambiguous += 1;
             }
-            None => unattributed += 1,
+            Some(Senders::Unscoped) | None => unattributed += 1,
         }
         records.push(record);
     }
@@ -149,6 +152,10 @@ mod tests {
             {"body": "cccc", "attempt": "a2", "step": "s4", "bytes": 10},
             // A send outside a durable step names no one.
             {"body": "dddd", "bytes": 10},
+            // A send outside a step and a step's send carry one body:
+            // neither takes it, so a2 counts none of its calls.
+            {"body": "ffff", "bytes": 10},
+            {"body": "ffff", "attempt": "a2", "step": "s5", "bytes": 10},
         ]);
         let calls = [
             call(1, 0.0, 100.0, "aaaa"),
@@ -157,6 +164,8 @@ mod tests {
             call(4, 300.0, 350.0, "cccc"),
             call(5, 400.0, 450.0, "dddd"),
             call(6, 500.0, 550.0, "eeee"),
+            call(7, 600.0, 650.0, "ffff"),
+            call(8, 700.0, 750.0, "ffff"),
         ];
         let joined = attributed(&calls, &sends);
         let named = |i: usize| {
@@ -173,7 +182,9 @@ mod tests {
         assert_eq!(named(3), (Some(4), Some(AMBIGUOUS), None));
         assert_eq!(named(4), (Some(5), None, None));
         assert_eq!(named(5), (Some(6), None, None));
-        assert_eq!((joined.unattributed, joined.ambiguous), (2, 1));
+        assert_eq!(named(6), (Some(7), Some(AMBIGUOUS), None));
+        assert_eq!(named(7), (Some(8), Some(AMBIGUOUS), None));
+        assert_eq!((joined.unattributed, joined.ambiguous), (2, 3));
         let by_attempt = joined.by_attempt.as_object().expect("an object");
         assert_eq!(by_attempt.len(), 2);
         assert_eq!(by_attempt["a1"]["calls"], json!(2));
