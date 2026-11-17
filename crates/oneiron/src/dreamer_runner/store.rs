@@ -802,6 +802,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     now: input.now,
                 },
             )?;
+            let record = match &outcome {
+                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
+                    record
+                }
+            };
+            // A Coach job can move between its worker and a wake pass. Its
+            // terminal write releases the accounting reservations both held.
+            if record.kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND {
+                self.settle_ended_budget_in_txn(wtxn, attempt_id, input.now)?;
+            }
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
             let reported = context.and_then(|context| {
                 let record = match &outcome {
@@ -830,11 +840,6 @@ impl<'a> DreamerRunnerStore<'a> {
             // A finished agent launch settles its spend lease (OF-532) in the
             // commit that finishes it: its parent pays what it spent and the
             // unused hold goes back. Settling twice is a no-op.
-            let record = match &outcome {
-                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
-                    record
-                }
-            };
             // FIX 1554: a report filed while a Coach Issues run held its
             // lease gets its successor in the commit that settles the run.
             self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
@@ -1016,6 +1021,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     input.budget_refusal.as_ref(),
                     input.now,
                 )?;
+                if record.kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND {
+                    self.settle_ended_budget_in_txn(wtxn, attempt_id, input.now)?;
+                }
                 self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
                 Ok(outcome)
             })?;

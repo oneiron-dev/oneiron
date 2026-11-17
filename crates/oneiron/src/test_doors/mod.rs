@@ -80,6 +80,7 @@ pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod esign_commitments;
+pub mod eval_authoring_execution_fault;
 pub mod extra_room_index;
 pub mod fanout_admission;
 pub mod feed_prune;
