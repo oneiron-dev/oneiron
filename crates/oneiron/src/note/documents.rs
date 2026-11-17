@@ -378,6 +378,43 @@ pub(crate) fn head_in(
         None => (note, 0),
     })
 }
+/// The stored rows of NOTE `note`'s text plane, each as its family, full key
+/// and value, for a legal hold's sealed copy: its head row, when it switched
+/// heads, and the marker of each head document its text plane ever held.
+/// Then the document of each such head, its live head first: a NOTE keeps
+/// its text there, under no entity document head (review P1 on #8423).
+///
+/// # Errors
+///
+/// Storage errors, or a marker key that does not decode.
+pub(crate) fn text_plane_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<(Vec<(&'static str, Vec<u8>, Vec<u8>)>, Vec<EntityId>)> {
+    use crate::side_table::SideKey as _;
+    let mut rows = Vec::new();
+    if let Some(value) = NOTE_HEAD.get_bytes(store, txn, &note)? {
+        rows.push(("note:head", NOTE_HEAD.key_bytes(&note), value));
+    }
+    let mut heads = vec![head_in(store, txn, note)?.0];
+    for row in NOTE_HEAD_DOC.iter_raw_from(store, txn, note.as_bytes())? {
+        let (suffix, value) = row?;
+        let Some((owner, head)) = <(EntityId, EntityId)>::decode_key(&suffix) else {
+            return Err(crate::Error::CorruptedIndex("NOTE head document marker"));
+        };
+        if owner != note {
+            continue;
+        }
+        let mut key = NOTE_HEAD_DOC.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        rows.push(("note:head_doc", key, value));
+        if !heads.contains(&head) {
+            heads.push(head);
+        }
+    }
+    Ok((rows, heads))
+}
 /// The live version of `note` as `store` holds it: the version a read of its
 /// live document answers with (`NoteReadView::version`).
 /// The Gate's campaign copy-review stage compares it with the version a

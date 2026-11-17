@@ -366,6 +366,7 @@ fn component_family(component: SourceComponent) -> &'static str {
         SourceComponent::MessageEdge => "edges_out",
         SourceComponent::MessageResultBody => "code_run:raw_output",
         SourceComponent::MessageRevision => "revision",
+        SourceComponent::AssetBodyFile => "asset:body_file",
     }
 }
 
