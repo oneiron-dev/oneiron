@@ -200,6 +200,16 @@ impl Vault {
         if claims.is_empty() {
             return Ok(());
         }
+        // The owner's `commitment.content.max_text_bytes` binds a derived promise where it is
+        // first written; the owner's later approval rewrites the same claims unchecked.
+        for claim in claims {
+            crate::commitment::setting_keys::check_claim_commitment_text_in_txn(
+                self,
+                txn,
+                &claim.predicate,
+                &crate::ingest::json_to_msgpack_value(&claim.value),
+            )?;
+        }
         let proposed = claims
             .iter()
             .map(|claim| write.candidate(claim, ClaimApprovalStatus::Proposed))

@@ -2,7 +2,8 @@
 
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
-    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSpeechCall,
+    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSayResultCall,
+    SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
@@ -343,6 +344,27 @@ fn wrong_root_call(name: &str, input: &str) -> Option<crate::memory::MemoryError
     crate::task_verb::sdk::wrong_root(&args.verb)
 }
 
+/// What a plain `say` speaks where the run speaks: a `say` input that names
+/// its text or its result and nothing else.
+enum PlainSay {
+    Text(String),
+    Result(String),
+}
+
+/// The plain `say` an input is, if it is one: its text alone, or its result
+/// alone. One that names a destination, a kind or refs is the `say` row's.
+fn plain_say(input: &Value) -> Option<PlainSay> {
+    let request: crate::memory::SayRequest = serde_json::from_value(input.clone()).ok()?;
+    if request.to.is_some() || request.kind.is_some() || !request.refs.is_empty() {
+        return None;
+    }
+    match (request.text, request.result) {
+        (Some(text), None) => Some(PlainSay::Text(text)),
+        (None, Some(result)) => Some(PlainSay::Result(result)),
+        _ => None,
+    }
+}
+
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
         "self.verbs.call" => {
@@ -384,6 +406,19 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 return Ok(SelfCall::Fold(crate::compaction::SelfFoldCall::Describe {
                     fold: crate::compaction::parse_fold_handle(fold)?,
                 }));
+            }
+            // A plain `say(text)` speaks where the run speaks: it is exactly
+            // `self.speak` (L8-25). A plain `say(result)` is that `self.speak`
+            // with one of the run's results for its words, which only the
+            // run's host resolves. A say that names a destination, a kind or
+            // refs is the `say` row's, served by its own door.
+            if verb == AgentVerb::Say
+                && let Some(plain) = plain_say(&args.input)
+            {
+                return Ok(match plain {
+                    PlainSay::Text(text) => SelfCall::Speak(SelfSpeechCall::new(text)),
+                    PlainSay::Result(result) => SelfCall::SayResult(SelfSayResultCall::new(result)),
+                });
             }
             if verb == AgentVerb::Ask {
                 let request: crate::task_verb::TaskAskRequest = decode(args.input)?;
@@ -665,7 +700,13 @@ fn reply_body(outcome: &SelfDispatchOutcome, park: ParkReply) -> Result<Value> {
             json!({"receipt":receipt.to_hex()})
         }
         SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
-        SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
+        SelfDispatchOutcome::StoredReply(value) => {
+            let mut body = json!({"output": value.output});
+            if !value.program_steps.is_empty() {
+                body["programSteps"] = json!(value.program_steps);
+            }
+            body
+        }
         SelfDispatchOutcome::Fold(answer) => {
             let output: Value = serde_json::from_str(&answer.json)
                 .map_err(|_| failure("fold answer is not JSON"))?;
