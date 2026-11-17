@@ -95,6 +95,7 @@ pub(crate) use self::charter::{
 pub(crate) use self::credential_binding::{
     connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
 };
+pub(crate) use self::lifecycle::PROXY_EXCHANGE_PREDICATE;
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
@@ -110,7 +111,8 @@ pub(crate) use self::record::{
     normalize_connector_key,
 };
 pub(crate) use self::slate::{
-    erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn,
+    erase_grant_slate_holder_narrows_in_txn, land_archived_connector_slate_rows_in_txn,
+    read_connector_slate_in_txn,
 };
 pub(crate) use self::slate_holder::erase_holder_narrows_in_txn;
 pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
