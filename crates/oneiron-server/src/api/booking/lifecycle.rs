@@ -15,7 +15,7 @@ use super::helpers::engine_read_error;
 use super::page_token::page_event_type_configs_listed;
 use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use crate::error::ApiError;
-use crate::server::SyncServer;
+use crate::server::{LinePlace, SyncServer};
 
 // -------------------------------------------------------------------------
 // Lifecycle drive
@@ -33,12 +33,16 @@ use crate::server::SyncServer;
 /// Beside the receipt, the rows the turn's oracle read that no receipt kept
 /// (FIX 5483): a writer that commits takes its solves' rows into its receipt,
 /// so these are a taken confirm's, which writes none.
+///
+/// `place`, a hold's place at the head of its page session's line, is held
+/// by the write itself until it returns ([`write_holding_line_place`]).
 pub(super) async fn run_booking_verb(
     server: &Arc<SyncServer>,
     request: BookingVerbRequest,
     exclude_session: Option<SessionKey>,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
+    place: Option<LinePlace>,
 ) -> Result<(BookingVerbReceipt, Vec<EntityId>), ApiError> {
     let local_node_id = local_booking_node_id(server)?;
     let attempt = oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
@@ -52,7 +56,7 @@ pub(super) async fn run_booking_verb(
     // runtime, so the whole turn does.
     let turn_server = Arc::clone(server);
     let line_push_allowance = server.config.line.monthly_push_allowance();
-    let (turn, unkept) = tokio::task::spawn_blocking(move || {
+    let (turn, unkept) = write_holding_line_place(place, move || {
         let vault: &Vault = &turn_server.vault;
         // The writer's oracle lists every row its solves read (FIX 5483).
         let producers = ProducerRows::default();
@@ -101,8 +105,7 @@ pub(super) async fn run_booking_verb(
         unkept.extend(producers.take());
         turn.map(|turn| (turn, unkept))
     })
-    .await
-    .map_err(|_| ApiError::internal_server_error("booking lifecycle turn stopped"))??;
+    .await??;
     match turn {
         BookingLifecycleTurn::Executed(receipt) => Ok((receipt, unkept)),
         BookingLifecycleTurn::NoHomeNode => {
@@ -127,6 +130,25 @@ pub(super) async fn run_booking_verb(
             ))
         }
     }
+}
+
+/// Runs `write` on the blocking pool and answers what it returned. `place`,
+/// a request's place at the head of its page session's line, is held by the
+/// write itself, not by the request: a request dropped while its write runs
+/// (a client gone) does not stop the write, which still commits the
+/// session's one HOLD row, so the line's next hold goes on only once the
+/// write has returned (FIX BOOKING-CANCELLED-HOLD-DETACHED-WRITE).
+pub(crate) async fn write_holding_line_place<T: Send + 'static>(
+    place: Option<LinePlace>,
+    write: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let written = write();
+        drop(place);
+        written
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("booking lifecycle turn stopped"))
 }
 
 /// This daemon's node id for the booking home-node check.
@@ -196,6 +218,10 @@ impl SlotOracle for ServerBookingOracle<'_> {
             None => solver.solve_moving(request, moving),
         })
     }
+
+    fn solve_past_caps(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.with_solver(|solver| solver.solve_past_caps_listing(request, self.producers))
+    }
 }
 
 impl ServerBookingOracle<'_> {
@@ -215,6 +241,18 @@ impl ServerBookingOracle<'_> {
             // presets, and a booking page is never page-less.
             synthetic_config: None,
         })
+    }
+
+    /// The caller's own grant view for `request` (ARCH-0062 #grant-view):
+    /// the solver's busy union on this oracle's binding, held to the host's
+    /// working hours, for each host the caller's live calendar grants cover.
+    /// Rows it reads go to this oracle's listing.
+    pub(super) fn granted_busy(
+        &self,
+        request: &SolveRequest,
+        caller: &EntityId,
+    ) -> Result<Option<Vec<oneiron::booking::agent_api::GrantedBusyView>>, BookingError> {
+        self.with_solver(|solver| solver.granted_busy(request, caller, self.producers))
     }
 }
 

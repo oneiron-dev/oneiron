@@ -33,6 +33,7 @@ use crate::entity_id::{EntityId, derived_domains};
 use crate::error::{Error, Result};
 use crate::ingest::archive_precheck::SkippedEntry;
 use crate::side_table::{self, Named, Raw, SideTable};
+use oneiron_contracts::lifecycle::{IllegalTransition, Lifecycle};
 
 /// Each hosted import's row, by its id.
 const JOBS: SideTable<[u8; 16], HostedImportJob, Named> =
@@ -111,10 +112,10 @@ pub enum HostedImportState {
     Cancelled,
 }
 
-impl HostedImportState {
-    /// The state as a job's progress names it.
-    #[must_use]
-    pub fn status(&self) -> HostedImportStatus {
+impl oneiron_contracts::lifecycle::Lifecycle for HostedImportState {
+    type Kind = HostedImportStatus;
+
+    fn kind(&self) -> Self::Kind {
         match self {
             Self::Staged => HostedImportStatus::Staged,
             Self::Landing => HostedImportStatus::Landing,
@@ -122,6 +123,31 @@ impl HostedImportState {
             Self::Failed(_) => HostedImportStatus::Failed,
             Self::Cancelling => HostedImportStatus::Cancelling,
             Self::Cancelled => HostedImportStatus::Cancelled,
+        }
+    }
+
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            HostedImportStatus::Staged => &[
+                HostedImportStatus::Landing,
+                HostedImportStatus::Landed,
+                HostedImportStatus::Failed,
+                HostedImportStatus::Cancelling,
+            ],
+            HostedImportStatus::Landing => &[
+                HostedImportStatus::Landed,
+                HostedImportStatus::Failed,
+                HostedImportStatus::Cancelling,
+            ],
+            // A cancel asked while the last conversation landed ends Landed.
+            HostedImportStatus::Cancelling => &[
+                HostedImportStatus::Landed,
+                HostedImportStatus::Failed,
+                HostedImportStatus::Cancelled,
+            ],
+            HostedImportStatus::Landed
+            | HostedImportStatus::Failed
+            | HostedImportStatus::Cancelled => &[],
         }
     }
 }
@@ -202,10 +228,7 @@ impl HostedImportJob {
     /// Whether nothing more lands: Landed, Failed or Cancelled.
     #[must_use]
     pub fn ended(&self) -> bool {
-        matches!(
-            self.state,
-            HostedImportState::Landed | HostedImportState::Failed(_) | HostedImportState::Cancelled
-        )
+        self.state.is_terminal()
     }
 }
 
@@ -455,6 +478,7 @@ impl Vault {
                 .cloned()
                 .collect();
             row.skipped_entry_count = u64::try_from(skipped_entries.len()).unwrap_or(u64::MAX);
+            Ok(())
         })
     }
 
@@ -482,7 +506,7 @@ impl Vault {
                 return Ok(Some(row));
             }
             if row.state != HostedImportState::Cancelling {
-                row.state = HostedImportState::Landing;
+                row.state.transition_to(HostedImportState::Landing)?;
             }
             row.cursor = cursor;
             row.new += u64::from(report.new);
@@ -557,12 +581,13 @@ impl Vault {
     }
 
     /// Ends the job as `state`, Landed, Failed or Cancelled, with the
-    /// Dreamer attempts its end queued. An ended row is left as it is.
-    /// `None` when there is no row.
+    /// Dreamer attempts its end queued. An ended row is left as it is. A
+    /// `state` that does not end it, or that no edge allows (a Staged job
+    /// ended Cancelled), is refused unwritten. `None` when there is no row.
     ///
     /// # Errors
     ///
-    /// A storage error.
+    /// A storage error, or a `state` that is no end or no edge allows.
     pub fn hosted_import_end(
         &self,
         id: HostedImportId,
@@ -570,8 +595,16 @@ impl Vault {
         dreamer_attempts_queued: u64,
     ) -> Result<Option<HostedImportJob>> {
         self.hosted_import_update(id, |row| {
-            row.state = state;
+            if !state.is_terminal() {
+                return Err(IllegalTransition {
+                    from: row.state.kind(),
+                    to: state.kind(),
+                }
+                .into());
+            }
+            row.state.transition_to(state)?;
             row.dreamer_attempts_queued = dreamer_attempts_queued;
+            Ok(())
         })
     }
 
@@ -639,7 +672,7 @@ impl Vault {
             if row.ended() || row.state == HostedImportState::Cancelling {
                 return Ok(Some(row));
             }
-            row.state = HostedImportState::Cancelling;
+            row.state.transition_to(HostedImportState::Cancelling)?;
             row.cancelled_by = Some(by);
             row.updated_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             JOBS.put(&self.store, txn, &id.0, &row)?;
@@ -700,7 +733,7 @@ impl Vault {
         Ok(Some(HostedImportView {
             import: id.to_hex(),
             source: row.source.clone(),
-            state: row.state.status(),
+            state: row.state.kind(),
             failure,
             upload: HostedImportUpload {
                 bytes: row.staged_bytes,
@@ -743,7 +776,7 @@ impl Vault {
     fn hosted_import_update(
         &self,
         id: HostedImportId,
-        change: impl FnOnce(&mut HostedImportJob),
+        change: impl FnOnce(&mut HostedImportJob) -> Result<()>,
     ) -> Result<Option<HostedImportJob>> {
         self.with_write_txn(|txn| {
             let Some(mut row) = JOBS.get(&self.store, txn, &id.0)? else {
@@ -752,7 +785,7 @@ impl Vault {
             if row.ended() {
                 return Ok(Some(row));
             }
-            change(&mut row);
+            change(&mut row)?;
             row.updated_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             JOBS.put(&self.store, txn, &id.0, &row)?;
             Ok(Some(row))

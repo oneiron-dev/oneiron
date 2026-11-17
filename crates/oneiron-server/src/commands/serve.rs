@@ -20,6 +20,7 @@ mod hooks;
 mod page_seal;
 mod sleep_release;
 mod startup_gate;
+mod startup_timings;
 mod stop;
 mod workers;
 pub(crate) use self::hooks::hook_sandbox;
@@ -95,6 +96,7 @@ pub(super) async fn serve_anchored(
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    warn_genesis_fragile(&vault);
     crate::owner::house::bind_house_leader_at_start(
         &vault,
         server_config.auth_secret.as_deref(),
@@ -157,10 +159,14 @@ pub(super) async fn serve_anchored(
         .with_artifact_listener(artifact_addr.port())
         .with_api_listener(listener.local_addr()?);
     tracing::info!(%addr, artifacts = %artifact_addr, "listening");
+    // Each step the gate holds a client's first call for is timed, and the
+    // times go on the finished line (FIX 25667).
+    let mut timings = startup_timings::StartupTimings::begin();
     // From bind the API listener answers: health says the server is starting,
     // and every other request waits for the router startup installs, so a
     // client's connect is never left in the backlog (FIX 22117).
     let gate = startup_gate::StartupGate::spawn(listener, config.limits.connections());
+    timings.mark("gate_spawn");
     // Borrowed uniquely, so the closure is `Send` whenever the host is.
     let awake_host = &mut host;
     let started = start_desktop_workers(
@@ -195,6 +201,7 @@ pub(super) async fn serve_anchored(
         true,
     )
     .await?;
+    timings.absorb(started.timings);
     let sync_server = started.server;
     let artifact_app = started.artifact_app;
     let questions = started.questions;
@@ -205,10 +212,16 @@ pub(super) async fn serve_anchored(
     let mesh_server = Arc::clone(&sync_server);
     // Each socket upgraded on the API listener or the mesh sees the stop, and
     // the stop waits for it and the calls it admitted (FIX 4757).
+    // The event-loop watchdog (L8-11) reports this process's readiness on
+    // `/api/health` and sheds nothing: a self-hosted owner's requests are
+    // never refused for it. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::default());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_app(sync_server).layer(cors_layer),
         stopped.clone(),
     );
+    timings.mark("router");
     // A startup error from here on stops what started and joins every worker
     // before it is returned (FIX 7386).
     let (mut mesh, mut device_sync) = (None, None);
@@ -222,10 +235,12 @@ pub(super) async fn serve_anchored(
             config.limits.connections(),
         )
         .await?;
+        timings.mark("mesh");
         // A machine that is not the elected home dials its home, on that
         // mesh when the home has a paired address there.
         device_sync =
             crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
+        timings.mark("device_sync");
         // Dedicated shared environments open beside the personal lane, never
         // through HOME/XDG discovery (FIX 2051, FIX 11136).
         let shared = crate::shared_envs::SharedEnvRegistry::open_all(
@@ -237,7 +252,9 @@ pub(super) async fn serve_anchored(
         )
         .await;
         mesh_server.install_shared_envs(shared);
+        timings.mark("shared_envs");
         host.ready()?;
+        timings.mark("host_ready");
         anyhow::Ok(())
     }
     .await;
@@ -259,6 +276,7 @@ pub(super) async fn serve_anchored(
         super::local_servers::register(vault_id, bound, &config.vault_path, files.as_ref());
     #[cfg(not(unix))]
     let _ = files;
+    timings.mark("local_register");
     let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
         let _ = stopped.wait_for(|stop| *stop).await;
     };
@@ -272,16 +290,23 @@ pub(super) async fn serve_anchored(
     // which this server judges (FIX 8274).
     let limits = config.limits.connections();
     let pool = crate::http_listener::ConnectionPool::served(&limits, &questions);
+    timings.mark("connection_pool");
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
     // its one shared ledger (FIX 7650).
     mesh_server
         .vault()
         .lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
+    timings.mark("proposal_spool");
     let owner_judge = Arc::clone(&mesh_server);
     // Startup succeeded: the requests the gate held run on the real router,
     // and the listener moves to the real accept loop.
     let listener = gate.hand_over(app.clone()).await;
-    tracing::info!("startup finished; the API listener serves the real router");
+    timings.mark("hand_over");
+    tracing::info!(
+        total_ms = %timings.total().as_millis(),
+        steps = %timings,
+        "startup finished; the API listener serves the real router"
+    );
     // Each listener's connections are tasks of its set here (FIX 9261).
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
     let api = crate::http_listener::serve_api_with_pool(
@@ -373,6 +398,7 @@ pub(crate) async fn build_server(
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_phonetic_embedder(config.phonetic_embedder.as_ref())?
         .with_model_setup_config(config, startup_args)
         .with_gpu_pool(gpu_pool)
         .with_broker(broker)
@@ -409,6 +435,10 @@ pub(crate) async fn build_server(
     sync_server
         .browser_readiness()
         .seed(config.browser.as_ref(), None);
+    // The runner fence each seat CLI starts under, proved now so the proof's
+    // outcome is in the start log and its cost is not the first run's
+    // (L8-27).
+    let _ = sync_server.runner_fence();
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within
@@ -538,6 +568,26 @@ pub(crate) fn build_embedder_on_thread(
 /// address judged is the one this path binds, before the vault opens. A dev
 /// server reachable from the LAN sets a secret instead; there is no override.
 /// Managed serve never comes here: the supervisor owns its socket.
+/// Says at each start, by the typed reason `GENESIS_FRAGILE`, that the vault
+/// holds no recovery method: a root move retired its recovery kit's key with
+/// every other key and no owner key has been enrolled since, or the owner
+/// skipped saving the genesis recovery secret (identity.md "Genesis window";
+/// L1-07-KIT-AFTER-MOVE = B). A flag, never a refusal: serve goes on.
+fn warn_genesis_fragile(vault: &oneiron::Vault) {
+    match vault.genesis_fragile_now() {
+        Ok(false) => {}
+        Ok(true) => tracing::warn!(
+            reason = oneiron::authority::GENESIS_FRAGILE_FLAG,
+            "this vault holds no recovery method; enrol a new recovery kit with \
+             `oneiron recovery-kit issue`, then `confirm`, then `enroll-authority`"
+        ),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "whether this vault holds a recovery method was not read at start"
+        ),
+    }
+}
+
 fn refuse_unauthenticated_public_bind(
     config: &ServeConfig,
     addr: SocketAddr,

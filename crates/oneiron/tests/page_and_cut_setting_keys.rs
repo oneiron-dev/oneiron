@@ -1,5 +1,6 @@
-//! Restriction wave 21: the page sizes and text cuts of five verbs are vault-scoped owner
-//! Setting keys whose defaults are the bounds those verbs always applied. Each test below pins one
+//! Restriction wave 21: the page sizes and text cuts of six verbs are vault-scoped owner
+//! Setting keys whose defaults are the bounds those verbs always applied (`refs.links.page_max`
+//! came after #8330, FIX [RESTRICTION-REFS-LINKS-PAGE-MAX-AFTER-8330]). Each test below pins one
 //! default exactly as before the change, then sets the key past the old bound through
 //! `vault.settings.set` and checks the formerly cut answer now stands whole; the last test pins
 //! the set-time checks of the page-max and byte-count keys. Every key is set by name, so on a
@@ -18,7 +19,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, SensitivityCeiling};
 use oneiron::lens::{
     GeneratedLens, LensAtom, LensAtomId, LensDefaultRequest, LensDossierSource, LensListRequest,
-    LensNode, LensProposeRequest, LensSlot, LensText, ResolveRecordRefRequest, ThrobberAtom,
+    LensNode, LensProposeRequest, LensSlot, LensText, RecordLinksRequest, ResolveRecordRefRequest,
+    ThrobberAtom,
 };
 use oneiron::memory::{Memory, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
@@ -403,6 +405,58 @@ fn lens_list_page_max_pages_past_200() {
 }
 
 #[test]
+fn refs_links_page_max_reads_a_turn_page_past_32() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let messages = (0..41_u32)
+        .map(|order| WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "dialogue".to_owned(),
+            content: format!("message {order}"),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order,
+            quote: None,
+        })
+        .collect();
+    let turn = me
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            messages,
+            occurred_at: fx.vault.now_recorded_at(),
+            assertions: WitnessAssertions::default(),
+            project: None,
+        })
+        .expect("a witnessed turn of 41 messages")
+        .turn_id
+        .to_hex();
+    let served = |limit: Option<u32>| {
+        me.record_links(&RecordLinksRequest {
+            text: None,
+            texts: None,
+            turn_ref: Some(turn.clone()),
+            after: None,
+            limit,
+            filter: None,
+        })
+        .expect("the owner reads the turn's links")
+        .texts
+        .len()
+    };
+    assert_eq!(served(None), 32);
+    assert_eq!(served(Some(40)), 32);
+    set_key(&me, "refs.links.page_max", json!(40));
+    assert_eq!(served(None), 40);
+    assert_eq!(served(Some(41)), 40);
+    assert_eq!(served(Some(5)), 5);
+    refused(&me, "refs.links.page_max", json!(0));
+}
+
+#[test]
 fn refs_resolve_snippet_chars_carries_a_longer_snippet() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
@@ -528,6 +582,7 @@ fn lenses_default_thread_entry_cut_follows_excerpt_bytes() {
         }],
         occurred_at: fx.vault.now_recorded_at(),
         assertions: WitnessAssertions::default(),
+        project: None,
     })
     .expect("a thread MESSAGE source");
     let request = || LensDefaultRequest {

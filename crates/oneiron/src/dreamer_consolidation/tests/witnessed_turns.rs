@@ -1120,14 +1120,7 @@ pub(super) fn stream_turn(
     text: &str,
     ending: &str,
 ) -> Result<(EntityId, EntityId, EntityId, WitnessTurn)> {
-    let person = EntityId::from_bytes([seed; 16])?;
-    vault.put_entity(
-        &person,
-        ENTITY_TYPE_PERSON,
-        occurred(1),
-        1,
-        b"stream writer",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().expect("owner");
     // A continuation stream needs its human writer's live owner binding.
     crate::test_util::bind_test_owner(vault, person);
     let conversation = EntityId::from_bytes([seed + 1; 16])?;
@@ -1233,7 +1226,7 @@ fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<
     assert!(branch.transcript(branch.scope(), &[turn])?.contains(SAID));
     end_stream(
         &vault,
-        EntityId::from_bytes([0x77; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         "",
         "cancel",
@@ -1316,7 +1309,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     let [consumed] = <[WorkingSetTurn; 1]>::try_from(dirty(&vault)?).expect("one dirty turn");
     advance_watermark_to_turn(&vault, scope, &consumed)?;
     assert!(dirty(&vault)?.is_empty(), "the round consumed the turn");
-    let writer = EntityId::from_bytes([0x7b; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let handle = memory
         .begin_message_stream(&input, Some(crate::memory::MessageWriteMode::Atomic))
@@ -1356,7 +1349,7 @@ fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
     );
     end_stream(
         &vault,
-        EntityId::from_bytes([0x81; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         " Owen",
         "finalize",

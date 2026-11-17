@@ -59,6 +59,8 @@ mod gemini_chat;
 mod gemini_media;
 mod host_budgets;
 mod hosted_speech;
+#[cfg(test)]
+mod hosted_speech_wire_tests;
 mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
@@ -568,6 +570,7 @@ fn rung(
             backend: Arc::clone(backend),
         },
         media: None,
+        hours: None,
     })
 }
 
@@ -700,6 +703,7 @@ fn native_rung(
         prompt,
         offer,
         media: None,
+        hours: None,
     })
 }
 

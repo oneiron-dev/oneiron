@@ -645,8 +645,31 @@ impl AuthorityStructure {
             if self.anchors.contains(anchor) || self.own_anchors.contains(anchor))
     }
 
-    fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
+    pub(super) fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
         matches!(key, AuthorityKey::Ed25519(anchor) if self.own_anchors.contains(anchor))
+    }
+
+    /// Whether this install believes `entry` (design pass 29: "a chain is
+    /// read only by a reader that believes its admitter"): a key may vouch
+    /// for it, it vouches as no stranger's, and no anchor this install only
+    /// awaits signed it. The roster's rows and the rows of this install's own
+    /// anchors (the pin's and the earlier admitter's) are believed. A foreign
+    /// anchor's rows, an awaited root's own rows, the rows of install keys
+    /// only such marks name, a removed machine's frontier joins (every row
+    /// [`Self::is_stranger`] reads as a stranger's), and rows no key vouches
+    /// for are not: the fold
+    /// trusts an anchor's chains only under the pin (`FoldedMachine::trusted`),
+    /// and awaiting widens only what the gate stores.
+    pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
+        self.vouches_for(entry)
+            && !self.is_stranger(entry)
+            && (signed_by(entry, &self.admitters) || !self.is_awaited_only(entry.signer_key()))
+    }
+
+    /// An anchor of a root this install awaits and does not take as its own.
+    fn is_awaited_only(&self, key: &AuthorityKey) -> bool {
+        matches!(key, AuthorityKey::Ed25519(anchor)
+            if self.awaited_anchors.contains(anchor) && !self.own_anchors.contains(anchor))
     }
 
     /// Whether `key` signs rows the fold may come to admit: an admitter, an

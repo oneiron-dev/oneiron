@@ -28,6 +28,7 @@ impl FacadeApiError {
                     reason_codes: Vec::new(),
                     legal_hold: None,
                     room_join_hold: None,
+                    pending: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -53,6 +54,18 @@ impl FacadeApiError {
             suggestions,
         )
     }
+}
+
+/// The catalogue status for an `ApiError` code string, if `code` is one.
+/// A door that hands an `ApiError` on as an engine error
+/// (`FacadeApiError::from(error).into_memory_error()`) drops its status; the
+/// match below takes it back from the catalogue, so a caller's refusal never
+/// reads as a server fault ([MESH-DOOR-REFUSAL-STATUS-500]).
+fn catalogue_refusal_status(code: &str) -> Option<StatusCode> {
+    crate::error::ErrorCode::ALL
+        .iter()
+        .find(|candidate| candidate.as_str() == code)
+        .map(|candidate| candidate.status())
 }
 
 /// The engine's refusal, forwarded whole.
@@ -221,6 +234,13 @@ impl From<MemoryError> for FacadeApiError {
             code if repo_doors::repo_refusal_status(code).is_some() => {
                 repo_doors::repo_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // [MESH-DOOR-REFUSAL-STATUS-500]: an `ApiError` catalogue code
+            // that reached the facade as an engine error string takes its
+            // catalogue status back. The arms above keep winning, and their
+            // statuses equal the catalogue's for the codes both name.
+            code if catalogue_refusal_status(code).is_some() => {
+                catalogue_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -259,6 +279,7 @@ impl From<MemoryError> for FacadeApiError {
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
                     room_join_hold: error.room_join_hold,
+                    pending: error.pending,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -275,6 +296,7 @@ impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
         let room_join_hold = error.room_join_hold().cloned().map(Box::new);
+        let pending = error.pending().cloned().map(Box::new);
         let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
@@ -283,6 +305,7 @@ impl From<ApiError> for FacadeApiError {
         );
         refusal.body.error.legal_hold = legal_hold;
         refusal.body.error.room_join_hold = room_join_hold;
+        refusal.body.error.pending = pending;
         refusal
     }
 }
@@ -364,6 +387,7 @@ impl FacadeApiError {
         replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
         replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
+        replayed.pending = replayed_field(error, "pending").map(Box::new);
         replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
@@ -403,6 +427,7 @@ impl FacadeApiError {
         refusal.reason_codes = error.reason_codes;
         refusal.legal_hold = error.legal_hold;
         refusal.room_join_hold = error.room_join_hold;
+        refusal.pending = error.pending;
         refusal
     }
 
@@ -434,7 +459,7 @@ impl IntoResponse for FacadeApiError {
 
 /// Every member a facade refusal's `error` states on the wire
 /// ([`FacadeErrorBody`], its wrong-root correction flattened in).
-const REPLAYED_ERROR_FIELDS: [&str; 15] = [
+const REPLAYED_ERROR_FIELDS: [&str; 16] = [
     "code",
     "message",
     "requestId",
@@ -449,6 +474,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "reasonCodes",
     "legal_hold",
     "room_join_hold",
+    "pending",
     "programSteps",
 ];
 

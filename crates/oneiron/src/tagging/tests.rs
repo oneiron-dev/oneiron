@@ -189,6 +189,7 @@ fn turn(turn_ref: Option<String>, messages: Vec<WitnessMessage>) -> WitnessTurn 
         messages,
         occurred_at: NOW,
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     }
 }
@@ -927,7 +928,7 @@ fn a_stream_continuation_marks_its_turn_again() {
 
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
-    let writer = speaker(&vault);
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     crate::test_util::bind_test_owner(&vault, writer);
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let mut streamed = message(0, "");
@@ -1947,6 +1948,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
                 ..message(0, "room")
             }],
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("room");

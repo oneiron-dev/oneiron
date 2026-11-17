@@ -60,7 +60,7 @@ impl Vault {
     /// the resume path is exercised without staging a real crash. `None` means
     /// the run halted before [`MemberOnboardingStep::Complete`], leaving a
     /// journal a later call resumes from.
-    pub(super) fn onboard_workspace_member_halting_after(
+    pub(crate) fn onboard_workspace_member_halting_after(
         &self,
         intent: MemberOnboardingIntent,
         authenticated_writer: &WriteActor,
@@ -146,6 +146,11 @@ impl Vault {
             }
         };
 
+        // Halting after Started leaves only the reservation: the member's
+        // slot, with no workspace established yet.
+        if halt_after == MemberOnboardingStep::Started {
+            return Ok(None);
+        }
         for step in ONBOARDING_STEPS {
             if step.rank() <= done {
                 continue;
@@ -268,6 +273,13 @@ impl Vault {
             }
             if prior != next {
                 PRESET.put(&self.store, txn, &key, &next)?;
+                super::work_companion::log_workspace_setting_in_txn(
+                    self,
+                    txn,
+                    vault_id,
+                    authenticated_writer.entity_ref(),
+                    &key,
+                )?;
             }
             Ok(())
         })
