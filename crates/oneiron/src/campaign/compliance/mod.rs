@@ -39,6 +39,7 @@ mod contracts;
 mod doors;
 mod evaluate;
 mod hydrate;
+mod opt_out_language;
 mod pack_store;
 mod rules;
 pub(crate) mod setting_keys;
@@ -76,6 +77,7 @@ pub(crate) use self::hydrate::{
     JurisdictionObservation, campaign_compliance_binding, campaign_compliance_gate,
     rank_jurisdiction_observation, select_jurisdiction,
 };
+pub(crate) use self::opt_out_language::{OptOutLanguage, recipient_opt_out_language_in_txn};
 pub(crate) use self::pack_store::campaign_complaint_pause_threshold_ppm_in_txn;
 
 #[cfg(test)]

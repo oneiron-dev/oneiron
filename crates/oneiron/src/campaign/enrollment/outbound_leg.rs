@@ -1,6 +1,8 @@
 //! Outward leg bridging persisted refs to the outbound chokepoint and the ledger.
 
-use super::detection::{CampaignEnrollmentEvent, campaign_enrollment_event};
+use super::detection::{
+    CampaignEnrollmentEvent, campaign_enrollment_event, event_opt_out_language_in_txn,
+};
 use super::home_node::{
     CampaignHomeNodeAdmission, CampaignHomeNodeDesignation, require_campaign_home_node,
 };
@@ -13,6 +15,7 @@ use super::runner::{
 use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
+use crate::campaign::compliance::OptOutLanguage;
 use crate::campaign::one_click_unsubscribe::one_click_unsubscribe_uri_in_txn;
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::entity_id::EntityId;
@@ -164,10 +167,13 @@ pub(super) fn campaign_envelope_bytes_in_txn(
     // `deny_unknown_fields`, never the raw body: the five base keys, none
     // of the chokepoint-sniffed ones (FIX 11513), plus the email keys iff
     // the step's channel is email (FIX 11641), plus the two bulk keys iff
-    // the email step is bulk. `composed_at` is the event's detection time,
-    // never now(): a redrive must freeze the same bytes, or the ledger would
-    // mint a fresh intent — a second send. The one-click link is a pure
-    // read of the vault's key, so it freezes the same bytes too.
+    // the email step is bulk, or the opt-out line's language iff the email
+    // step is 1:1 and its member's language is not English (FIX
+    // [CAMPAIGN-OPT-OUT-LINE-LOCALE]). `composed_at` is the event's
+    // detection time, never now(): a redrive must freeze the same bytes, or
+    // the ledger would mint a fresh intent — a second send. The one-click
+    // link is a pure read of the vault's key, and the language one of the
+    // event row detection wrote, so both freeze the same bytes too.
     let envelope = if step.channel == EMAIL_CHANNEL {
         let Some(subject) = outbound.subject.as_ref() else {
             return Err(invalid("a campaign email step's subject is absent"));
@@ -182,12 +188,19 @@ pub(super) fn campaign_envelope_bytes_in_txn(
             "composed_at": event.detected_at,
             "sender_ref": step.sender_ref.to_hex(),
         });
-        if let (Some(uri), Some(keys)) = (list_unsubscribe, envelope.as_object_mut()) {
-            keys.insert(
-                "send_mode".to_owned(),
-                CampaignSendMode::Bulk.as_str().into(),
-            );
-            keys.insert("list_unsubscribe".to_owned(), uri.into());
+        if let Some(keys) = envelope.as_object_mut() {
+            if let Some(uri) = list_unsubscribe {
+                keys.insert(
+                    "send_mode".to_owned(),
+                    CampaignSendMode::Bulk.as_str().into(),
+                );
+                keys.insert("list_unsubscribe".to_owned(), uri.into());
+            } else {
+                let language = event_opt_out_language_in_txn(vault, txn, event.event_ref)?;
+                if language != OptOutLanguage::English {
+                    keys.insert("opt_out_language".to_owned(), language.as_tag().into());
+                }
+            }
         }
         envelope
     } else {
