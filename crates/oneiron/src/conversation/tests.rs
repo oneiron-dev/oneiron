@@ -9,10 +9,8 @@ fn audience_admits(vault: &Vault, record: EntityId, person: EntityId) -> Result<
 
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor, EntityId, EntityId) {
     let dir = tempfile::tempdir().unwrap();
-    let config = VaultConfig {
-        embedding_model: Some("test/model@v1".to_owned()),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open(dir.path(), config).unwrap();
     let alice = EntityId::now();
     let bob = EntityId::now();
@@ -42,9 +40,11 @@ fn record(vault: &Vault, room: EntityId, actor: WriteActor, at: u64) -> AppendRe
         conversation: room,
         parent: vault.head(&room).unwrap(),
         reply_to: None,
+        quote: None,
         address: crate::conversation_dag::AddressMode::Broadcast,
         recipients: vec![],
         kind: crate::registry::ENTITY_TYPE_TURN,
+        containing_turn: None,
         session: None,
         text: vec![],
         advance: true,
@@ -52,6 +52,7 @@ fn record(vault: &Vault, room: EntityId, actor: WriteActor, at: u64) -> AppendRe
         occurred: TimeRange { start: at, end: at },
         learned_at: at,
         actor,
+        thread_audience: None,
     }
 }
 /// Scoped reads are default-deny: a reader needs an explicit `core:read` grant.
@@ -177,6 +178,7 @@ fn a_conversation_cannot_be_created_over_a_deleted_shell() {
 #[test]
 fn direct_addressing_never_restricts_room_visibility() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let outsider = EntityId::now();
     vault
         .put_entity(
@@ -193,7 +195,7 @@ fn direct_addressing_never_restricts_room_visibility() {
     let mut message = record(&vault, room, actor, 4);
     message.address = crate::conversation_dag::AddressMode::Direct;
     message.recipients = vec![outsider];
-    let id = vault.append_dag_record(&message).unwrap().id;
+    let id = vault.append_dag_record(&writer, &message).unwrap().id;
     assert!(audience_admits(&vault, id, bob).unwrap());
     assert_eq!(
         vault.targets(&id, EdgeKind::AddressedTo, None).unwrap(),
@@ -223,13 +225,14 @@ fn hard_deleted_empty_room_id_cannot_be_recreated() {
 #[test]
 fn membership_windows_survive_kick_rejoin_and_history_revoke() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let before = record(&vault, room, actor, 2);
-    let before = vault.append_dag_record(&before).unwrap();
+    let before = vault.append_dag_record(&writer, &before).unwrap();
     vault
         .join_member(room, bob, actor, 3, HistoryChoice::None)
         .unwrap();
     let during = record(&vault, room, actor, 4);
-    let during = vault.append_dag_record(&during).unwrap();
+    let during = vault.append_dag_record(&writer, &during).unwrap();
     assert!(!audience_admits(&vault, before.id, bob).unwrap());
     assert!(audience_admits(&vault, during.id, bob).unwrap());
     vault
@@ -242,12 +245,12 @@ fn membership_windows_survive_kick_rejoin_and_history_revoke() {
     assert!(!audience_admits(&vault, before.id, bob).unwrap());
     vault.leave_member(room, bob, actor, 7).unwrap();
     let gap = record(&vault, room, actor, 8);
-    let gap = vault.append_dag_record(&gap).unwrap();
+    let gap = vault.append_dag_record(&writer, &gap).unwrap();
     vault
         .join_member(room, bob, actor, 9, HistoryChoice::None)
         .unwrap();
     let after = record(&vault, room, actor, 10);
-    let after = vault.append_dag_record(&after).unwrap();
+    let after = vault.append_dag_record(&writer, &after).unwrap();
     assert!(audience_admits(&vault, during.id, bob).unwrap());
     assert!(!audience_admits(&vault, gap.id, bob).unwrap());
     assert!(audience_admits(&vault, after.id, bob).unwrap());
@@ -284,23 +287,26 @@ fn membership_windows_survive_kick_rejoin_and_history_revoke() {
 #[test]
 fn threads_never_move_head_and_metadata_is_derived() {
     let (_dir, vault, actor, room, _) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner));
     let first = vault
-        .append_dag_record(&record(&vault, room, actor, 1))
+        .append_dag_record(&writer, &record(&vault, room, actor, 1))
         .unwrap();
     let second = vault
-        .append_dag_record(&record(&vault, room, actor, 2))
+        .append_dag_record(&writer, &record(&vault, room, actor, 2))
         .unwrap();
     let mut fork = record(&vault, room, actor, 3);
     fork.parent = Some(first.id);
     fork.advance = false;
-    let fork = vault.append_dag_record(&fork).unwrap();
+    let fork = vault.append_dag_record(&writer, &fork).unwrap();
     assert!(vault.thread(first.id).unwrap().replies.is_empty());
     for trunk in [first.id, second.id] {
         let mut replies = Vec::new();
         for at in 4..7 {
             replies.push(
                 vault
-                    .reply_in_thread(trunk, &record(&vault, room, actor, at))
+                    .reply_in_thread(&writer, trunk, &record(&vault, room, actor, at))
                     .unwrap()
                     .id,
             );
@@ -316,12 +322,12 @@ fn threads_never_move_head_and_metadata_is_derived() {
                 vault.targets(reply, EdgeKind::RepliesTo, None).unwrap(),
                 [*target]
             );
-            let strip = vault.reply_strip(reply).unwrap().unwrap();
+            let strip = vault.reply_strip(&read, reply).unwrap().unwrap();
             assert_eq!(strip.record, *target);
-            assert!(!strip.stale);
+            assert_eq!(strip.stale, Some(false));
         }
         let nested = vault
-            .reply_in_thread(replies[0], &record(&vault, room, actor, 7))
+            .reply_in_thread(&writer, replies[0], &record(&vault, room, actor, 7))
             .unwrap();
         assert_eq!(
             vault.thread(trunk).unwrap().replies.last(),
@@ -387,16 +393,17 @@ fn presence_is_not_membership() {
 #[test]
 fn audience_all_of_rechecks_ledger_after_kick() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
     let early = record(&vault, room, actor, 2);
-    let early = vault.append_dag_record(&early).unwrap();
+    let early = vault.append_dag_record(&writer, &early).unwrap();
     vault
         .join_member(room, bob, actor, 3, HistoryChoice::None)
         .unwrap();
     let middle = record(&vault, room, actor, 4);
-    let middle = vault.append_dag_record(&middle).unwrap();
+    let middle = vault.append_dag_record(&writer, &middle).unwrap();
     permit_reads(&vault, &[actor.entity_ref()]);
     let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
     let audience = vault
@@ -427,7 +434,7 @@ fn audience_all_of_rechecks_ledger_after_kick() {
     );
     vault.leave_member(room, bob, actor, 5).unwrap();
     let late = record(&vault, room, actor, 6);
-    let late = vault.append_dag_record(&late).unwrap();
+    let late = vault.append_dag_record(&writer, &late).unwrap();
     assert!(
         audience
             .read(&[crate::claim::PointRead::id(late.id)], None)
@@ -447,6 +454,7 @@ fn audience_all_of_rechecks_ledger_after_kick() {
 #[test]
 fn assembled_context_and_edge_peers_share_the_audience_predicate() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
@@ -459,7 +467,7 @@ fn assembled_context_and_edge_peers_share_the_audience_predicate() {
             .unwrap()
             .into(),
     )];
-    let early = vault.append_dag_record(&early).unwrap();
+    let early = vault.append_dag_record(&writer, &early).unwrap();
     vault
         .join_member(room, bob, actor, 3, HistoryChoice::None)
         .unwrap();
@@ -472,7 +480,7 @@ fn assembled_context_and_edge_peers_share_the_audience_predicate() {
             .unwrap()
             .into(),
     )];
-    let late = vault.append_dag_record(&late).unwrap();
+    let late = vault.append_dag_record(&writer, &late).unwrap();
     vault
         .put_edge(&late.id, EdgeKind::Mentions, &early.id, 0.6)
         .unwrap();
@@ -532,6 +540,7 @@ fn assembled_context_and_edge_peers_share_the_audience_predicate() {
 #[test]
 fn audience_ledger_snapshot_budget_is_per_room_not_per_hit() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let other = EntityId::now();
     vault
         .create_conversation(other, &ConversationBody::default(), actor, 1)
@@ -542,7 +551,7 @@ fn audience_ledger_snapshot_budget_is_per_room_not_per_hit() {
             .join_member(room, bob, actor, 1, HistoryChoice::Share)
             .unwrap();
         let r = record(&vault, room, actor, 2);
-        let r = vault.append_dag_record(&r).unwrap();
+        let r = vault.append_dag_record(&writer, &r).unwrap();
         ids.push(r.id);
     }
     permit_reads(&vault, &[actor.entity_ref()]);
@@ -592,7 +601,7 @@ fn relationship_audience_is_all_of_and_unscoped_single_reader_is_unchanged() {
     )
     .unwrap();
     body.source = Some(crate::ClaimSource::Observed);
-    body.rel = Some(relationship);
+    body.rel = Some(crate::claim::RelationshipSet::from([relationship]));
     vault
         .batch()
         .put_replicated(
@@ -600,6 +609,7 @@ fn relationship_audience_is_all_of_and_unscoped_single_reader_is_unchanged() {
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &crate::claim::encode_claim_body(&body).unwrap(),
         )
         .text(&id, &[("body", "private relationship memory")])
@@ -643,10 +653,11 @@ fn relationship_audience_is_all_of_and_unscoped_single_reader_is_unchanged() {
 #[test]
 fn moving_head_to_a_room_or_sub_session_is_atomic_and_refused() {
     let (_dir, vault, actor, room, _) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let first = record(&vault, room, actor, 2);
-    let first = vault.append_dag_record(&first).unwrap();
+    let first = vault.append_dag_record(&writer, &first).unwrap();
     let second = record(&vault, room, actor, 3);
-    let second = vault.append_dag_record(&second).unwrap();
+    let second = vault.append_dag_record(&writer, &second).unwrap();
     let session = vault.spawn_dag_sub_session(&first.id, actor).unwrap();
     for target in [room, session] {
         assert!(matches!(
@@ -667,11 +678,12 @@ fn moving_head_to_a_room_or_sub_session_is_atomic_and_refused() {
 #[test]
 fn membership_rows_without_their_revision_never_grant_audience_reads() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, bob, actor, 2, HistoryChoice::Share)
         .unwrap();
     let row = record(&vault, room, actor, 3);
-    let row = vault.append_dag_record(&row).unwrap();
+    let row = vault.append_dag_record(&writer, &row).unwrap();
     permit_reads(&vault, &[bob]);
     let reader = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
@@ -708,6 +720,7 @@ fn membership_rows_without_their_revision_never_grant_audience_reads() {
 #[test]
 fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
     let (_dir, vault, actor, room, _) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
@@ -720,7 +733,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
             .unwrap()
             .into(),
     )];
-    let good = vault.append_dag_record(&good).unwrap();
+    let good = vault.append_dag_record(&writer, &good).unwrap();
     let mut hidden = Vec::new();
     let mut missing = Vec::new();
     for missing_room in [true, false] {
@@ -737,7 +750,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
             )
             .unwrap();
         let parent = record(&vault, broken_room, actor, 2);
-        let parent = vault.append_dag_record(&parent).unwrap();
+        let parent = vault.append_dag_record(&writer, &parent).unwrap();
         let mut child = record(&vault, broken_room, actor, 3);
         child.body = encode(&serde_json::json!({"txt":"needle broken ancestor"})).unwrap();
         child.text = vec![(
@@ -747,7 +760,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
                 .unwrap()
                 .into(),
         )];
-        let child = vault.append_dag_record(&child).unwrap();
+        let child = vault.append_dag_record(&writer, &child).unwrap();
         assert!(audience_admits(&vault, child.id, actor.entity_ref()).unwrap());
         missing.push(if missing_room { broken_room } else { parent.id });
         hidden.push(child.id);
@@ -781,6 +794,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &crate::claim::encode_claim_body(&body).unwrap(),
         )
         .text(&claim, &[("body", "needle missing subject")])
@@ -905,29 +919,30 @@ fn room_members_reject_non_person_and_agent_def_atomically() {
 #[test]
 fn thread_replies_obey_membership_time_windows() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let trunk = record(&vault, room, actor, 1);
-    let trunk = vault.append_dag_record(&trunk).unwrap();
+    let trunk = vault.append_dag_record(&writer, &trunk).unwrap();
     let before = vault
-        .reply_in_thread(trunk.id, &record(&vault, room, actor, 2))
+        .reply_in_thread(&writer, trunk.id, &record(&vault, room, actor, 2))
         .unwrap()
         .id;
     vault
         .join_member(room, bob, actor, 3, HistoryChoice::None)
         .unwrap();
     let during = vault
-        .reply_in_thread(trunk.id, &record(&vault, room, actor, 4))
+        .reply_in_thread(&writer, trunk.id, &record(&vault, room, actor, 4))
         .unwrap()
         .id;
     vault.leave_member(room, bob, actor, 5).unwrap();
     let gap = vault
-        .reply_in_thread(trunk.id, &record(&vault, room, actor, 6))
+        .reply_in_thread(&writer, trunk.id, &record(&vault, room, actor, 6))
         .unwrap()
         .id;
     vault
         .join_member(room, bob, actor, 7, HistoryChoice::None)
         .unwrap();
     let after = vault
-        .reply_in_thread(trunk.id, &record(&vault, room, actor, 8))
+        .reply_in_thread(&writer, trunk.id, &record(&vault, room, actor, 8))
         .unwrap()
         .id;
 
@@ -947,18 +962,19 @@ fn thread_replies_obey_membership_time_windows() {
 #[test]
 fn scope_summary_and_merge_header_require_every_covered_membership_window() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
     let before = vault
-        .append_dag_record(&record(&vault, room, actor, 2))
+        .append_dag_record(&writer, &record(&vault, room, actor, 2))
         .unwrap()
         .id;
     vault
         .join_member(room, bob, actor, 3, HistoryChoice::None)
         .unwrap();
     let after = vault
-        .append_dag_record(&record(&vault, room, actor, 4))
+        .append_dag_record(&writer, &record(&vault, room, actor, 4))
         .unwrap()
         .id;
     let scope = crate::conversation_dag::ScopeSelector {
@@ -1023,11 +1039,12 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
 #[test]
 fn conversation_summary_claim_needs_every_covered_turn_readable() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
     let turn = vault
-        .append_dag_record(&record(&vault, room, actor, 10))
+        .append_dag_record(&writer, &record(&vault, room, actor, 10))
         .unwrap()
         .id;
     vault
@@ -1060,6 +1077,7 @@ fn conversation_summary_claim_needs_every_covered_turn_readable() {
                 end: 150,
             },
             150,
+            None,
             &crate::claim::encode_claim_body(&body).unwrap(),
         )
         .commit()
@@ -1070,23 +1088,22 @@ fn conversation_summary_claim_needs_every_covered_turn_readable() {
 #[test]
 fn thread_metadata_survives_reopen_without_side_tables() {
     let (dir, vault, actor, room, _) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let trunk = vault
-        .append_dag_record(&record(&vault, room, actor, 1))
+        .append_dag_record(&writer, &record(&vault, room, actor, 1))
         .unwrap()
         .id;
     let first = vault
-        .reply_in_thread(trunk, &record(&vault, room, actor, 3))
+        .reply_in_thread(&writer, trunk, &record(&vault, room, actor, 3))
         .unwrap()
         .id;
     let second = vault
-        .reply_in_thread(trunk, &record(&vault, room, actor, 2))
+        .reply_in_thread(&writer, trunk, &record(&vault, room, actor, 2))
         .unwrap()
         .id;
     drop(vault);
-    let config = VaultConfig {
-        embedding_model: Some("test/model@v1".to_owned()),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open(dir.path(), config).unwrap();
     let thread = vault.thread(trunk).unwrap();
     assert_eq!(thread.replies, [first, second]);
@@ -1098,13 +1115,14 @@ fn thread_metadata_survives_reopen_without_side_tables() {
 #[test]
 fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
     let (_dir, vault, actor, room, bob) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, bob, actor, 1, HistoryChoice::Share)
         .unwrap();
     let mut input = record(&vault, room, actor, 2);
     input.body = encode(&serde_json::json!({"txt": "needle healthy"})).unwrap();
     input.text = vec![("body".into(), "needle healthy".into())];
-    let turn = vault.append_dag_record(&input).unwrap().id;
+    let turn = vault.append_dag_record(&writer, &input).unwrap().id;
     let scope = crate::conversation_dag::ScopeSelector {
         conversation: room,
         session: None,
@@ -1127,6 +1145,7 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
             crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
                 v: 1,
                 session: EntityId::now().to_hex(),
+                conversation: None,
                 epoch: 1,
                 turn_start: 1,
                 turn_end: 1,

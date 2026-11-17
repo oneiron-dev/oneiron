@@ -71,8 +71,14 @@ pub(super) struct FoldContext<'a> {
     /// The bytes this fold may project to hold at its peak.
     pub(super) memory_floor_bytes: u64,
     /// This install's pin on a fold of its own vault's log: which world-key
-    /// records count here. It decides no entry's validity.
+    /// records count here. The pin decides no entry's validity; it decides
+    /// which valid root appointment counts.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// The verdicts of the root appointments this fold holds, which their
+    /// refusals carry, and the world the counted ones recover
+    /// (`root_appointment_judge`). None on a fold that judges none (an
+    /// appointment is then `Unjudged`).
+    pub(super) appointments: Option<&'a super::root_appointment_judge::AppointmentJudgement>,
 }
 
 impl FoldContext<'_> {
@@ -426,9 +432,16 @@ pub(super) fn fold_authority_log_once_with(
         .sequence_floors
         .map(|_| floors_of(&by_hash, &entry_ancestors, context));
     let original_floors = floors.as_ref().map(|floors| &floors.original);
+    // Root appointments are judged before any entry folds: only the pinned
+    // anchor's, each over its own ancestry (`root_appointment_judge`).
+    let appointments = super::root_appointment_judge::judge_appointments(&by_hash, context.pin);
+    if let Some(anchor) = appointments.burned {
+        issues.push(AuthorityFoldIssue::AnchorBurned { anchor });
+    }
     let context = FoldContext {
         sequence_floors: floors.as_ref().map(|floors| &floors.applied),
         entry_ancestors: Some(&entry_ancestors),
+        appointments: Some(&appointments),
         ..context
     };
 
@@ -447,6 +460,7 @@ pub(super) fn fold_authority_log_once_with(
         &by_hash,
         &entry_ancestors,
         handoffs,
+        &appointments.recovered,
         &mut issues,
     );
     super::world_refold::refold_world_edits(
@@ -591,6 +605,7 @@ pub(super) fn fold_authority_log_once_with(
             revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),
+            closed_conflicts: retirements.closed_conflicts(),
             unsettled: retirements.unsettled(),
             counted_ancestor_pairs,
             issues,

@@ -345,7 +345,7 @@ impl LfsTarget {
 /// from its target and its credential from the broker. An action carries
 /// the headers its batch reply named, as given, its own `Authorization`
 /// among them: each a header name and value HTTP can send unchanged, none
-/// of [`RESERVED_ACTION_HEADERS`], a `Content-Length` only of `body_len`,
+/// of `RESERVED_ACTION_HEADERS`, a `Content-Length` only of `body_len`,
 /// and a `Transfer-Encoding` only `chunked`.
 ///
 /// # Errors
@@ -413,7 +413,7 @@ impl LfsRequestDigest {
         framed_part(&mut digest, repository.path().as_bytes());
         match target {
             LfsTarget::Batch(batch) => {
-                framed_part(&mut digest, batch.operation.as_str().as_bytes())
+                framed_part(&mut digest, batch.operation.as_str().as_bytes());
             }
             LfsTarget::ObjectDownload(action)
             | LfsTarget::ObjectUpload(action)

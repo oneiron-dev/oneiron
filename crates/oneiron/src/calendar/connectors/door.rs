@@ -8,6 +8,7 @@ use super::{
     CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState,
     CalendarSyncOutcome,
 };
+use crate::calendar::ingest::feed_door;
 use crate::calendar::setting_keys::CONNECTOR_SEAT;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -108,16 +109,37 @@ fn put_record_in_txn(
     Ok(())
 }
 
+/// The seat ref of an installed seat whose passports carry `system`, or none, read in `txn`. A
+/// stopped seat still holds its system: its imported events keep their passports.
+pub(crate) fn seat_of_system_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+) -> crate::Result<Option<String>> {
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        let setup = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value;
+        if setup.is_some_and(|setup| setup.config.system == system) {
+            return Ok(Some(seat_ref));
+        }
+    }
+    Ok(None)
+}
+
 /// The `calendar.connector_seat` hook, in the write that changes a seat's row. It keeps the
 /// rules the configure door had: a value row at a seat ref, naming that ref, installed once.
 /// A configured seat is immutable (a change or a clear is refused; a new configuration takes a
 /// new seat ref), and a seat ref that a seat already used is never installed again, so no
-/// cursor or kill switch outlives its seat.
+/// cursor or kill switch outlives its seat. A seat never imports under the system of an
+/// installed ICS feed: each complete poll of the feed cancels every event of its system that
+/// the feed body lacks, the seat's events too. A system whose feed was uninstalled is open to a
+/// seat, since no poll of that feed runs again.
 ///
 /// # Errors
 ///
 /// `InvalidConfig` for a pin, a row with no seat ref, a value naming another seat ref, a change
-/// to an installed seat, or a seat ref used before.
+/// to an installed seat, a seat ref used before, or the system of an installed ICS feed.
 pub(crate) fn seat_setup_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -153,6 +175,13 @@ pub(crate) fn seat_setup_changed_in_txn(
         if STATES.contains(&vault.store, &*txn, &seat_ref.to_owned())? {
             return Err(crate::Error::InvalidConfig(
                 "this seat_ref named an earlier seat; use a new seat_ref".into(),
+            ));
+        }
+        if feed_door::registration_in_txn(vault, txn, &setup.config.system)?.is_some() {
+            return Err(crate::Error::InvalidConfig(
+                "an installed ICS feed imports under this system, and its complete polls would \
+                 cancel the seat's events; use another system"
+                    .into(),
             ));
         }
     }
