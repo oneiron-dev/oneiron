@@ -1213,6 +1213,40 @@ impl Vault {
         fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
     }
 
+    /// The owner's restore of an archived row this vault already holds byte for byte, as the
+    /// import's unchanged-row shortcut meets it (blind review P1, REVIEW-9365). When the row
+    /// is a TASK authority fact, the restore counts it as
+    /// [`Self::restore_archived_task_fact_in_txn`] counts a fact it lands: a fact an own
+    /// device sent here unsigned proves nothing here, and the owner's restore of his own
+    /// archive is his own act (OWNER-RESTORE-TASK-FACT-COUNT = A). It enters this install's
+    /// written-here index, and the import's [`Self::adopt_task_facts_in_txn`] twins it. An
+    /// Owner fact whose maker does not derive its task's id refuses the import, as the
+    /// restore door refuses it. Any other row is left as it is.
+    pub(crate) fn restore_held_task_fact_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        fact_ref: &EntityId,
+    ) -> Result<()> {
+        let Some(raw) = self.get_raw_in(wtxn, fact_ref)? else {
+            return Ok(());
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if header.entity_type != ENTITY_TYPE_TASK || !is_task_authority_fact_body(body) {
+            return Ok(());
+        }
+        if !decode_carried_task_authority_fact_body(body)?
+            .fact
+            .commits_to_its_task()
+        {
+            return Err(Error::InvariantViolation(
+                "task authority fact's maker does not derive its task id",
+            ));
+        }
+        fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
+    }
+
     /// The authority one TASK's replicated facts prove.
     ///
     /// `Ok(None)` means NO Owner fact exists, and direct authority therefore
