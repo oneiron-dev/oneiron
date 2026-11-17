@@ -90,7 +90,12 @@ fn scrub_decision(
 /// Scrubs the people a change names. A record's target id stays.
 fn scrub_change(change: &mut SharedVaultChange, actor: &EntityId) -> bool {
     match change {
-        SharedVaultChange::VaultDeleted { .. } | SharedVaultChange::RecordErased { .. } => false,
+        SharedVaultChange::VaultDeleted { .. }
+        | SharedVaultChange::RecordErased { .. }
+        | SharedVaultChange::ProjectAccessReset { .. }
+        | SharedVaultChange::HouseRoleChanged { .. }
+        | SharedVaultChange::WorkspaceSettingsChanged { .. }
+        | SharedVaultChange::ConversationLearningChanged { .. } => false,
         SharedVaultChange::OwnerAdded { owner } => scrub(owner, actor),
         SharedVaultChange::OwnershipTransferred { from, to, .. }
         | SharedVaultChange::OwnerRecovered { from, to } => {
@@ -110,7 +115,9 @@ fn scrub_change(change: &mut SharedVaultChange, actor: &EntityId) -> bool {
         | SharedVaultChange::InvitationWithdrawn { member, .. }
         | SharedVaultChange::MemberRoleChanged { member, .. }
         | SharedVaultChange::MemberRemoved { member }
-        | SharedVaultChange::MemberLeft { member } => scrub(member, actor),
+        | SharedVaultChange::MemberLeft { member }
+        | SharedVaultChange::MemberOnboarded { member, .. }
+        | SharedVaultChange::DelegateGranted { member, .. } => scrub(member, actor),
     }
 }
 
