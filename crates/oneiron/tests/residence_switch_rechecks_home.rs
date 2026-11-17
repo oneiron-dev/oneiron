@@ -308,8 +308,7 @@ fn a_home_that_loses_the_election_during_a_switch_to_sync_opened_runs_it() {
             // window waits on the residence upkeep's grant (`rr:w:`); under
             // sync opened a window syncs only once granted.
             assert_eq!(
-                change.unsynced,
-                held,
+                change.unsynced, held,
                 "a home that loses the election during its switch to sync opened reports its \
                  held windows unsynced"
             );
