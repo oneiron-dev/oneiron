@@ -545,8 +545,7 @@ fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
 }
 
 fn telemetry_config() -> VaultConfig {
-    VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    }
+    let mut config = VaultConfig::default();
+    config.retrieval_telemetry_capture = true;
+    config
 }

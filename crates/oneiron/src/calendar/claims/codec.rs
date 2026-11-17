@@ -82,6 +82,8 @@ pub(super) const KEY_LAST_SEEN_AT: &str = "last_seen_at";
 
 pub(super) const KEY_PRESENCE: &str = "presence";
 
+pub(super) const KEY_CANCELLED_SINCE: &str = "cancelled_since";
+
 pub(super) const KEY_STATUS: &str = "status";
 
 pub(super) const KEY_BASIS: &str = "basis";
@@ -315,6 +317,9 @@ pub(in crate::calendar) fn decode_attendee_value(value: &Value) -> Result<Calend
 /// back-compat; new writes include it. The content hash is MessagePack binary
 /// of exactly 32 bytes. An optional source names the exact archived content,
 /// with a canonical artifact id and a positive version; it adds no dependency.
+/// An optional `cancelled_since` dates the source's first report of the UID
+/// cancelled; a row without it (every row of an uncancelled version, and
+/// every row written before it) decodes it as `None`.
 pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportValue> {
     let entries = value_map(value)?;
     let required = [
@@ -326,7 +331,7 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         KEY_LAST_SEEN_AT,
     ];
     let mut allowed = required.to_vec();
-    allowed.extend([KEY_PRESENCE, KEY_SOURCE]);
+    allowed.extend([KEY_PRESENCE, KEY_SOURCE, KEY_CANCELLED_SINCE]);
     validate_keys(entries, &allowed, &required)?;
     let system = required_string(entries, KEY_SYSTEM)?;
     let uid = required_string(entries, KEY_UID)?;
@@ -362,6 +367,13 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         direction,
         last_seen_at: required_u64(entries, KEY_LAST_SEEN_AT)?,
         presence,
+        cancelled_since: optional_value(entries, KEY_CANCELLED_SINCE)?
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid_claim("calendar passport cancelled_since is invalid"))
+            })
+            .transpose()?,
     })
 }
 

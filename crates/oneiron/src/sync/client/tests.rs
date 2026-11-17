@@ -96,6 +96,7 @@ fn commit_local_entity(
         ENTITY_TYPE_TASK,
         TimeRange { start: 1, end: 1 },
         learned_at,
+        0,
         body,
     );
     window
@@ -227,7 +228,13 @@ fn test_selector() -> SyncSelector {
 
 fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Vec<u8> {
     let data = crate::claim::encode_claim_body(body).expect("claim encode");
-    let blob = entity_blob(ENTITY_TYPE_CLAIM, TimeRange { start: 5, end: 5 }, 5, &data);
+    let blob = entity_blob(
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: 5, end: 5 },
+        5,
+        0,
+        &data,
+    );
     let doc = server_window_doc();
     doc.get_map("entities")
         .insert(id.to_hex().as_str(), blob.as_slice())
@@ -836,6 +843,7 @@ fn a_home_promotion_snapshot_carrying_custody_lands_nowhere() {
         crate::registry::ENTITY_TYPE_SECRET_CUSTODY,
         TimeRange { start: at, end: at },
         at,
+        0,
         b"placeholder custody body",
     );
     let carrier = EntityId::now().to_hex();
@@ -1147,7 +1155,7 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
             .get_map("entities")
             .insert(
                 &shared,
-                entity_blob(ENTITY_TYPE_TASK, range, at, b"shared").as_slice(),
+                entity_blob(ENTITY_TYPE_TASK, range, at, 0, b"shared").as_slice(),
             )
             .unwrap();
         server_doc.commit();
@@ -1169,14 +1177,19 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
                     .get_map("entities")
                     .insert(
                         row,
-                        entity_blob(ENTITY_TYPE_TASK, range, at + 1 + n as u64, b"unsent")
+                        entity_blob(ENTITY_TYPE_TASK, range, at + 1 + n as u64, 0, b"unsent")
                             .as_slice(),
                     )
                     .unwrap();
                 window.doc.commit();
             }
-            let diagnostic =
-                entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, range, at, b"diag");
+            let diagnostic = entity_blob(
+                crate::registry::ENTITY_TYPE_DIAGNOSTIC,
+                range,
+                at,
+                0,
+                b"diag",
+            );
             window
                 .doc
                 .get_map("entities")
@@ -2423,6 +2436,7 @@ fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restar
                     crate::registry::ENTITY_TYPE_PERSON,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    0,
                     b"person",
                 )
                 .as_slice(),
@@ -2489,6 +2503,7 @@ fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decisio
                     crate::registry::ENTITY_TYPE_PERSON,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    0,
                     b"person",
                 )
                 .as_slice(),
@@ -2654,7 +2669,13 @@ fn journaled_claim_text() -> JournaledClaimText {
         .documents()
         .open(claim)
         .unwrap()
-        .edit_text(0, 0, "private text")
+        .edit_text(
+            crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human),
+            1,
+            0,
+            0,
+            "private text",
+        )
         .unwrap();
     let home = LoroDoc::new();
     home.get_text("body").insert(0, "home ").unwrap();

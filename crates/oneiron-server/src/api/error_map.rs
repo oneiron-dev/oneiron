@@ -176,6 +176,17 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Restart policy review from the current diff and read frontier."],
         ),
+        // L3-39: a memory fork names a revision this machine holds no bytes
+        // of; the reader may read the row now.
+        ErrorKind::HistoryNotHeld => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("history_not_held".to_owned()),
+            },
+            [
+                "Read the row at the live head, or read this frontier where the row's history is held.",
+            ],
+        ),
         // FIX 10011: the owner's model pin stands and no offered seat
         // serves it; no other model is put in its place.
         ErrorKind::ModelPinUnavailable => ApiError::new(

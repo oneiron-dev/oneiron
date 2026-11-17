@@ -14,6 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/legacy.rs` | src | s | 2 struct · 2 enum · 9 fn · 1 crate-vis | LegacyDigest, LegacyHash, LegacyPurpose, TagMode | The K door: a digest that main already stores or sends keeps its exact bytes |
 | `src/lib.rs` | src | s | 5 struct · 20 fn · 1 const · 1 mod · 3 re-export · 1 crate-vis | ContentHash, ContentHasher, Fingerprint, Fingerprinter, Purpose | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
+| `src/purposes/calendar.rs` | src | s | — | — | Purposes of calendar ingest (`oneiron` `calendar::ingest`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`) |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
