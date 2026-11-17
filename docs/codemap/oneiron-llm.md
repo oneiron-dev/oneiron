@@ -57,8 +57,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/openai_compat/tests.rs` | test | m | — | — | The adapter under a run admission's gate: its preflight refuses what its send would, before the call's… |
 | `src/openai_compat/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | OpenAiCompatHttpRequest, OpenAiCompatHttpResponse, OpenAiCompatStreamFrame, OpenAiCompatTransport, OpenAiCompatTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
 | `src/openai_compat/wire.rs` | src | m | 4 fn · 3 crate-vis | — | Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status… |
-| `src/systemone/mod.rs` | src | m | 3 struct · 1 trait · 3 fn · 1 type · 2 const · 1 re-export | SystemOneHttpRequest, SystemOneHttpResponse, SystemOneSeat, SystemOneTransport | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
+| `src/systemone/mod.rs` | src | m | 4 struct · 1 trait · 6 fn · 1 type · 4 const · 1 re-export | SealedSystemOneRequest, SystemOneHttpRequest, SystemOneHttpResponse, SystemOneSeat, SystemOneTransport | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
 | `src/systemone/pack.rs` | src | s | 4 struct · 2 fn | SystemOnePackAnswer, SystemOnePackPrediction, SystemOnePackQuestion, SystemOnePackRequest | One native System One request over a shared state and ordered typed questions |
 | `src/systemone/tests.rs` | test | s | — | — | — |
+| `tests/native_budget_wire.rs` | test | m | — | — | L9-19 (ARCH-0036 #decision-deadline part 4, #system-one-codec): a System One server that takes a native… |
 | `tests/openai_compat_family.rs` | test | s | — | — | L9-25 PR 4 (ARCH-0036 `#adapters`, MED-1 = A): the OpenAI-compatible media backend splits by family over one… |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |
