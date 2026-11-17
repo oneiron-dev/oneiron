@@ -1,4 +1,5 @@
 //! Room bodies, membership windows, session presence and audience visibility.
+pub(crate) mod archive_restore;
 mod attendee;
 mod body;
 mod chat_breakpoint;
