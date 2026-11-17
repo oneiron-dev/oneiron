@@ -12,6 +12,7 @@
 
 use super::*;
 use crate::side_table::{self, Raw, SideTable};
+use oneiron_contracts::msgpack;
 
 const RUN_LABEL: &str = "cleanup run result";
 
@@ -193,6 +194,6 @@ fn write_in_txn(
         txn,
         super::entity_rows::Listing::Run,
         attempt.as_bytes(),
-        &encode_row(&Value::Map(fields), RUN_LABEL)?,
+        &msgpack::encode(&Value::Map(fields)),
     )
 }

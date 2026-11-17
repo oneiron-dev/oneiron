@@ -3,6 +3,7 @@
 use rmpv::Value;
 
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_contracts::msgpack;
 
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 
@@ -43,13 +44,9 @@ pub(super) fn map_f32(value: &Value, key: &str) -> Option<f32> {
 }
 
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, value)
-        .map_err(|_| invalid("skill reliability MessagePack encode failed"))?;
-    Ok(encoded)
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn decode_value(raw: &[u8]) -> Result<Value> {
-    rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| invalid("skill reliability MessagePack decode failed"))
+    msgpack::decode(raw).map_err(|_| invalid("skill reliability MessagePack decode failed"))
 }

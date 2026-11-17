@@ -181,6 +181,7 @@ pub mod meso_extraction_width;
 pub mod microsoft_token;
 pub mod model_binding_proposer;
 pub mod model_call_turn_link;
+pub mod msgpack_trailing;
 pub mod model_step_submission_codec;
 pub mod msgpack_bridge;
 pub mod nightly;

@@ -7,6 +7,7 @@ use crate::side_table::codec::RawValue;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::msgpack;
 
 use oneiron_base::human_task_followup::HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION;
 use oneiron_base::human_task_followup::HumanFollowupStage;
@@ -46,10 +47,7 @@ pub const KEY_SURFACE_EVENT_REF: &str = "surface_event_ref";
 // ── storage ─────────────────────────────────────────────────────────────────
 
 pub fn encoded(entries: Vec<(Value, Value)>) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
-        .expect("writing msgpack into a Vec is infallible");
-    bytes
+    msgpack::encode(&Value::Map(entries))
 }
 
 pub fn entity_value(id: EntityId) -> Value {
@@ -71,12 +69,7 @@ pub fn field<'v>(entries: &'v [(Value, Value)], key: &str) -> Option<&'v Value> 
 }
 
 pub fn decode_map(raw: &[u8], what: &'static str) -> Result<Vec<(Value, Value)>> {
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| Error::CorruptedIndex(what))?;
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(Error::CorruptedIndex(what)),
-    }
+    msgpack::decode_map(raw).map_err(|_| Error::CorruptedIndex(what))
 }
 
 pub fn decode_entity(
