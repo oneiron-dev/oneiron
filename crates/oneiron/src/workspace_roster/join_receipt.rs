@@ -221,6 +221,25 @@ pub(super) fn ready_key(room: EntityId, subject: &JoinSubject, branch: Option<En
     )
 }
 
+/// Whether `room`'s Ready index holds a row, for the room or one of its
+/// threads, whose subject is not `owner`: a reader the room's ledger does
+/// not name. A row is counted whatever its receipt now decides.
+pub(super) fn room_ready_join_for_other_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    owner: EntityId,
+) -> Result<bool> {
+    let own = format!("{}/{}/", room.to_hex(), owner.to_hex());
+    for row in READY.iter_from(store, txn, format!("{}/", room.to_hex()).as_bytes())? {
+        let (key, _) = row?;
+        if !key.starts_with(&own) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Deletes every join receipt a request for `room` filed, whatever its
 /// decision, then the room's Ready index.
 pub(super) fn delete_room_joins(
