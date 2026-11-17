@@ -311,7 +311,10 @@ pub(crate) use rooms::{
 pub(crate) use rooms::{
     erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
 };
-pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{
+    own_room_windows_in_txn, project_room_audience_in, room_join_audience_in,
+    room_sole_owner_reader_in,
+};
 pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};

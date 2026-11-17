@@ -18,8 +18,8 @@
 //! [`ERASED_MEMBER_ACT_REFUSAL`] ([`refuse_an_erased_member_act`]).
 //! A held erase is no such act: it names its record, and runs.
 //!
-//! `start_authority_act` checks a built-in act's name, not its plan, so a
-//! stored plan may not decode. Such an act cannot run. The scrub writes the
+//! `start_authority_act` refuses a built-in act whose plan does not decode,
+//! so only a legacy row's stored plan may not decode. Such an act cannot run. The scrub writes the
 //! erased marker over each spelling of the person's hex: in each JSON string
 //! and key as a JSON reader decodes it, when the plan is JSON, and in its
 //! bytes as text. Then it goes on: one malformed act never stops an erase.
@@ -62,7 +62,7 @@ fn names(field: &str, actor: &EntityId) -> bool {
 
 /// Writes [`ERASED_CALL_IDENTITY`] over `field` when it names `actor`.
 /// Returns whether it did.
-fn scrub(field: &mut String, actor: &EntityId) -> bool {
+pub(super) fn scrub(field: &mut String, actor: &EntityId) -> bool {
     let named = names(field, actor);
     if named {
         ERASED_CALL_IDENTITY.clone_into(field);
@@ -316,7 +316,7 @@ fn names_an_erased_member(act: &PendingAuthorityAct) -> Result<bool> {
 }
 
 /// What a scrub does to one stored row.
-enum RowEdit {
+pub(super) enum RowEdit {
     /// The row names no one erased.
     Keep,
     /// The row with the erased marker in each slot that named the person.
@@ -326,7 +326,7 @@ enum RowEdit {
 }
 
 /// Applies `edit` to each row of `table`.
-fn rewrite_rows(
+pub(super) fn rewrite_rows(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     table: &SideTable<String, Vec<u8>, Raw>,
@@ -345,7 +345,7 @@ fn rewrite_rows(
 }
 
 /// Deletes each row of `table` keyed under `actor`'s hex.
-fn delete_own_rows(
+pub(super) fn delete_own_rows(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     table: &SideTable<String, Vec<u8>, Raw>,
