@@ -85,12 +85,14 @@ pub struct TaskBriefModelBinding {
 }
 
 /// One draft call: the instruction, the one-liner and the lens rows as the
-/// model reads them, and the JSON schema its reply must match.
+/// model reads them, the JSON schema its reply must match, and the caller
+/// whose create it composes, whose own lease the host meters the call on.
 #[derive(Debug, Clone, Copy)]
 pub struct TaskBriefDraftRequest<'a> {
     pub instruction: &'a str,
     pub input: &'a str,
     pub schema: &'a serde_json::Value,
+    pub caller: crate::WriteActor,
 }
 
 /// A create's request to have its brief composed: the caller's one-liner
@@ -362,6 +364,7 @@ impl Memory<'_> {
             instruction: COMPOSE_INSTRUCTION,
             input: &input,
             schema: &schema,
+            caller: self.write_actor(),
         })?;
         let draft: BriefDraft = serde_json::from_str(reply.trim()).map_err(|error| {
             unfit_draft(&format!("the reply is not the schema's JSON ({error})"))
