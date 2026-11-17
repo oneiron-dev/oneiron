@@ -203,7 +203,8 @@ pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict, CanVerbAnswer, CanVe
 pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
 pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
-    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
+    AllRelationships, ClaimRelationships, ClaimScope, ClaimScopeInput, ScopedClaimInput,
+    ScopedCommitRequest,
 };
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
@@ -360,7 +361,8 @@ pub use scoped_export::{
     ScopedExportRecord, ScopedExportRequest,
 };
 pub use search_hybrid::{
-    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+    HybridPhoneticVectorQuery, HybridPprQuery, HybridRankReplay, HybridSearchHit,
+    HybridSearchRequest, HybridTemporalQuery,
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,

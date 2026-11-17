@@ -39,8 +39,13 @@ const VERBS: [(&str, bool); 8] = [
     (VERB_PREVIEW, false),
 ];
 
-/// The most ops one `image.render` or `image.preview` applies.
+/// The most ops one `image.render` or `image.preview` applies when its call
+/// names no `max_ops`: the host's default count (`organ_host.image.max_ops`).
 const MAX_RENDER_OPS: usize = 256;
+
+const fn default_max_render_ops() -> usize {
+    MAX_RENDER_OPS
+}
 
 /// The bounds of `image.preview`'s `max_side`, in pixels.
 pub const MIN_PREVIEW_SIDE: u32 = 16;
@@ -185,19 +190,27 @@ struct ExportArgs {
 }
 
 /// `image.render`'s args: the ops in order, each a map naming its `op`
-/// beside that op's own args, and the format.
+/// beside that op's own args, the format, and `max_ops`, the most ops this
+/// render applies: the host's count, which is the vault owner's
+/// `organ_host.image.max_ops`. A call that names none takes
+/// [`MAX_RENDER_OPS`]. The memory grant and frame limits bound each call
+/// whatever the count.
 #[derive(Deserialize)]
 struct RenderArgs {
     ops: Vec<Value>,
     format: String,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
 }
 
-/// `image.preview`'s args: `image.render`'s ops, and the longest side the
-/// preview may have.
+/// `image.preview`'s args: `image.render`'s ops and `max_ops`, and the
+/// longest side the preview may have.
 #[derive(Deserialize)]
 struct PreviewArgs {
     ops: Vec<Value>,
     max_side: u32,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
 }
 
 #[derive(Deserialize)]
@@ -522,7 +535,7 @@ impl ImageOrgan {
     fn render(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: RenderArgs = from_value(call.args, "render args")?;
         png_only(&args.format)?;
-        let (body, input, header) = self.rendered_body(call, &args.ops)?;
+        let (body, input, header) = self.rendered_body(call, &args.ops, args.max_ops)?;
         let peak = ops::render_peak(&body, &|| call.check_cancel())?;
         self.export_png(call, &body, peak, input, &header)
     }
@@ -539,7 +552,7 @@ impl ImageOrgan {
                 args.max_side
             )));
         }
-        let (mut body, input, header) = self.rendered_body(call, &args.ops)?;
+        let (mut body, input, header) = self.rendered_body(call, &args.ops, args.max_ops)?;
         let check = || call.check_cancel();
         if let Some(fit) = preview_fit(body.canvas, args.max_side) {
             body = ops::resize(
@@ -558,15 +571,17 @@ impl ImageOrgan {
 
     /// The body of the call's one input with `ops` applied in order, as
     /// `image.render` and `image.preview` build it, beside the input and its
-    /// checked header.
+    /// checked header. `max_ops` is the call's count: the host's, which is
+    /// the vault owner's `organ_host.image.max_ops`.
     fn rendered_body<'a>(
         &self,
         call: &'a CallContext<'_>,
         ops: &[Value],
+        max_ops: usize,
     ) -> Result<(ImageBody, &'a InputBytes, Header), OrganError> {
-        if ops.len() > MAX_RENDER_OPS {
+        if ops.len() > max_ops {
             return Err(bad(format!(
-                "a render takes at most {MAX_RENDER_OPS} ops, not {}",
+                "a render takes at most {max_ops} ops, not {}",
                 ops.len()
             )));
         }
