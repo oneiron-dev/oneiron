@@ -48,17 +48,23 @@ const SYSTEM_WRITE: &[&str] = &["/dev/null"];
 /// kernel with none.
 ///
 /// # Errors
-/// A rule could not be made, or a third-party organ's kernel has no
-/// Landlock ABI 3; the error says it was the fence.
+/// A rule could not be made, a third-party organ's kernel has no Landlock
+/// ABI 3, or a third-party organ has no scratch dir; the error says it was
+/// the fence.
 pub(super) fn fence(spec: &OrganSpec, scratch: Option<&Path>) -> io::Result<Option<OwnedFd>> {
-    if let Some(scratch) = scratch {
-        return ruleset(spec, &[scratch]).map(Some);
+    match spec.tier {
+        OrganTier::ThirdParty => {
+            let scratch = scratch.ok_or_else(|| {
+                io::Error::other("the organ's Landlock fence could not be built: no scratch dir")
+            })?;
+            ruleset(spec, &[scratch]).map(Some)
+        }
+        OrganTier::FirstParty if super::filesystem_confined() => {
+            let write: Vec<&Path> = spec.write_dirs.iter().map(PathBuf::as_path).collect();
+            ruleset(spec, &write).map(Some)
+        }
+        OrganTier::FirstParty => Ok(None),
     }
-    if spec.tier == OrganTier::FirstParty && super::filesystem_confined() {
-        let write: Vec<&Path> = spec.write_dirs.iter().map(PathBuf::as_path).collect();
-        return ruleset(spec, &write).map(Some);
-    }
-    Ok(None)
 }
 
 /// `spec`'s ruleset, with `write` the dirs it writes besides the null
