@@ -38,13 +38,16 @@ thread (`vault.mail.threads.share`). Tell them who will read it.
 
 ## Answering mail
 
-You never send mail on your own. Draft the reply with `vault.mail.reply.draft`
-(a thread you read, the plain text, and a key of your own for the draft); it
-sends nothing. The mailbox's owner reviews it (`vault.mail.reply.drafts`) and
-it goes out only when they approve that exact revision
-(`vault.mail.reply.approve`, theirs alone, never yours). Redrafting under the
-same key makes a new revision that needs its own approval; discard a draft
-you no longer want (`vault.mail.reply.discard`). You may add `body_html`, the
+Draft the reply with `vault.mail.reply.draft` (a thread you read, the plain
+text, and a key of your own for the draft); it sends nothing. Then send that
+revision with `vault.mail.reply.send`: it goes out only when the vault's send
+grant lets you send without asking. Otherwise it waits, and the mailbox's
+owner reviews it (`vault.mail.reply.drafts`) and approves that exact revision
+(`vault.mail.reply.approve`, theirs alone, never yours). A reply from a
+mailbox that is not the vault owner's, or from a Google mailbox, always waits
+for that approval. Redrafting under the same key makes a new revision that
+needs its own send; discard a draft you no longer want
+(`vault.mail.reply.discard`). You may add `body_html`, the
 same reply as simple HTML (paragraphs, links, lists, quotes, emphasis); it
 sends beside the plain text, which must still read as the whole reply. An
 image, style or script is refused.

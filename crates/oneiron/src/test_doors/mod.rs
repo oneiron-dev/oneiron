@@ -157,6 +157,7 @@ pub mod live_window_note_scrub;
 pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
+pub mod mail_reply_send;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
