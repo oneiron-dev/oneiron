@@ -211,7 +211,7 @@ fn is_separator(c: char) -> bool {
 }
 
 fn add_romaji(codes: &mut BTreeSet<String>, text: &str) {
-    let compact: String = text.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    let compact: String = text.chars().filter(char::is_ascii_alphabetic).collect();
     if compact.is_empty() {
         return;
     }
