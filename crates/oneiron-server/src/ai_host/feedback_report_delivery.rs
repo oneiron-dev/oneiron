@@ -17,14 +17,17 @@ use crate::server::SyncServer;
 
 /// Resolves a bound publisher endpoint to this host's feedback carrier: the
 /// configured destination's HTTP transport, or none.
-pub(super) struct ReportPublisherResolver {
+pub(super) struct ReportPublisherResolver<'a> {
+    /// The vault whose owner's `feedback.delivery.require_https` each send
+    /// reads again.
+    vault: &'a oneiron::Vault,
     transport: Option<HttpFeedbackTransport>,
 }
 
-impl ReportPublisherResolver {
+impl<'a> ReportPublisherResolver<'a> {
     /// The carrier for `server`'s feedback destination. A destination whose
     /// transport cannot be built resolves to none, so every send holds.
-    pub(super) fn for_server(server: &SyncServer) -> Self {
+    pub(super) fn for_server(server: &'a SyncServer) -> Self {
         let transport = server.feedback.as_ref().and_then(|host| {
             HttpFeedbackTransport::for_vault(
                 server.vault(),
@@ -33,11 +36,14 @@ impl ReportPublisherResolver {
             )
             .ok()
         });
-        Self { transport }
+        Self {
+            vault: server.vault(),
+            transport,
+        }
     }
 }
 
-impl ReportSignatureTransport for ReportPublisherResolver {
+impl ReportSignatureTransport for ReportPublisherResolver<'_> {
     fn destination(&self) -> Option<ReportPublisherEndpoint> {
         self.transport
             .as_ref()
@@ -48,7 +54,14 @@ impl ReportSignatureTransport for ReportPublisherResolver {
         &mut self,
         request: &ReportSignatureTransportRequest<'_>,
     ) -> OutboundExecutionOutcome {
+        let vault = self.vault;
         match self.transport.as_mut() {
+            // The owner's rule is read again before each signature POST: one
+            // run reuses this transport for every report, and the owner may
+            // turn feedback.delivery.require_https back on mid-run.
+            Some(transport) if !transport.endpoint_admitted_now(vault) => {
+                OutboundExecutionOutcome::failed("feedback_endpoint_requires_https")
+            }
             Some(transport) => transport.send_issue_signature(request),
             None => OutboundExecutionOutcome::failed("feedback_destination_unset"),
         }

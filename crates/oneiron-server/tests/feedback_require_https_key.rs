@@ -5,7 +5,9 @@
 //! With no row a plain-HTTP endpoint off loopback builds no feedback transport, as before, and
 //! loopback HTTP still does. The owner's false lets it build. Credentials, a query, a fragment or
 //! another scheme never pass whatever the key says. The transport is built the way every send
-//! builds it (`HttpFeedbackTransport::for_vault`), so the test reads the rule each send reads.
+//! builds it (`HttpFeedbackTransport::for_vault`), so the test reads the rule each send reads; a
+//! transport one delivery run reuses reads it again before each send
+//! (`HttpFeedbackTransport::endpoint_admitted_now`).
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron-server --all-features --test feedback_require_https_key`.
@@ -49,11 +51,16 @@ impl Fixture {
 
     /// The owner turns the HTTPS rule off.
     fn allow_plain_http(&self) {
+        self.require_https(false);
+    }
+
+    /// The owner sets the HTTPS rule.
+    fn require_https(&self, required: bool) {
         let outcome = self
             .vault
             .set_setting(
                 SettingCaller::Owner(&self.owner_proof),
-                SetSetting::vault_value(KEY, json!(false)),
+                SetSetting::vault_value(KEY, json!(required)),
             )
             .expect("the owner sets the key");
         assert!(
@@ -121,4 +128,30 @@ fn the_owners_false_still_refuses_credentials_a_query_and_another_scheme() {
             "{endpoint} never passes"
         );
     }
+}
+
+/// One delivery run reuses its transport for every report: the owner's true, set after the
+/// transport was built, stops its next plain-HTTP send (review #8613 round 1).
+#[test]
+fn the_owners_true_after_the_build_stops_the_next_plain_http_send() {
+    let fixture = Fixture::open();
+    fixture.allow_plain_http();
+    let transport = HttpFeedbackTransport::for_vault(
+        &fixture.vault,
+        FeedbackDeliveryConfig {
+            destination: FeedbackDestination::Collector,
+            endpoint: LAN_HTTP.to_owned(),
+        },
+        None,
+    )
+    .expect("the owner's false builds the plain-HTTP transport");
+    assert!(
+        transport.endpoint_admitted_now(&fixture.vault),
+        "under the owner's false the endpoint passes"
+    );
+    fixture.require_https(true);
+    assert!(
+        !transport.endpoint_admitted_now(&fixture.vault),
+        "the owner's true holds from the next send of a transport built before it"
+    );
 }

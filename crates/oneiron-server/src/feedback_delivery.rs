@@ -105,6 +105,17 @@ pub fn check_endpoint_with(
     }
     Ok(())
 }
+/// `vault`'s owner rule `feedback.delivery.require_https`, read now. A key
+/// that cannot be read keeps HTTPS required.
+fn requires_https_now(vault: &oneiron::Vault) -> bool {
+    oneiron::feedback::feedback_delivery_requires_https(vault).unwrap_or_else(|error| {
+        tracing::warn!(
+            %error,
+            "feedback.delivery.require_https did not read; the feedback send requires HTTPS"
+        );
+        true
+    })
+}
 impl HttpFeedbackTransport {
     /// A transport to `config`'s endpoint, which must be HTTPS (HTTP only on
     /// loopback).
@@ -116,23 +127,23 @@ impl HttpFeedbackTransport {
     }
 
     /// A transport to `config`'s endpoint under `vault`'s owner rule
-    /// (`feedback.delivery.require_https`), read now: every send builds its
-    /// transport here, so the owner's change holds from the next send. A key
-    /// that cannot be read keeps HTTPS required.
+    /// (`feedback.delivery.require_https`), read now. A transport that
+    /// serves more than one send checks [`Self::endpoint_admitted_now`]
+    /// before each, so the owner's change holds from the next send.
     pub fn for_vault(
         vault: &oneiron::Vault,
         config: FeedbackDeliveryConfig,
         bearer: Option<Zeroizing<String>>,
     ) -> Result<Self, FeedbackDeliveryError> {
-        let require_https = oneiron::feedback::feedback_delivery_requires_https(vault)
-            .unwrap_or_else(|error| {
-                tracing::warn!(
-                    %error,
-                    "feedback.delivery.require_https did not read; the feedback send requires HTTPS"
-                );
-                true
-            });
-        Self::build(config, bearer, require_https)
+        Self::build(config, bearer, requires_https_now(vault))
+    }
+
+    /// Whether this transport's endpoint passes `vault`'s owner rule read
+    /// now: once the owner turns `feedback.delivery.require_https` back on, a
+    /// transport built before it sends nothing more over plain HTTP, neither
+    /// the signature nor the destination's bearer.
+    pub fn endpoint_admitted_now(&self, vault: &oneiron::Vault) -> bool {
+        check_endpoint_with(&self.config.endpoint, requires_https_now(vault)).is_ok()
     }
 
     fn build(
