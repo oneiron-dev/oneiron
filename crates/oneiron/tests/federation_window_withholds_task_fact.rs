@@ -110,6 +110,12 @@ fn fixture() -> Result<Fixture> {
         vault.authenticate_owner(owner_id, "owen@example.com", true, GateDecisionId::now())?;
     let issuer = HostSlipIssuer::from_secret(b"task-fact-member-window")?;
     vault.ensure_host_root_slip(&issuer)?;
+    // Sharing and the member's seating give Grants, whose acts this install
+    // carries: its keystore, the engine's MACHINE writers and its live
+    // machine profile under this root, which binds the owner.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.provision_engine_machine_identities(&issuer)?;
+    vault.ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)?;
     vault.initialize_shared_vault(&owner, SHARED, None, &[], 1)?;
     let member = EntityId::now();
     let member_body = encode(&Value::Map(vec![(
