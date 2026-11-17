@@ -75,6 +75,7 @@ mod rest;
 #[cfg(oneiron_test_support)]
 pub(crate) use rest::GrantIssuer;
 mod search;
+pub(crate) mod setting_keys;
 mod share;
 mod smtp_client;
 #[doc(hidden)]
@@ -108,6 +109,8 @@ pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
 #[cfg(oneiron_test_support)]
+pub(crate) use imap::imap_folder_digest_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use imap::imap_landed_headers;
 pub use imap::{IMAP_CONNECTOR_EFFECTOR, ImapMailWire};
 pub use importer::{MailSyncBudget, MailSyncReport};
@@ -120,6 +123,8 @@ pub(crate) use mbox_import::mbox_landed_headers;
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
+#[cfg(oneiron_test_support)]
+pub(crate) use microsoft365_calendar::{graph_calendar_cursor_covers, graph_calendar_opening};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };

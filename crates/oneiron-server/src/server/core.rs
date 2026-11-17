@@ -66,6 +66,9 @@ pub struct SyncServer {
     pub(crate) standing_block_cache: Mutex<oneiron::persona_snapshot::standing::StandingBlockCache>,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
+    /// The connection sessions holding a `broadcast_tx` subscriber now; the
+    /// host's own subscribers are not among them (FIX 23314).
+    pub(crate) broadcast_sessions: crate::broadcast::BroadcastSessions,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
     pub(crate) next_conn_id: AtomicU32,
     /// Serializes lease-registry mutations (ONE-1140, OD-3): two concurrent
@@ -131,9 +134,15 @@ pub struct SyncServer {
     pub(crate) retrieval_buffer: RetrievalMeterBuffer,
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
-    pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// Shared with the counts each call hands to the blocking pool
+    /// (`record_on_blocking_pool`), which outlive the call's borrow.
+    pub(crate) wire_telemetry: Arc<crate::wire_telemetry::WireTelemetry>,
     /// The mesh listener's sync streams in their own pressure check (FIX 7737).
     pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
+    /// How this process stands now (L8-11): ready until the event-loop
+    /// watchdog serve starts moves it; `/api/health`, `Ping` and the intake
+    /// gate read it.
+    pub(crate) process_readiness: Arc<crate::process_readiness::ProcessReadiness>,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
@@ -199,12 +208,19 @@ pub struct SyncServer {
     /// and `connector.answer` reads them.
     pub(crate) connector_elicitations:
         Arc<crate::connector_elicitation::ConnectorElicitationRegistry>,
+    /// The `mcp_stdio` connector children every connector host this server
+    /// builds sends through (row L8-27), stopped with the server.
+    pub(crate) connector_stdio: Arc<crate::connector_call_host::stdio::ConnectorStdioRegistry>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
     /// How this process's browser stands (FIX 7670), which each browser
     /// guest start moves and `Ping` and the owner's status read.
     pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
+    /// The runner fence every runner this server starts on the host runs
+    /// under, proved once (L8-27); built at its first use.
+    pub(crate) runner_fence:
+        std::sync::OnceLock<Option<Arc<crate::runtime::runner_fence::HostRunnerFence>>>,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
@@ -250,6 +266,10 @@ pub struct SyncServer {
     pub(crate) gpu_pool: std::sync::OnceLock<crate::runtime::GpuPool>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
+    /// The host's own embedding line, pushed into every embedder slot this
+    /// server holds ([`Self::with_embedding_line`]); `None` leaves each slot
+    /// on the vault's background line.
+    pub(crate) embedding_line: Option<oneiron::BudgetGuard>,
     /// The house model's decision read the owner probes at
     /// `/v1/llm/decision_read`, and the meter its reads are admitted on;
     /// `None` turns the route off.
@@ -298,6 +318,9 @@ pub struct SyncServer {
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// Host-native permission for each actual tagger POST, separate from LLM requests.
     pub(crate) tagger_egress: Option<Arc<dyn oneiron::llm::TaggerEgressPredicate>>,
+    /// The learned phonetic rung's model (`[phonetic_embedder]`), filled by
+    /// the media backfill's passes. `None` binds none.
+    pub(super) phonetic_embedder: Option<Arc<super::phonetic_embedding::PhoneticEndpoint>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
     /// on a server built without a known vault path.
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
@@ -356,6 +379,7 @@ const _: fn(&SyncServer) = |server| {
     fields! {
         vault, invocation_claims, root_doc, ephemeral_store, message_scopes, dreamer_progress,
         standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
+        broadcast_sessions,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
@@ -364,20 +388,22 @@ const _: fn(&SyncServer) = |server| {
         mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
         booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
+        process_readiness,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
-        seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
+        seat_helpers, model_budgets, cloud_registration, connector_elicitations, connector_stdio,
+        browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
-        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
-        decision_reads, decisions, hook_runtime,
+        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
+        decision_read, decision_reads, decisions, hook_runtime, runner_fence,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,
         #[cfg(unix)] organ_dir,
         run_receipts, ai, pattern_launch_runner, rerank_runtime, hyde_host, extraction_egress,
-        tagger_egress, owner_host, feedback, feedback_triage, feedback_flood, artifact_port,
-        api_addr, artifact_socket,
+        tagger_egress, phonetic_embedder, owner_host, feedback, feedback_triage, feedback_flood,
+        artifact_port, api_addr, artifact_socket,
         #[cfg(test)] booking_test_now_secs,
         #[cfg(test)] booking_test_clock_from,
     }
@@ -489,6 +515,22 @@ impl SyncServer {
         &self.browser_readiness
     }
 
+    /// This process's readiness, as its event-loop watchdog last moved it.
+    pub(crate) fn process_readiness(&self) -> &Arc<crate::process_readiness::ProcessReadiness> {
+        &self.process_readiness
+    }
+
+    /// Starts this process's event-loop watchdog (L8-11) on `settings`: a
+    /// probe task on the calling Tokio runtime, which must be the one that
+    /// serves the app, and a hang check on a thread of its own. It runs until
+    /// the returned guard drops.
+    pub fn start_process_watchdog(
+        &self,
+        settings: crate::process_readiness::ProcessHealthSettings,
+    ) -> crate::process_readiness::ProcessWatchdog {
+        crate::process_readiness::ProcessWatchdog::start(&self.process_readiness, settings)
+    }
+
     /// Installs the host-owned published backend execution profile.
     #[must_use]
     pub fn with_artifact_backend(
@@ -538,6 +580,35 @@ impl SyncServer {
         budget: oneiron::BudgetGuard,
     ) -> Self {
         self.llm = Some(crate::models::RawInference::injected(backend, budget));
+        self
+    }
+
+    /// Pays the background embedding requests of this server's embedder
+    /// slot from `line`, the host's own, instead of the vault's background
+    /// line (ARCH-0053 `#embedding-admission-built`: "A host may push its own
+    /// embedding line instead"): the primary endpoint's, its pods' and its
+    /// remote rung's, in the slot this server holds now and in one it
+    /// attaches later. A request the line refuses is never sent: a rung's
+    /// batch then embeds on the device, another batch waits for a later
+    /// pass, and the vault's Owners are told once that the line is spent.
+    ///
+    /// Two kinds of paid request stay off the line, as they stay off the
+    /// vault's: the startup probes, sent while serve or first-run setup
+    /// builds the slot, before it holds any line; and an evaluation's
+    /// exact-model queries, admitted on the evaluation's own run.
+    ///
+    /// A second push keeps the first line, here and in every slot, so the
+    /// server and its slots never pay on different host lines.
+    #[must_use]
+    pub fn with_embedding_line(mut self, line: oneiron::BudgetGuard) -> Self {
+        if self.embedding_line.is_some() {
+            tracing::warn!("a server's host embedding line is pushed once");
+            return self;
+        }
+        if let Some(slot) = self.embedder_slot() {
+            slot.push_host_line(line.clone());
+        }
+        self.embedding_line = Some(line);
         self
     }
 
@@ -665,6 +736,7 @@ impl SyncServer {
     /// server is shared. First-run setup uses [`Self::attach_first_run_slots`]
     /// once the server is live instead.
     pub(crate) fn with_embedder(self, embedder: Option<EmbedderSlot>) -> Self {
+        self.push_embedding_line(embedder.as_ref());
         let tagger = self.tagger_slot();
         self.model_slots.store(Arc::new(ModelSlots {
             embedder: embedder.map(Arc::new),
@@ -737,6 +809,14 @@ impl SyncServer {
         self.model_setup_runtime.set(runtime).is_ok()
     }
 
+    /// Pushes the host's embedding line, if it pushed one, into `slot`
+    /// before the slot serves ([`Self::with_embedding_line`]).
+    fn push_embedding_line(&self, slot: Option<&EmbedderSlot>) {
+        if let (Some(slot), Some(line)) = (slot, &self.embedding_line) {
+            slot.push_host_line(line.clone());
+        }
+    }
+
     /// Fills an empty slot pair after first-run setup, never a Some→Some reload.
     pub(crate) fn attach_first_run_slots(
         &self,
@@ -753,6 +833,7 @@ impl SyncServer {
         if let Some(pool) = gpu_pool {
             let _ = self.gpu_pool.set(pool);
         }
+        self.push_embedding_line(embedder.as_ref());
         self.model_slots.store(Arc::new(ModelSlots {
             embedder: embedder.map(Arc::new),
             tagger: tagger.map(Arc::new),
@@ -871,6 +952,16 @@ impl SyncServer {
     pub(crate) async fn stop_shared_envs(&self) {
         if let Some(registry) = self.shared_envs.get() {
             registry.stop().await;
+        }
+    }
+
+    /// Stops every `mcp_stdio` connector child, and starts none from here
+    /// on (row L8-27): each child's input is closed, and it is killed if it
+    /// has not exited a moment later.
+    pub(crate) async fn stop_connector_stdio(&self) {
+        let registry = Arc::clone(&self.connector_stdio);
+        if let Err(error) = tokio::task::spawn_blocking(move || registry.stop()).await {
+            tracing::warn!(%error, "stdio connector children were not stopped");
         }
     }
 
