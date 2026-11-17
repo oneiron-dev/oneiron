@@ -9,7 +9,9 @@ use super::connectors::door::{
     validate_endpoint,
 };
 use super::ingest::IcsFeedPollConfig;
-use super::ingest::feed_door::{ics_feed_changed_in_txn, ics_feed_committed, is_feed_system};
+use super::ingest::feed_door::{
+    ics_feed_changed_in_txn, ics_feed_committed, ics_feed_write_turn, is_feed_system,
+};
 use crate::error::{Error, Result};
 use crate::setting::{ItemDomain, Kind, SettingValue};
 
@@ -74,11 +76,12 @@ crate::setting::setting_keys! {
     /// configuration takes a new system, never one an installed CalDAV seat imports under.
     /// Installing one starts its poll chain. Clearing one uninstalls it: its standing consent
     /// ends, its cursor goes and its pending polls are cancelled; a system it polled under stays
-    /// retired.
+    /// retired. A change waits for a running poll's admission, so none lands inside one.
     pub(crate) ICS_FEED: Option<IcsFeedPollConfig> = "calendar.ics_feed" {
         kind: Kind::new(no_feed).strictest(no_feed),
         item: Some(ItemDomain { name: "ICS feed systems", admits: is_feed_system }),
         on_change: Some(ics_feed_changed_in_txn),
         after_commit: Some(ics_feed_committed),
+        write_turn: Some(ics_feed_write_turn),
     };
 }
