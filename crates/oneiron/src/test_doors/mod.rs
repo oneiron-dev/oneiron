@@ -76,8 +76,8 @@ pub mod feeds;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
-pub mod fingerprint_keep_store_digests;
 pub mod fingerprint_keep_saved_query;
+pub mod fingerprint_keep_store_digests;
 pub mod fingerprint_keep_typed_feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
