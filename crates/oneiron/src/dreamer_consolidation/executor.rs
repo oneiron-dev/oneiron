@@ -25,6 +25,11 @@ pub(crate) use decisions::{
     NativeFixtureMember, NativePackOutcome, NativeResolutionFixture,
     native_resolution_pack_for_test,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use extraction::native_decisions_parity::{
+    NativeDecisionsFixture, NativeDecisionsOutcome, NativeSetOutcome,
+    native_extraction_decisions_for_test,
+};
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;

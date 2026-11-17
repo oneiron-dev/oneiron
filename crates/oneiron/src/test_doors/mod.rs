@@ -98,6 +98,7 @@ pub mod esign_commitments;
 pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
 pub mod extra_room_index;
+pub mod extraction_decisions;
 pub mod extraction_inputs;
 pub mod extraction_probe;
 pub mod extraction_routing;

@@ -20,6 +20,8 @@ pub(in crate::dreamer_consolidation) use super::merge_resolution::{
 mod cited;
 pub(in crate::dreamer_consolidation) mod corrections;
 mod decided;
+#[cfg(oneiron_test_support)]
+pub(crate) mod native_decisions_parity;
 mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
