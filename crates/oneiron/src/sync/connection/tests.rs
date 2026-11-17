@@ -845,6 +845,8 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
     let (_local_tx, mut local_rx) = mpsc::unbounded_channel();
     let (_shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
     let mut promotion_rx = manager.subscribe_promotions();
+    let mut debounce_buffer = Vec::new();
+    let mut upkeep = super::steady::UpkeepTasks::default();
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         conn.steady_state(
@@ -852,8 +854,10 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
             &mut client,
             &event_tx,
             &mut local_rx,
+            &mut debounce_buffer,
             &mut promotion_rx,
             &mut shutdown_rx,
+            &mut upkeep,
         ),
     )
     .await
