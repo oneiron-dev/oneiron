@@ -24,7 +24,7 @@ pub(super) use pending_execution::UnsignedExecution;
 
 use super::{
     ChangeRecord, DetachOutcome, DetachReport, Effect, RemoveOwnerPlan, SharedActExecutionReceipt,
-    SharedActKind, SharedVaultChange, decode, invalid, live_owners, non_root,
+    SharedActKind, SharedVaultChange, admin_act_recipients, decode, invalid, live_owners, non_root,
 };
 use crate::authority::{
     CapabilitySlip, GrantFamily, HostSlipIssuer, MembershipExecutionCause, OwnerHandover,
@@ -513,11 +513,20 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        // [MEMBER-REMOVAL-KEEPS-ACTOR-GRANTS]: a removed member's roster
+        // actor keeps no Grant naming it; a role change that keeps the member
+        // drops nothing new.
+        let actors = if leaves {
+            crate::workspace_roster::member_actor_refs_in_txn(self, txn, &member)?
+        } else {
+            Vec::new()
+        };
         let dropped: Vec<(EntityId, FederationGrant)> = self
             .member_grant_rows_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
-                (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
+                (leaves && (grant.member_ref == member || actors.contains(&grant.member_ref)))
+                    || grant.delegated_by == Some(member)
             })
             .collect();
         self.drop_grant_rows_in_txn(txn, dropped, slips, receipt)
@@ -891,7 +900,13 @@ impl Vault {
             }
             None => None,
         };
-        let owners = live_owners(&holders, None);
+        // An admin power's change is told to every live Owner, Admin and
+        // Deputy, a seated house mind among them; any other change to the
+        // live Owners.
+        let recipients = match power {
+            Some(_) => admin_act_recipients(&self.live_notice_holders(&txn, vault_id, now)?),
+            None => live_owners(&holders, None),
+        };
         let id = self.store.clock.entity_id()?.to_hex();
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
@@ -901,7 +916,7 @@ impl Vault {
             None => ChangeRecord::Unnamed,
         };
         let mut receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
+            &mut txn, id, vault_id, None, actor_id, recipients, effect, None, record, None, now,
         )?;
         self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, decision)?;
         if let Some(ask) = ask {

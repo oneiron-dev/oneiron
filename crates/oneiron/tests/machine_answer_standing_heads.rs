@@ -29,7 +29,7 @@
 
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -290,8 +290,12 @@ impl ServedVault {
         &self,
         entries: &[AuthorityEntryHash],
     ) -> oneiron::Result<oneiron::authority::ConfirmedHeldAnswers> {
-        self.vault
-            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries)
+        self.vault.confirm_held_machine_answers(
+            &self.owner,
+            ActSurface::ThisInstall,
+            entries,
+            &BTreeMap::new(),
+        )
     }
 }
 
