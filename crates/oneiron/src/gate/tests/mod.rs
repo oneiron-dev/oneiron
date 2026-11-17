@@ -42,8 +42,6 @@ mod carry_forward;
 #[cfg(feature = "sync")]
 mod carry_forward_sync;
 mod charter_ceiling;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CLAIM-CANDIDATE-LINEAGE]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
@@ -52,8 +50,6 @@ mod consent_bundle;
 mod consolidation_readers;
 mod credential_lifetimes;
 mod critical_confirm_holds;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-INDEX]: the lib test target's type check fails here (13 errors: E0061 x10, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
@@ -79,8 +75,6 @@ mod scoped_policy_values;
 mod scoped_read;
 mod special_doors;
 mod support;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-TRUST-BOUNDARY]: the lib test target's type check fails here (15 errors: E0061 x9, E0308 x6); port it, then drop this gate
-#[cfg(any())]
 mod trust_boundary;
 mod vad_vetting;
 mod witness_message;

@@ -4,8 +4,6 @@ use crate::booking::{
 };
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-PUBLICATION-REGRESSIONS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;

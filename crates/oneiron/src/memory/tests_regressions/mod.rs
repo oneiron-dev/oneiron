@@ -19,6 +19,4 @@ mod consolidation_outbound;
 mod outbound_actor_scope;
 mod recall;
 mod recall_revision;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-RECALL-SECURITY]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod recall_security;

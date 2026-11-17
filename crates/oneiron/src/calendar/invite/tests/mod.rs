@@ -1,5 +1,3 @@
-// FIX [LIBTEST-QUARANTINE-CALENDAR-INVITE-TESTS-FACETED-SENDER]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod faceted_sender;
 mod pending_passport;
 
@@ -148,8 +146,6 @@ fn prior_thread(vault: &Vault, seed: u8, party: &str) {
         .expect("put last_touch claim");
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-INVITE-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn calendar_invite_payload_is_exact_five_field_contract() {
     let payload = CalendarInvitePayload {
@@ -158,6 +154,7 @@ fn calendar_invite_payload_is_exact_five_field_contract() {
         sequence: 0,
         ics_blob_ref: "blob:c0ffee".to_owned(),
         recipient: "guest@example.test".to_owned(),
+        mention: None,
     };
     let wire = serde_json::to_value(&payload).expect("serialize");
     let object = wire.as_object().expect("object");
@@ -192,8 +189,6 @@ fn calendar_invite_payload_is_exact_five_field_contract() {
     assert!(serde_json::from_value::<CalendarInvitePayload>(lowercased).is_err());
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-INVITE-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn calendar_invite_frozen_body_references_blob_not_raw_ics() {
     let payload = CalendarInvitePayload {
@@ -202,6 +197,7 @@ fn calendar_invite_frozen_body_references_blob_not_raw_ics() {
         sequence: 0,
         ics_blob_ref: "blob:c0ffee".to_owned(),
         recipient: "guest@example.test".to_owned(),
+        mention: None,
     };
     let frozen = serde_json::to_vec(&serde_json::json!({
         "verb": CALENDAR_INVITE_VERB,
@@ -282,8 +278,6 @@ fn calendar_invite_update_reuses_uid_and_increments_sequence() {
     ));
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-INVITE-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn calendar_invite_cancel_reuses_uid_and_increments_sequence() {
     let (_dir, vault, actor_ref, event_ref, blob_ref) = admitted_fixture();
@@ -303,6 +297,7 @@ fn calendar_invite_cancel_reuses_uid_and_increments_sequence() {
         sequence: 1,
         ics_blob_ref: cancel_blob,
         recipient: "guest@example.test".to_owned(),
+        mention: None,
     };
     let admission = admit_calendar_invite(&vault, actor_ref, &cancel, NOW).expect("cancel");
     assert_eq!(
@@ -503,8 +498,6 @@ fn calendar_invite_confirmed_booking_grant_satisfies_no_cold_invite() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-INVITE-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn cancel_with_prior_consent_but_no_recipient_binding_preserves_passport() {
     let (_dir, vault, actor_ref, event_ref, blob_ref) = admitted_fixture();
@@ -526,6 +519,7 @@ fn cancel_with_prior_consent_but_no_recipient_binding_preserves_passport() {
         sequence: 1,
         ics_blob_ref: cancel_blob,
         recipient: "stranger@example.test".to_owned(),
+        mention: None,
     };
     let before = crate::calendar::passport::live_passports_for_event(&vault, &event_ref).unwrap();
     assert_eq!(before.len(), 1);

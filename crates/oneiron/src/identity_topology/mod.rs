@@ -111,14 +111,12 @@ pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,
 };
-pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
-pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
-// FIX [LIBTEST-QUARANTINE-IDENTITY-TOPOLOGY-ADMISSION-DISPOSITION-ITEMS]: re-exports sealed_by_key_for_test, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::sealed_by_key_for_test;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::signed_validated_row_for_test;
+pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
+pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 pub(crate) use attribution::{
     admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
     effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,

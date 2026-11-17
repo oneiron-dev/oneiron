@@ -12,8 +12,6 @@ use crate::{
     registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST},
 };
 
-// FIX [LIBTEST-QUARANTINE-CODE-RUN-TESTS-ROOM-SAVER]: the lib test target's type check fails here (8 errors: E0061 x4, E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[path = "tests_room_saver.rs"]
 mod room_saver;
 #[path = "tests_room_saving.rs"]

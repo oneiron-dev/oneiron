@@ -264,7 +264,11 @@ fn fixture_with(
         .batch()
         .claim_candidate(&head, candidate, &envelope, occurred(2), 2)
         .commit()?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let queued = decode_partition_payload(&attempt.status.payload.input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    let partition = queued.part_key(part.conversation_ref);
     let branch = BranchResources::open(
         vault,
         actor,
@@ -282,12 +286,12 @@ fn fixture_with(
     scope
         .writable
         .remove(&super::super::gap::branch_gap_projection(
-            &partition,
+            &queued,
             branch.scope(),
         ));
     scope
         .writable
-        .insert(super::super::gap::branch_gap_projection(&partition, &scope));
+        .insert(super::super::gap::branch_gap_projection(&queued, &scope));
     let run = DreamerRunContext {
         run_id: attempt.status.attempt.run_id.clone().expect("queued run"),
         attempt_id: attempt.status.attempt.id,
@@ -340,16 +344,20 @@ fn execute_at_pin<'a>(
         sink,
         inference: test_inference_host(),
         scope: Some(scope),
+        decisions: ConsolidationDecisions::shipped()?,
     };
     block_on_ready(executor.execute(
         &fx.attempt,
         &mut WakeAttemptContext {
             vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: pin,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))
 }
@@ -393,7 +401,12 @@ fn names(vault: &Vault, subject: EntityId) -> Result<Vec<EntityId>> {
 fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
-    let (partition, turns, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let queued = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    let partition = queued.part_key(part.conversation_ref);
+    let turns = queued.turn_ids();
     // The head grant is supplied at execution, not in the queued payload.
     // The driver must capture that CLAIM at the SAME wake ledger revision.
     let snapshot = PreparedWake::capture_with_grants(
@@ -451,7 +464,11 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
     let range_start = text.find('☕').expect("visible multibyte span");
     let range_end = range_start + "☕".len();
     let store = DreamerRunnerStore::new(&vault);
-    let (partition, _, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let queued = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    let partition = queued.part_key(part.conversation_ref);
     let plan = ConsolidationPartitionPlan {
         key: partition,
         turns: vec![WorkingSetTurn {
@@ -527,10 +544,13 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 23_000,
         prepared_wake: Some(&pin),
         prepared_attempt: None,
+        spend_meter: None,
     };
     let mut executor = ConsolidationExecutor {
         roles: Default::default(),
@@ -542,6 +562,7 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     vault.set_consolidation_selection(&selection::SelectionConfig {
         soak_ms: 0,
@@ -726,17 +747,17 @@ fn an_evidence_attachment_counts_on_the_agents_auto_write_rate() -> Result<()> {
 fn project_bound_branch_never_relabels_default_project_evidence() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
-    let (partition, _, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let queued = decode_partition_payload(&fx.attempt.status.payload.input)?;
     let mut scope = fx.scope.clone();
     scope
         .writable
         .remove(&super::super::gap::branch_gap_projection(
-            &partition, &fx.scope,
+            &queued, &fx.scope,
         ));
     scope.project = Some(EntityId::now());
     scope
         .writable
-        .insert(super::super::gap::branch_gap_projection(&partition, &scope));
+        .insert(super::super::gap::branch_gap_projection(&queued, &scope));
     let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     assert!(matches!(
@@ -1099,7 +1120,9 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
             binding: crate::llm::HostInferenceBinding::Advertised {
                 model,
                 locality: crate::ModelLocality::OwnServer,
+                keyless: false,
             },
+            sourced: None,
         }
     };
     let roles = RoleBackends::default()
@@ -1129,16 +1152,20 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: Some(fx.scope.clone()),
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let execution = block_on_ready(executor.execute(
         &fx.attempt,
         &mut WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))?;
     assert!(
@@ -1856,16 +1883,20 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let done = block_on_ready(executor.execute(
             &admitted,
             &mut WakeAttemptContext {
                 vault: &vault,
                 deadline: &deadline,
+                cancel: None,
+                device_cancel: None,
                 budget_id: "wake",
                 now_ms: 21_000,
                 prepared_wake: Some(&pin),
                 prepared_attempt: None,
+                spend_meter: None,
             },
         ))
         .unwrap_or_else(|error| panic!("corrects {corrects}: the branch refused: {error}"));
@@ -1885,7 +1916,7 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
             .iter()
             .flat_map(|message| &message.content)
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -2055,14 +2086,18 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let first = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(
@@ -2124,6 +2159,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     let DreamerAttemptExecution::Deferred {
         completed_units,
         retry_at,
+        step_bindings,
     } = held
     else {
         panic!("first wake must schedule a selection retry")
@@ -2137,6 +2173,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
             now: 21,
         },
         retry_at,
+        &step_bindings,
     )?;
     // The exact CLAIM grant exists only in the saved execution scope. A new
     // executor with no host bound must still pin it before retry admission.
@@ -2183,14 +2220,18 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: retry_at * 1_000,
         prepared_wake: Some(&second_pin),
         prepared_attempt: None,
+        spend_meter: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&next, &mut ctx))?,
@@ -2207,7 +2248,12 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let store = DreamerRunnerStore::new(&vault);
-    let (partition, _, watermark) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let queued = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    let partition = queued.part_key(part.conversation_ref);
+    let watermark = part.watermark_last_learned_at;
     let queued =
         store.enqueue_consolidation(crate::dreamer_runner::EnqueueDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
@@ -2269,6 +2315,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut wrapper = crate::commitment_wake::CommitmentWakeExecutor::new(
         inner,
@@ -2668,7 +2715,7 @@ fn claim_cited_conflict_meets_taint_and_preserves_gap_and_survivor() -> Result<(
                     .is_ok_and(|claim| claim.is_some_and(|body| body.predicate == "profile.tone"))
             }));
             let resource = super::super::gap::branch_gap_projection(
-                &decode_partition_payload(&fx.attempt.status.payload.input)?.0,
+                &decode_partition_payload(&fx.attempt.status.payload.input)?,
                 &fx.scope,
             );
             let crate::llm::ScopeResource::Projection { key } = resource else {
@@ -2754,7 +2801,7 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
             .iter()
             .flat_map(|message| &message.content)
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -3228,7 +3275,7 @@ fn message_text(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
