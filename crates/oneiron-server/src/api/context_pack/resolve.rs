@@ -79,6 +79,8 @@ const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "signals_person",
     "query_affect",
     "queryAffect",
+    "packet_id",
+    "packetId",
     "hydrate",
     "include_edges",
     "includeEdges",
@@ -232,6 +234,7 @@ pub(crate) async fn execute_context_pack(
         skill_reliability,
         candidate_limit,
         query_affect,
+        packet,
         ranking,
         time,
         signals,
@@ -344,6 +347,15 @@ pub(crate) async fn execute_context_pack(
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, candidate_limit);
     }
+    if let Some(phonetic) = req.phonetic_vector.as_ref() {
+        builder = builder.search_phonetic_vector(
+            &phonetic.model_id,
+            &phonetic.vector,
+            phonetic
+                .limit
+                .unwrap_or(oneiron::phonetic_learned::PHONETIC_VECTOR_DEFAULT_LIMIT),
+        );
+    }
     for seed in &media {
         builder = builder.search_media(
             &seed.space,
@@ -355,6 +367,9 @@ pub(crate) async fn execute_context_pack(
     }
     if let Some(vad) = query_affect {
         builder = builder.query_affect(vad);
+    }
+    if let Some(summary) = packet {
+        builder = builder.rehydrate_from(summary);
     }
     builder = ranking.applied(builder);
     builder = time.applied(builder);
@@ -391,6 +406,12 @@ pub(crate) async fn execute_context_pack(
     }
     if skip_optional_recall {
         builder = builder.skip_optional_recall();
+    }
+    // A live chat turn's recall names the TURN it serves, so the engine can
+    // label its run from the user's later words (FIX
+    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP).
+    if let Some(turn) = req.retrieval_turn {
+        builder = builder.retrieval_turn(turn);
     }
     // Reaction signals ride the same clamp as the pack they come with.
     let signal_disclosure = disclosure.clone();
@@ -590,6 +611,15 @@ fn read_reaction_signals(
         || req.interlocutors.is_some()
         || req.filter.is_some()
         || disclosure.is_some();
+    // The raw feed meets the world judge the scoped read applies (DEC-0005:
+    // a caller off this device reads nothing a withheld world keeps). An
+    // owner-grade caller with no slip off this device, as a managed vault's
+    // owner or a dev-hatch request a proxy marked, hears of no reaction a
+    // world withheld from its destination keeps, nor of one on a message
+    // such a world keeps. A caller on this device is withheld nothing.
+    let raw_destination = (!scoped)
+        .then(|| auth.destination())
+        .filter(oneiron::settings::ReadDestination::is_off_device);
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;
@@ -597,6 +627,14 @@ fn read_reaction_signals(
             && !scoped_read
                 .is_reaction_signal_readable_under(&signal, disclosure)
                 .map_err(|e| core_engine_error("reaction signal scope failed", e))?
+        {
+            continue;
+        }
+        if let Some(destination) = &raw_destination
+            && !server
+                .vault
+                .rows_may_leave_for(&[signal.reaction, signal.message], destination)
+                .map_err(|e| core_engine_error("reaction signal world judge failed", e))?
         {
             continue;
         }

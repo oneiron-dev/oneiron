@@ -196,6 +196,10 @@ impl SlotOracle for ServerBookingOracle<'_> {
             None => solver.solve_moving(request, moving),
         })
     }
+
+    fn solve_past_caps(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.with_solver(|solver| solver.solve_past_caps_listing(request, self.producers))
+    }
 }
 
 impl ServerBookingOracle<'_> {
@@ -215,6 +219,18 @@ impl ServerBookingOracle<'_> {
             // presets, and a booking page is never page-less.
             synthetic_config: None,
         })
+    }
+
+    /// The caller's own grant view for `request` (ARCH-0062 #grant-view):
+    /// the solver's busy union on this oracle's binding, held to the host's
+    /// working hours, for each host the caller's live calendar grants cover.
+    /// Rows it reads go to this oracle's listing.
+    pub(super) fn granted_busy(
+        &self,
+        request: &SolveRequest,
+        caller: &EntityId,
+    ) -> Result<Option<Vec<oneiron::booking::agent_api::GrantedBusyView>>, BookingError> {
+        self.with_solver(|solver| solver.granted_busy(request, caller, self.producers))
     }
 }
 

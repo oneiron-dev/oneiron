@@ -10,11 +10,13 @@
 //! value naming a live actor no split here takes out, a nested
 //! history, and a map no adapter reads stay unclassified, named. A Loro
 //! PeerID is the writer of an operation, never an owner of what it wrote.
+//! Each map's row ([`super::descriptor`]) names its hooks, here and in the
+//! families.
 //!
 //! KS7-3b also asks which keys may stand plaintext in a skeleton
-//! ([`key_refusal`]), which of the others it withholds in an atom of their
-//! own ([`withheld_key`], FIX 10279), and how a split value or key takes its
-//! opened actors back ([`root_fill`], [`key_fill`]).
+//! ([`super::descriptor::key_refusal`]), which of the others it withholds in
+//! an atom of their own ([`withheld_key`], FIX 10279), and how a split value
+//! or key takes its opened actors back ([`root_fill`], [`key_fill`]).
 
 use loro::LoroValue;
 
@@ -31,169 +33,128 @@ use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
-use crate::sync::ingest::{
-    MESSAGE_WRITER_MAP, PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_writer_proof_carrier,
-};
-use crate::sync::message_docs::MESSAGE_DOCS_MAP;
-use crate::sync::office_proposals::OFFICE_PROPOSALS_MAP;
-use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
-use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
-use crate::sync::room_facts::ROOM_FACTS_MAP;
+use crate::sync::ingest::{admit_peer_origin_carrier, admit_writer_proof_carrier};
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
-use crate::sync::schema::ASSET_BODY_REFS_MAP;
-use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
-use crate::sync::source_audiences::SOURCE_AUDIENCES_MAP;
-use crate::sync::turn_programs::{TURN_PROGRAM_ARMS_MAP, TURN_PROGRAM_WAKES_MAP};
-use crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP;
+use crate::sync::selector::HELD_EDIT_CAUSALITY_KEY;
 use crate::sync::withdrawn_cutoffs::{
-    CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
-    epoch_floor_scope,
+    CarriedCutoff, EPOCH_FLOOR, admit_withdrawn_cutoff_carrier, epoch_floor_scope,
 };
-
-/// Every window root map an adapter here reads: the roots a capture admits.
-pub(crate) const WINDOW_ROOTS: [&str; 28] = [
-    "entities",
-    "edges",
-    "tombstones",
-    HELD_EDIT_CAUSALITY_MAP,
-    "retained_claim_worlds",
-    ROW_BIRTHS_MAP,
-    ORIGIN_POSITIONS_MAP,
-    PEER_ORIGIN_MAP,
-    MESSAGE_WRITER_MAP,
-    WITHDRAWN_CUTOFFS_MAP,
-    "documents",
-    "document_heads",
-    "head_move_receipts",
-    "note_forks",
-    "note_proposals",
-    "entity_documents",
-    CUSTODY_MAP,
-    ROOM_TURNS_MAP,
-    ROOM_FACTS_MAP,
-    DOCUMENT_PINS_MAP,
-    MESSAGE_DOCS_MAP,
-    OFFICE_PROPOSALS_MAP,
-    TYPED_BODY_ROWS_MAP,
-    REPO_MANIFESTS_MAP,
-    TURN_PROGRAM_ARMS_MAP,
-    TURN_PROGRAM_WAKES_MAP,
-    ASSET_BODY_REFS_MAP,
-    SOURCE_AUDIENCES_MAP,
-];
-
-/// Whether a key holding a digest of what it carries (a pin's, a part's, a
-/// protected input's) may stand plaintext in a skeleton. A digest commits to
-/// its value and would outlive the value's erase, so it does not: the key is
-/// withheld in an atom of its own under its rightful holders
-/// ([`withheld_key`], [`withheld_part_key`], [`withheld_client_key`]; FIX
-/// 10278), and only a window whose digest key no holder claims stays under
-/// the vault-wide seal. Call, behind this one constant.
-const DIGEST_KEYS_ARE_PLAIN: bool = false;
 
 /// An `authored_by` edge, whose key names its actor.
 const AUTHORED_BY: &str = "an authored_by edge names its actor";
-
-/// A key that spells payload, not an opaque id or a schema name.
-const PAYLOAD_KEY: &str = "a window map key that is not an opaque id or a schema name";
-
-/// A key holding a digest of what it carries.
-const DIGEST_KEY: &str = "a window map key holding a digest of what it carries";
 
 /// An entity's whole document (a deck body's `tables` and `charts` roots
 /// among its nested containers), whose history only its own split takes
 /// out.
 const ENTITY_DOCUMENT: &str = "an entity's whole document and its nested history";
 
-/// Where the value `value` under `key` in the window root map `root` goes.
-/// `owners` places an entity row by its kind.
-pub(crate) fn root_entry(
-    root: &str,
-    key: &str,
-    value: &[u8],
-    owners: &dyn SyncPayloadOwners,
-) -> Placement {
-    let structure = |dependencies: Vec<OwnerRef>| Placement::Structure { dependencies };
-    let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
-    let entity = named(key);
-    match root {
-        // An author carrier's actor is split out (FIX 17143).
-        "entities" => entity.map_or_else(undecodable, |id| {
-            super::author_carrier::entry(id, value).unwrap_or_else(|| entity_row(id, value, owners))
-        }),
-        "edges" => match parse_edge_key(key) {
-            // An authored_by edge is its source's: the actor it names rides
-            // in its withheld key alone (FIX 10279, `withheld_key`), so the
-            // edge goes with that actor. Its value must be the kind's own
-            // layout, which holds no actor.
-            Some((source, EdgeKind::AuthoredBy, actor))
-                if format_edge_key(&source, EdgeKind::AuthoredBy, &actor) == key
-                    && crate::edge::decode_edge_value_for_kind(EdgeKind::AuthoredBy, value)
-                        .is_ok() =>
-            {
-                Placement::owned(OwnerRef::entity(&source), Vec::new())
-            }
-            Some((_, EdgeKind::AuthoredBy, _)) => undecodable(),
-            // Any other edge holds while both its ends do.
-            Some((source, _, target)) => {
-                structure(vec![OwnerRef::entity(&source), OwnerRef::entity(&target)])
-            }
-            None => undecodable(),
-        },
-        // A tombstone names a deleted id, and outlives it.
-        "tombstones" => entity.map_or_else(undecodable, |_| structure(Vec::new())),
-        "retained_claim_worlds" => match entity {
-            Some(id) if value.len() == 16 => structure(vec![OwnerRef::entity(&id)]),
-            _ => undecodable(),
-        },
-        ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::entry(key, value),
-        ORIGIN_POSITIONS_MAP => crate::sync::origin_positions::checkpoint_entry(key, value),
-        PEER_ORIGIN_MAP => match (entity, admit_peer_origin_carrier(key, &binary(value))) {
-            (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
-            _ => undecodable(),
-        },
-        // A writer's proof holds while its MESSAGE row does (FIX 12113).
-        MESSAGE_WRITER_MAP => match (entity, admit_writer_proof_carrier(key, &binary(value))) {
-            (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
-            _ => undecodable(),
-        },
-        WITHDRAWN_CUTOFFS_MAP => match admit_withdrawn_cutoff_carrier(key, &binary(value)) {
-            Ok(CarriedCutoff::Withdrawn(artifact, _)) => {
-                structure(vec![OwnerRef::entity(&artifact)])
-            }
-            Ok(CarriedCutoff::EpochFloor(scope, _, _)) => structure(
-                std::iter::once(scope.session)
-                    .chain(scope.conversation)
-                    .map(|id| OwnerRef::entity(&id))
-                    .collect(),
-            ),
-            Err(_) => undecodable(),
-        },
-        "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
-            crate::sync::note::checkpoint::entry(root, key, value)
+/// A value no adapter reads: it keeps the group whole.
+fn undecodable() -> Placement {
+    Placement::unclassified(None, SyncUnclassified::Undecodable)
+}
+
+/// An entity row under its id. An author carrier's actor is split out (FIX
+/// 17143).
+pub(super) fn entity(key: &str, value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
+    named(key).map_or_else(undecodable, |id| {
+        super::author_carrier::entry(id, value).unwrap_or_else(|| entity_row(id, value, owners))
+    })
+}
+
+/// An edge under its canonical key.
+pub(super) fn edge(key: &str, value: &[u8]) -> Placement {
+    match parse_edge_key(key) {
+        // An authored_by edge is its source's: the actor it names rides
+        // in its withheld key alone (FIX 10279, `withheld_key`), so the
+        // edge goes with that actor. Its value must be the kind's own
+        // layout, which holds no actor.
+        Some((source, EdgeKind::AuthoredBy, actor))
+            if format_edge_key(&source, EdgeKind::AuthoredBy, &actor) == key
+                && crate::edge::decode_edge_value_for_kind(EdgeKind::AuthoredBy, value).is_ok() =>
+        {
+            Placement::owned(OwnerRef::entity(&source), Vec::new())
         }
-        "entity_documents" => Placement::unclassified(
-            entity.map(|id| OwnerRef::entity(&id)),
-            SyncUnclassified::ActorSplit(ENTITY_DOCUMENT),
-        ),
-        CUSTODY_MAP => crate::sync::custody::checkpoint::entry(key, value),
-        ROOM_TURNS_MAP => crate::sync::room_turns::checkpoint::entry(key, value),
-        ROOM_FACTS_MAP => crate::sync::room_facts::checkpoint::entry(key, value),
-        DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
-        MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
-        OFFICE_PROPOSALS_MAP => crate::sync::office_proposals::checkpoint::entry(key, value),
-        TYPED_BODY_ROWS_MAP => crate::sync::typed_body_rows::checkpoint::entry(key, value),
-        REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
-        SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::entry(key, value),
-        // FIX 5266: a turn-program row names its actor.
-        TURN_PROGRAM_ARMS_MAP | TURN_PROGRAM_WAKES_MAP => {
-            crate::sync::turn_programs::checkpoint_entry(root, value)
-        }
-        // KS-2 carries every ASSET byte, a by-reference body's too.
-        ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
-        _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
+        Some((_, EdgeKind::AuthoredBy, _)) => undecodable(),
+        // Any other edge holds while both its ends do.
+        Some((source, _, target)) => Placement::Structure {
+            dependencies: vec![OwnerRef::entity(&source), OwnerRef::entity(&target)],
+        },
+        None => undecodable(),
     }
+}
+
+/// A tombstone names a deleted id, and outlives it.
+pub(super) fn tombstone(key: &str, _: &[u8]) -> Placement {
+    named(key).map_or_else(undecodable, |_| Placement::Structure {
+        dependencies: Vec::new(),
+    })
+}
+
+/// A neutral delete's causality: no adapter reads it, so a value in this
+/// root keeps the group whole.
+pub(super) fn held_edit_causality(_: &str, _: &[u8]) -> Placement {
+    Placement::unclassified(None, SyncUnclassified::UnknownRoot)
+}
+
+/// A retained claim world, held while its entity is.
+pub(super) fn retained_claim_world(key: &str, value: &[u8]) -> Placement {
+    match named(key) {
+        Some(id) if value.len() == 16 => Placement::Structure {
+            dependencies: vec![OwnerRef::entity(&id)],
+        },
+        _ => undecodable(),
+    }
+}
+
+/// A peer's origin, held while its entity is.
+pub(super) fn peer_origin(key: &str, value: &[u8]) -> Placement {
+    match (named(key), admit_peer_origin_carrier(key, &binary(value))) {
+        (Some(id), Ok(())) => Placement::Structure {
+            dependencies: vec![OwnerRef::entity(&id)],
+        },
+        _ => undecodable(),
+    }
+}
+
+/// A writer's proof holds while its MESSAGE row does (FIX 12113).
+pub(super) fn message_writer(key: &str, value: &[u8]) -> Placement {
+    match (named(key), admit_writer_proof_carrier(key, &binary(value))) {
+        (Some(id), Ok(())) => Placement::Structure {
+            dependencies: vec![OwnerRef::entity(&id)],
+        },
+        _ => undecodable(),
+    }
+}
+
+/// A withdrawn artifact's cutoff, held while the artifact is; a
+/// conversation's floor, while its session and conversation are.
+pub(super) fn withdrawn_cutoff(key: &str, value: &[u8]) -> Placement {
+    match admit_withdrawn_cutoff_carrier(key, &binary(value)) {
+        Ok(CarriedCutoff::Withdrawn(artifact, _)) => Placement::Structure {
+            dependencies: vec![OwnerRef::entity(&artifact)],
+        },
+        Ok(CarriedCutoff::EpochFloor(scope, _, _)) => Placement::Structure {
+            dependencies: std::iter::once(scope.session)
+                .chain(scope.conversation)
+                .map(|id| OwnerRef::entity(&id))
+                .collect(),
+        },
+        Err(_) => undecodable(),
+    }
+}
+
+/// An entity's whole document, named by its entity.
+pub(super) fn entity_document(key: &str, _: &[u8]) -> Placement {
+    Placement::unclassified(
+        named(key).map(|id| OwnerRef::entity(&id)),
+        SyncUnclassified::ActorSplit(ENTITY_DOCUMENT),
+    )
+}
+
+/// KS-2 carries every ASSET byte, a by-reference body's too.
+pub(super) fn asset_body_ref(_: &str, _: &[u8]) -> Placement {
+    Placement::Dispatched(OtherClient::Body)
 }
 
 /// An entity's row bytes, placed by its kind as the registry places it. A
@@ -246,68 +207,47 @@ fn binary(value: &[u8]) -> LoroValue {
     LoroValue::Binary(value.to_vec().into())
 }
 
-/// Why `key` of the window root map `root` cannot stand plaintext in a
-/// skeleton; `None` for an opaque id or a schema name. Every key a capture
-/// meets is asked, a deleted one's too.
-pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
-    let class = match root {
-        // Only neutral deletes use this key. A value in this root still
-        // has no root_entry adapter and keeps the group whole.
-        HELD_EDIT_CAUSALITY_MAP if key == HELD_EDIT_CAUSALITY_KEY => KeyClass::Opaque,
-        // A room row's part is filed under its digest (FIX 11790).
-        ROOM_TURNS_MAP | ROOM_FACTS_MAP if is_part_key(key) => KeyClass::Digest,
-        "entities"
-        | "tombstones"
-        | "retained_claim_worlds"
-        | "entity_documents"
-        | ROW_BIRTHS_MAP
-        | ORIGIN_POSITIONS_MAP
-        | PEER_ORIGIN_MAP
-        | MESSAGE_WRITER_MAP
-        | ROOM_TURNS_MAP
-        | ASSET_BODY_REFS_MAP => id_key(key),
-        "edges" => match parse_edge_key(key) {
-            Some((_, EdgeKind::AuthoredBy, _)) => {
-                return Some(SyncUnclassified::ActorSplit(AUTHORED_BY));
-            }
-            Some((source, kind, target)) if format_edge_key(&source, kind, &target) == key => {
-                KeyClass::Opaque
-            }
-            _ => KeyClass::Payload,
-        },
-        // A conversation's floor names its session, then its conversation
-        // (FIX 5029).
-        WITHDRAWN_CUTOFFS_MAP => match key.strip_prefix(EPOCH_FLOOR) {
-            Some(filed) if epoch_floor_scope(filed).is_ok() => KeyClass::Opaque,
-            Some(_) => KeyClass::Payload,
-            None => id_key(key),
-        },
-        "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
-            crate::sync::note::checkpoint::key_class(root, key)
+/// An edge's key: an authored_by edge's names its actor; any other edge's
+/// is opaque in its canonical spelling.
+pub(super) fn edge_key(key: &str) -> std::result::Result<KeyClass, SyncUnclassified> {
+    match parse_edge_key(key) {
+        Some((_, EdgeKind::AuthoredBy, _)) => Err(SyncUnclassified::ActorSplit(AUTHORED_BY)),
+        Some((source, kind, target)) if format_edge_key(&source, kind, &target) == key => {
+            Ok(KeyClass::Opaque)
         }
-        CUSTODY_MAP => crate::sync::custody::checkpoint::key_class(key),
-        DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
-        MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
-        OFFICE_PROPOSALS_MAP => crate::sync::office_proposals::checkpoint::key_class(key),
-        TYPED_BODY_ROWS_MAP => crate::sync::typed_body_rows::checkpoint::key_class(key),
-        REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::key_class(key),
-        SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::key_class(key),
-        // A side row's key may spell a platform handle.
-        ROOM_FACTS_MAP => KeyClass::Payload,
-        // FIX 5266: an arming rides under its registration, a wake under its
-        // turn and registration.
-        TURN_PROGRAM_ARMS_MAP => id_key(key),
-        TURN_PROGRAM_WAKES_MAP if crate::sync::turn_programs::wake_key_is_opaque(key) => {
-            KeyClass::Opaque
-        }
-        TURN_PROGRAM_WAKES_MAP => KeyClass::Payload,
-        _ => return Some(SyncUnclassified::UnknownRoot),
-    };
-    match class {
-        KeyClass::Opaque => None,
-        KeyClass::Digest if DIGEST_KEYS_ARE_PLAIN => None,
-        KeyClass::Digest => Some(SyncUnclassified::ActorSplit(DIGEST_KEY)),
-        KeyClass::Payload => Some(SyncUnclassified::ActorSplit(PAYLOAD_KEY)),
+        _ => Ok(KeyClass::Payload),
+    }
+}
+
+/// Only neutral deletes use this map's one key. A value in this root still
+/// has no adapter and keeps the group whole.
+pub(super) fn held_edit_causality_key(
+    key: &str,
+) -> std::result::Result<KeyClass, SyncUnclassified> {
+    if key == HELD_EDIT_CAUSALITY_KEY {
+        Ok(KeyClass::Opaque)
+    } else {
+        Err(SyncUnclassified::UnknownRoot)
+    }
+}
+
+/// A withdrawn artifact's id; a conversation's floor names its session, then
+/// its conversation (FIX 5029).
+pub(super) fn withdrawn_cutoff_key(key: &str) -> KeyClass {
+    match key.strip_prefix(EPOCH_FLOOR) {
+        Some(filed) if epoch_floor_scope(filed).is_ok() => KeyClass::Opaque,
+        Some(_) => KeyClass::Payload,
+        None if named(key).is_some() => KeyClass::Opaque,
+        None => KeyClass::Payload,
+    }
+}
+
+/// A wake's key: its turn and registration in their one spelling.
+pub(super) fn turn_program_wake_key(key: &str) -> KeyClass {
+    if crate::sync::turn_programs::wake_key_is_opaque(key) {
+        KeyClass::Opaque
+    } else {
+        KeyClass::Payload
     }
 }
 
@@ -328,9 +268,9 @@ pub(super) struct WithheldKey {
 /// the edge with it, goes with that actor; a whole document pin's key, the
 /// digest of the pin naming no one, is its citer's, held while the message
 /// it quotes is, as the pin is. `None` for every other key: a part's digest
-/// is withheld under its manifests' holders ([`withheld_part_key`]), a
+/// is withheld under its manifests' holders ([`super::descriptor::withheld_part_key`]), a
 /// custody digest beside its client's copy ([`withheld_client_key`]), and any
-/// other keeps its window whole as [`key_refusal`] names.
+/// other keeps its window whole as [`super::descriptor::key_refusal`] names.
 pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
     match root {
         "edges" => {
@@ -361,24 +301,6 @@ pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
         }
         _ => None,
     }
-}
-
-/// Whether the skeleton withholds `key` of `root` as a part's digest (FIX
-/// 10278): a part of a parted window value, filed under its digest. Its key
-/// goes with every holder a manifest names the part for
-/// ([`super::parts::PartHolders`]), as its value does; the digest itself
-/// names no one.
-pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
-    is_part_key(key)
-        && matches!(
-            root,
-            ROOM_TURNS_MAP
-                | ROOM_FACTS_MAP
-                | DOCUMENT_PINS_MAP
-                | MESSAGE_DOCS_MAP
-                | TYPED_BODY_ROWS_MAP
-                | REPO_MANIFESTS_MAP
-        )
 }
 
 /// The client the skeleton withholds `key` of `root` for, beside that
@@ -423,15 +345,6 @@ pub(super) fn key_fill(
             }
         }
         _ => Err(bad_part()),
-    }
-}
-
-/// A key that is an id in its one canonical spelling.
-fn id_key(key: &str) -> KeyClass {
-    if named(key).is_some() {
-        KeyClass::Opaque
-    } else {
-        KeyClass::Payload
     }
 }
 
