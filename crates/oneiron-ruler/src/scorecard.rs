@@ -276,6 +276,12 @@ pub enum ScorecardError {
         /// The contract the file carries.
         found: String,
     },
+    /// The retriever name is empty or holds whitespace.
+    #[error("bad retriever: {retriever}")]
+    BadRetriever {
+        /// The bad retriever name.
+        retriever: String,
+    },
 }
 
 /// Grade one retrieval run of one pack slice under one parameter set.
@@ -296,6 +302,40 @@ pub fn build_scorecard(
         .ok_or(ScorecardError::PackHasNoVectors)?
         .model_id
         .clone();
+    grade(pack, pack_digest, header, runs, model_id)
+}
+
+/// Grade a run that read no vectors: a keyword arm, or a reference run file.
+///
+/// The same grading and the same refusals in the same order as
+/// [`build_scorecard`], except the no-vectors refusal: a run that read no
+/// vectors names its retriever instead of an embedding model, so `model_id`
+/// is `retriever`. A retriever that is empty or holds whitespace is refused.
+pub fn build_keyword_scorecard(
+    pack: &PackSlice,
+    pack_digest: &str,
+    header: &RunHeader,
+    runs: &[QueryRun],
+    retriever: &str,
+) -> Result<Scorecard, ScorecardError> {
+    if retriever.is_empty() || retriever.chars().any(char::is_whitespace) {
+        return Err(ScorecardError::BadRetriever {
+            retriever: retriever.to_owned(),
+        });
+    }
+    grade(pack, pack_digest, header, runs, retriever.to_owned())
+}
+
+/// The shared grading body behind [`build_scorecard`] and
+/// [`build_keyword_scorecard`]: every refusal after the model id is known,
+/// then the grading. The model id never changes what is refused or graded.
+fn grade(
+    pack: &PackSlice,
+    pack_digest: &str,
+    header: &RunHeader,
+    runs: &[QueryRun],
+    model_id: String,
+) -> Result<Scorecard, ScorecardError> {
     if header.budget_rows == 0 {
         return Err(ScorecardError::BadBudget);
     }
