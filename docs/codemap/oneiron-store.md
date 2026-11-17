@@ -293,7 +293,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/key_custody/anchor.rs` | src | s | 1 fn · 2 const | — | The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image… |
 | `src/key_custody/credential_faults.rs` | src | s | 1 enum · 1 const | CustodyCredentialPassFault | A credential's keys in the passes every custody client shares (KS-6, FIX-LIST 5687 part 1): a head's… |
 | `src/key_custody/head.rs` | src | s | 5 mod | — | Store-layer modules of core `store::key_custody::head`; core re-exports each one at its old path |
-| `src/key_custody/head/carried_pads.rs` | src | s | 3 fn · 6 const · 1 mod | — | World pad compartments a restore left unopened, carried forward (PAD-3, FIX 11133) |
+| `src/key_custody/head/carried_pads.rs` | src | s | 3 fn · 4 const · 1 mod | — | World pad compartments a restore left unopened, carried forward (PAD-3, FIX 11133) |
 | `src/key_custody/head/holder_debts.rs` | src | s | 1 struct | HolderDebtWire | Holder debts on the custody head (FIX 11206): each copy of an erasable key another machine holds… |
 | `src/key_custody/head/pad_scope.rs` | src | s | 2 struct · 7 fn · 1 type · 7 const | CapsuleWire, WorldPadScope | World pad compartments (KS-5, FIX 6706, L04 half): one world's pads, live and retired, sealed apart from… |
 | `src/key_custody/head/scope.rs` | src | s | 1 struct · 1 enum · 4 fn | CompartmentScope, CustodyOpener | Who reads each compartment of a custody head, who its keys are wrapped to, and what a restore opens it with |
