@@ -334,16 +334,17 @@ impl<'r> Round<'r> {
             base,
             watch,
             origin: Instant::now(),
+            before_end: ready.clone(),
             ready,
             listed_before: proof::listed(agent),
             sittings: Vec::new(),
-            before_end: DreamerStatus::default(),
         })
     }
 
     /// Witnesses each life in a sitting of its own; every witness's sample.
     /// A refused hint, or an open not seen within `OPEN_WAIT`, ends the arm:
-    /// that life's turns would join no sitting of their own.
+    /// that life's turns would join no sitting of their own. So does a failed
+    /// status read before the end hint: the round wait needs that baseline.
     pub(super) fn witness(&mut self, lives: &[Life]) -> Result<Vec<Sample>, String> {
         let mut samples = Vec::new();
         for life in lives {
@@ -367,7 +368,14 @@ impl<'r> Round<'r> {
                 samples.push(witness(self.agent, turn));
                 sitting.turns += 1;
             }
-            self.before_end = cycle::status(self.agent, self.http, self.base).unwrap_or_default();
+            // A failed read ends the arm: a zero baseline would let an
+            // earlier life's round pass for the last one's.
+            self.before_end = cycle::status(self.agent, self.http, self.base).map_err(|error| {
+                format!(
+                    "{}: the Dreamer status before the end hint failed: {error}",
+                    life.key
+                )
+            })?;
             cycle::hint(self.agent, self.http, self.base, "end")
                 .map_err(|error| format!("{}: the end hint failed: {error}", life.key))?;
             self.sittings.push(sitting);
