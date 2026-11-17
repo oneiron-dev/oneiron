@@ -215,7 +215,7 @@ fn accept_scope_in_txn(
         .cloned()
         .ok_or_else(|| invalid_body("the revision's grant names no endpoint"))?;
     match &signal.exceed {
-        ConnectorScopeExceed::Endpoint { requested } => endpoint = requested.clone(),
+        ConnectorScopeExceed::Endpoint { .. } => {}
         ConnectorScopeExceed::PayloadClass { requested, .. } => ceiling = ceiling.max(*requested),
         ConnectorScopeExceed::ToolDataClass { requested } => {
             headers |= requested == ToolGrantDataClass::XMcpHeader.as_str();
