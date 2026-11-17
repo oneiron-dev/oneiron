@@ -177,6 +177,7 @@ pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
+pub mod question_saved_lane;
 pub mod question_teardown;
 pub mod re_root_stale_sweep;
 pub mod read_exposure;

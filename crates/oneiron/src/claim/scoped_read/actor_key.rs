@@ -914,6 +914,101 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// The grant basis this key reads under, as a saved lane keeps it beside
+    /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
+    /// floor, a narrower credential's owner exemption, or neither; each
+    /// proved again at every read), its grant gate (none, the
+    /// relationship-only gate, or the access gate) and the principal that
+    /// gate admitted rows on the grants of.
+    pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
+        use super::frozen::{NativeGrantGate, NativeOwnerStanding};
+        let owner_standing = if self.owner.is_some() {
+            NativeOwnerStanding::Floor
+        } else if self.owner_exemption.is_some() {
+            NativeOwnerStanding::Exemption
+        } else {
+            NativeOwnerStanding::Absent
+        };
+        let grant_gate = if !self.enforce_access_grants {
+            NativeGrantGate::Ungated
+        } else if self.unscoped_rows_open {
+            NativeGrantGate::Relationship
+        } else {
+            NativeGrantGate::Access
+        };
+        super::frozen::NativeReadBasis {
+            owner_standing,
+            grant_gate,
+            grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
+        }
+    }
+
+    /// This key held to `basis`, the grant basis a saved lane's live key
+    /// read under (FIX 14344, Astra F2 on #8029): the meet of the two on
+    /// each axis, so the rebuilt key reads no row either one refused (Sol
+    /// R1/R2 on #8061).
+    /// - It keeps the owner's floor only under a floor's basis.
+    /// - It keeps an owner exemption, or turns a floor it loses into one,
+    ///   only under a basis with an owner standing (Sol F1 on #8061), and
+    ///   only where each key's gate let every row through while the owner
+    ///   binding held: unbound, or lifted by an exemption. A floor's basis
+    ///   records no exemption, so no exemption lifts a gate it read under.
+    /// - Its gate binds unless neither key's did (Sol F7 on #8061), with the
+    ///   owner as principal where an ungated key held the floor, and it
+    ///   closes unscoped rows where either gate closed them. A key a gate
+    ///   already binds keeps its own principal, or none (Astra F1 on #8061).
+    /// - Under the saved key's gate it reads on the grants of that gate's
+    ///   principal alone, and on none where the two keys' principals differ
+    ///   or the saved gate was bound to none (Sol F5 on #8065).
+    ///
+    /// A key no gate bound held no exemption to keep: its lane, rebuilt over
+    /// a key a gate binds, reads only the relationship rows its principal's
+    /// grants admit.
+    #[must_use]
+    pub(super) fn within_native_basis(mut self, basis: super::frozen::NativeReadBasis) -> Self {
+        use super::frozen::{NativeGrantGate, NativeOwnerStanding};
+        // What each gate let through: an unbound gate, every row; one an
+        // owner exemption lifts, every row while the owner binding holds; a
+        // binding gate, an unscoped row only while it leaves them open.
+        let key_ungated = !self.enforce_access_grants;
+        let key_lifted = key_ungated || self.owner_exemption.is_some();
+        let key_unscoped_open = key_ungated || self.unscoped_rows_open;
+        let saved_ungated = basis.grant_gate == NativeGrantGate::Ungated;
+        let saved_lifted = saved_ungated || basis.owner_standing == NativeOwnerStanding::Exemption;
+        let saved_unscoped_open = basis.grant_gate != NativeGrantGate::Access;
+        let floor_owner = self.owner;
+        let lost_floor = if basis.owner_standing == NativeOwnerStanding::Floor {
+            None
+        } else {
+            self.owner.take()
+        };
+        let exemption_owner = match basis.owner_standing {
+            NativeOwnerStanding::Absent => None,
+            NativeOwnerStanding::Exemption | NativeOwnerStanding::Floor => {
+                self.owner_exemption.or(lost_floor)
+            }
+        };
+        let neither_gated = key_ungated && saved_ungated;
+        if key_ungated && (lost_floor.is_some() || !neither_gated) {
+            self.principal_ref = self.principal_ref.or(floor_owner);
+        }
+        if !saved_ungated && self.principal_ref != basis.grant_principal {
+            self.principal_ref = None;
+        }
+        if neither_gated {
+            self.owner_exemption = exemption_owner;
+            return self;
+        }
+        self.enforce_access_grants = true;
+        self.unscoped_rows_open = key_unscoped_open && saved_unscoped_open;
+        self.owner_exemption = if key_lifted && saved_lifted {
+            exemption_owner
+        } else {
+            None
+        };
+        self
+    }
+
     /// Constructs a read capability only from a log/MAC/holder-verified slip.
     #[must_use]
     pub fn from_verified_slip(proof: &crate::authority::VerifiedSlip) -> Option<Self> {
