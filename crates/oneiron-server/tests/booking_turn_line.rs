@@ -27,7 +27,7 @@ use std::time::Duration;
 use oneiron::{Vault, VaultConfig};
 use oneiron_server::config::{LimitsConfig, SyncServerConfig};
 use oneiron_server::test_doors::booking_turn_line::{
-    DroppedWaiter, Pass, TurnEnd, authenticated_hold, lines_held,
+    DroppedWaiter, Pass, TurnEnd, authenticated_hold, hold_dropped_during_its_write, lines_held,
     waiter_dropped_after_the_head_leaves,
 };
 use oneiron_server::{ENGINE_THREAD_STACK_BYTES, server::SyncServer};
@@ -255,6 +255,53 @@ async fn dropped_waiter_leaves_no_line() -> TestResult {
     let next = hold(&server, &window, "E", SESSION, Duration::ZERO).await;
     assert_eq!(next, TurnEnd::Admitted, "{:?}", window.log());
     assert_eq!(lines_held(&server), 0, "an answered hold leaves no line");
+    Ok(())
+}
+
+#[test]
+fn a_hold_dropped_during_its_write_keeps_the_line_until_the_write_settles() -> TestResult {
+    on_engine_stack(dropped_hold_keeps_the_line_for_its_write)
+}
+
+/// FIX BOOKING-CANCELLED-HOLD-DETACHED-WRITE: A takes the head of the
+/// session's line and starts its write, and A's request is dropped while
+/// the write runs (its client went away). The write still commits the
+/// session's one HOLD row, so B, the session's next hold, waits for it: B
+/// takes the head only once A's write has returned. Before, A's place went
+/// with its request, and B was admitted while A's write was still to
+/// replace B's hold token. The write runs through the executor's own
+/// `write_holding_line_place`; the executor's hand-off of the place to it
+/// is not run here (the door's `hold_write`).
+async fn dropped_hold_keeps_the_line_for_its_write() -> TestResult {
+    let (_dir, server) = server()?;
+    let seen = hold_dropped_during_its_write(&server, SESSION).await?;
+    assert!(
+        seen.second_waited,
+        "B must wait while A's write still runs: {seen:?}"
+    );
+    assert!(
+        seen.second_took_the_head,
+        "B takes the head once A's write returned: {seen:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn lines_held_counts_a_detached_write() -> TestResult {
+    on_engine_stack(detached_write_holds_its_line)
+}
+
+/// The same order: while A's write runs past its dropped request, the
+/// server holds A's session's line; once the write has returned and B is
+/// gone, it holds none.
+async fn detached_write_holds_its_line() -> TestResult {
+    let (_dir, server) = server()?;
+    let seen = hold_dropped_during_its_write(&server, SESSION).await?;
+    assert_eq!(
+        (seen.lines_held_while_writing, seen.lines_held_after),
+        (1, 0),
+        "the line is held while A's write runs and forgotten after: {seen:?}"
+    );
     Ok(())
 }
 

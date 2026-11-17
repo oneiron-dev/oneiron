@@ -270,6 +270,8 @@ async fn execute(
             }
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
+            // The hold's write holds its place in the line until it returns.
+            let place = turn.take_place();
             let (response, sources) = execute_hold(
                 server,
                 page_ref,
@@ -277,6 +279,7 @@ async fn execute(
                 now,
                 public_authority,
                 transport.owner_verified,
+                place,
             )
             .await?;
             let listed = listed.map(|mut rows| {

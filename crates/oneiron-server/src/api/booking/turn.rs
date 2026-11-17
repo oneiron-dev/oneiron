@@ -33,8 +33,11 @@ pub(crate) struct Turn<'a> {
     deadline: Instant,
     asked: bool,
     /// Its place at the head of its window's line, held until the request is
-    /// answered: the executor drops it with the turn, after its write.
-    place: Option<LinePlace<'a>>,
+    /// answered: for a hold that reaches its write, the executor hands it to
+    /// the write, which gives it up as the write returns, even when the
+    /// request was dropped first; a hold answered before its write gives it
+    /// up with the turn.
+    place: Option<LinePlace>,
 }
 
 impl<'a> Turn<'a> {
@@ -69,6 +72,13 @@ impl<'a> Turn<'a> {
             }
             None => Err(waited_out()),
         }
+    }
+
+    /// This request's place in its window's line, taken for the write it was
+    /// admitted for: the write holds it until it returns (FIX
+    /// BOOKING-CANCELLED-HOLD-DETACHED-WRITE). `None` when it holds none.
+    pub(crate) fn take_place(&mut self) -> Option<LinePlace> {
+        self.place.take()
     }
 
     /// What admission's `disposition` comes to: `Some` to act on, or `None`
