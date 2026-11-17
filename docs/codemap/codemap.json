@@ -33858,7 +33858,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 14
      }
@@ -34269,7 +34269,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/trend_output.rs",
      "purpose": "The daily trend pass and its output (OF-568 L3)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -61789,13 +61789,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/publish/mirror_plan.rs",
      "purpose": "Freezing one automatic mirror push plan (FIX 6866 part 2; CALLS \"FIX 6866 automatic review record\" and \"FIX…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -61882,11 +61882,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/publish/mirror_review.rs",
-     "purpose": "Core half of `origin::publish::mirror_review`: its store-layer items live in…",
+     "purpose": "The review section of one whole ref an automatic mirror plan pushes (FIX 6866 part 2; CALLS \"FIX 6866…",
      "surface": {
       "crate-vis": 5
      }
@@ -61898,7 +61898,7 @@
      "path": "src/origin/publish/mod.rs",
      "purpose": "Exact-commit publication to a repository's mirror (FIX 6866, part 1): a public mirror changes only when we…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 1,
       "re-export": 7
      }
@@ -61922,7 +61922,7 @@
      "purpose": "The full-ancestry review of one exact publish (FIX 6866; CALLS \"FIX 6866 review scope\"): what the push would…",
      "surface": {
       "const": 1,
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -72509,6 +72509,56 @@
      "path": "src/scan_check/table_tests.rs",
      "purpose": "The code's own list of engine scans: none refuses for how many rows it reads (rule 5)",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_agent_definition.rs",
+     "purpose": "Threshold fixtures of the agent_definition scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_code_repo.rs",
+     "purpose": "Threshold fixtures of the code_repo scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_project.rs",
+     "purpose": "Threshold fixtures of the project scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_room_thread.rs",
+     "purpose": "Threshold fixtures of the room_thread scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_runtime_records.rs",
+     "purpose": "Threshold fixtures of the runtime_records scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -93991,6 +94041,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_dreamer.rs",
+     "purpose": "The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StepState"
      ],
@@ -94039,6 +94099,22 @@
      "purpose": "Door for `tests/fingerprint_keep_index_keys.rs` (PLAN-UC-04 stage 5): the keys local vault tables are…",
      "surface": {
       "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MirrorPlanFields",
+      "MirrorPlanRefFields",
+      "MirrorSectionWrite"
+     ],
+     "path": "src/test_doors/fingerprint_keep_origin.rs",
+     "purpose": "The origin publish and mirror digests, for the K-proof of PLAN-UC-04 stage 3.2…",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -94678,7 +94754,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 288,
+      "mod": 290,
       "re-export": 1
      }
     },
@@ -106710,6 +106786,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_dreamer.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -106760,6 +106846,17 @@
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 5a: the keys local vault tables are indexed and deduplicated by keep…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_origin.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.2: the origin publish review digest and a mirror plan's section…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 16
      }
     },
     {
@@ -113774,9 +113871,9 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 5,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
@@ -114054,7 +114151,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 294,
+     "files": 296,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114229,10 +114326,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 299,
+   "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8108,
-   "test_files": 1857
+   "source_files": 8115,
+   "test_files": 1859
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -128893,7 +128990,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/purposes/dreamer.rs",
-     "purpose": "Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`)",
+     "purpose": "Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`…",
      "surface": {}
     },
     {
@@ -128946,6 +129043,14 @@
       "const": 2,
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/origin.rs",
+     "purpose": "Purposes of the git origin (`crates/oneiron/src/origin`)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -129106,7 +129211,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129122,7 +129227,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 33,
+   "source_files": 34,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -182235,7 +182340,7 @@
      "path": "src/origin/publish.rs",
      "purpose": "Store-layer modules of core `origin::publish`; core re-exports each one at its old path",
      "surface": {
-      "mod": 3
+      "mod": 2
      }
     },
     {
@@ -182270,16 +182375,6 @@
       "enum": 3,
       "fn": 5,
       "struct": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/origin/publish/mirror_review.rs",
-     "purpose": "The review section of one whole ref an automatic mirror plan pushes (FIX 6866 part 2; CALLS \"FIX 6866…",
-     "surface": {
-      "const": 1
      }
     },
     {
@@ -187389,7 +187484,7 @@
      "purpose": "Store-layer modules of core `store::open_gates`; core re-exports each one at its old path"
     },
     "origin": {
-     "files": 38,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -188133,7 +188228,7 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 654,
+   "source_files": 653,
    "test_files": 25
   },
   "oneiron-testkit": {
