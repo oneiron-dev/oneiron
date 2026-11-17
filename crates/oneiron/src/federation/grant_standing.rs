@@ -195,6 +195,26 @@ fn guest_row_families(grant: &FederationGrant) -> &'static [GrantFamily] {
     }
 }
 
+/// Whether a counted act gives the guest's Grant row `id`, whose stored body is `body`, in its
+/// shape's family ([`guest_row_families`]), with no counted end and the giving's terms the
+/// row's. Neither expiry nor a pact is read: a Connect pact offer binds a Grant no pact binds
+/// yet, and its doors judge expiry themselves (FIX
+/// [CONNECT-PROPOSE-AND-CARRY-READ-GRANT-ROW-ALONE]).
+#[must_use]
+pub(crate) fn guest_grant_given_in_fold(fold: &AuthorityFold, id: EntityId, body: &[u8]) -> bool {
+    decode_federation_grant_body_keyed(body).is_ok_and(|(grant, terms_key)| {
+        grant.role == FederationGrantRole::Guest
+            && given_in_fold(
+                fold,
+                id,
+                &grant,
+                terms_key.as_ref(),
+                guest_row_families(&grant),
+            )
+            .is_some()
+    })
+}
+
 /// What the live guest Grant row `id`, whose stored body is `body`, confers at `now` under
 /// `fold` (pass 28 R3c): the row of a guest's Grant given by its counted act in its shape's
 /// family ([`guest_row_families`]), which no counted act ended (the guest's revoke ends it,

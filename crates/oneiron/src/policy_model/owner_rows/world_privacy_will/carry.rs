@@ -97,8 +97,17 @@ fn verify_leg<'a>(
 }
 
 /// The connected vault's guest actor here: the member the pact's grant
-/// names, the vault-resident actor that stands for that vault.
-fn connect_guest_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, grant: EntityId) -> Result<EntityId> {
+/// names, the vault-resident actor that stands for that vault, read from the
+/// grant as `fold` stands behind it (its owner's counted mint, no counted
+/// end, its terms the act's, the Active pact binding it), never from the row
+/// alone: a row put back naming another member files no ask under that
+/// member (FIX [CONNECT-PROPOSE-AND-CARRY-READ-GRANT-ROW-ALONE]).
+fn connect_guest_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    grant: EntityId,
+) -> Result<EntityId> {
     let crate::vault::LiveEntityRow::Live {
         entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
         body,
@@ -106,7 +115,9 @@ fn connect_guest_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, grant: EntityId) -
     else {
         return Err(not_carried());
     };
-    Ok(crate::federation::decode_federation_grant_body(&body)?.member_ref)
+    crate::federation::guest_grant_in_fold(fold, grant, &body, vault.store.clock.now_recorded_at())
+        .map(|standing| standing.grant().member_ref)
+        .ok_or_else(not_carried)
 }
 
 impl Vault {
@@ -207,7 +218,7 @@ impl Vault {
             let (local, state) = verify_leg(&fold, &delivery)?;
             match delivery.body.leg {
                 ForeignWorldPrivacyLeg::Ask if delivery.body.answer.is_none() => {
-                    self.file_foreign_ask_in_txn(txn, local, state, &delivery.body)
+                    self.file_foreign_ask_in_txn(txn, &fold, local, state, &delivery.body)
                 }
                 ForeignWorldPrivacyLeg::Answer => self
                     .settle_foreign_ask_in_txn(txn, &delivery.body)
@@ -227,6 +238,7 @@ impl Vault {
     fn file_foreign_ask_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
         local: AuthorityVaultId,
         state: &FederationPactState,
         body: &ForeignWorldPrivacyCarry,
@@ -267,7 +279,7 @@ impl Vault {
         } else {
             (Kind::Proposal, Vec::new())
         };
-        let guest = connect_guest_in_txn(self, txn, state.grant_ref)?;
+        let guest = connect_guest_in_txn(self, txn, fold, state.grant_ref)?;
         let request = self.open_world_privacy_request_in_txn(
             txn,
             NewRequest {
