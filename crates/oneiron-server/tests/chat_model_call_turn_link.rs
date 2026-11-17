@@ -493,14 +493,16 @@ impl Host {
             "one saved MESSAGE regenerates the replaced reply"
         );
         let message = messages[0];
+        // A TURN is a child of its conversation; a MESSAGE is part of its
+        // TURN.
         let thread_turns = self
             .vault
             .sources(&conversation, EdgeKind::ChildOf, None)
             .expect("the conversation's TURNs");
         let turn = self
             .vault
-            .targets(&message, EdgeKind::ChildOf, None)
-            .expect("the MESSAGE's parents")
+            .targets(&message, EdgeKind::PartOf, None)
+            .expect("the MESSAGE's TURNs")
             .into_iter()
             .find(|turn| thread_turns.contains(turn))
             .expect("the Retry's MESSAGE sits in a TURN of the conversation");
