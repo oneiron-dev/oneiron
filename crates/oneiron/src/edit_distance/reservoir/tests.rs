@@ -6,17 +6,17 @@
 use super::*;
 
 use crate::config::VaultConfig;
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, consent_receipt_grant_ref};
 use crate::edit_distance::attribution::{
     AmendmentCause, AmendmentEvidence, judge_amendment, record_amendment_evidence,
 };
-use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::edit_distance::delta::{
+    EndpointRef, MeasuredEnd, delta_from_reconstructed, put_amendment_delta_in_txn,
+};
 use crate::edit_distance::routing::{
     record_judged_amendment, serving_model_version, set_serving_model,
 };
-use crate::edit_distance::{
-    FinalizedProposalText, LoroOpRef, ProposalArtifactRef, put_finalized_proposal_text,
-};
+use crate::edit_distance::{ProposalArtifactRef, put_imported_endpoints};
 use crate::error::GateError;
 use crate::llm::ModelId;
 use crate::off_record::OffRecordBackendClass;
@@ -91,18 +91,7 @@ fn put_artifact(
     source_turn_ref: Option<EntityId>,
 ) -> Result<ProposalArtifactRef> {
     let artifact_ref = ProposalArtifactRef::mint();
-    put_finalized_proposal_text(
-        vault,
-        &FinalizedProposalText {
-            artifact_ref,
-            proposed_ref: LoroOpRef::from_bytes(vec![1]),
-            final_ref: LoroOpRef::from_bytes(vec![2]),
-            ops_by_actor: Vec::new(),
-            proposed_text: proposed.to_owned(),
-            final_text: final_text.to_owned(),
-            source_turn_ref,
-        },
-    )?;
+    put_imported_endpoints(vault, artifact_ref, source_turn_ref, proposed, final_text)?;
     Ok(artifact_ref)
 }
 
@@ -110,7 +99,16 @@ fn put_artifact(
 /// amendment's receipt id. This is the ELIGIBILITY mark — an artifact without
 /// one was edited, but nothing says a decider kept the edit.
 fn mark_amended(vault: &Vault, artifact: ProposalArtifactRef) -> Result<()> {
-    let delta = delta_from_reconstructed("before", "after");
+    let delta = delta_from_reconstructed(
+        MeasuredEnd {
+            at: EndpointRef::imported_proposed(artifact),
+            content: "before",
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(artifact),
+            content: "after",
+        },
+    );
     vault.with_write_txn(|wtxn| {
         put_amendment_delta_in_txn(
             vault,
@@ -164,7 +162,8 @@ fn candidates(vault: &Vault, scope: ReservoirScope) -> Result<Vec<TrainingPair>>
 
 fn export_to_vec(vault: &Vault, scope: ReservoirScope) -> Result<(ExportManifest, String)> {
     let mut out = Vec::new();
-    let manifest = export_reservoir(vault, scope, &mut out)?;
+    let owner = owner(vault);
+    let manifest = export_reservoir(vault, &owner, scope, CorpusUse::OwnerExport, &mut out)?;
     Ok((manifest, String::from_utf8(out).expect("JSONL is utf-8")))
 }
 
@@ -207,7 +206,16 @@ fn the_ledger_join_key_is_the_namespaced_amendment_receipt_id() -> Result<()> {
     );
 
     // A Δ under the bare hex is a row for some other family's key.
-    let delta = delta_from_reconstructed("before", "after");
+    let delta = delta_from_reconstructed(
+        MeasuredEnd {
+            at: EndpointRef::imported_proposed(artifact),
+            content: "before",
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(artifact),
+            content: "after",
+        },
+    );
     vault.with_write_txn(|wtxn| {
         put_amendment_delta_in_txn(&vault, wtxn, &bare_hex, &delta)?;
         Ok(())
@@ -351,8 +359,15 @@ fn a_live_session_source_turn_aborts_the_export_before_the_first_byte() -> Resul
     stage_live_overlay_turn(&session, &turn)?;
 
     let mut sink = CountingSink::default();
-    let err = export_reservoir(&vault, ReservoirScope::default(), &mut sink)
-        .expect_err("a session-sourced candidate refuses the export");
+    let owner = owner(&vault);
+    let err = export_reservoir(
+        &vault,
+        &owner,
+        ReservoirScope::default(),
+        CorpusUse::OwnerExport,
+        &mut sink,
+    )
+    .expect_err("a session-sourced candidate refuses the export");
     assert!(
         matches!(err, Error::InvariantViolation(_)),
         "the abort is a typed invariant violation, got {err:?}",
@@ -408,12 +423,18 @@ fn the_export_door_rides_the_disclosure_consent_rail() -> Result<()> {
     );
 
     let mut sink = CountingSink::default();
-    let err = export_reservoir(&vault, ReservoirScope::default(), &mut sink)
-        .expect_err("no grant, no export");
+    let owner = owner(&vault);
+    let err = export_reservoir(
+        &vault,
+        &owner,
+        ReservoirScope::default(),
+        CorpusUse::OwnerExport,
+        &mut sink,
+    )
+    .expect_err("no grant, no export");
     assert!(matches!(err, Error::Gate(GateError::ConsentGrantNotFound)));
     assert_eq!(sink.bytes, 0, "a refused export writes nothing");
 
-    let owner = owner(&vault);
     let receipt = vault.create_standing_grant(&owner, export_grant_bound()?)?;
     assert_eq!(
         vault
@@ -424,13 +445,15 @@ fn the_export_door_rides_the_disclosure_consent_rail() -> Result<()> {
     );
     assert_eq!(export_to_vec(&vault, ReservoirScope::default())?.0.pairs, 1);
 
-    let grant_ref = receipt.grant_ref().expect("the standing grant's row ref");
+    let grant_ref = consent_receipt_grant_ref(&receipt).expect("the standing grant's row ref");
     vault.revoke_consent_grant(&owner, &grant_ref)?;
     assert!(
         matches!(
             export_reservoir(
                 &vault,
+                &owner,
                 ReservoirScope::default(),
+                CorpusUse::OwnerExport,
                 &mut CountingSink::default()
             ),
             Err(Error::Gate(GateError::ConsentGrantNotFound))
