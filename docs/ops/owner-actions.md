@@ -705,6 +705,21 @@ in flight; retry once it drains. After the cutover, a push here runs under this 
 it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
 or when another host writes the repository. Reads still serve. Only a live owner can cut over.
 
+Name the writer's git door as well, and this copy sends pushes there:
+
+```sh
+oneiron api raw POST /v1/owner/origin-authority \
+  --data '{"repo": "demo", "expected_epoch": 3, "residence": "cloud-vault",
+           "writer": "<the new host machine id>", "writer_door": "https://cloud.example/git"}'
+```
+
+`writer_door` is the writer host's door base: `https://<host>/git` (HTTP only on loopback), with
+no userinfo, query or fragment. A pusher who may push to the repository is then redirected (307)
+to `https://cloud.example/git/demo.git`, and stock git follows the redirect for the whole push.
+Git asks for credentials for the new host. A push request that does not start with the ref
+advertisement, or that is bound to a checkout lease on this host, gets the 403 with that URL
+added. A caller without the `git_push` grant gets its usual 403 and never learns the URL.
+
 ## Mirror a served repository outward
 
 Each repository names one https mirror (GitHub, GitLab, a Gitea), and the mirror carries a
@@ -2339,6 +2354,13 @@ Another install's root changes through your request and its target install:
   claim. Read who asked from `carrier_role` and `carrier_is_yours`: when `carrier_role` is
   absent, this install's records tie that machine to no key they read, so treat the asker as
   unknown.
+- A waiting pin also carries the question to show you (`prompt`) and the code of the root it
+  names (`root_code`). The question is three lines: what happens, the kit's code, and who asked
+  by the same reading: one of your devices, a device that is not yours (a server Oneiron hosts,
+  for one), or no device your vault knows. Compare the code with your kit's before you confirm:
+  `oneiron recovery-kit issue` prints it as `root_code`, and a machine that pins the kit shows it
+  as `pinned_code` at `GET /v1/owner/roots`. The code is 26 letters and digits; the fingerprint in
+  full stays in `root`.
 - `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
 - A pin needs no kit. A pin of the root the target already pins runs on its own. A pin of any
   other root waits on the target for your confirm there: `GET /v1/owner/roots` shows that root as

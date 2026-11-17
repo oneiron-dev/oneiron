@@ -9,9 +9,12 @@
 //! whose call ends before its body is read is aborted and never sent; an
 //! answer still in a content coding is refused, and the codings the child
 //! asks for never pass; a call that presents nothing reaches the upstream
-//! with no credential; a connector that names an upstream is not started
-//! without a door origin; the upstream is part of the connector's endpoint,
-//! and only a bare origin is taken.
+//! with no credential; a call that presents another credential than the
+//! child's earlier calls goes to a new child, which holds nothing the
+//! earlier credential fetched, and that change is no restart of a child that
+//! keeps exiting; a connector that names an upstream is not started without
+//! a door origin; the upstream is part of the connector's endpoint, and only
+//! a bare origin is taken.
 //!
 //! The child is a Python stand-in that calls its upstream with urllib, or
 //! with a raw socket for a request it finishes in a later call. The
@@ -52,6 +55,10 @@ const SECRET: &str = "owen-issues-token-v1";
 /// The text each copy of it becomes in what the child is given.
 const CLEARED: &str = "[issues token]";
 
+/// Another caller's credential, and the text it becomes.
+const OTHER_SECRET: &str = "ada-issues-token-v1";
+const OTHER_CLEARED: &str = "[ada token]";
+
 /// An MCP stdio server: `tools/call fetch` sends `GET` to its upstream's
 /// base URL plus `path`, with `Authorization: Bearer` and its key (or
 /// `token`, when the call names one) and `Accept-Encoding: accept` when the
@@ -59,10 +66,14 @@ const CLEARED: &str = "[issues token]";
 /// and its whole environment. With `slow: "begin"` it sends a `POST`'s head
 /// and half its body and keeps the rest; with `slow: "end"`, in a later
 /// call, it says what the door answered, sending the rest of the body first
-/// only when the door had said nothing within 3 s.
+/// only when the door had said nothing within 3 s. With `keep`, it keeps the
+/// body it got, as a single-user server keeps what it fetched; with
+/// `read_kept`, it says what it kept and calls no upstream. Each answer
+/// names its process.
 const STAND_IN: &str = r#"import json, os, socket, sys, time, urllib.error, urllib.parse, urllib.request
 
 slow = None
+kept = None
 
 def send(message):
     sys.stdout.write(json.dumps(message) + "\n")
@@ -89,7 +100,8 @@ def fetch(arguments):
         status, body, echo = error.code, error.read().decode(), error.headers.get("x-echo", "")
     except Exception as error:
         status, body, echo = 0, repr(error), ""
-    return {"status": status, "body": body, "echo": echo, "env": dict(os.environ)}
+    return {"status": status, "body": body, "echo": echo, "env": dict(os.environ),
+            "pid": os.getpid()}
 
 def begin_slow(arguments):
     global slow
@@ -129,8 +141,12 @@ while True:
             said = begin_slow(arguments)
         elif arguments.get("slow") == "end":
             said = end_slow()
+        elif arguments.get("read_kept"):
+            said = {"kept": kept, "pid": os.getpid()}
         else:
             said = fetch(arguments)
+            if arguments.get("keep"):
+                kept = said["body"]
         send({"jsonrpc": "2.0", "id": message["id"], "result": {
             "content": [{"type": "text", "text": "fetched"}],
             "structuredContent": said}})
@@ -294,11 +310,17 @@ fn door(registry: &ConnectorStdioRegistry) -> (String, tokio::runtime::Runtime) 
 /// What the call presents: the header built from [`SECRET`], and the value
 /// to clear.
 fn held() -> UpstreamHeld {
-    let mut auth = HeaderValue::from_str(&format!("Bearer {SECRET}")).expect("a header value");
+    presenting(SECRET, CLEARED)
+}
+
+/// A call that presents `secret`: the header built from it, and the value to
+/// clear as `cleared`.
+fn presenting(secret: &str, cleared: &str) -> UpstreamHeld {
+    let mut auth = HeaderValue::from_str(&format!("Bearer {secret}")).expect("a header value");
     auth.set_sensitive(true);
     UpstreamHeld::new(
         Some(auth),
-        Some(SentValue::new(SECRET.as_bytes(), CLEARED).keep()),
+        Some(SentValue::new(secret.as_bytes(), cleared).keep()),
         None,
     )
 }
@@ -556,6 +578,90 @@ fn a_call_that_presents_nothing_reaches_the_upstream_with_no_credential() {
     assert_eq!(seen.len(), 1, "{seen:?}");
     assert_eq!(seen[0].target, "/public");
     assert_eq!(seen[0].authorization, None, "the door sent a credential");
+    registry.stop();
+}
+
+#[test]
+fn a_call_presenting_another_credential_gets_a_child_that_holds_nothing_the_first_fetched() {
+    let layout = layout();
+    let fence = HostRunnerFence::for_vault(&layout.vault).expect("runner fence");
+    let (upstream_origin, seen) = upstream();
+    let registry = ConnectorStdioRegistry::default();
+    let (door_origin, _runtime) = door(&registry);
+    let connector = section(&layout.stand_in, Some(&upstream_origin));
+    let call = |presented: UpstreamHeld, arguments: Value| {
+        fetch(
+            &registry,
+            &connector,
+            &fence,
+            Some(&door_origin),
+            presented,
+            arguments,
+        )
+    };
+    // The first caller's credential fetches a private page, and the child
+    // keeps it.
+    let first = call(held(), json!({ "path": "/private/owen", "keep": true }))
+        .expect("the call was sent (is python3 on PATH?)");
+    assert_eq!(first["status"], 200, "{first}");
+    // A later call that presents the same credential goes to the same child.
+    let again = call(held(), json!({ "read_kept": true })).expect("the second call was sent");
+    assert_eq!(
+        again["pid"], first["pid"],
+        "a call that presents the same credential got a new child"
+    );
+    assert!(
+        again["kept"]
+            .as_str()
+            .is_some_and(|kept| kept.contains("/private/owen")),
+        "{again}"
+    );
+    // A call that presents another credential, or none, goes to a new child,
+    // which holds nothing the first credential fetched.
+    for (presented, who) in [
+        (
+            presenting(OTHER_SECRET, OTHER_CLEARED),
+            "another credential",
+        ),
+        (UpstreamHeld::default(), "no credential"),
+    ] {
+        let said = call(presented, json!({ "read_kept": true })).expect("the call was sent");
+        assert_ne!(
+            said["pid"], first["pid"],
+            "a call that presents {who} went to the first credential's child"
+        );
+        assert_eq!(
+            said["kept"],
+            Value::Null,
+            "a call that presents {who} read what the first credential fetched: {said}"
+        );
+    }
+    // Callers that take turns are each served: a child stopped for another
+    // credential did not exit, so its replacements never reach the restart
+    // limit (five starts within a minute).
+    let secret = |turn: usize| if turn % 2 == 0 { SECRET } else { OTHER_SECRET };
+    for turn in 0..6 {
+        let presented = if turn % 2 == 0 {
+            held()
+        } else {
+            presenting(OTHER_SECRET, OTHER_CLEARED)
+        };
+        let said = call(presented, json!({ "path": "/public" })).unwrap_or_else(|| {
+            panic!("turn {turn} was not sent: a change of credential counted as a restart")
+        });
+        assert_eq!(said["status"], 200, "{said}");
+    }
+    // Each turn reached the upstream with its own credential alone.
+    let seen = seen.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let presented: Vec<_> = seen
+        .iter()
+        .skip(1)
+        .map(|seen| seen.authorization.clone())
+        .collect();
+    let expected: Vec<_> = (0..6)
+        .map(|turn| Some(format!("Bearer {}", secret(turn))))
+        .collect();
+    assert_eq!(presented, expected);
     registry.stop();
 }
 

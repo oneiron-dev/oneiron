@@ -297,6 +297,16 @@ enum StartDecision<'a> {
     Judge(StartCheckIn<'a>),
     Reached(CheckInDecision),
 }
+/// Which grant holders a holder scan admits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HolderAdmission {
+    /// Live PERSON holders only: who may act, propose, approve or veto.
+    Persons,
+    /// Live PERSON holders and each house mind a live org link seats
+    /// (`workspace_roster::is_house_link_grant_in_txn`; its default role is
+    /// Deputy, canon HOUSE-BIND = A): who hears of an admin act.
+    PersonsAndHouses,
+}
 pub(super) struct LiveActHolder {
     pub(super) member: EntityId,
     pub(super) role: Role,
@@ -330,6 +340,46 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
         now: u64,
+    ) -> Result<Vec<LiveActHolder>> {
+        self.live_grant_holders_in_txn(txn, vault_id, now, HolderAdmission::Persons)
+    }
+
+    /// [`Self::live_act_holders`] and each house mind a live org link seats:
+    /// whom an admin act's notice goes to (UNBUILT06-SHAPE Q3 = A; review of
+    /// #8384). Never an authority read: a house acts through its own doors.
+    pub(super) fn live_notice_holders(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        now: u64,
+    ) -> Result<Vec<LiveActHolder>> {
+        self.live_grant_holders_in_txn(txn, vault_id, now, HolderAdmission::PersonsAndHouses)
+    }
+
+    /// Whether `grant`'s member counts as a holder under `admission`: a live
+    /// PERSON, or with `PersonsAndHouses` a live house mind its org link seats.
+    fn holder_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: &super::FederationGrant,
+        admission: HolderAdmission,
+    ) -> Result<bool> {
+        if crate::consent::person_is_live_in_txn(self, txn, &grant.member_ref)? {
+            return Ok(true);
+        }
+        Ok(admission == HolderAdmission::PersonsAndHouses
+            && crate::workspace_roster::is_house_link_grant_in_txn(self, txn, grant)?
+            && crate::vault::live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.is_live())
+    }
+
+    /// The live grant holders of shared vault `vault_id` at `now` that
+    /// `admission` admits.
+    fn live_grant_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        now: u64,
+        admission: HolderAdmission,
     ) -> Result<Vec<LiveActHolder>> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_root_is_conflicted() {
@@ -370,7 +420,7 @@ impl Vault {
                     federation_grant_activation(&fold, &id),
                     FederationGrantActivation::Unpacted | FederationGrantActivation::Active
                 )
-                && crate::consent::person_is_live_in_txn(self, txn, &grant.member_ref)?
+                && self.holder_admitted_in_txn(txn, &grant, admission)?
                 && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 // A pact can further restrict the grant's content ceiling. A
@@ -1024,7 +1074,7 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 
 mod matured;
 mod owner_change_wait;
-mod policy_change;
+pub(crate) mod policy_change;
 pub use matured::PendingActMatured;
 pub use policy_change::{
     NOTIFICATION_PRODUCER_POLICY_CHANGE, SharedActPoliciesView, SharedActPolicyChange,

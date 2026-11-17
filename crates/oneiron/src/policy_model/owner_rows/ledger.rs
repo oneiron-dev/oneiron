@@ -2,6 +2,12 @@
 use serde::{Deserialize, Serialize};
 
 use super::notifications::PolicyNotificationTarget;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::batch::secret_scan::admit_typed;
 use crate::check_in::CheckInDecision;
 use crate::error::{Error, GateError, Result};
@@ -161,6 +167,17 @@ pub(super) fn put_event_in_txn(
     event: &PolicyChangedEvent,
 ) -> Result<()> {
     EVENTS.put(&vault.store, txn, &event.receipt_id, &encode(event)?)
+}
+
+/// Whether the shared typed event stream holds an event for `receipt_id`, in the caller's
+/// snapshot: the companion check for an applied unanimity turn-off, whose settlement names
+/// the row-change event its landing wrote.
+pub(super) fn policy_change_event_exists_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_id: &str,
+) -> Result<bool> {
+    EVENTS.contains(&vault.store, txn, &receipt_id.to_owned())
 }
 
 /// The change receipts, bound through the declared table, for the actor
@@ -360,5 +377,140 @@ impl Vault {
             }
         }
         Ok(rows)
+    }
+}
+
+/// Lands one archived `OWNER_POLICY_CHANGE_EVENT` envelope in `txn`: canonical outer decode
+/// and the credential predicate, then the embedded event's own canonical round-trip with its
+/// key naming its receipt id. No ruling, receipt, sequence row or notification is written.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_policy_change_event_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&EVENTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let event: PolicyChangedEvent = match decode(&value) {
+        Ok(event) => event,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    let canonical = match encode(&event) {
+        Ok(canonical) => canonical,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    if canonical != value || key != event.receipt_id {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    if event.kind.is_empty()
+        || EntityId::from_hex(&event.receipt_id).is_err()
+        || EntityId::from_hex(&event.author).is_err()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&EVENTS, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived owner-policy envelopes in dependency order, one outcome
+    /// per input row: change events, the secret-scan mode and receipts, and world-privacy
+    /// receipts first; then the widen-unanimity row; then world-privacy requests; then
+    /// unanimity turn-offs. A row whose companion landed
+    /// earlier in this same pass sees it: an applied request names a world-privacy receipt,
+    /// and an applied turn-off names a change event. An absent row installs, an identical
+    /// row is unchanged, and a different row stays live. No ruling, settings change, wait
+    /// settlement, signal or notification is written here: the mode lands without minting
+    /// its receipt, event or lift run; pending asks wait for the holders' next answer; and
+    /// the ledger's `SEQUENCE` allocates ruling revisions, not event keys, so no counter is
+    /// repaired.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_policy_model_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        order.sort_by_key(|&index| policy_model_land_rank(&rows[index].source_table));
+        let mut landed: Vec<(usize, ArchivedSideRowOutcome)> = Vec::with_capacity(rows.len());
+        for index in order {
+            let row = &rows[index];
+            let outcome = match row.source_table.as_str() {
+                name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => {
+                    land_archived_policy_change_event_row_in_txn(vault, txn, permit, row)?
+                }
+                name if name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name => {
+                    super::secret_scan_switch::land_archived_secret_scan_mode_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
+                    super::secret_scan_switch::land_archived_secret_scan_receipt_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_RECEIPT.name => {
+                    super::world_privacy_switch::land_archived_world_privacy_receipt_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name => {
+                    super::world_privacy_will::unanimity::land_archived_unanimity_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name => {
+                    super::world_privacy_will::record::land_archived_world_privacy_request_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name => {
+                    super::world_privacy_will::unanimity::land_archived_unanimity_off_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                // The dispatcher never sends a foreign envelope here; without an
+                // owning table the envelope has no decoding.
+                _ => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),
+            };
+            landed.push((index, outcome));
+        }
+        landed.sort_by_key(|(index, _)| *index);
+        Ok(landed.into_iter().map(|(_, outcome)| outcome).collect())
+    }
+}
+
+/// The landing rank of one PolicyModel envelope: companions before the rows that name
+/// them (receipts and change events before requests and turn-offs, the unanimity row
+/// before the turn-offs that land it); any unknown envelope last.
+fn policy_model_land_rank(source_table: &str) -> u8 {
+    match source_table {
+        name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => 0,
+        name if name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name => 1,
+        name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => 2,
+        name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_RECEIPT.name => 3,
+        name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name => 4,
+        name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name => 5,
+        name if name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name => 6,
+        _ => 7,
     }
 }
