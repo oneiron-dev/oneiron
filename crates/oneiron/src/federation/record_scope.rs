@@ -723,9 +723,24 @@ pub(crate) fn scope_for_blob(
     id: EntityId,
     raw: &[u8],
 ) -> Result<Option<Scope>> {
+    scope_for_blob_with_history(store, store, txn, id, raw)
+}
+
+/// [`scope_for_blob`] with each history control's scope read from `history`,
+/// such as a read's [`crate::claim::history_projection::MachineHistoryReadCache`]
+/// that resolves each target's history once (FIX
+/// MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE). `history` must answer as
+/// `store` does in `txn`.
+pub(crate) fn scope_for_blob_with_history(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    history: &impl MachineHistoryScope,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<Scope>> {
     let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     let data = &raw[ENTITY_METADATA_HEADER_LEN..];
-    scope_for_parts(store, txn, id, h.entity_type, data)
+    scope_for_parts_with_history(store, history, txn, id, h.entity_type, data)
 }
 
 /// The scope of the actual row parts admitted by a read in `txn`.
@@ -736,11 +751,24 @@ pub(crate) fn scope_for_parts(
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
+    scope_for_parts_with_history(store, store, txn, id, kind, data)
+}
+
+/// [`scope_for_parts`] with each history control's scope read from `history`
+/// ([`scope_for_blob_with_history`]).
+fn scope_for_parts_with_history(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    history: &impl MachineHistoryScope,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Scope>> {
     if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let Ok(body) = crate::claim::decode_claim_body(data, true) else {
             return Ok(None);
         };
-        if let Some(effective) = store.machine_history_scope(txn, &body)? {
+        if let Some(effective) = history.machine_history_scope(txn, &body)? {
             return Ok(effective);
         }
         return Ok(Some(body.record_scope("read")));
@@ -823,6 +851,30 @@ impl MachineHistoryScope for crate::store::StoreRead<'_> {
     }
 }
 
+/// A read's cache answers as the store does, each target's history resolved
+/// once for the read (FIX MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+#[cfg(feature = "sync")]
+impl MachineHistoryScope for crate::claim::history_projection::MachineHistoryReadCache<'_> {
+    fn machine_history_scope(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<Option<Scope>>> {
+        if crate::claim::history_store::machine_history_kind(&body.predicate).is_none() {
+            return Ok(None);
+        }
+        let ClaimSubject::Entity(target) = body.subject else {
+            return Ok(Some(None));
+        };
+        let history = self.target(target);
+        Ok(Some(
+            history
+                .resolved(self.store(), txn, self.fold(txn)?)?
+                .map(machine_history_effective_scope),
+        ))
+    }
+}
+
 fn machine_history_disclosure_scope(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -834,25 +886,29 @@ fn machine_history_disclosure_scope(
     let ClaimSubject::Entity(target) = body.subject else {
         return Ok(Some(None));
     };
-    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+    let fold = crate::authority::authority_view_readonly_for_store_in_txn(
         store,
         store.privacy_posture,
         txn,
     )?;
-    match crate::claim::history_projection::resolved_machine_history(store, txn, &fold, target) {
-        Ok(projection) => {
-            let mut effective =
-                crate::claim::history_projection::project_machine_claim(&projection)
-                    .record_scope("read");
-            if projection.stale {
-                effective.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Restricted);
-            }
-            Ok(Some(Some(effective)))
-        }
-        Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete))
-        | Err(Error::Claim(crate::error::ClaimError::InvalidMachineClaimProof)) => Ok(Some(None)),
-        Err(other) => Err(other),
+    Ok(Some(
+        crate::claim::history_projection::TargetHistory::new(target)
+            .resolved(store, txn, &fold)?
+            .map(machine_history_effective_scope),
+    ))
+}
+
+/// The audience a resolved machine history's controls inherit: the projected
+/// claim's read scope, held Restricted while the history is stale.
+fn machine_history_effective_scope(
+    projection: &crate::claim::transition::ClaimTransitionProjection,
+) -> Scope {
+    let mut effective =
+        crate::claim::history_projection::project_machine_claim(projection).record_scope("read");
+    if projection.stale {
+        effective.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Restricted);
     }
+    effective
 }
 
 /// The position the scoped read and export doors select the stored row of
