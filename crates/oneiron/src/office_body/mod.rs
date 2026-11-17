@@ -138,11 +138,21 @@ use oneiron_xlsx_formula::RecalcClock;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use serde::{Deserialize, Serialize};
 
+#[cfg(oneiron_test_support)]
+pub(crate) use author_token::index::{
+    put_pins_author_token_ref_in_txn, put_pins_export_token_ref_in_txn,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use holder_ask::put_pins_live_edit_route_in_txn;
 pub use oneiron_docedit::resource::{
     RESERVE_STEP, ResourceAllocation, ResourcePort, ResourceRefusal, Resources,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use pptx::put_pins_oracle_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use records::joined_office_fork_companion;
+#[cfg(oneiron_test_support)]
+pub(crate) use records::put_pins_office_source_in_txn;
 use records::{EXPORT_AUTHORS, EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
     ForkState, HeldDeckId, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor,
@@ -153,6 +163,8 @@ pub use resources::{
     DocumentMemory, document_resources, document_resources_until, register_document_memory,
 };
 pub(crate) use resources::{document_error, document_refused, docx_error, machine_memory_refused};
+#[cfg(oneiron_test_support)]
+pub(crate) use support::pins_version_key;
 use support::{
     apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, land_moved_xlsx,
     loro_kind, open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate,
