@@ -10,6 +10,7 @@
 //! skills/connectors/MCPs by id and grants nothing until a later dispatch layer
 //! (AGENT-3) resolves and authorizes them.
 
+pub(crate) mod archive_restore;
 mod byte_observation;
 mod codec;
 mod doors;
