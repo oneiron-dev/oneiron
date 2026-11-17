@@ -15,7 +15,7 @@ use crate::registry::{
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT,
 };
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store, StoreRead};
 
 use super::disclosure_tier_a_marked_in;
 use super::scope_codec::{MAX_DISCLOSURE_SCOPE_TOPIC_BYTES, decode_disclosure_scope_value};
@@ -133,9 +133,38 @@ pub(crate) fn disclosure_tier(
     entity_type: u8,
     claim_body: Option<&ClaimBody>,
 ) -> Result<DisclosureTier> {
+    disclosure_tier_bound(&store.read(), rtxn, id, entity_type, claim_body, None)
+}
+
+/// [`disclosure_tier`] for an assembly bound to the live room stretch
+/// `bound_stretch` names, whose every interlocutor is seated in its room
+/// (ARCH-0052 D5 rule 1; ROOM-PACK-STRETCH-TIER-A = A, the lead 14 Nov
+/// 05:3x, from the owner's OFFRECORD-WORDS = A, ARCH-0052:18: "the agent in
+/// the room sees both the room and outside. but the room itself is sealed
+/// from outside"). Rule 1 skips that stretch's own rows, members of its
+/// overlay and of no other live one; a row of any other live room stays
+/// Tier A, and rules 2-5 judge every row. `None` is [`disclosure_tier`].
+/// `store` is the content the assembly reads, a room's overlay ∪ base for a
+/// room pack, so a staged CLAIM is judged on its staged body; the live
+/// registry and the owner's Tier-A marks are the vault's, read on base.
+pub(crate) fn disclosure_tier_bound(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    claim_body: Option<&ClaimBody>,
+    bound_stretch: Option<&str>,
+) -> Result<DisclosureTier> {
     // Rule 1 — live session-overlay membership. ONE-1731 removed the durable
     // fence half; membership in a live room is the whole rule now.
-    if store.off_record_sessions.contains_entity(id)? {
+    let own_row = match bound_stretch {
+        Some(session_ref) => store
+            .base()
+            .off_record_sessions
+            .is_member_only_of(id, session_ref)?,
+        None => false,
+    };
+    if !own_row && store.base().off_record_sessions.contains_entity(id)? {
         return Ok(DisclosureTier::TierA);
     }
     // Rule 2 — governance/consent/biometric/intimate-profile type bytes.
@@ -175,14 +204,14 @@ pub(crate) fn disclosure_tier(
         }
     }
     // Rule 5 — owner-marked-private row.
-    if disclosure_tier_a_marked_in(store, rtxn, id)? {
+    if disclosure_tier_a_marked_in(store.base(), rtxn, id)? {
         return Ok(DisclosureTier::TierA);
     }
     Ok(DisclosureTier::TierB)
 }
 
 pub(super) fn read_stored_claim_body(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<ClaimBody>> {

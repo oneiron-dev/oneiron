@@ -3,7 +3,8 @@
 //! generation as the dial's first read under the call's clock, then routes each answer
 //! exactly as [`DecisionLadder::run_pack`] does; a stronger rung is one of the ladder's own
 //! slots. The generation goes out as the caller's own calls do: a durable step, the raw seam
-//! on the caller's lease, or the raw seam under a per-call admission.
+//! on the caller's lease, the raw seam under a per-call admission, or a step the caller
+//! submits itself ([`DecisionLadder::run_pack_submitted`]).
 
 use serde_json::{Map, Value, json};
 
@@ -60,14 +61,16 @@ pub struct GeneratedRung<'a> {
 impl GeneratedRung<'_> {
     /// What the rung's model costs per thousand units it reads, from its model registry
     /// row's input price per million (FIX 11305): the vault a durable step runs in holds the
-    /// row. None for a raw read, which names no vault, for a model with no registered
-    /// price, and when the price names no currency (FIX 11778: unknown never prices).
+    /// row, as does the vault a submitted step names. None for a raw read, which names no
+    /// vault, for a model with no registered price, and when the price names no currency
+    /// (FIX 11778: unknown never prices).
     fn registered_cost_per_thousand(&self) -> Option<f64> {
-        let GeneratedStep::Durable { step, .. } = &self.step else {
-            return None;
+        let vault = match &self.step {
+            GeneratedStep::Durable { step, .. } => step.vault,
+            GeneratedStep::Submitted { vault, .. } => *vault,
+            GeneratedStep::Raw { .. } | GeneratedStep::Admitted { .. } => return None,
         };
-        let row = step
-            .vault
+        let row = vault
             .model_registry_row(&self.request.model)
             .ok()
             .flatten()?;
@@ -92,12 +95,35 @@ pub enum GeneratedStep<'a> {
     Raw { lease: &'a BudgetLease },
     /// The raw seam, each request admitted on the guard and settled on what it spent.
     Admitted { guard: &'a BudgetGuard },
+    /// The caller's own durable step (a live run's step, FIX RUN-STEP-TYPED-DECISION-MODE):
+    /// `submit` sends the sealed request as that step and gives back its reply, the saved
+    /// one on a retry, or `None` when the step kept no reply (a budget trap, a park, a
+    /// failure, a refusal), which the caller answers itself. It may block on the host's
+    /// runtime: only [`DecisionLadder::run_pack_submitted`] reads it, on the caller's own
+    /// thread and outside any runtime, so the step keeps the call's thread context. The
+    /// rung's backend is never called; `vault` holds the model's price row.
+    Submitted {
+        submit: &'a (dyn Fn(LlmRequest) -> Result<Option<SubmittedRead>> + Sync),
+        vault: &'a crate::Vault,
+    },
+}
+
+/// The invariant [`DecisionLadder::run_pack_submitted`] breaks when its read was not ready at
+/// its first poll: a submitted read awaits nothing.
+pub const SUBMITTED_READ_INVARIANT: &str = "a submitted generated read awaited";
+
+/// What a [`GeneratedStep::Submitted`] step replied: its response, and whether it was
+/// the saved reply of an earlier submission.
+pub struct SubmittedRead {
+    pub response: LlmResponse,
+    pub memoized: bool,
 }
 
 /// What a generated pack gave its caller.
 pub enum GeneratedDecisions {
     /// Each question's decision in order, and each generation's request hash, usage,
-    /// durable binding (`None` for a raw or admitted generation), and memoized flag.
+    /// durable binding (`None` for a raw, admitted or submitted generation), and memoized
+    /// flag.
     Decided {
         decisions: Vec<TypedDecision>,
         steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
@@ -165,6 +191,51 @@ impl DecisionLadder<'_> {
             None,
         )
         .await
+    }
+
+    /// [`Self::run_pack_generated`] for a [`GeneratedStep::Submitted`] rung, driven on the
+    /// calling thread and outside any async runtime, so the caller's step may block on the
+    /// host's runtime with the caller's own thread context and stack (FIX
+    /// RUN-STEP-TYPED-DECISION-MODE). A submitted read awaits nothing: its generation is the
+    /// caller's blocking submit and the close runs on its own thread, so its future is ready
+    /// at its first poll; one that is not fails on [`SUBMITTED_READ_INVARIANT`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the generated rung joins run_pack's inputs"
+    )]
+    pub fn run_pack_submitted(
+        &self,
+        rung: &GeneratedRung<'_>,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> DurableStepResult<GeneratedDecisions> {
+        if !matches!(rung.step, GeneratedStep::Submitted { .. }) {
+            return Err(invalid("a submitted read takes a submitted step").into());
+        }
+        let read = std::pin::pin!(self.run_pack_generated(
+            rung,
+            questions,
+            principal,
+            evidence,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        ));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match std::future::Future::poll(read, &mut context) {
+            std::task::Poll::Ready(decided) => decided,
+            std::task::Poll::Pending => {
+                Err(Error::InvariantViolation(SUBMITTED_READ_INVARIANT).into())
+            }
+        }
     }
 
     /// [`Self::run_pack_generated`], each generation that finished pushed onto `spent`
@@ -312,6 +383,13 @@ async fn read(
                 None => return Ok(Reply::Answers(Err(cut()))),
             }
         }
+        // The caller's own step, on the thread driving this read and outside any runtime
+        // (`run_pack_submitted`): it awaits nothing here. A step that kept no reply stops
+        // the read as a trapped durable step does.
+        GeneratedStep::Submitted { submit, .. } => match submit(request)? {
+            Some(SubmittedRead { response, memoized }) => (response, None, memoized),
+            None => return Ok(Reply::Trapped),
+        },
     };
     steps.push((hash, response.usage.clone(), binding, memoized));
     Ok(Reply::Answers(
