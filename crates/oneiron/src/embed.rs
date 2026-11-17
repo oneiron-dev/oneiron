@@ -30,6 +30,7 @@ mod space_move;
 mod space_probe;
 mod turn;
 pub(crate) mod world_space;
+pub mod world_vectors;
 pub use binding_move::{
     BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
 };
@@ -302,6 +303,9 @@ pub struct PendingEmbeddingReconciler {
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
     rung_role: routing::RungRole,
+    /// The primary embedder, held on the vault for `vault.worlds.vectors`
+    /// while this reconciler lives.
+    registration: world_vectors::HostTextEmbedderRegistration,
     pod_hours: Option<std::sync::Arc<dyn PodHoursClock>>,
 }
 
@@ -312,6 +316,8 @@ impl PendingEmbeddingReconciler {
         vault: std::sync::Arc<crate::Vault>,
         embedder: std::sync::Arc<dyn Embedder>,
     ) -> Self {
+        let registration =
+            world_vectors::HostTextEmbedderRegistration::register(&vault, embedder.as_ref());
         Self {
             vault,
             embedder,
@@ -319,6 +325,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
+            registration,
             pod_hours: None,
         }
     }
@@ -390,6 +397,7 @@ impl PendingEmbeddingReconciler {
         }
         let mut rung = RemoteRung::new(std::sync::Arc::clone(&self.embedder), predicate);
         rung.lease_duration_ms = self.lease_duration_ms;
+        self.registration.hold_to_primary_rung(rung.offer_id());
         self.remote_rung = Some(rung);
         self.rung_role = routing::RungRole::Primary;
         Ok(self)
