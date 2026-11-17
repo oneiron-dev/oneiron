@@ -1647,6 +1647,7 @@ fn exact_project_and_room_batch_still_has_a_roster_audience() -> Result<()> {
         claims_scope_ref: record.claims_scope_ref.clone(),
         origin: None,
         pins: Vec::new(),
+        unpinned: Vec::new(),
         pin_policy: Default::default(),
     };
     vault

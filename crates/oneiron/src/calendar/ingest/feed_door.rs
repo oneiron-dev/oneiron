@@ -109,7 +109,8 @@ pub(crate) fn registration_in_txn(
 /// once; an installed feed is immutable (a change is refused; a new configuration takes a new
 /// system), and a system an earlier feed polled under is never installed again. Nor is a system
 /// an installed CalDAV seat imports under: each complete poll cancels every event of its
-/// system that the feed body lacks, the seat's events too.
+/// system that the feed body lacks, the seat's events too. Nor is a pack calendar source's
+/// system, whose complete listings sweep it the same way.
 /// Installing a feed starts its poll chain, due at once, in the same write; a chain already
 /// pending for the feed is adopted, never forked. A feed whose import waits on its owner, or
 /// was declined (CAL-02), starts no chain: the owner's approval starts it. Clearing an installed
@@ -119,8 +120,8 @@ pub(crate) fn registration_in_txn(
 /// # Errors
 ///
 /// `InvalidConfig` for a pin, a row with no system, a value naming another system, a change to
-/// an installed feed, a system used before, or a system an installed seat imports under;
-/// storage errors.
+/// an installed feed, a system used before, a system an installed seat imports under, or a
+/// system with the pack calendar prefix; storage errors.
 pub(crate) fn ics_feed_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -169,6 +170,7 @@ pub(crate) fn ics_feed_changed_in_txn(
              would cancel its events; use another system"
         )));
     }
+    crate::mail_pack::refuse_calendar_source_system(&config.system)?;
     if consent::poll_hold_in_txn(vault, txn, &config)?.is_none() {
         enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
     }
