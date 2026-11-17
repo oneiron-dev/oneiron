@@ -66,7 +66,11 @@ fn test_selector_conn_state() -> ConnState {
     ConnState::new(protocol::PROTOCOL_VERSION)
 }
 
-fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: oneiron::EntityId) {
+async fn bind_selector_test_auth(
+    server: &SyncServer,
+    state: &mut ConnState,
+    member: oneiron::EntityId,
+) {
     let params = crate::test_credentials::bind_payload(
         server,
         &format!("scope=core:read;principal_ref={}", member.to_hex()),
@@ -76,7 +80,9 @@ fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: o
         serde_json::json!({"requestId": 1, "method": "auth.bind", "params": params}),
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
-    handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx).unwrap();
+    handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx)
+        .await
+        .unwrap();
     assert!(rx.try_recv().is_ok());
 }
 
@@ -314,7 +320,9 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         protocol::TAG_RPC,
         serde_json::json!({"requestId": 77, "method": "auth.bind", "params": params}),
     );
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx)
+        .await
+        .unwrap();
     let _ = rx.try_recv().unwrap();
     handle_window_sync(
         &server,
@@ -453,7 +461,9 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         protocol::TAG_RPC,
         serde_json::json!({"requestId": 78, "method": "auth.bind", "params": params}),
     );
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx)
+        .await
+        .unwrap();
     let _ = rx.try_recv().unwrap();
     let error = handle_window_sync(
         &server,
@@ -559,7 +569,9 @@ async fn residence_replay_refuses_a_birth_scope_restamp() {
         protocol::TAG_RPC,
         serde_json::json!({"requestId": 79, "method": "auth.bind", "params": params}),
     );
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx)
+        .await
+        .unwrap();
     let _ = rx.try_recv().unwrap();
     let error = handle_window_sync(
         &server,
@@ -1125,7 +1137,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, owner);
+    bind_selector_test_auth(&server, &mut conn_state, owner).await;
     handle_window_sync(
         &server,
         1,
@@ -1196,7 +1208,7 @@ async fn selector_connection_rejects_full_window_bypass() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, owner);
+    bind_selector_test_auth(&server, &mut conn_state, owner).await;
     handle_window_sync(
         &server,
         1,
@@ -1276,7 +1288,7 @@ async fn selector_request_authorizes_before_window_creation() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member);
+    bind_selector_test_auth(&server, &mut conn_state, member).await;
     let result = handle_window_sync(
         &server,
         1,
@@ -1381,7 +1393,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, owner);
+    bind_selector_test_auth(&server, &mut conn_state, owner).await;
     handle_window_sync(
         &server,
         1,
@@ -2980,13 +2992,13 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
             .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut state, owner);
+    bind_selector_test_auth(&server, &mut state, owner).await;
     // Holder proofs are dated by the held store clock but checked against the
     // authority clock, which keeps real time: bind every connection up front.
     let mut impostor = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46)).await;
     let mut reconnected = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut reconnected, owner);
+    bind_selector_test_auth(&server, &mut reconnected, owner).await;
     let mut saw_defer = false;
     // More than the retired 64-window quota. Every valid request completes,
     // either immediately or by redeeming its durable response identity.
@@ -3225,7 +3237,7 @@ async fn document_batch_exchange(version: u8) {
     ));
     assert!(replies.try_recv().is_err());
     let mut impostor = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46)).await;
     assert!(matches!(
         handle_sync_message(
             &server,
@@ -3239,7 +3251,7 @@ async fn document_batch_exchange(version: u8) {
         Err(ProtocolError::InvalidPayload(_))
     ));
     assert!(replies.try_recv().is_err());
-    bind_selector_test_auth(&server, &mut state, owner);
+    bind_selector_test_auth(&server, &mut state, owner).await;
     handle_sync_message(
         &server,
         1,

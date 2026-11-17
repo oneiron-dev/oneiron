@@ -2,7 +2,9 @@
 //! before a verb moves a task. It first proves the caller is the actor it
 //! names ([`TaskActorProof`]): by a live authority binding, or, for a caller
 //! no binding names (the owner on a hosted root, an ask guest), by its own
-//! slip or grant, or, for the in-process host's own caller, by store truth.
+//! slip or grant, or, for one of the vault's own agents whose act the engine
+//! runs, by its standing definition, or, for the in-process host's own
+//! caller, by store truth.
 //! Then it reads only the TASK's immutable facts (Owner, Assigned,
 //! HumanAssigned, Accepted) through `task_standing_in`, never the body's
 //! display assignee. An engine runner's first take, which no fact names, is
@@ -36,6 +38,15 @@ pub(crate) enum TaskActorProof<'a> {
     /// conferring now. A host binds it as an [`AdmittedTaskGrant`]
     /// (`Memory::presented_task_grant`).
     Grant { actor: EntityId, grant: EntityId },
+    /// One of this vault's own agents, acting as itself in an act the engine
+    /// runs for it, as its take of a guest's parked post addressed to it
+    /// (ARCH-0028: the agent decides whether to take it). Pairing binds no
+    /// such agent: it acts through its capability slips. So on a rooted vault
+    /// that is not shared, an agent the log never bound, and that no
+    /// revocation touched, is proven while it is one of the vault's own
+    /// agents and its definition stands; a bound agent is held to its
+    /// binding ([`Vault::verify_own_agent_write_actor_in_txn`]).
+    OwnAgent(&'a WriteActor),
     /// The in-process host's own caller (`Memory::native_invocation`: no
     /// transport reached it, no slip or read proof is bound to it), such as
     /// the embedded SDK's owner or `as_actor`, an engine runner, or a host
@@ -52,7 +63,7 @@ impl TaskActorProof<'_> {
         match self {
             Self::Grant { grant, .. } => Some(*grant),
             Self::Slip { slip, .. } => EntityId::from_hex(slip.claims().grant_ref.as_deref()?).ok(),
-            Self::Bound(_) | Self::Native(_) => None,
+            Self::Bound(_) | Self::OwnAgent(_) | Self::Native(_) => None,
         }
     }
 }
@@ -208,7 +219,7 @@ impl Vault {
     }
 }
 
-/// The task verbs whose actor [`Vault::prove_task_actor_in_txn`] judges.
+/// The task verbs whose actor [`Vault::prove_task_actor_by_in_txn`] judges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskActorVerb<'a> {
     /// `tasks.accept`, and an agent's take of work addressed to it: the
@@ -264,25 +275,14 @@ fn refused(reason: &'static str) -> Error {
 }
 
 impl Vault {
-    /// Proves `actor` may run `verb` on `task` in the caller's transaction:
-    /// the writer's live binding (`verify_write_actor_in_txn`), then the
-    /// TASK's facts. A TASK no Owner fact proves, or one the actor is no
-    /// party to (for [`TaskActorVerb::RunnerTake`], one its lease does not
-    /// hold), is not found; a party the verb does not admit, or any verb but
+    /// Proves the actor `proof` names may run `verb` on `task` in the
+    /// caller's transaction: `proof` proves the actor (a live binding, the
+    /// caller's own slip or grant, one of the vault's own agents whose
+    /// definition stands, or a native caller's store truth), then the TASK's
+    /// facts. A TASK no Owner fact proves, or one the actor is no party to
+    /// (for [`TaskActorVerb::RunnerTake`], one its lease does not hold), is
+    /// not found; a party the verb does not admit, or any verb but
     /// [`TaskActorVerb::Status`] on a cancelled TASK, is refused.
-    pub(crate) fn prove_task_actor_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        task: EntityId,
-        actor: &WriteActor,
-        verb: TaskActorVerb<'_>,
-    ) -> Result<TaskStanding> {
-        self.prove_task_actor_by_in_txn(txn, task, TaskActorProof::Bound(actor), verb)
-    }
-
-    /// [`Vault::prove_task_actor_in_txn`] for any caller: `proof` proves the
-    /// actor (a live binding, the caller's own slip or grant, or a native
-    /// caller's store truth), then the TASK's facts judge it as there.
     pub(crate) fn prove_task_actor_by_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -367,6 +367,10 @@ impl Vault {
                 self.require_live_guest_grant_in_txn(txn, grant, &actor.to_hex(), now)
                     .map_err(|_| refused("the caller's grant does not prove this actor"))?;
                 Ok(actor)
+            }
+            TaskActorProof::OwnAgent(writer) => {
+                self.verify_own_agent_write_actor_in_txn(txn, writer)?;
+                Ok(writer.entity_ref())
             }
             TaskActorProof::Native(writer) => {
                 self.verify_native_write_actor_in_txn(txn, writer)?;

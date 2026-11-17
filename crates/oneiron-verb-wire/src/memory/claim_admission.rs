@@ -48,6 +48,39 @@ impl ClaimScope {
     }
 }
 
+/// A claim's position as a caller sends it (OF-464; canon cross-arch-0002a
+/// §5.8). Each axis may be omitted. Before the write lands, the write door
+/// stamps an omitted axis from the caller's authorised context: the world
+/// and facet the caller's credential is bound to, else the base WORLD, the
+/// vault's default FACET (only while it is a stored FACET; otherwise the
+/// write is refused and names `scope_facet_id`), `all` relationships, and
+/// the root's default PROJECT. The stored and returned claim always carries
+/// all four axes ([`ClaimScope`]); omission is never an untagged stored value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimScopeInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_facet_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_relationship_id: Option<ClaimRelationships>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_project_id: Option<String>,
+}
+
+impl From<ClaimScope> for ClaimScopeInput {
+    /// A fully stated position: every axis named, nothing left to stamp.
+    fn from(scope: ClaimScope) -> Self {
+        Self {
+            world_id: Some(scope.world_id),
+            scope_facet_id: Some(scope.scope_facet_id),
+            scope_relationship_id: Some(scope.scope_relationship_id),
+            scope_project_id: Some(scope.scope_project_id),
+        }
+    }
+}
+
 /// Public claim admission. Provenance is host-authored; made_by is not an input field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +91,10 @@ pub struct ScopedClaimInput {
     pub value: serde_json::Value,
     pub confidence: f32,
     pub source: String,
-    pub scope: ClaimScope,
+    /// The claim's position; an omitted axis, or an omitted `scope`, is
+    /// stamped by the write door ([`ClaimScopeInput`]).
+    #[serde(default)]
+    pub scope: ClaimScopeInput,
     /// Optional sensitivity band, in 0..=3, independent of the four position axes.
     pub sensitivity: Option<u8>,
     #[serde(default)]
