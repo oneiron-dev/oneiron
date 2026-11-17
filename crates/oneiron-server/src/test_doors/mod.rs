@@ -61,6 +61,7 @@ pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod system_one_leg;
+pub mod system_one_rung;
 pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;

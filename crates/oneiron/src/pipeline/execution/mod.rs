@@ -6,3 +6,4 @@ mod retrieval_policy;
 mod types;
 
 use super::authority;
+pub(in crate::pipeline) use channels::RerankedBlock;

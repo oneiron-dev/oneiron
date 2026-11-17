@@ -157,6 +157,7 @@ pub(crate) fn spawn_deposit_settlement(
                         refunded = drain.refunded,
                         retrying = drain.retrying,
                         pending = drain.pending,
+                        still_owed = drain.still_owed,
                         failed = drain.failed,
                         "booking deposits settled"
                     );
