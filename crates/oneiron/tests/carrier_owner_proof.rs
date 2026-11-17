@@ -38,6 +38,14 @@
 //! only itself: through a machine that is not the owner's it waits where the
 //! vault holds an owner key, and the person's door refuses it there.
 //!
+//! The ratchet (the owner's ruling AUTH-5 = B with his opt-out, 15 Nov
+//! 20:15; the lead's WAYBACK-2 and WAYBACK-6 = A): a vault that has ever
+//! held an owner key keeps asking for one after the last is removed. The
+//! owner's switch back to web sign-in counts only with an owner key's
+//! cosign, speaks for the keys it saw, and ends with a key enrolled later or
+//! with a later choice to ask for a key again. The tests at the end fold a
+//! managed host's vault whose owner enrols device keys by hand-signed rows.
+//!
 //! The vault asks only on account of a key whose proof the fold takes
 //! (Engine RULING 16 Nov, CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A): a proof
 //! is an Ed25519 cosign, so a vault whose only owner key is a P-256 key (a
@@ -57,8 +65,8 @@ use oneiron::authority::{
     HeldAnswerListing, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
-    ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
-    fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
+    OwnerKeyRequirement, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, WebSignInAct, authority_entry_hash,
+    authority_transcript, fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
     machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -78,8 +86,11 @@ use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::verbs::{RepoAnchorBindInput, bind_repo_anchor_as};
 use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
-    ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
+    ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick, OWNER_KEY_ENROLLMENT_SEEN,
+    OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll, PolicySetting, PolicySettingSet,
     conversation_training_vault_target, home_pick_target, machine_answer_revision,
+    owner_key_enrollment_challenge, owner_key_enrollment_target, policy_setting_revision,
+    web_sign_in_value,
 };
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 
@@ -109,6 +120,15 @@ const PREDECESSOR_SEED: u8 = 67;
 const JOINING_SEED: u8 = 68;
 /// The seed of a vault root that is a P-256 key.
 const P256_ROOT_SEED: u8 = 60;
+
+/// The owner's device keys the ratchet tests enrol: the seeds of the first
+/// and of a later one.
+const OWNER_KEY_SEED: u8 = 69;
+const LATER_OWNER_KEY_SEED: u8 = 70;
+
+/// A web sign-in value that names no key set: the owner's choice to ask for
+/// an owner key again.
+const ASKS_FOR_AN_OWNER_KEY: [u8; 32] = [0; 32];
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -1985,6 +2005,23 @@ impl ServedVault {
         .expect("bind the repository's CODE anchor");
     }
 
+    /// This install serves one repository that no CODE anchor binds: it
+    /// stands under no portable id, so the owner's cutover signs no cut.
+    fn serve_an_unbound_repo(&self) {
+        self.vault
+            .register_served_origin_as_owner(&self.owner, SERVED_REPO, "main")
+            .expect("register the served repository");
+    }
+
+    /// This install becomes the owner's machine and then holds no owner key:
+    /// he enrols its key, answers with that proof that it is his, and the
+    /// handle lets the key go. The vault still asks for an owner key.
+    fn becomes_the_owners_machine_without_his_key(&self) {
+        self.enrol_owner_key();
+        self.answer_this_install_is_mine();
+        release_owner_keys(&self.vault);
+    }
+
     /// The owner cuts the served repository's authority over to this install
     /// from the epoch `expected_epoch`.
     fn cut_origin(&self, expected_epoch: Option<u64>) -> oneiron::Result<OriginAuthority> {
@@ -2479,6 +2516,83 @@ fn the_origin_cutover_door_lands_with_the_owners_key_on_this_install() {
     );
 }
 
+/// The cutover of a repository under no portable id signs no cut, so the
+/// fold has no entry to judge and the door asks for itself (FIX
+/// ORIGIN-CUTOVER-UNBOUND-REPO-NO-OWNER-PROOF): beside an owner key this
+/// install does not hold it refuses as the bound repository's cutover does,
+/// and the host's authority row is not written.
+#[test]
+fn the_origin_cutover_door_refuses_an_unbound_repo_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served.serve_an_unbound_repo();
+    served.owner_key_held_on_another_install();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    let rows = served.stored_rows();
+    assert_owner_key_refusal(served.cut_origin(None));
+    served.assert_nothing_stored_since(rows);
+    assert_eq!(served.origin_row(), None, "no authority row is written");
+}
+
+/// The unbound repository's cutover under the first guard: no owner key in
+/// the vault, so it lands from an install that is not his machine, as it
+/// does today, and signs nothing.
+#[test]
+fn the_origin_cutover_door_takes_an_unbound_repo_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    served.serve_an_unbound_repo();
+    let rows = served.stored_rows();
+    let row = served
+        .cut_origin(None)
+        .expect("the cutover lands as it does today");
+    assert_eq!(row.epoch, 1);
+    assert_eq!(
+        served.stored_rows(),
+        rows,
+        "a repository under no portable id has no cut to sign"
+    );
+}
+
+/// The same cutover from an install that holds the owner's key lands: the
+/// key that would have proven a cut is here.
+#[test]
+fn the_origin_cutover_door_takes_an_unbound_repo_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.serve_an_unbound_repo();
+    served.enrol_owner_key();
+    let row = served.cut_origin(None).expect("the cutover lands");
+    assert_eq!(row.epoch, 1);
+}
+
+/// The door asks what the fold asks of a cut. From the owner's own machine
+/// that holds no owner key, the bound repository's cut lands unproven, so
+/// the unbound repository's cutover lands there too.
+#[test]
+fn the_origin_cutover_door_takes_both_repos_from_the_owners_machine_without_his_key() {
+    let bound = ServedVault::hosted();
+    bound.serve_a_repo();
+    bound.becomes_the_owners_machine_without_his_key();
+    assert!(bound.install_is_mine(), "guard: the owner's machine");
+    let rows = bound.stored_rows();
+    let row = bound
+        .cut_origin(None)
+        .expect("the owner's machine carries his cut of the bound repository");
+    assert_eq!(row.epoch, 1);
+    assert!(
+        bound.stored_rows() > rows,
+        "the cutover signs the owner's cut of the repository"
+    );
+
+    let unbound = ServedVault::hosted();
+    unbound.serve_an_unbound_repo();
+    unbound.becomes_the_owners_machine_without_his_key();
+    assert!(unbound.install_is_mine(), "guard: the owner's machine");
+    let row = unbound
+        .cut_origin(None)
+        .expect("the owner's machine cuts the unbound repository over as it cuts the bound one");
+    assert_eq!(row.epoch, 1);
+}
+
 /// The device succession door under the first guard: no owner key in the
 /// vault, so the succession lands from an install that is not his machine.
 #[test]
@@ -2924,5 +3038,722 @@ fn a_self_host_serving_install_enrols_its_own_owner_key() {
     assert!(
         served.held().can_confirm,
         "the enrolled key proves the owner acts this install carries"
+    );
+}
+
+/// A vault whose owner enrols device keys, for the ratchet tests (ruling
+/// AUTH-5): the root signs each enrolment and the hosted node carries it, as
+/// a managed host's enrol door does. Every row names its parents, so a test
+/// can cut two branches. The root has signed at sequences 0 and 1; the node
+/// and the owner's keys have signed nothing.
+struct OwnerKeyVault {
+    answer: HostedNodeAnswer,
+}
+
+impl OwnerKeyVault {
+    /// A managed host's vault: its root is the host's custodial key.
+    fn hosted() -> Self {
+        Self {
+            answer: HostedNodeAnswer::on_a_hosted_vault(),
+        }
+    }
+
+    /// A self-host vault: its root is the owner's own key.
+    fn self_host() -> Self {
+        Self {
+            answer: HostedNodeAnswer::new(),
+        }
+    }
+
+    /// The newest row.
+    fn tip(&self) -> AuthorityEntryHash {
+        hash(self.answer.rows.last().expect("a row"))
+    }
+
+    fn push(&mut self, row: AuthorityLogEntry) -> AuthorityEntryHash {
+        let entry = hash(&row);
+        self.answer.rows.push(row);
+        entry
+    }
+
+    fn fold(&self) -> AuthorityFold {
+        self.answer.fold()
+    }
+
+    /// The owner enrols `key` as his device's owner signing key: the root
+    /// signs the enrolment at `root_seq`, and the node carries his act and
+    /// holds the key.
+    fn enrol(
+        &mut self,
+        key: &SigningKey,
+        root_seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> AuthorityEntryHash {
+        let vault_id = self.answer.vault_id();
+        let machine = self.answer.machine;
+        let public_key = key.verifying_key().to_bytes();
+        let challenge = owner_key_enrollment_challenge(&vault_id, machine, &public_key, owner())
+            .expect("the key's challenge");
+        let enroll = OwnerKeyEnroll {
+            act: OwnerAct::by_owner(
+                owner(),
+                OwnerActKind::OwnerKeyEnrollment,
+                owner_key_enrollment_target(&vault_id, &public_key).expect("the key's target"),
+                ActSurface::ThisInstall,
+                OWNER_KEY_ENROLLMENT_SEEN,
+            ),
+            machine,
+            carrier: machine,
+            device: DeviceAuthority {
+                key: key_of(key),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: OWNER_KEY_POSSESSION_KIND.to_owned(),
+                    evidence: key.sign(&challenge).to_bytes().to_vec(),
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+        };
+        let row = signed(
+            Some(vault_id),
+            root_seq,
+            parents,
+            AuthorityOp::OwnerKeyEnroll(enroll),
+            &self.answer.root,
+            &[&self.answer.node],
+        );
+        self.push(row)
+    }
+
+    /// `key`, an enrolled owner key that has signed nothing, removes itself.
+    fn key_removes_itself(
+        &mut self,
+        key: &SigningKey,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> AuthorityEntryHash {
+        let row = signed(
+            Some(self.answer.vault_id()),
+            1,
+            parents,
+            AuthorityOp::RevokeDevice {
+                revoked_key: key_of(key),
+            },
+            key,
+            &[],
+        );
+        self.push(row)
+    }
+
+    /// The node carries the owner's web sign-in act of `value` at
+    /// `node_seq`, its `seen` over the setting's `live` acts, with one cosign
+    /// by each of `cosigners`.
+    fn node_sets_web_sign_in(
+        &mut self,
+        node_seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        value: [u8; 32],
+        live: &[AuthorityEntryHash],
+        cosigners: &[&SigningKey],
+    ) -> AuthorityEntryHash {
+        self.node_sets_on_the_web_sign_in_target(
+            PolicySetting::WebSignIn,
+            node_seq,
+            parents,
+            (value, live),
+            cosigners,
+        )
+    }
+
+    /// The node carries the owner's act of `setting` at `node_seq` on the
+    /// web sign-in setting's target: the value it leaves and the target's
+    /// live acts its `seen` covers (`left`), with one cosign by each of
+    /// `cosigners`. A vault-wide setting names only its own target; the
+    /// free-time policy names any.
+    fn node_sets_on_the_web_sign_in_target(
+        &mut self,
+        setting: PolicySetting,
+        node_seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        left: ([u8; 32], &[AuthorityEntryHash]),
+        cosigners: &[&SigningKey],
+    ) -> AuthorityEntryHash {
+        let (value, live) = left;
+        let target = PolicySetting::WebSignIn
+            .reserved_target()
+            .expect("the setting's target")
+            .expect("a vault-wide setting");
+        let act = OwnerAct::by_owner(
+            owner(),
+            setting.act_kind(),
+            target,
+            ActSurface::ThisInstall,
+            policy_setting_revision(live.iter().copied()),
+        );
+        let row = signed(
+            Some(self.answer.vault_id()),
+            node_seq,
+            parents,
+            AuthorityOp::PolicySettingSet(PolicySettingSet {
+                act,
+                machine: self.answer.machine,
+                setting,
+                prior: [0; 32],
+                value: Some(value),
+            }),
+            &self.answer.node,
+            cosigners,
+        );
+        self.push(row)
+    }
+
+    /// The node carries the owner's home pick of [`PICKED_NODE`] at
+    /// `node_seq`, with no cosign. No pick is live, so it saw the zero
+    /// revision.
+    fn node_picks_home(
+        &mut self,
+        node_seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> AuthorityEntryHash {
+        let vault_id = self.answer.vault_id();
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::HomeNodePick,
+            home_pick_target(&vault_id).expect("the pick's target"),
+            ActSurface::ThisInstall,
+            [0; 32],
+        );
+        let row = signed(
+            Some(vault_id),
+            node_seq,
+            parents,
+            AuthorityOp::HomeNodePick(HomeNodePick {
+                act,
+                machine: self.answer.machine,
+                node_id: Some(PICKED_NODE),
+            }),
+            &self.answer.node,
+            &[],
+        );
+        self.push(row)
+    }
+
+    /// The node carries its own answer `Owned(Yours)` at `node_seq`,
+    /// cosigned by `proof`: with an owner key's proof the node is the
+    /// owner's machine.
+    fn node_answers_yours(
+        &mut self,
+        node_seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        proof: &SigningKey,
+    ) -> AuthorityEntryHash {
+        let vault_id = self.answer.vault_id();
+        let machine = self.answer.machine;
+        let registration = hash(&self.answer.rows[1]);
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineAnswer,
+            machine,
+            ActSurface::ThisInstall,
+            machine_answer_revision([registration]),
+        );
+        let row = signed(
+            Some(vault_id),
+            node_seq,
+            parents,
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                machine,
+                &self.answer.node,
+                MachineRole::Owned(MachineOwnership::Yours),
+                2,
+                Some((machine, act)),
+            )),
+            &self.answer.node,
+            &[proof],
+        );
+        self.push(row)
+    }
+}
+
+/// The web sign-in value that speaks for exactly `keys`.
+fn speaks_for(keys: &[&SigningKey]) -> [u8; 32] {
+    let keys: BTreeSet<AuthorityKey> = keys.iter().map(|key| key_of(key)).collect();
+    web_sign_in_value(&keys)
+}
+
+/// The node's unproven pick `pick` waits for the owner's proof: the vault
+/// asks for an owner key.
+fn assert_the_pick_waits(fold: &AuthorityFold, pick: AuthorityEntryHash) {
+    assert_eq!(
+        home_pick_in_force(fold),
+        None,
+        "the vault asks for an owner key, so a not-mine node's unproven pick waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.waiting_owner_choices().contains(&pick),
+        "the pick is stored and asks the owner, not refused: {:?}",
+        fold.issues
+    );
+}
+
+/// The node's unproven pick lands: the vault runs on web sign-in.
+fn assert_the_pick_lands(fold: &AuthorityFold) {
+    assert_eq!(
+        home_pick_in_force(fold),
+        Some(PICKED_NODE),
+        "the vault runs on web sign-in, so the node's unproven pick lands: {:?}",
+        fold.issues
+    );
+}
+
+/// The ratchet (AUTH-5 = B). Base: with the last owner key removed the
+/// roster holds no key that proves, and the node's unproven pick lands.
+#[test]
+fn a_vault_whose_last_owner_key_was_removed_still_asks_for_one() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let removed = vault.key_removes_itself(&key, vec![enrolled]);
+    let pick = vault.node_picks_home(1, vec![removed]);
+    let fold = vault.fold();
+    assert!(
+        fold.roster
+            .get(&key_of(&key))
+            .is_some_and(|device| device.revoked),
+        "the owner's key was enrolled and then removed: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// The ratchet's guard, and the fixture's: beside a live enrolled owner key
+/// the node's unproven pick waits, on the base as well.
+#[test]
+fn a_hosted_nodes_unproven_pick_waits_beside_an_enrolled_owner_key() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let pick = vault.node_picks_home(1, vec![enrolled]);
+    let fold = vault.fold();
+    assert!(
+        fold.roster
+            .get(&key_of(&key))
+            .is_some_and(|device| !device.revoked && device.roles == ROLE_OWNER),
+        "the hand-signed enrolment puts the owner's key on the roster: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// The owner's opt-out ("Switch back to web sign-in"). Base: the setting
+/// means nothing to the fold, so the pick still waits beside the live key.
+#[test]
+fn the_owners_switch_back_to_web_sign_in_lets_the_node_carry_his_acts() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    vault.node_picks_home(2, vec![switched]);
+    assert_the_pick_lands(&vault.fold());
+}
+
+/// The switch back, then the last key's removal, in that order: the vault
+/// stays on web sign-in. It lands on the base too, where nothing asks once
+/// the key is gone.
+#[test]
+fn the_switch_back_outlives_the_keys_it_saw() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let removed = vault.key_removes_itself(&key, vec![switched]);
+    vault.node_picks_home(2, vec![removed]);
+    assert_the_pick_lands(&vault.fold());
+}
+
+/// Ruled out (AUTH-5): "a web session alone can never turn the ratchet off".
+/// After the last key is removed the node carries the switch back with no
+/// cosign: it waits, and so does the node's pick. Base: both land.
+#[test]
+fn a_web_session_alone_never_switches_the_vault_back() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let removed = vault.key_removes_itself(&key, vec![enrolled]);
+    let switched = vault.node_sets_web_sign_in(1, vec![removed], speaks_for(&[&key]), &[], &[]);
+    let pick = vault.node_picks_home(2, vec![switched]);
+    let fold = vault.fold();
+    assert!(
+        fold.waiting_owner_choices().contains(&switched),
+        "a switch back with no owner key's cosign waits: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// A removed key proves nothing: the switch back it cosigns is a forged
+/// entry, and the vault still asks. Base: the entry is forged there too, and
+/// the pick lands.
+#[test]
+fn a_switch_back_cosigned_by_a_removed_owner_key_is_no_entry() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let removed = vault.key_removes_itself(&key, vec![enrolled]);
+    let forged = vault.node_sets_web_sign_in(1, vec![removed], speaks_for(&[&key]), &[], &[&key]);
+    let pick = vault.node_picks_home(2, vec![removed]);
+    let fold = vault.fold();
+    assert!(
+        !fold.valid_entries.contains(&forged),
+        "a cosign by a removed key is a forged proof, an invalid entry"
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// The switch back counts only with an owner key's cosign, whoever carries
+/// it: the owner's own machine carries it bare, and it waits. Base: a mine
+/// carrier's setting act lands.
+#[test]
+fn the_owners_own_machine_cannot_switch_back_without_an_owner_keys_cosign() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let answered = vault.node_answers_yours(1, vec![enrolled], &key);
+    let switched = vault.node_sets_web_sign_in(2, vec![answered], speaks_for(&[&key]), &[], &[]);
+    let fold = vault.fold();
+    let node_key = vault.answer.node.verifying_key().to_bytes();
+    assert!(
+        mine(&fold, vault.answer.machine, &node_key),
+        "the answer an owner key proved makes the node the owner's machine: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.waiting_owner_choices().contains(&switched),
+        "the owner's machine carries the switch back with no owner key's cosign: it waits: {:?}",
+        fold.issues
+    );
+}
+
+/// WAYBACK-6 = A: a key enrolled after the switch back arms the vault again.
+/// The switch spoke for the first key alone, so with both keys removed the
+/// vault asks. Base: nothing asks once the keys are gone.
+#[test]
+fn a_key_enrolled_after_the_switch_back_arms_the_vault_again() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let later = signing(LATER_OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let enrolled_later = vault.enrol(&later, 3, vec![switched]);
+    let removed = vault.key_removes_itself(&key, vec![enrolled_later]);
+    let removed_later = vault.key_removes_itself(&later, vec![removed]);
+    let pick = vault.node_picks_home(2, vec![removed_later]);
+    assert_the_pick_waits(&vault.fold(), pick);
+}
+
+/// A switch back and an enrolment that did not see each other read as the
+/// stricter: the vault asks. Base: nothing asks once the keys are gone.
+#[test]
+fn a_switch_back_and_an_enrolment_on_two_branches_read_as_asking() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let later = signing(LATER_OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let enrolled_beside = vault.enrol(&later, 3, vec![enrolled]);
+    let removed = vault.key_removes_itself(&key, vec![switched, enrolled_beside]);
+    let removed_later = vault.key_removes_itself(&later, vec![removed]);
+    let pick = vault.node_picks_home(2, vec![removed_later]);
+    assert_the_pick_waits(&vault.fold(), pick);
+}
+
+/// The owner's later choice to ask for an owner key ends the switch back. On
+/// a vault that runs on web sign-in any carrier may bring it: it narrows.
+/// Base: nothing asks once the key is gone.
+#[test]
+fn a_later_choice_to_ask_for_an_owner_key_ends_the_switch_back() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let removed = vault.key_removes_itself(&key, vec![switched]);
+    let asks =
+        vault.node_sets_web_sign_in(2, vec![removed], ASKS_FOR_AN_OWNER_KEY, &[switched], &[]);
+    let pick = vault.node_picks_home(3, vec![asks]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&asks) && !fold.waiting_owner_choices().contains(&asks),
+        "on web sign-in the node carries the choice to ask for a key, and it lands: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// A value speaks only for the keys the vault held when it was signed. On
+/// web sign-in the node carries, with no cosign, a value over the first key
+/// and one the owner enrols afterwards: it never comes to speak for both.
+/// Base: nothing asks once the keys are gone.
+#[test]
+fn a_carrier_cannot_speak_for_a_key_the_vault_does_not_hold_yet() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let later = signing(LATER_OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let removed = vault.key_removes_itself(&key, vec![switched]);
+    let ahead = vault.node_sets_web_sign_in(
+        2,
+        vec![removed],
+        speaks_for(&[&key, &later]),
+        &[switched],
+        &[],
+    );
+    let enrolled_later = vault.enrol(&later, 3, vec![ahead]);
+    let removed_later = vault.key_removes_itself(&later, vec![enrolled_later]);
+    let pick = vault.node_picks_home(3, vec![removed_later]);
+    assert_the_pick_waits(&vault.fold(), pick);
+}
+
+/// The settings register keys an act by its target alone, and a free-time
+/// policy act names any target. One that names the web sign-in setting's
+/// target, with the switch's own value and an owner key's cosign, is a valid
+/// entry and changes nothing: only the web sign-in setting's own act lands
+/// there. With the last key removed the vault still asks.
+#[test]
+fn another_settings_act_on_the_web_sign_in_target_changes_nothing() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let foreign = vault.node_sets_on_the_web_sign_in_target(
+        PolicySetting::FreeTimePolicy,
+        1,
+        vec![enrolled],
+        (speaks_for(&[&key]), &[]),
+        &[&key],
+    );
+    let removed = vault.key_removes_itself(&key, vec![foreign]);
+    let pick = vault.node_picks_home(2, vec![removed]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&foreign),
+        "a free-time policy act may name any target: it is a valid entry: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// The switch is a managed host's vault's alone: a self-host vault has no
+/// account to fall back to. The owner's own root cosigns the act; it is
+/// valid, and the vault asks as before, on the base as well.
+#[test]
+fn a_self_host_vault_takes_no_switch_back() {
+    let mut vault = OwnerKeyVault::self_host();
+    let root = vault.answer.root.clone();
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![vault.tip()], speaks_for(&[&root]), &[], &[&root]);
+    let pick = vault.node_picks_home(2, vec![switched]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&switched),
+        "the root's cosign is a proof on a self-host vault, so the act is a valid entry: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
+}
+
+/// The value's formula, pinned beside the code: BLAKE3 under its context
+/// over each key, in order, as a suite byte and the public key.
+#[test]
+fn the_web_sign_in_value_is_blake3_over_the_owner_keys_in_order() {
+    let first = key_of(&signing(OWNER_KEY_SEED));
+    let second = key_of(&signing(LATER_OWNER_KEY_SEED));
+    let keys = BTreeSet::from([first.clone(), second]);
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron web sign-in owner keys v1");
+    for key in &keys {
+        let (suite, bytes) = match key {
+            AuthorityKey::Ed25519(bytes) => (1_u8, bytes.as_slice()),
+            AuthorityKey::P256(bytes) => (2_u8, bytes.as_slice()),
+        };
+        hasher.update(&[suite]);
+        hasher.update(bytes);
+    }
+    assert_eq!(
+        web_sign_in_value(&keys),
+        *hasher.finalize().as_bytes(),
+        "the value is the documented digest of the keys"
+    );
+    assert_ne!(
+        web_sign_in_value(&keys),
+        web_sign_in_value(&BTreeSet::from([first])),
+        "a later key changes the value"
+    );
+}
+
+/// What the vault asks of its owner, as a door, a route and the key changes
+/// list read it off the fold ([`AuthorityFold::owner_key_requirement`]). A
+/// hosted vault that never held an owner key asks for none and has landed no
+/// act of the web sign-in setting.
+#[test]
+fn a_vault_that_never_held_an_owner_key_reads_as_never_held() {
+    let fold = OwnerKeyVault::hosted().fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::NeverHeld,
+        "no owner key was ever enrolled: {:?}",
+        fold.issues
+    );
+    assert!(fold.web_sign_in_acts().is_empty());
+}
+
+/// The ratchet, as the fold reads it out: the vault asks while its key is
+/// live and after the key's removal alike, under the value over the key it
+/// has held. A reading off the live roster would say the vault never held a
+/// key once the last one is removed.
+#[test]
+fn a_vault_whose_last_owner_key_was_removed_reads_as_requiring_one() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let required = OwnerKeyRequirement::Required {
+        web_sign_in_switch: Some(speaks_for(&[&key])),
+    };
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    assert_eq!(
+        vault.fold().owner_key_requirement(),
+        required,
+        "beside its live owner key the vault asks for one"
+    );
+    vault.key_removes_itself(&key, vec![enrolled]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        required,
+        "the key's removal changes nothing about what the vault asks: {:?}",
+        fold.issues
+    );
+}
+
+/// The owner's switch back reads as web sign-in, and the fold keeps the act
+/// as the switch.
+#[test]
+fn the_switch_back_reads_as_web_sign_in() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::WebSignIn,
+        "the switch carries the owner key's proof and the value over that key: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.web_sign_in_acts(),
+        &BTreeMap::from([(switched, WebSignInAct::SwitchedBack)])
+    );
+}
+
+/// WAYBACK-6 = A, read out: a key enrolled after the switch back makes the
+/// vault ask again, under the value over both keys, and the switch stays
+/// among the landed acts as the switch it was.
+#[test]
+fn a_key_enrolled_after_the_switch_back_reads_as_required_under_a_new_value() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let later = signing(LATER_OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    vault.enrol(&later, 3, vec![switched]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: Some(speaks_for(&[&key, &later])),
+        },
+        "the switch spoke for the first key alone: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.web_sign_in_acts(),
+        &BTreeMap::from([(switched, WebSignInAct::SwitchedBack)])
+    );
+}
+
+/// A switch back that a later act of the setting replaced stays among the
+/// landed acts: the history of switches is the fold's, not only its live
+/// act. The later act, which asks for an owner key again, lands as that. A
+/// reading of the live acts alone would drop the switch.
+#[test]
+fn a_switch_back_that_a_later_act_replaced_stays_among_the_landed_acts() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let switched =
+        vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[&key]);
+    let asks =
+        vault.node_sets_web_sign_in(2, vec![switched], ASKS_FOR_AN_OWNER_KEY, &[switched], &[]);
+    let fold = vault.fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: Some(speaks_for(&[&key])),
+        },
+        "the later act ends the switch back: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.web_sign_in_acts(),
+        &BTreeMap::from([
+            (switched, WebSignInAct::SwitchedBack),
+            (asks, WebSignInAct::AsksAgain),
+        ])
+    );
+}
+
+/// A switch back with no owner key's proof waits: it has landed nothing, so
+/// it is no act of the setting and the vault asks as before.
+#[test]
+fn a_switch_back_that_waits_for_the_owners_proof_is_no_landed_act() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let unproven = vault.node_sets_web_sign_in(1, vec![enrolled], speaks_for(&[&key]), &[], &[]);
+    let fold = vault.fold();
+    assert!(
+        fold.waiting_owner_choices().contains(&unproven),
+        "the unproven switch waits for the owner's proof: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: Some(speaks_for(&[&key])),
+        }
+    );
+    assert!(fold.web_sign_in_acts().is_empty());
+}
+
+/// A self-host vault asks for its owner root's proof and has no value that
+/// switches it back: it has no account to fall back to.
+#[test]
+fn a_self_host_vault_reads_as_required_with_no_value_to_switch_it_back() {
+    let fold = OwnerKeyVault::self_host().fold();
+    assert_eq!(
+        fold.owner_key_requirement(),
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: None,
+        },
+        "the owner root is the vault's owner key: {:?}",
+        fold.issues
     );
 }

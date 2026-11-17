@@ -163,6 +163,7 @@ pub(super) fn apply_origin_cut(
         choice: Some(&choice),
         context: ORIGIN_CUT_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        owner_key_only: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -251,10 +252,18 @@ impl Vault {
     /// it appended, each frontier join it needed among them, for the
     /// caller's transaction to hand to the live mirror.
     ///
+    /// With no repository in `repos` (the served repository stands under no
+    /// portable id) there is no cut to sign and no entry for the fold to
+    /// judge, so the cutover is refused where a cut this install carried
+    /// would wait for the owner's proof
+    /// ([`Vault::refuse_unprovable_owner_choice_in_txn`]): the host's row
+    /// never lands where the owner's cut could not.
+    ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that
     /// cannot carry the act; history this vault lacks; a cut that does not
-    /// land.
+    /// land; [`crate::error::RecordError::OwnerKeyRequired`] for a cut, or a
+    /// cutover with none, that waits for the owner's proof.
     pub(crate) fn sign_origin_cuts_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -264,6 +273,7 @@ impl Vault {
         (epoch, writer): (u64, EntityId),
     ) -> Result<BTreeSet<EntityId>> {
         if repos.is_empty() {
+            self.refuse_unprovable_owner_choice_in_txn(txn)?;
             return Ok(BTreeSet::new());
         }
         let before = self.authority_view_readonly_in_txn(txn)?;

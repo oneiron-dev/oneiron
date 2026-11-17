@@ -17,6 +17,14 @@
 //!
 //! Only the free-time policy is an agent's to set, within a Grant line that
 //! names it; a vault-wide setting is the owner's own.
+//!
+//! One setting is read by the fold itself and has no local row: web sign-in
+//! ([`PolicySetting::WebSignIn`], the owner's ruling AUTH-5, 15 Nov). Its
+//! value is no digest of a row: the act that switches a hosted vault back to
+//! web sign-in carries [`web_sign_in_value`] over the owner keys it speaks
+//! for, and any other value asks for an owner key again.
+
+use std::collections::BTreeSet;
 
 use rmpv::Value;
 
@@ -44,6 +52,34 @@ pub const POLICY_SETTING_REVISION_CONTEXT: &[u8] = b"oneiron/policy-setting-revi
 #[must_use]
 pub fn policy_setting_revision(live: impl IntoIterator<Item = AuthorityEntryHash>) -> [u8; 32] {
     super::owner_act::act_revision(POLICY_SETTING_REVISION_CONTEXT, live)
+}
+
+/// The domain of [`web_sign_in_value`].
+pub const WEB_SIGN_IN_VALUE_CONTEXT: &str = "oneiron web sign-in owner keys v1";
+
+/// The value of the act that switches a hosted vault back to web sign-in
+/// ([`PolicySetting::WebSignIn`]): BLAKE3 under
+/// [`WEB_SIGN_IN_VALUE_CONTEXT`] over every key the vault has ever held as
+/// the owner's, in order, each as one suite byte (1 for Ed25519, 2 for
+/// P-256) and its canonical public key bytes. The choice speaks for exactly
+/// these keys: a key enrolled later is not among them, so the vault asks for
+/// an owner key again.
+#[must_use]
+pub fn web_sign_in_value(owner_keys: &BTreeSet<AuthorityKey>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(WEB_SIGN_IN_VALUE_CONTEXT);
+    for key in owner_keys {
+        match key {
+            AuthorityKey::Ed25519(bytes) => {
+                hasher.update(&[1]);
+                hasher.update(bytes);
+            }
+            AuthorityKey::P256(bytes) => {
+                hasher.update(&[2]);
+                hasher.update(bytes);
+            }
+        }
+    }
+    *hasher.finalize().as_bytes()
 }
 
 /// The target an owner act names when it changes no row of its own: a
@@ -93,6 +129,13 @@ pub enum PolicySetting {
     /// setting's reserved target; its digests cover the agent with its
     /// tiers, which stay node-local claims (RULING L2-53-CEILING).
     AgentWorldAccess,
+    /// Whether a hosted vault that has held an owner key runs on web sign-in
+    /// again (the owner's ruling AUTH-5, 15 Nov: "Switch back to web
+    /// sign-in"). The fold reads it and no install keeps a row of it: the
+    /// value [`web_sign_in_value`] over the owner keys the act speaks for
+    /// switches the vault back, and any other value asks for an owner key
+    /// again.
+    WebSignIn,
 }
 
 impl PolicySetting {
@@ -110,6 +153,7 @@ impl PolicySetting {
             Self::DefaultFacet => "settings.default_facet",
             Self::UndoSend => "settings.undo_send",
             Self::AgentWorldAccess => "settings.agent_world_access",
+            Self::WebSignIn => "settings.web_sign_in",
         }
     }
 
@@ -126,6 +170,7 @@ impl PolicySetting {
             Self::DefaultFacet => "default_facet",
             Self::UndoSend => "undo_send",
             Self::AgentWorldAccess => "agent_world_access",
+            Self::WebSignIn => "web_sign_in",
         }
     }
 
@@ -142,6 +187,7 @@ impl PolicySetting {
             "default_facet" => Self::DefaultFacet,
             "undo_send" => Self::UndoSend,
             "agent_world_access" => Self::AgentWorldAccess,
+            "web_sign_in" => Self::WebSignIn,
             _ => return None,
         })
     }
@@ -157,7 +203,8 @@ impl PolicySetting {
             | Self::NonBaseWorldClaimFraction
             | Self::DefaultFacet
             | Self::UndoSend
-            | Self::AgentWorldAccess => OwnerActKind::PolicySetting,
+            | Self::AgentWorldAccess
+            | Self::WebSignIn => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

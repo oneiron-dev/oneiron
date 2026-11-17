@@ -360,6 +360,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         root_anchors: BTreeMap::new(),
         anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
+        owner_keys_ever: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
         grant_travel: BTreeMap::new(),

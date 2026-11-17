@@ -193,6 +193,7 @@ pub(super) fn fold_entry_state(
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
+            owner_keys_ever: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
             grant_travel: BTreeMap::new(),
@@ -550,14 +551,18 @@ pub(super) fn fold_entry_state(
         ) {
             Err(issue) => return EntryFold::Invalid(issue),
             Ok(OwnerKeyEnrollReading::Enrolment) => {
-                apply_op(&mut state, &entry.op, hash, entry.signer_key());
+                // The passkey facts first: the roster's writer remembers the
+                // key for good when it gives the owner's proof, which a
+                // passkey's vouch withholds until confirmed.
                 super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
                 super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+                apply_op(&mut state, &entry.op, hash, entry.signer_key());
             }
             Ok(OwnerKeyEnrollReading::Confirmation) => {
                 state
                     .passkey_vouch_confirmations
                     .insert(enroll.device.key.clone());
+                super::owner_proof::remember_owner_key(&mut state, &enroll.device.key);
             }
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
