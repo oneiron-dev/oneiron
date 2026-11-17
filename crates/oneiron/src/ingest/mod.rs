@@ -59,7 +59,6 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
-pub(crate) use self::admission::json_to_msgpack_value;
 pub use self::admission::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen,
     admit_imported_entity, admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
@@ -94,8 +93,6 @@ pub use self::types::{
 
 #[cfg(test)]
 mod bulk_review_tests;
-// FIX [LIBTEST-QUARANTINE-INGEST-DOCS-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod docs_tests;
 #[cfg(test)]

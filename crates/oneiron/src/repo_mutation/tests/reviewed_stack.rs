@@ -2,7 +2,8 @@ use super::*;
 use crate::contract_oracle::{ContractOracle, ContractSpec, WorkspaceGraph};
 use crate::critic::{CriticLens, CritiqueVerdict, LensCatalog};
 use crate::merge_queue::{
-    BatchState, CheckPhase, CheckReport, MergeBatch, MergeFile, MergeProposal, MergeQueue,
+    BatchState, CheckPhase, CheckReport, MergeBatch, MergeFile, MergeFileExpected, MergeProposal,
+    MergeQueue,
 };
 use crate::repo_mutation::proposal::{RepoProposal, RepoProposalOperation, RepoProposalStatus};
 use std::collections::BTreeMap;
@@ -91,13 +92,18 @@ fn candidate(vault: &Vault, proposal: &RepoProposal, green: &str) -> MergePropos
             super::super::mount::RepoMountRef::Fork(proposal.pre_action_fork_hash),
         )
         .unwrap();
+    let (path, content) = proposal.ordinary_file().unwrap();
     MergeProposal {
         id: proposal.id.to_hex(),
         base_green: green.into(),
         files: vec![MergeFile {
-            path: proposal.path.clone(),
-            expected: old.read_file(&proposal.path).unwrap().map(<[u8]>::to_vec),
-            content: Some(proposal.content.clone()),
+            path: path.to_owned(),
+            expected: old
+                .read_file(path)
+                .unwrap()
+                .map(|bytes| MergeFileExpected::Bytes(bytes.to_vec())),
+            content: Some(content.to_vec()),
+            metadata_edit: None,
         }],
     }
 }
@@ -560,7 +566,7 @@ fn stale_later_document_refuses_whole_stack_before_first_effect() {
             &mut session,
             &crate::code_document::CodeFileEdit::between("second.rs", "", "unseen live edit"),
             crate::write_envelope::WriteActor::new(
-                second.actor,
+                second.actor.id().unwrap(),
                 crate::edge::EdgeActorClass::Agent,
             ),
         )

@@ -388,6 +388,7 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
             event_types: vec![EventTypeCard {
                 key: request.event_type,
                 title: "Introduction".to_owned(),
+                deposit: None,
                 duration_min: 10,
                 description: "Fixture description".to_owned(),
             }],
@@ -543,6 +544,7 @@ fn solver_config(flex_with_ordinary: bool) -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HOST_SEED),
@@ -657,6 +659,7 @@ fn companion_config() -> EventTypeConfig {
         booking_window_secs: 14 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HANGOUT_HOST_SEED),

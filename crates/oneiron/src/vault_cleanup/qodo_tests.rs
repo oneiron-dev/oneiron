@@ -5,11 +5,10 @@ use crate::config::VaultConfig;
 use crate::temporal::TimeRange;
 
 fn test_config() -> VaultConfig {
-    VaultConfig {
-        dimensions: 4,
-        embedding_model: Some("test/cleanup@v1".to_owned()),
-        ..VaultConfig::default()
-    }
+    let mut config = VaultConfig::default();
+    config.dimensions = 4;
+    config.embedding_model = Some("test/cleanup@v1".to_owned());
+    config
 }
 
 /// A vault whose owner chose propose-first: most tests here drive the

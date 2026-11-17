@@ -12,7 +12,6 @@ use super::{
         decode_family, family_prefix, secret_scan_before_put,
     },
 };
-use crate::claim::ScopedReadActorKey;
 use crate::gate::PolicyManifestResolution;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -419,7 +418,9 @@ pub(super) fn silence_stands(
     {
         return Ok(false);
     }
-    let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // The principal's key carries its live class, as at a fact's label
+    // (ARRIVAL-READER-KEY-CLASSLESS).
+    let actor = super::graph_ask::party_read_key_in_txn(store, txn, record.principal)?;
     // FIX 7461: the principal's bare read first, then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);
     Ok(reader.readable_in_txn(txn, policy, &answer.unit)?

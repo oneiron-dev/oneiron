@@ -262,6 +262,7 @@ pub(crate) fn admit_calendar_invite_in_txn(
         direction: CalendarPassportDirection::Outbound,
         last_seen_at: now,
         presence: CalendarPassportPresence::Live,
+        cancelled_since: None,
     };
     Ok(CalendarInviteAdmission {
         event_ref,

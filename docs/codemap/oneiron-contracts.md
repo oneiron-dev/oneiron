@@ -54,8 +54,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/limit_ask/cgroup.rs` | src | s | 2 crate-vis | — | The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066) |
 | `src/limit_ask/engine_rows.rs` | src | m | 2 fn · 1 const | — | The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so… |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
-| `src/memory.rs` | src | s | 11 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
-| `src/memory/error.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 type · 25 const · 1 re-export | MemoryError, MemoryPending, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory.rs` | src | s | 12 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
+| `src/memory/error.rs` | src | m | 6 struct · 2 enum · 7 fn · 1 type · 26 const · 1 re-export | ExtractionCorrectionPair, ExtractionLayout, ExtractionStepSlice, MemoryError, MemoryPending, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
 | `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/msgpack.rs` | src | s | 1 struct · 1 enum · 18 fn | Entries, MsgpackError | The one reader for untyped MessagePack rows (PLAN-UC-08) |
@@ -84,6 +84,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope.rs` | src | s | 1 struct · 7 fn | WriteActor | The write actor every write path stamps |
 | `tests/contracts_register_names.rs` | test | s | — | — | The names of 8 name lists in `oneiron-contracts`, one line per row, generated from… |
 | `tests/cursor_text.rs` | test | s | — | — | The `{at}:{id}` cursor (UC-13 PR 1): written byte for byte as the mail inbox and the conversation transcript… |
+| `tests/extraction_layout_wire.rs` | test | s | — | — | The bound extraction step's layout refusal carries its native slices as the typed `extraction_layout` field… |
 | `tests/fingerprint_id_prefix.rs` | test | s | — | — | PLAN-UC-04 stage 0: the id rules against the fingerprint door |
 | `tests/msgpack_reader.rs` | test | m | — | — | The one reader for untyped MessagePack rows (`oneiron_contracts::msgpack`, PLAN-UC-08 PR 0): one value and… |
 | `tests/parse_hex_cursor.rs` | test | s | — | — | The hex cursor reader (UC-13 PR 2, HEX-CASE-POLICY = A): hex digits of either case, nothing else |

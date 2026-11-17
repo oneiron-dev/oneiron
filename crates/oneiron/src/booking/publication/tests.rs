@@ -5,6 +5,7 @@ use crate::booking::{
     encode_event_type_claim_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED};
 use serde_json::json;
 
@@ -74,6 +75,7 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(3),
@@ -104,6 +106,7 @@ fn publication() -> BookingPagePublication {
         event_types: vec![EventTypeCard {
             key: EventTypeKey("event".to_owned()),
             title: "Owner supplied title".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Owner supplied description".to_owned(),
         }],
@@ -111,6 +114,7 @@ fn publication() -> BookingPagePublication {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(json!({"arbitrary": [false, null, {"nested": "</script>"}]})),
         landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -119,6 +123,7 @@ fn publication() -> BookingPagePublication {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     }
 }
 
