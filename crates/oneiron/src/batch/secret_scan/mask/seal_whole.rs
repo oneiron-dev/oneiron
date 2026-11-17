@@ -39,7 +39,9 @@ use heed::RwTxn;
 use rmpv::Value;
 use zeroize::Zeroizing;
 
-use super::super::{REASON_DETECTED, scan_write_payload, secret_scan_error, write_payload_hit};
+use super::super::{
+    FieldRule, REASON_DETECTED, scan_write_payload, secret_scan_error, write_payload_hit,
+};
 use super::body::{BodyForm, body_tree, encode_body};
 use super::changed_scan::scan_reads_same;
 use super::side_row::SidePart;
@@ -133,23 +135,25 @@ pub(super) fn plan_seals(
 /// names each part's record, whose owner-kept values are screened first.
 /// `sealing` is false where no seal can land: a part that still reads as a
 /// hit then refuses the write with the door's reason, as one no seal clears
-/// does, before anything is minted.
+/// does, before anything is minted. Each part is read by the pass's field
+/// rule `rule`, as its scans read it.
 pub(super) fn plan_part_seals(
     kept: &KeptValues,
     planned: &mut [SidePart],
     origins: &[(EntityId, &str)],
     sealing: bool,
+    rule: FieldRule,
 ) -> Result<Vec<Seal>> {
     let mut seals = Vec::new();
     for (index, (part, (record, _))) in planned.iter_mut().zip(origins).enumerate() {
-        let Err(refusal) = part.scan(kept, record) else {
+        let Err(refusal) = part.scan(kept, record, rule) else {
             continue;
         };
         if !sealing {
             return Err(refusal);
         }
         let read = |bytes: &[u8]| hit(kept, record, bytes);
-        let clean = |part: &SidePart| part.scan(kept, record).is_ok();
+        let clean = |part: &SidePart| part.scan(kept, record, rule).is_ok();
         let taken = seal_until_clean(part, refusal, |part| seal_part(part, &read), clean)?;
         seals.extend(taken.into_iter().map(|(at, reason)| Seal {
             index,

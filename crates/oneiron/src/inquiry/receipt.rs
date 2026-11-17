@@ -14,7 +14,7 @@ use std::ops::Bound;
 
 use super::edge::{InquiryEdge, InquiryTermsChangeOutcome};
 use super::record::{Inquiry, InquiryKeep, InquiryOutcome};
-use super::terms::InquiryTerms;
+use super::terms::{InquiryCheckInMode, InquiryTerms};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -340,4 +340,234 @@ pub(crate) fn erase_inquiry_receipt_actor_in_txn(
         RECEIPTS.put(&vault.store, wtxn, &key, &row)?;
     }
     Ok(())
+}
+
+/// Whether `text` is `len` lowercase hex characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether a decoded receipt of one send keeps the writer's pure row
+/// invariants.
+fn archived_inquiry_holds(key: &str, receipt: &ReceiptRecord) -> bool {
+    if key != receipt.receipt_id {
+        return false;
+    }
+    if receipt.receipt_kind != ReceiptKind::Inquiry {
+        return false;
+    }
+    match receipt.outcome.as_str() {
+        "answered" | "no_answer" | "pending" | "unavailable" => {}
+        _ => return false,
+    }
+    if receipt.on_behalf_of.is_some() {
+        return false;
+    }
+    if !receipt.policy_trace.is_empty() {
+        return false;
+    }
+    let Some(rest) = receipt.receipt_id.strip_prefix("inquiry:") else {
+        return false;
+    };
+    let Some((hex, seq)) = rest.split_once(':') else {
+        return false;
+    };
+    if !is_lower_hex(hex, 32) {
+        return false;
+    }
+    let Ok(number) = seq.parse::<u32>() else {
+        return false;
+    };
+    if seq != format!("{number:06}") {
+        return false;
+    }
+    if receipt.job_ref.as_deref() != Some(hex) {
+        return false;
+    }
+    let Some(trigger) = receipt.trigger_ref.as_deref() else {
+        return false;
+    };
+    if !is_lower_hex(trigger, 32) {
+        return false;
+    }
+    if let Some(member) = receipt.fields.get(FIELD_MEMBER)
+        && !is_lower_hex(member, 32)
+    {
+        return false;
+    }
+    let Some(question) = receipt.fields.get(FIELD_QUESTION) else {
+        return false;
+    };
+    if question.trim().is_empty() {
+        return false;
+    }
+    let Some(purpose) = receipt.fields.get(FIELD_PURPOSE) else {
+        return false;
+    };
+    if purpose.trim().is_empty() || purpose.contains('\n') {
+        return false;
+    }
+    let Some(keep) = receipt.fields.get(FIELD_KEEP) else {
+        return false;
+    };
+    if keep != "task" && keep != "copy" {
+        return false;
+    }
+    let Some(expires) = receipt.fields.get(FIELD_EXPIRES_AT) else {
+        return false;
+    };
+    let Ok(expires) = expires.parse::<u64>() else {
+        return false;
+    };
+    if expires == 0 {
+        return false;
+    }
+    // The asker's role is one line; a receipt written before the field holds none, and an
+    // actor's erase removes it together with the asker.
+    if let Some(role) = receipt.fields.get(FIELD_ASKER_ROLE)
+        && (receipt.actor.is_none() || role.trim().is_empty() || role.contains('\n'))
+    {
+        return false;
+    }
+    if receipt.fields.len() > 6 || receipt.fields.len() < 4 {
+        return false;
+    }
+    for name in receipt.fields.keys() {
+        if name != FIELD_MEMBER
+            && name != FIELD_QUESTION
+            && name != FIELD_PURPOSE
+            && name != FIELD_KEEP
+            && name != FIELD_EXPIRES_AT
+            && name != FIELD_ASKER_ROLE
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a decoded Share receipt of one terms change keeps the writer's
+/// pure row invariants.
+fn archived_inquiry_terms_change_holds(key: &str, receipt: &ReceiptRecord) -> bool {
+    if key != receipt.receipt_id {
+        return false;
+    }
+    if receipt.receipt_kind != ReceiptKind::Share {
+        return false;
+    }
+    // A change that leaves the terms as they read writes no receipt.
+    match receipt.outcome.as_str() {
+        "narrowed" | "widened" => {}
+        _ => return false,
+    }
+    if receipt.on_behalf_of.is_some() || receipt.job_ref.is_some() {
+        return false;
+    }
+    if !receipt.policy_trace.is_empty() {
+        return false;
+    }
+    let Some(rest) = receipt.receipt_id.strip_prefix("share:inquiry_terms:") else {
+        return false;
+    };
+    let Some((grant_hex, seq)) = rest.split_once(':') else {
+        return false;
+    };
+    if !is_lower_hex(grant_hex, 32) {
+        return false;
+    }
+    let Ok(number) = seq.parse::<u32>() else {
+        return false;
+    };
+    if seq != format!("{number:06}") {
+        return false;
+    }
+    if receipt.trigger_ref.as_deref() != Some(format!("federation_grant:{grant_hex}").as_str()) {
+        return false;
+    }
+    // An actor's erase removes the member; the receipt stands without one.
+    if let Some(actor) = receipt.actor.as_deref()
+        && !is_lower_hex(actor, 32)
+    {
+        return false;
+    }
+    if receipt.fields.len() != 6 {
+        return false;
+    }
+    for name in [
+        FIELD_TASK_MODE,
+        FIELD_COPY_MODE,
+        FIELD_PREVIOUS_TASK_MODE,
+        FIELD_PREVIOUS_COPY_MODE,
+    ] {
+        let Some(mode) = receipt.fields.get(name) else {
+            return false;
+        };
+        if InquiryCheckInMode::from_token(mode).is_none() {
+            return false;
+        }
+    }
+    for name in [FIELD_KEEP_ALLOWED, FIELD_PREVIOUS_KEEP_ALLOWED] {
+        let Some(keep) = receipt.fields.get(name) else {
+            return false;
+        };
+        if InquiryKeep::from_token(keep).is_none() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Lands one archived receipt of this store, a send's or a terms change's,
+/// with its time index, preserving erase-removed members.
+fn land_archived_inquiry_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if !archived_inquiry_holds(&key, &receipt)
+        && !archived_inquiry_terms_change_holds(&key, &receipt)
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    let outcome = install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)?;
+    if matches!(
+        outcome,
+        ArchivedSideRowOutcome::Installed | ArchivedSideRowOutcome::Unchanged
+    ) {
+        BY_TIME.put(vault, txn, &(receipt.occurred_at, key), &())?;
+    }
+    Ok(outcome)
+}
+
+impl Vault {
+    /// Lands the owner's archived receipts of this store, each send's and
+    /// each terms change's, in input order, rebuilding only their time index.
+    pub(crate) fn land_archived_inquiry_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_inquiry_receipt_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
 }

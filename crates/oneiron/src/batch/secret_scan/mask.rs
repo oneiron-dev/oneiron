@@ -63,6 +63,7 @@ use heed::RwTxn;
 use rmpv::Value;
 use zeroize::{Zeroize, Zeroizing};
 
+use super::FieldRule;
 use super::container::{self, Stop, holds_spans, is_sealed, masked_copy, walk_members};
 use super::scan_batch_ops;
 use super::shapes::{self, Door, HANDLE_OPEN};
@@ -178,6 +179,42 @@ pub(crate) fn rebind_mask_origin_in_txn(
     }
     origin.record = *new;
     MASK_ORIGIN.put(store, wtxn, custody, &origin)
+}
+
+/// The place a mask on write names for a key it lifted out of a stored
+/// file's bytes: the file keeps its bytes, and only its mark names the
+/// record.
+pub(crate) const FILE_PLACE: &str = "file";
+
+/// Each custody record a mask on write minted for a key it lifted out of a
+/// stored file, read in `txn`: the records whose only marks are the
+/// files' own (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn file_mints_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    Ok(MASK_ORIGIN
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, origin)| origin.place == FILE_PLACE)
+        .map(|(custody, _)| custody)
+        .collect())
+}
+
+/// Moves the mask origin of the custody record `from` to the record `to`
+/// (FILE-CUSTODY-MERGE-AFTER-REWRAP): `to` takes it unless it holds one of
+/// its own, and `from` keeps none.
+pub(crate) fn move_mask_origin_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    from: &EntityId,
+    to: &EntityId,
+) -> Result<()> {
+    let Some(origin) = MASK_ORIGIN.get(store, wtxn, from)? else {
+        return Ok(());
+    };
+    if MASK_ORIGIN.get(store, wtxn, to)?.is_none() {
+        MASK_ORIGIN.put(store, wtxn, to, &origin)?;
+    }
+    MASK_ORIGIN.delete(store, wtxn, from)?;
+    Ok(())
 }
 
 /// Keeps an immutable part whole in existing custody. Only its handle leaves
@@ -484,6 +521,8 @@ struct Masker {
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
+    /// Which values under a credential name the field rule lifts whole.
+    field_rule: FieldRule,
     /// The batch door's plan: a recovery phrase split over a file's parts
     /// is marked word by word, one record for its words (LABEL-04). A
     /// carrier's text is placed as before, such a phrase left unplaced: a
@@ -530,7 +569,7 @@ impl Masker {
                     if self.minted {
                         continue;
                     }
-                    self.at = Some((*id, "file".to_owned()));
+                    self.at = Some((*id, FILE_PLACE.to_owned()));
                     if let Some(copy) = self.mark_file(*id, data)? {
                         replace_wiped(data, copy);
                     }
@@ -730,9 +769,10 @@ impl Masker {
     }
 
     /// One map member under its `key`, as the field rule reads it: a value
-    /// under a credential name whole, any other member by member.
+    /// under a credential name whole (text alone under
+    /// [`FieldRule::TextOnly`]), any other member by member.
     fn mask_member(&mut self, key: &Value, member: &mut Value) -> Result<bool> {
-        if !credential_member(key, member) {
+        if !credential_member(key, member, self.field_rule) {
             return self.mask_value(member);
         }
         let secret = Zeroizing::new(match &*member {
@@ -1032,10 +1072,12 @@ fn part_at<'v>(value: &'v mut Value, path: &[usize]) -> Option<&'v mut Value> {
     Some(part)
 }
 
-/// Whether the field rule reads `member`, under `key`, whole: a value under a
-/// credential name, neither nil nor a placeholder.
-fn credential_member(key: &Value, member: &Value) -> bool {
-    key.as_str().is_some_and(shapes::sensitive_key)
+/// Whether the field rule `rule` reads `member`, under `key`, whole: a value
+/// under a credential name, neither nil nor a placeholder, of a shape `rule`
+/// reads whole.
+fn credential_member(key: &Value, member: &Value, rule: FieldRule) -> bool {
+    rule.reads_whole(member)
+        && key.as_str().is_some_and(shapes::sensitive_key)
         && !member.is_nil()
         && !member
             .as_str()

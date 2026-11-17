@@ -141,17 +141,23 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
-    // Each arming that decodes leaves its trigger index with it; one that does
-    // not leaves its index row to the next release, which drops it.
+    // Each arming that decodes leaves its trigger index with it; when one does
+    // not decode, the actor's sweep below takes its index rows too, so no due
+    // row lingers past the erase.
     let mut armed = Vec::new();
+    let mut undecodable = false;
     for row in ARM.iter_raw_from(vault, &*txn, actor.as_bytes())? {
         let (_, bytes) = row?;
-        if let Ok(arming) = ARM.decode_value(&bytes) {
-            armed.push(arming);
+        match ARM.decode_value(&bytes) {
+            Ok(arming) => armed.push(arming),
+            Err(_) => undecodable = true,
         }
     }
     for arming in &armed {
         super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
+    }
+    if undecodable {
+        super::trigger::unindex_actor_triggers_in_txn(vault, txn, *actor)?;
     }
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     DISARMED.delete_from(vault, txn, actor.as_bytes())?;
