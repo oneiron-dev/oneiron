@@ -209,6 +209,38 @@ pub enum SharedVaultChange {
         record: String,
         redaction: Option<String>,
     },
+    /// An admin act that changes no membership row, logged so every other
+    /// live Admin and Deputy hears of it (`Vault::record_admin_act_in_txn`).
+    /// The access roster of shared project `project` was reset.
+    ProjectAccessReset {
+        project: String,
+    },
+    /// `member` was onboarded into a workspace of this vault at `role`.
+    MemberOnboarded {
+        member: String,
+        role: Role,
+    },
+    /// The house mind of workspace `workspace` was seated at `role`, or with
+    /// `None` taken out of the role it held.
+    HouseRoleChanged {
+        workspace: String,
+        role: Option<Role>,
+    },
+    /// A setting of workspace `workspace` changed: its stored preset, its
+    /// work-companion policy or its house name.
+    WorkspaceSettingsChanged {
+        workspace: String,
+    },
+    /// The vault's conversation-learning setting was set.
+    ConversationLearningChanged {
+        on: bool,
+        allow_opt_out: bool,
+    },
+    /// `member` was given the Delegate grant `grant`.
+    DelegateGranted {
+        grant: String,
+        member: String,
+    },
 }
 
 /// The durable receipt of one executed shared act or membership change. An
@@ -520,6 +552,18 @@ fn live_owners(holders: &[LiveActHolder], verb: Option<&str>) -> BTreeSet<Entity
         .map(|holder| holder.member)
         .collect()
 }
+/// Who hears of an admin act: every live Owner, Admin and Deputy of
+/// `holders`, read by `Vault::live_notice_holders`, so a house mind its org
+/// link seats at one of those roles too (canon identity.md
+/// #cloud-agent-recovery, ORG-1 A: "The vault logs each admin act and
+/// notifies the other admins"; UNBUILT06-SHAPE Q3 = A).
+fn admin_act_recipients(holders: &[LiveActHolder]) -> BTreeSet<EntityId> {
+    holders
+        .iter()
+        .filter(|holder| matches!(holder.role, Role::Owner | Role::Admin | Role::Deputy))
+        .map(|holder| holder.member)
+        .collect()
+}
 fn non_root(role: Option<Role>) -> Result<()> {
     match role {
         None | Some(Role::Deputy | Role::Admin | Role::Steward | Role::Member | Role::Viewer) => {
@@ -816,8 +860,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Persist the receipt and one notice to each live Owner, the actor and
-    /// every holder the change concerns, in the change's own writer.
+    /// Persist the receipt and one notice to each of `recipients` (the live
+    /// Owners, and for an admin act every live Admin and Deputy too), the
+    /// actor and every holder the change concerns, in the change's own
+    /// writer.
     #[allow(clippy::too_many_arguments)]
     fn record_shared_change_in_txn(
         &self,
@@ -826,7 +872,7 @@ impl Vault {
         vault_id: u64,
         act: Option<(String, String)>,
         actor: EntityId,
-        owners: BTreeSet<EntityId>,
+        mut recipients: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
         record: ChangeRecord,
@@ -862,7 +908,6 @@ impl Vault {
         self.store
             .vault_meta
             .put(txn, &key(RECEIPT_PREFIX, &receipt.id), &encode(&receipt)?)?;
-        let mut recipients = owners;
         recipients.insert(actor);
         recipients.extend(effect.notify);
         for recipient in recipients {
@@ -883,6 +928,56 @@ impl Vault {
                 .put(txn, &outcome_key, &encode(&outcome)?)?;
         }
         Ok(receipt)
+    }
+
+    /// Logs admin act `change` by `actor` in shared vault `vault_id`, in the
+    /// act's own writer at `now`: one receipt, and one outcome notice to the
+    /// actor and to each live Owner, Admin and Deputy, a seated house mind
+    /// among them (`admin_act_recipients`). For the admin doors that change no
+    /// membership row (the membership writer tells the same people itself):
+    /// a project access reset, an onboarding, a house role, a workspace
+    /// setting, the conversation-learning setting and a delegate mint.
+    /// `None`, and nothing written, when this vault holds no shared creation
+    /// for `vault_id`.
+    pub(crate) fn record_admin_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        actor: EntityId,
+        change: SharedVaultChange,
+        now: u64,
+    ) -> Result<Option<SharedActExecutionReceipt>> {
+        // A vault id this vault holds no shared creation for is no shared
+        // vault here: its device owner's act tells no one (review of #8384).
+        if self
+            .shared_vault_creation_in_txn(txn)?
+            .is_none_or(|creation| creation.vault_id != vault_id)
+        {
+            return Ok(None);
+        }
+        let holders = self.live_notice_holders(txn, vault_id, now)?;
+        let id = self.store.clock.entity_id()?.to_hex();
+        let effect = Effect {
+            change,
+            grants: Vec::new(),
+            revoked_slips: Vec::new(),
+            detach: None,
+            notify: BTreeSet::new(),
+        };
+        self.record_shared_change_in_txn(
+            txn,
+            id,
+            vault_id,
+            None,
+            actor,
+            admin_act_recipients(&holders),
+            effect,
+            None,
+            ChangeRecord::Unnamed,
+            None,
+            now,
+        )
+        .map(Some)
     }
 
     fn shared_act_receipt_in_txn(
