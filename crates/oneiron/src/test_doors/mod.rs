@@ -66,6 +66,7 @@ pub mod data_key_preset_switch;
 pub mod data_key_sealed_vault;
 pub mod data_key_stale_unlock;
 pub mod derivation_floor;
+pub mod derivation_position;
 pub mod derive;
 pub mod derive_verbs;
 pub mod device_succession_fold;
