@@ -338,6 +338,31 @@ fn with_no_live_reconciler_of_the_vault_model_every_world_answers_none() {
 }
 
 #[test]
+fn dropping_the_newest_reconciler_answers_for_the_older_one_still_live() {
+    let fixture = world_vectors_fixture();
+    fixture.set_models(ModelOrder::Inherit);
+    let older = fixture.reconciler(FixedEmbedder::on_device());
+    let newer = fixture.reconciler(FixedEmbedder::other_model());
+    assert_eq!(
+        verdict(&fixture.read(), fixture.world),
+        (WorldVectorsVerdict::None, None),
+        "the newest live reconciler runs another model",
+    );
+    drop(newer);
+    assert_eq!(
+        verdict(&fixture.read(), fixture.world),
+        (WorldVectorsVerdict::VaultSpace, None),
+        "the older reconciler still embeds W into the vault index",
+    );
+    drop(older);
+    assert_eq!(
+        verdict(&fixture.read(), fixture.world),
+        (WorldVectorsVerdict::None, None),
+        "with no live reconciler W answers none",
+    );
+}
+
+#[test]
 fn setting_the_order_back_to_inherit_answers_vault_space_again() {
     let fixture = world_vectors_fixture();
     let _reconciler = fixture.reconciler(FixedEmbedder::on_device());
