@@ -19,8 +19,6 @@ use crate::test_util::{entity, open_test_vault_with, seed_agent_definition};
 // at 500. Rejection checks use the attempted write's time, not wall clock.
 mod anchor_admission;
 mod anchor_session_admission;
-// FIX [LIBTEST-QUARANTINE-SUBJECT-MODEL-TESTS-ARCHIVE]: the lib test target's type check fails here (4 errors: E0599 x3, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod archive;
 pub(crate) mod authorization;
 mod evaluation_time;

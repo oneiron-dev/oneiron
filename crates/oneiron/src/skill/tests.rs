@@ -1133,8 +1133,6 @@ fn local_raw_and_batch_creates_must_be_born_candidate() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 #[test]
 fn replicated_create_keeps_writing_already_lifecycled_records() -> Result<()> {
@@ -1154,6 +1152,7 @@ fn replicated_create_keeps_writing_already_lifecycled_records() -> Result<()> {
                 ENTITY_TYPE_SKILL,
                 TimeRange { start: 9, end: 9 },
                 9,
+                None,
                 &encode_skill_record(&born_active)?
             )
             .commit()
@@ -1174,6 +1173,7 @@ fn replicated_create_keeps_writing_already_lifecycled_records() -> Result<()> {
             ENTITY_TYPE_SKILL,
             TimeRange { start: 10, end: 10 },
             11,
+            None,
             &body,
         )
         .commit()?;
@@ -1289,8 +1289,6 @@ fn callable_role_contract_round_trips_and_noncallable_cannot_smuggle_call() -> R
 #[cfg(any())]
 mod resident;
 
-// FIX [LIBTEST-QUARANTINE-SKILL-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// SOL-9A-2-R2 F1: a quarantine is the owner's decision, and a restore over
 /// the vault from before it is refused rather than load the skill again.
 #[test]
@@ -1309,8 +1307,10 @@ fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
     vault.update_skill_record(&id, &quarantined, TimeRange { start: 32, end: 32 }, 33)?;
 
     let destination = backups.path().join("restored");
+    let key = vault.checkpoint_key()?;
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         embedding_test_config(),
         &vault,
@@ -1328,8 +1328,6 @@ fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// SOL-9A-2-R2 F9, F10: withdrawing a skill's approval stops it loading, and
 /// a governance tier keeps automation off it. A restore over the vault from
 /// before either is refused.
@@ -1343,10 +1341,12 @@ fn a_restore_never_returns_a_withdrawn_approval_or_a_lifted_governance_tier() ->
     active.approval_status = ClaimApprovalStatus::Approved;
     vault.update_skill_record(&id, &active, TimeRange { start: 21, end: 21 }, 22)?;
     let backups = crate::test_support::restore_tempdir();
+    let key = vault.checkpoint_key()?;
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
         let error = Vault::restore_checkpoint_keeping_authority(
             image,
+            &key,
             &destination,
             embedding_test_config(),
             &vault,

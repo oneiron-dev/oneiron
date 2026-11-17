@@ -15,7 +15,6 @@ use crate::Vault;
 use crate::error::ErrorKind;
 use crate::world_keys::WorldKeyStatus;
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 const AT: TimeRange = TimeRange { start: 3, end: 3 };
 
 fn install_signing(vault: &Vault) -> ed25519_dalek::SigningKey {

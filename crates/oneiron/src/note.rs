@@ -454,8 +454,6 @@ pub use brief_view::{BriefCitationView, BriefView};
 pub(crate) use replica::{
     import_note_from_authority, text_withheld_by_worlds, validate_note_export,
 };
-// FIX [LIBTEST-QUARANTINE-NOTE-DOCUMENT-TESTS]: the lib test target's type check fails here (8 errors: E0308 x7, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
 #[cfg(all(test, feature = "sync"))]
@@ -470,8 +468,6 @@ pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEdit
 
 #[cfg(test)]
 mod program_tests;
-// FIX [LIBTEST-QUARANTINE-NOTE-SHARED-MEMBERSHIP-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_membership_tests;
 
