@@ -7,6 +7,7 @@ use crate::llm::{
 use std::sync::{Arc, Barrier};
 use std::thread;
 
+mod closed_leases;
 mod dispatch;
 mod per_call;
 
