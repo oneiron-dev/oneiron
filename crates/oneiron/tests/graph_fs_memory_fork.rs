@@ -473,6 +473,38 @@ fn grep_at_a_fork_finds_the_old_words_and_walks() {
     );
 }
 
+/// Review 8945 round 1, P1 2: find walks from its root, so the root must
+/// stand at the fork before it is printed, as its listing shows nothing.
+#[test]
+fn find_at_a_fork_names_no_row_born_after_it() {
+    let (_dir, vault) = open_vault();
+    let owner = owner_id(&vault);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    put_person(&vault);
+    let frontier = mount_frontier_hex(&memory, live_mount_request());
+    let late = put_person(&vault);
+
+    let find = |mount: &GraphFsMountRequest| {
+        let mount_value = serde_json::to_value(mount).expect("the mount request encodes");
+        let request = serde_json::from_value(
+            json!({"mount": mount_value, "path": format!("/entities/{}", late.to_hex())}),
+        )
+        .expect("a graph file find request decodes");
+        let output = memory.graph_fs_find(request).expect("find under the row");
+        decoded_output_text(&output)
+    };
+    let fork_found = find(&fork_mount_request(&frontier));
+    assert!(
+        !fork_found.contains(&late.to_hex()),
+        "find at the fork names no row born after its frontier: {fork_found}"
+    );
+    let live_found = find(&live_mount_request());
+    assert!(
+        live_found.contains(&late.to_hex()),
+        "find on the live head names the later row: {live_found}"
+    );
+}
+
 #[test]
 fn a_link_made_after_the_fork_is_absent_there() {
     let (_dir, vault) = open_vault();
