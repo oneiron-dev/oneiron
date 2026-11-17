@@ -166,10 +166,6 @@ crate::side_table::side_tables! {
     /// purge failure), so terminal quarantine may discharge it. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REPLAY_REMAT_MARKER_PROVENANCE: SyncState b"rmp:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// This machine's residence choice (sync all or sync what it opened) and when it was made;
-    /// node-local, never synced. Key: ().
-    SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// The worlds the owner picked for this machine to follow (ARCH-0023b #partial-sync): each
     /// world's 16 id bytes, ascending; node-local, never synced. Key: ().
     SYNC_RESIDENCE_DEVICE_WORLDS: SyncState b"rs:worlds" Raw
@@ -291,11 +287,12 @@ crate::side_table::side_tables! {
     /// move no backup watermark. Runtime-tier: no image carries it. Key: ().
     BACKUP_CHANGE: VaultMeta b"backup:change:v1" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
-    /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
-    BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
+    /// FIX 7767: one resident on record, and what its settled calls charged each allocation
+    /// generation they ran on. The owner's share is the setting `budget.resident_share`. Key:
+    /// id16 (resident).
+    BUDGET_RESIDENT_USAGE: VaultMeta b"budget.resident.usage.v1\0" Named Engine
         [restore: live] [family: unclassified] [tier: canonical]
-        => crate::store::resident_budget_rows::erase_resident_share_actor_in_txn;
+        => crate::store::resident_budget_rows::erase_resident_usage_actor_in_txn;
     /// Channel-identity lifecycle receipt ledger. Key: id16.
     CHANNEL_IDENTITY_LIFECYCLE_RECEIPT: VaultMeta b"channel_identity_lifecycle:v0:" Named
         [restore: live] [family: unclassified] [tier: canonical]

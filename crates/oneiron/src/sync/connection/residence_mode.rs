@@ -3,7 +3,7 @@
 //! This worker resolves it again each time this machine becomes or stops
 //! being the elected home: the topology's first election, a host update, or
 //! an election a vault wake brings with no topology feed at all. It resolves
-//! from the host's configured mode and the owner's stored choice (`rs:mode`),
+//! from the host's configured mode and the owner's stored choice (`sync.residence.mode`),
 //! never from the mode the connection ran, so a machine that loses the home
 //! goes back to the owner's choice rather than keep the home's forced All.
 //! Only a real change is published; the steady loop then queues what it

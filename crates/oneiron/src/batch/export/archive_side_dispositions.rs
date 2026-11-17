@@ -28,7 +28,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("BOARD_LAYOUT_SETTINGS", ArchiveSideDisposition::Retained),
     ("BUDGET_HOST_ACCOUNT", ArchiveSideDisposition::Retained),
-    ("BUDGET_RESIDENT_SHARE", ArchiveSideDisposition::Retained),
+    ("BUDGET_RESIDENT_USAGE", ArchiveSideDisposition::Retained),
     ("BUDGET_RSI_LINE", ArchiveSideDisposition::Retained),
     ("CALL_RECEIPT", ArchiveSideDisposition::Retained),
     (
