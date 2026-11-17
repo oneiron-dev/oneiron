@@ -34,6 +34,7 @@ mod evidence;
 mod link;
 mod record;
 mod revert;
+pub(crate) mod setting_keys;
 mod settle;
 mod sources;
 mod supersede;
@@ -42,8 +43,8 @@ mod wire;
 
 pub use archive::{
     ARCHIVE_CONFIG_CHANGED, ARCHIVE_NEEDS_ATTEMPT, ARCHIVE_NO_OBSERVED_SOURCE, ARCHIVE_NOT_A_CLAIM,
-    ARCHIVE_OBSERVATION_CHANGED, ARCHIVE_POLICY_CHANGED, ARCHIVE_SCORE_NOT_BELOW_POLICY,
-    ARCHIVE_SOURCE_MOVED, ARCHIVE_SOURCE_WITHHELD,
+    ARCHIVE_OBSERVATION_CHANGED, ARCHIVE_POLICY_CHANGED, ARCHIVE_RESTRICTION,
+    ARCHIVE_SCORE_NOT_BELOW_POLICY, ARCHIVE_SOURCE_MOVED, ARCHIVE_SOURCE_WITHHELD,
 };
 pub use artifact::{
     PROFILE_MALFORMED, PROFILE_SOURCE_UNREAD, PROFILE_SUBJECT_UNREAD, PersonAboutFacts,
@@ -55,16 +56,20 @@ pub use batch::{
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_UNVERIFIED};
-pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
+pub use link::{
+    SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_RESTRICTION,
+    TOPOLOGY_UNREAD,
+};
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use revert::{
     DERIVE_REVERT_CONTENT_KIND, DeriveRevertReceipt, REVERT_CHANGED_SINCE, REVERT_INVERSE_REFUSED,
-    REVERT_NO_INVERSE, REVERT_NOT_YOURS,
+    REVERT_LIFTS_RESTRICTION, REVERT_NO_INVERSE, REVERT_NOT_YOURS,
 };
-pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
+pub use settle::{SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use sources::{SOURCE_MOVED, SOURCE_WITHHELD};
 pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
+    SUPERSEDE_RESTRICTION,
 };
 pub use wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
@@ -82,6 +87,13 @@ pub const DERIVE_BATCH_KEY: &str = "batch";
 
 /// The refusal token of an item that names a refused item of its batch.
 pub const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
+
+/// The refusal of an item staged while the committing actor's read
+/// credential is not live: a base agent whose Steward grant lacks `read`,
+/// or whose MACHINE binding is revoked, reads nothing. The claim and
+/// evidence items refuse with this token instead of aborting the batch,
+/// and the source recheck denies the commit with it.
+pub const READ_NOT_LIVE: &str = "gate.deny.derive.read_not_live";
 
 /// The gate decision ledger's content kind for a derivation item's refusal
 /// receipt.

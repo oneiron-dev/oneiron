@@ -50,7 +50,7 @@ where
         .write_txn()
         .map_err(|error| engine_failure("writer acquisition", error))?;
     let value = {
-        let _active_write_txn = crate::store::active_write_txn_guard();
+        let _active_write_txn = crate::store::active_write_txn_guard(vault.store.env.id());
         apply(&mut wtxn)?
     };
     wtxn.commit()

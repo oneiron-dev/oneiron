@@ -1,0 +1,17 @@
+{
+  "name": "vault.voices.recognition.withdraw",
+  "description": "A person withdraws voice-recognition consent for their own voice, the owner for any subject, or an agent with the consent-log Grant for a counterparty: it deletes the voiceprint and samples and keeps the consent record.",
+  "input": "crate::task_verb::sdk::VoiceRecognitionWithdrawRequest",
+  "output": "crate::task_verb::sdk::VoiceRecognitionWithdrawReceipt",
+  "call": "crate::task_verb::sdk::withdraw_voice_recognition_consent(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "delete",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "recognition_recorder"
+}

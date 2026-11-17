@@ -5,8 +5,10 @@
 //! work and veto none: an entry whose predecessors still hold waits Queued
 //! and is never refused. A predecessor stops holding it once its
 //! declaration is released, expires or is replaced, or once a run batch
-//! accepted under that declaration reaches the queue's head; one accepted
-//! after this entry never holds it. Acceptance hands the exact candidate to
+//! accepted under that declaration that ends its enqueue reaches the
+//! queue's head (an earlier batch of a split enqueue does not:
+//! [MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]); one accepted after this entry
+//! never holds it. Acceptance hands the exact candidate to
 //! the queue: staging and landing never ask whether the worker that
 //! submitted it still runs, and every existing check, review and recovery
 //! still applies.
@@ -89,21 +91,26 @@ impl MergeQueue<'_> {
                 BatchIndexKind::Declaration,
                 &predecessor.declaration.to_hex(),
             )?;
-            let accepted: Vec<(BatchState, u64)> = batches
+            // Each accepted batch's state, sequence, and whether it ends its
+            // enqueue: a later batch of a split enqueue still follows it.
+            let accepted: Vec<(BatchState, u64, bool)> = batches
                 .iter()
                 .filter_map(|other| {
                     let other_order = other.run_order.as_ref()?;
-                    (other_order.declaration == Some(predecessor.declaration))
-                        .then_some((other.state, other_order.sequence))
+                    (other_order.declaration == Some(predecessor.declaration)).then_some((
+                        other.state,
+                        other_order.sequence,
+                        other.followed_by.is_none(),
+                    ))
                 })
                 .collect();
-            let landed = accepted.iter().any(|(state, _)| {
-                matches!(state, BatchState::HeadAdvanced | BatchState::GreenAdvanced)
+            let landed = accepted.iter().any(|(state, _, last)| {
+                *last && matches!(state, BatchState::HeadAdvanced | BatchState::GreenAdvanced)
             });
             let behind = !accepted.is_empty()
                 && accepted
                     .iter()
-                    .all(|(_, sequence)| *sequence > order.sequence);
+                    .all(|(_, sequence, _)| *sequence > order.sequence);
             if !landed
                 && !behind
                 && crate::task_verb::declaration_holds_in_txn(
