@@ -30,8 +30,9 @@ use oneiron::authority::{
     AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
     MachineEncryptionKey, MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN,
-    ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript, fold_authority_log,
-    fold_authority_log_for_posture, genesis_vault_id, machine_profile_proof_transcript,
+    ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
+    fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
+    machine_profile_proof_transcript,
 };
 use oneiron::{EntityId, HostingPrivacyPosture};
 use oneiron_authority::authority::{
@@ -836,6 +837,114 @@ fn a_custodial_root_sibling_agent_bind_of_an_owner_key_leaves_the_owners_binding
     assert!(
         binds_active(&fold, &owner_key, owner()),
         "the owner's own binding stays active: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Row OLD-PARENTS-OWNER-BINDING-CONFLICT, the root's own key bound as the
+/// owner's (blind review round 2 of #9137, P1, 17 Nov 08:58). With an owner
+/// key's cosign the root binds its own key as the owner's, as the owner
+/// binds from a device of their own; beside that bind, on the same
+/// enrolment, the root alone binds its key as another actor's agent key at
+/// the owner's epoch. No binding of the key is a person's on those parents,
+/// and the root's key is no owner key outside cloud custody. Main and this
+/// row's head before the fix: the agent bind counts, the merge marks the
+/// key's binding conflicted, and the owner's only binding is dead.
+#[test]
+fn a_custodial_root_sibling_agent_bind_of_its_own_key_leaves_the_owners_binding_active() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolment = vault.enrol(2, registration, &key);
+    let root = vault.root.clone();
+    let root_key = key_of(&root);
+    let owners_bind = vault.append(
+        3,
+        enrolment,
+        human_bind(root_key.clone(), owner(), 1),
+        &root,
+        &[&key],
+    );
+    let agent_bind = vault.append(
+        4,
+        enrolment,
+        AuthorityOp::BindActor {
+            authority_key: root_key.clone(),
+            actor_ref: other_person(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &root,
+        &[],
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&owners_bind),
+        "the root's bind of the owner with the owner key's cosign counts: {owners_bind:?}"
+    );
+    assert!(
+        !fold.valid_entries.contains(&agent_bind),
+        "the custodial root's agent bind of its own key alone does not count: {agent_bind:?}"
+    );
+    assert!(
+        binds_active(&fold, &root_key, owner()),
+        "the owner's binding stays active: {:?}",
+        fold.actor_bindings
+    );
+}
+
+/// Passes on main too: a key no person's binding can name, a machine's
+/// `ROLE_AGENT` key, binds as an agent on the custodial root's word, as a
+/// machine enrolment binds its agent key (`machine_enroll.rs`).
+#[test]
+fn a_custodial_root_alone_binds_an_agent_key_on_a_hosted_vault() {
+    let mut vault = OwnerKeyVault::on_a_hosted_vault();
+    let registration = vault.registration();
+    let agent = signing(OWNER_KEY_SEED);
+    let agent_key = key_of(&agent);
+    let root = vault.root.clone();
+    let enrolment = vault.append(
+        2,
+        registration,
+        AuthorityOp::EnrollDevice {
+            device: DeviceAuthority {
+                key: agent_key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: Vec::new(),
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_AGENT,
+            },
+        },
+        &root,
+        &[],
+    );
+    let bind = vault.append(
+        3,
+        enrolment,
+        AuthorityOp::BindActor {
+            authority_key: agent_key.clone(),
+            actor_ref: other_person(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &root,
+        &[&agent],
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment) && fold.valid_entries.contains(&bind),
+        "the root's enrolment and agent bind of a machine's agent key count: {enrolment:?} {bind:?}"
+    );
+    assert!(
+        fold.actor_bindings.get(&agent_key).is_some_and(|binding| {
+            binding.actor_ref == other_person()
+                && binding.actor_class == "agent"
+                && binding.status == ActorBindingStatus::Active
+        }),
+        "the agent key speaks for its actor: {:?}",
         fold.actor_bindings
     );
 }
