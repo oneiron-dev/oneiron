@@ -219,8 +219,10 @@ struct RefundList {
 
 impl RefundView {
     /// What the deposit records of this refund: its amount once it
-    /// succeeded; pending while Stripe still holds it; a failure for good
-    /// once it failed or was cancelled.
+    /// succeeded; pending while Stripe still holds it; a refusal once it
+    /// failed or was cancelled, which leaves the refund owed and its settle
+    /// row asking again hourly (the owner's line for it is
+    /// FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
     fn settled_amount(&self) -> Result<u64, DepositProviderFailure> {
         match self.status.as_str() {
             "succeeded" => Ok(self.amount),
@@ -232,6 +234,54 @@ impl RefundView {
                 "Stripe's refund {} is {status}",
                 self.id
             ))),
+        }
+    }
+
+    /// Whether Stripe ended this refund with nothing paid back.
+    fn ended_unpaid(&self) -> bool {
+        matches!(self.status.as_str(), "failed" | "canceled")
+    }
+}
+
+/// What a payment's refunds answer for the refund a settle row owes.
+enum OwedRefund {
+    /// The refund made under the row's own key: the one found, or a new one.
+    Keyed(RefundView),
+    /// The payment holds refunds made under no such key (a person's, in the
+    /// Stripe dashboard), and none under the row's that pays or may still
+    /// pay: what of them succeeded, and what Stripe still holds. The row
+    /// asked for no refund in this pass.
+    MadeElsewhere { succeeded: u64, held: u64 },
+}
+
+impl OwedRefund {
+    /// What the deposit records of the `owed` refund. A refund under the
+    /// row's key answers for itself. Refunds made elsewhere stand as the
+    /// deposit's refund once they have paid back at least what is owed, and
+    /// the deposit records what was owed. While Stripe still holds a part of
+    /// that, the answer is pending. Short of it the row adds nothing: the
+    /// refund stays owed, refused with what is missing, until the owner
+    /// refunds the rest by hand.
+    fn settled_amount(&self, owed: u64) -> Result<u64, DepositProviderFailure> {
+        match self {
+            Self::Keyed(refund) => refund.settled_amount(),
+            Self::MadeElsewhere { succeeded, .. } if *succeeded >= owed => Ok(owed),
+            Self::MadeElsewhere { succeeded, held } => {
+                let paid_or_held = succeeded.saturating_add(*held);
+                if paid_or_held >= owed {
+                    Err(DepositProviderFailure::Pending(format!(
+                        "Stripe holds a refund made outside the deposit: {succeeded} of the \
+                         {owed} owed is refunded and {held} is pending"
+                    )))
+                } else {
+                    Err(DepositProviderFailure::Permanent(format!(
+                        "the payment holds a refund made outside the deposit: {paid_or_held} of \
+                         the {owed} owed is refunded or pending, and the missing {} is not \
+                         refunded here; refund it by hand",
+                        owed.saturating_sub(paid_or_held)
+                    )))
+                }
+            }
         }
     }
 }
@@ -398,12 +448,25 @@ impl<'v> StripeClient<'v> {
     /// one already made under it, found by its metadata, or else a new one.
     /// Stripe dedupes a repeated key for a day only, so a refund it holds
     /// pending longer is never made twice.
+    ///
+    /// A payment that already holds a refund made under no such key (a
+    /// person's, in the Stripe dashboard) is never refunded here: a settle
+    /// row lives while its refund is owed, so it would pay the visitor a
+    /// second time once an outage or a refusal ends. The answer is then what
+    /// those refunds amount to
+    /// (FIX [BK-DEPOSIT-REFUND-AFTER-HAND-REFUND-PAID-TWICE]).
+    ///
+    /// The row's own refund that Stripe ended failed or cancelled paid
+    /// nothing back, so it hides no refund made elsewhere: those are added up
+    /// as if it were not there, and a hand refund that covers what is owed
+    /// ends the row. With none, that ended refund answers for itself, and no
+    /// second one is made under the key.
     fn refund_once(
         &self,
         payment_id: &str,
         amount_minor: u64,
         key: &str,
-    ) -> Result<RefundView, StripeCallError> {
+    ) -> Result<OwedRefund, StripeCallError> {
         payment_path(payment_id, "")?;
         let listed = self.call(
             &format!("/v1/refunds?payment_intent={payment_id}&limit=100"),
@@ -412,10 +475,28 @@ impl<'v> StripeClient<'v> {
         )?;
         let listed: RefundList = serde_json::from_slice(&listed)
             .map_err(|_| StripeCallError::Malformed("no refund list in the reply".to_owned()))?;
-        if let Some(made) = listed.data.into_iter().find(|refund| {
-            refund.metadata.get(SETTLE_KEY_METADATA).map(String::as_str) == Some(key)
-        }) {
-            return Ok(made);
+        let mut succeeded = 0_u64;
+        let mut held = 0_u64;
+        let mut keyed_unpaid = None;
+        for refund in listed.data {
+            if refund.metadata.get(SETTLE_KEY_METADATA).map(String::as_str) == Some(key) {
+                if !refund.ended_unpaid() {
+                    return Ok(OwedRefund::Keyed(refund));
+                }
+                keyed_unpaid = keyed_unpaid.or(Some(refund));
+                continue;
+            }
+            match refund.status.as_str() {
+                "succeeded" => succeeded = succeeded.saturating_add(refund.amount),
+                "pending" | "requires_action" => held = held.saturating_add(refund.amount),
+                _ => {}
+            }
+        }
+        if succeeded > 0 || held > 0 {
+            return Ok(OwedRefund::MadeElsewhere { succeeded, held });
+        }
+        if let Some(refund) = keyed_unpaid {
+            return Ok(OwedRefund::Keyed(refund));
         }
         let body = self.call(
             "/v1/refunds",
@@ -428,6 +509,7 @@ impl<'v> StripeClient<'v> {
             Some(key),
         )?;
         serde_json::from_slice(&body)
+            .map(OwedRefund::Keyed)
             .map_err(|_| StripeCallError::Malformed("no refund in the reply".to_owned()))
     }
 
@@ -484,7 +566,7 @@ impl DepositSettlementPort for StripeClient<'_> {
                 return self
                     .refund_once(id, amount_minor, key)
                     .map_err(StripeCallError::into_failure)?
-                    .settled_amount();
+                    .settled_amount(amount_minor);
             }
             DepositSettleMove::Capture { amount_minor } => {
                 (self.capture(id, amount_minor, key), CAPTURE_DONE)

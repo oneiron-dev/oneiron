@@ -7,13 +7,14 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 265 IDs, 443 public registry rows, and three explicit
+The pinned plan has 29 files, 266 IDs, 443 public registry rows, and three explicit
 excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.test.ts`
 (Engine order, 10 Nov 12:54 JST), MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
 11 Nov 05:37 JST), MUSE-LOOP-01..08 in `coordination.test.ts` and
 `artifacts.test.ts` (Engine answer MUSE-LOOP-REGISTRATION, 10 Nov 11:52 JST), and
 FEDERATION-09..14 inquiry cases in `federation.test.ts` (Engine TASK 15 Nov 08:32 JST,
-RULING INQUIRE-NEXT-ORDER = A) make the 265-ID plan. The Muse additions cite their
+RULING INQUIRE-NEXT-ORDER = A), and SYNC-09 in `sync.test.ts` (Engine RULING 12 Nov
+21:34 JST, FIX DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC) make the 266-ID plan. The Muse additions cite their
 drivable PROMISE-REGISTER ids in `promises`; inquiry has no matching register id,
 so its entries cite the checked federation canon anchors in `source` instead.
 The retrieval file has 21 cases and an estimated 300 seconds, the coordination file
@@ -431,7 +432,7 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 265-ID plan. The prepared manifest must identify
+never claims completion of the 266-ID plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
@@ -459,7 +460,7 @@ SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
 cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
 but does not turn an independently passing sibling into FAIL. Owner-deferred
 SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
-coverage still requires passing evidence for all 265 IDs. Partial and optional-profile
+coverage still requires passing evidence for all 266 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 

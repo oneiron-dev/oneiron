@@ -57,6 +57,8 @@ mod storage;
 pub(crate) use storage::erase_reader_caller_actor_in_txn;
 pub(crate) use storage::replay_rows;
 mod support;
+#[cfg(oneiron_test_support)]
+pub(crate) use support::dispatch_outcome_map_get_for_test;
 pub(crate) mod tables;
 mod task_reporting;
 mod task_settlement;
