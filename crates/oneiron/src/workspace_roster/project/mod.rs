@@ -1034,25 +1034,6 @@ impl Vault {
             None => Ok(None),
         }
     }
-    /// The project whose derived home room `room` is; `None` for any other
-    /// room (an extra room, a plain room).
-    pub(crate) fn home_room_project_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        room: EntityId,
-    ) -> Result<Option<EntityId>> {
-        let Some(project) = ROOM_PROJECT.get(&self.store, txn, &room)? else {
-            return Ok(None);
-        };
-        Ok((home_room_id(project)? == room).then_some(project))
-    }
-    /// Every project's derived home room with its project, in room order.
-    pub(crate) fn home_room_projects_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, EntityId)>> {
-        ROOM_PROJECT.scan(&self.store, txn)
-    }
     /// The stored project if the read fold accepts it, without the depth row.
     pub(crate) fn visible_project_in_txn(
         &self,

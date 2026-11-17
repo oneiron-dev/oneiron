@@ -117,6 +117,15 @@ fn encode(binding: &ProjectLeaderResident) -> Value {
     ])
 }
 
+/// Whether a stored `agent.resident` value is a project leader binding's.
+fn is_project_leader_value(value: &Value) -> bool {
+    value
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(Value::as_u64)
+        == Some(PROJECT_LEADER_VERSION)
+}
+
 fn decode(project: EntityId, value: &Value) -> Result<ProjectLeaderResident> {
     let a = value
         .as_array()
@@ -256,22 +265,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         room: EntityId,
     ) -> Result<Option<ProjectLeaderResident>> {
-        match self.home_room_project_in_txn(txn, room)? {
+        match crate::workspace_roster::room_project_in(self, txn, room)? {
             Some(project) => self.project_leader_resident_for_effect_in_txn(txn, project),
             None => Ok(None),
         }
     }
 
     /// Every acting leader binding that names `agent`, one per project it
-    /// leads, in home-room order.
+    /// leads, in project order.
     pub(crate) fn project_leader_residents_for_effect_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         agent: EntityId,
     ) -> Result<Vec<ProjectLeaderResident>> {
         let mut bindings = Vec::new();
-        for (room, _) in self.home_room_projects_in_txn(txn)? {
-            if let Some(binding) = self.home_room_leader_resident_in_txn(txn, room)?
+        for project in self.leader_bound_projects_in_txn(txn)? {
+            if let Some(binding) = self.project_leader_resident_for_effect_in_txn(txn, project)?
                 && binding.agent_def_ref == agent
             {
                 bindings.push(binding);
@@ -286,12 +295,27 @@ impl Vault {
     pub fn project_leader_resident_agents(&self) -> Result<BTreeSet<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let mut agents = BTreeSet::new();
-        for (room, _) in self.home_room_projects_in_txn(&txn)? {
-            if let Some(binding) = self.home_room_leader_resident_in_txn(&txn, room)? {
+        for project in self.leader_bound_projects_in_txn(&txn)? {
+            if let Some(binding) = self.project_leader_resident_for_effect_in_txn(&txn, project)? {
                 agents.insert(binding.agent_def_ref);
             }
         }
         Ok(agents)
+    }
+
+    /// Every project a leader binding was written for, by the predicate's
+    /// posting list: the PROJECT subjects of `agent.resident` rows.
+    fn leader_bound_projects_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
+        Ok(self
+            .claims_with_predicate_in_txn(txn, PREDICATE)?
+            .into_iter()
+            .filter_map(|(_, body)| match &body.subject {
+                ClaimSubject::Entity(subject) if is_project_leader_value(&body.value) => {
+                    Some(*subject)
+                }
+                _ => None,
+            })
+            .collect())
     }
 
     /// Whether a resident's inbox pass takes the staged room wake `wake`:
@@ -388,7 +412,7 @@ impl Vault {
             return Ok(false);
         };
         Ok(effective.leader == binding.agent_def_ref.to_hex()
-            && self.home_room_project_in_txn(txn, binding.home_conversation_ref)?
+            && crate::workspace_roster::room_project_in(self, txn, binding.home_conversation_ref)?
                 == Some(binding.project_ref))
     }
 

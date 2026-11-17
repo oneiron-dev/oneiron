@@ -118,8 +118,18 @@ pub(super) fn stage_room_wakes_in_txn(
     agents.extend(thread_task_holders_in_txn(vault, txn, turn)?);
     // UNBUILT3-22: a turn in a project's home room wakes the project's
     // leader while its leader binding acts (ARCH-0067 #agents).
-    if let Some(leader) = vault.home_room_leader_resident_in_txn(txn, room)? {
-        agents.insert(leader.agent_def_ref);
+    // A binding that does not read stages no leader wake and fails no turn.
+    match vault.home_room_leader_resident_in_txn(txn, room) {
+        Ok(Some(leader)) => {
+            agents.insert(leader.agent_def_ref);
+        }
+        Ok(None) => {}
+        Err(error) => tracing::warn!(
+            room = %room.to_hex(),
+            turn = %turn_id.to_hex(),
+            %error,
+            "room wake: the home room's leader binding did not read; no leader wake staged"
+        ),
     }
     if let Ok(speaker) = EntityId::from_hex(&turn.actor) {
         agents.remove(&speaker);
