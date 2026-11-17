@@ -292,6 +292,32 @@ pub fn resumed_witness_receipt(result: &Value) -> Option<crate::memory::WitnessR
     serde_json::from_value(result.clone()).ok()
 }
 
+/// The args a hook's ask saved under `call`'s invocation, where `session`
+/// keeps its pauses, or else the vault, when the saved call is `call`'s own
+/// (its verb, actor and class) and names no row erased since. A host that
+/// stamps a call's args itself, with the time it ran or an id it minted,
+/// rebuilds its retry from the first try's stamps, so the resumed chain
+/// checks the call its ask held (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT).
+/// The resumed chain hands the host's own check these same args, so the read
+/// shows the host nothing new; it is never a caller's answer. `None` with no
+/// such call.
+///
+/// # Errors
+///
+/// Reading the saved call.
+pub fn saved_args(
+    vault: &Vault,
+    session: Option<&HookSession>,
+    call: &VerbCall,
+) -> crate::Result<Option<Value>> {
+    match session {
+        Some(session) => {
+            session.with_storage(vault, |storage| vault.verb_hook_saved_args(storage, call))
+        }
+        None => vault.verb_hook_saved_args(VerbHookStorage::Canonical, call),
+    }
+}
+
 /// The pre chain of a session-only call ([`hook_session`]) a server door
 /// runs itself: its hooks run as on any call, `check` re-admitting a
 /// rewrite, and their records and ask pauses stay with `session`. Only its

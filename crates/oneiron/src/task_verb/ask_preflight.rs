@@ -5,8 +5,11 @@ use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding};
 impl Memory<'_> {
     /// Read-only `can(ask)` preflight. Uses the live authority holders, class,
     /// disclosure and native route that `tasks_ask` resolves at admission. It
-    /// neither mints a TASK nor schedules an outbound notice or effect.
+    /// neither mints a TASK nor schedules an outbound notice or effect. An
+    /// ask whose text names a secret value kind is refused first, as
+    /// `tasks_ask` refuses it.
     pub fn tasks_can_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskPreflight> {
+        input.check_secret_kinds()?;
         if !self.has_task_work_turn() {
             return self.task_work_memory().tasks_can_ask(input);
         }

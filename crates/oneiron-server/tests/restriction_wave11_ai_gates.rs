@@ -58,9 +58,10 @@ use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
-use oneiron_server::models::{QuotaChoice, QuotaQuestion};
+use oneiron_server::models::{QuotaChoice, QuotaFallback, QuotaQuestion};
 use oneiron_server::{build_app, server::SyncServer};
 use rmpv::Value as RmpValue;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -800,6 +801,263 @@ fn a_quota_answer_the_owner_did_not_let_stays_refused() {
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT, "agent waits: {bytes:?}");
+
+        fixture.finish().await;
+    });
+}
+
+// The answerer cases attach the AI host (`setup_ai`): only the attached
+// runtime keeps its quota questions on the fixture's vault. Without it the
+// runtime keeps its rests nowhere, and every answer is 404
+// `no_such_question`.
+
+/// The fallback model a planted `use_fallback` question offers.
+const FALLBACK_MODEL: &str = "other/fallback-model@1";
+
+/// A quota question's answer row as the vault keeps it
+/// (`models:offer-cooldown:v1:answer:<id>`), decoded by this test's own copy
+/// of its fields. The cases thus pin the stored form (stored change: keep),
+/// and they build on PR 1's base, where the row does not exist yet.
+#[derive(Debug, Deserialize)]
+struct AnswerRow {
+    question: String,
+    choice: QuotaChoice,
+    fallback: Option<String>,
+    answered_by: AnsweredBy,
+}
+
+/// Who gave an answer, as its answer row keeps it.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AnsweredBy {
+    Owner,
+    Agent(EntityId),
+}
+
+/// The answer row kept for question `id`, if one is kept.
+fn answer_row(fixture: &Fixture, id: &str) -> Option<AnswerRow> {
+    fixture
+        .vault
+        .sync_state_get(&format!("models:offer-cooldown:v1:answer:{id}"))
+        .expect("read the answer row")
+        .map(|bytes| rmp_serde::from_slice(&bytes).expect("decode the answer row"))
+}
+
+/// A question id in the form the runtime keeps: an offer's hex64 key.
+fn offer_question_id(seed: u8) -> String {
+    hex(&[seed; 32])
+}
+
+/// Plants one open quota question that offers `use_fallback` to
+/// [`FALLBACK_MODEL`] (and `wait`).
+fn plant_fallback_question(fixture: &Fixture, id: &str) {
+    let question = QuotaQuestion {
+        id: id.to_owned(),
+        asked_at: fixture.vault.now_recorded_at(),
+        provider: "fixture".to_owned(),
+        model: "fixture/model".to_owned(),
+        route: "fixture".to_owned(),
+        spent: SpentKind::Window,
+        resets_at: None,
+        choices: vec![QuotaChoice::Wait, QuotaChoice::UseFallback],
+        fallbacks: vec![QuotaFallback {
+            provider: "other".to_owned(),
+            model: FALLBACK_MODEL.to_owned(),
+        }],
+        account: None,
+    };
+    let bytes = rmp_serde::to_vec_named(&question).expect("encode the question");
+    fixture
+        .vault
+        .sync_state_put(&format!("models:offer-cooldown:v1:ask:{id}"), &bytes)
+        .expect("plant the question");
+}
+
+/// The answer body that names [`FALLBACK_MODEL`].
+fn use_fallback_body() -> Value {
+    json!({"choice": "use_fallback", "fallback": FALLBACK_MODEL})
+}
+
+/// The `use_fallback` item on at an agent's row lets that agent set the
+/// standing fallback (a payment loosening the owner turned on), and the
+/// question's answer row reads back that agent as the answerer
+/// (WAVE11-QUOTA-CANON).
+#[test]
+fn an_agent_the_owner_lets_use_a_fallback_is_recorded_as_the_answerer() {
+    run_on_engine_stack("wave11-quota-fallback-agent", || async {
+        let (fixture, a, _b) = setup_ai().await;
+        set_quota_row(
+            &fixture,
+            "use_fallback",
+            SettingScope::Agent(a.principal),
+            true,
+        );
+        let id = offer_question_id(0xa1);
+        plant_fallback_question(&fixture, &id);
+
+        let (status, bytes) = post_bytes(
+            &fixture,
+            &format!("/v1/ai/quota/{id}"),
+            &a.token,
+            agent_binding(&fixture, &a),
+            use_fallback_body(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NO_CONTENT,
+            "agent uses the fallback: {bytes:?}"
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .model_fallback(&id)
+                .expect("read the fallback")
+                .as_deref(),
+            Some(FALLBACK_MODEL),
+            "the standing fallback is set"
+        );
+
+        let record = answer_row(&fixture, &id).expect("the answer row is kept");
+        assert_eq!(record.question, id);
+        assert_eq!(record.choice, QuotaChoice::UseFallback);
+        assert_eq!(record.fallback.as_deref(), Some(FALLBACK_MODEL));
+        assert_eq!(record.answered_by, AnsweredBy::Agent(a.principal));
+
+        fixture.finish().await;
+    });
+}
+
+/// With the `use_fallback` item at its default (off), the agent's answer is
+/// refused exactly as today and leaves no trace; the owner's answer then
+/// stands and its row reads back the owner as the answerer.
+#[test]
+fn a_fallback_the_owner_did_not_let_stays_his_and_records_him() {
+    run_on_engine_stack("wave11-quota-fallback-default", || async {
+        let (fixture, a, _b) = setup_ai().await;
+        let id = offer_question_id(0xb2);
+        plant_fallback_question(&fixture, &id);
+
+        let (status, body) = post(
+            &fixture,
+            &format!("/v1/ai/quota/{id}"),
+            &a.token,
+            agent_binding(&fixture, &a),
+            use_fallback_body(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "agent fallback: {body}");
+        assert_eq!(
+            body["error"]["code"].as_str(),
+            Some("owner_required"),
+            "today's code: {body}"
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .model_fallback(&id)
+                .expect("read the fallback"),
+            None,
+            "no fallback is set"
+        );
+        assert!(
+            answer_row(&fixture, &id).is_none(),
+            "a refused answer keeps no row"
+        );
+
+        let (status, bytes) = post_bytes(
+            &fixture,
+            &format!("/v1/ai/quota/{id}"),
+            &fixture.owner_token,
+            owner_binding(&fixture),
+            use_fallback_body(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NO_CONTENT,
+            "owner uses the fallback: {bytes:?}"
+        );
+        let record = answer_row(&fixture, &id).expect("the answer row is kept");
+        assert_eq!(record.choice, QuotaChoice::UseFallback);
+        assert_eq!(record.answered_by, AnsweredBy::Owner);
+
+        fixture.finish().await;
+    });
+}
+
+/// Plants one open quota question for spent prepaid credit on `account`,
+/// as the runtime keeps one when a spent account parks all its offers.
+fn plant_account_question(fixture: &Fixture, id: &str, account: &str) {
+    let question = QuotaQuestion {
+        id: id.to_owned(),
+        asked_at: fixture.vault.now_recorded_at(),
+        provider: "fixture".to_owned(),
+        model: "fixture/model".to_owned(),
+        route: "fixture".to_owned(),
+        spent: SpentKind::Credit,
+        resets_at: None,
+        choices: vec![QuotaChoice::TopUp, QuotaChoice::AddAccount],
+        fallbacks: Vec::new(),
+        account: Some(account.to_owned()),
+    };
+    let bytes = rmp_serde::to_vec_named(&question).expect("encode the question");
+    fixture
+        .vault
+        .sync_state_put(&format!("models:offer-cooldown:v1:ask:{id}"), &bytes)
+        .expect("plant the question");
+}
+
+/// Whether the question `id` is still open.
+fn question_open(fixture: &Fixture, id: &str) -> bool {
+    fixture
+        .vault
+        .sync_state_get(&format!("models:offer-cooldown:v1:ask:{id}"))
+        .expect("read the question")
+        .is_some()
+}
+
+/// One top-up serves every offer billed to the account: the owner's answer
+/// to one question closes each question open under that account, and each
+/// one's answer row reads back the owner and the top-up. A question on
+/// another account stays open with no answer row.
+#[test]
+fn a_top_up_records_its_answerer_on_every_question_it_closes() {
+    run_on_engine_stack("wave11-quota-top-up-account", || async {
+        let (fixture, _a, _b) = setup_ai().await;
+        let answered = offer_question_id(0xc3);
+        let sibling = offer_question_id(0xc4);
+        let other = offer_question_id(0xc5);
+        plant_account_question(&fixture, &answered, "account-one");
+        plant_account_question(&fixture, &sibling, "account-one");
+        plant_account_question(&fixture, &other, "account-two");
+
+        let (status, bytes) = post_bytes(
+            &fixture,
+            &format!("/v1/ai/quota/{answered}"),
+            &fixture.owner_token,
+            owner_binding(&fixture),
+            json!({"choice": "top_up"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "owner tops up: {bytes:?}");
+
+        for id in [&answered, &sibling] {
+            assert!(!question_open(&fixture, id), "the top-up closes {id}");
+            let record = answer_row(&fixture, id).expect("the answer row is kept");
+            assert_eq!(record.question, *id);
+            assert_eq!(record.choice, QuotaChoice::TopUp);
+            assert_eq!(record.fallback, None);
+            assert_eq!(record.answered_by, AnsweredBy::Owner);
+        }
+        assert!(
+            question_open(&fixture, &other),
+            "another account's question stays open"
+        );
+        assert!(
+            answer_row(&fixture, &other).is_none(),
+            "an unanswered question keeps no row"
+        );
 
         fixture.finish().await;
     });

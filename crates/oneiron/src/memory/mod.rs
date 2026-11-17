@@ -62,7 +62,7 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
-pub(crate) use conflict_settle::conflict_review_held_in;
+pub(crate) use conflict_settle::{conflict_review_held_in, dreamer_conflict_review_held_in};
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
@@ -283,7 +283,8 @@ pub use key_value::{
 };
 pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    ExtractionCorrectionPair, ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,

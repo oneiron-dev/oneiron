@@ -40,7 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/quarantine.rs` | src | s | 2 struct · 5 fn · 3 const | Date, Entry | The flaky-test quarantine and the three nextest tiers |
 | `src/receipt.rs` | src | s | 1 struct · 4 fn | ReceiptReader | The receipt reader: governance receipts read back through the public `vault.receipts` verb, newest first, as… |
 | `src/server.rs` | src | s | 2 struct · 12 fn · 1 const | ServerProcess, ServerSpec | A server process on a free port, started and stopped by the test |
-| `tests/canary.rs` | test | m | — | — | The canary leak detector, step 1: each audience class seeded through public verbs reaches the readers in its… |
+| `tests/canary.rs` | test | s | — | — | The canary leak detector, step 1: each audience class seeded through public verbs reaches the readers in its… |
 | `tests/door.rs` | test | s | — | — | A verb run through the in-process door leaves a receipt the receipt reader reads back through `vault.receipts` |
 | `tests/dreamer.rs` | test | s | — | — | In-process Dreamer wake passes over a small seeded vault, every model call answered by the scripted backend |
 | `tests/golden_day.rs` | test | s | — | — | The golden day (`oneiron_testkit::golden_day`): one scripted day on a fresh vault, and the normalised dump… |
