@@ -263,7 +263,7 @@ fn bound_extraction_inputs_page(
 }
 
 /// Resolves the proven owner's whole-vault read or a live Steward reader's scope.
-fn extraction_reader_scope_in_txn(
+pub(crate) fn extraction_reader_scope_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     owner: Option<&crate::consent::AuthenticatedOwner>,
@@ -287,7 +287,7 @@ fn extraction_reader_scope_in_txn(
 }
 
 /// Reads only an extraction attempt still present in the queue, without distinguishing refusals.
-fn queued_extraction_branch_in_txn(
+pub(crate) fn queued_extraction_branch_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: EntityId,
@@ -311,7 +311,7 @@ fn queued_extraction_branch_in_txn(
 }
 
 /// Serves one queued TURN only when its source and every named partition entity read.
-fn extraction_turn_in_txn(
+pub(crate) fn extraction_turn_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,

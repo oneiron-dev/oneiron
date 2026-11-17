@@ -25,7 +25,7 @@ const CONFLICTS_PAGE_VERB: &str = "vault.consolidation.conflicts.page";
 const EXTRACTION_INPUTS_PAGE_VERB: &str = "vault.consolidation.extraction.inputs.page";
 /// The evidence spans an extraction attempt reads.
 const EVIDENCE_SPANS_VERB: &str = "vault.evidence.spans";
-/// The typed question a conflict-settlement attempt asks the host's ladder.
+/// The typed verdict admitted by conflict settlement and extraction.
 const AI_VERDICT_VERB: &str = "ai.verdict";
 /// The commit that lands items admitted by the bound facet.
 const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
@@ -36,8 +36,8 @@ impl DreamerAttemptBinding {
     ///
     /// Strength admits its observations page and Archive commits. Conflict
     /// settlement admits its conflicts page, typed verdicts on the host's
-    /// lent ladder and Settle commits. Extraction admits its inputs page and
-    /// evidence spans, and no commit. A commit takes the batch itself,
+    /// lent ladder and Settle commits. Extraction admits its inputs page,
+    /// evidence spans and checked verdict packs, and no commit. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -61,7 +61,10 @@ impl DreamerAttemptBinding {
                 )
             }
             BoundFacet::Extraction => {
-                matches!(verb, EXTRACTION_INPUTS_PAGE_VERB | EVIDENCE_SPANS_VERB)
+                matches!(
+                    verb,
+                    EXTRACTION_INPUTS_PAGE_VERB | EVIDENCE_SPANS_VERB | AI_VERDICT_VERB
+                )
             }
         };
         if !admitted {

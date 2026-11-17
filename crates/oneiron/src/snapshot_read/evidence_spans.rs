@@ -102,6 +102,16 @@ pub fn validate_evidence_spans(
     Ok(())
 }
 
+/// The range cap in force in `txn`: `snapshot_read.evidence.max_ranges`, a
+/// stored 0 read as 1.
+fn max_ranges_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<usize> {
+    let cap = super::setting_keys::EVIDENCE_SPANS_MAX_RANGES_SETTING
+        .read_in_txn(memory.vault(), txn, &[], None)?
+        .value
+        .max(1);
+    Ok(usize::try_from(cap).unwrap_or(usize::MAX))
+}
+
 /// Reads one source through the caller's scoped read, in one snapshot.
 ///
 /// - A source the caller does not read answers `withheld`, as `vault.get`
@@ -157,13 +167,7 @@ fn bound_evidence_spans(
     let vault = memory.vault();
     let max_ranges = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        usize::try_from(
-            super::setting_keys::EVIDENCE_SPANS_MAX_RANGES_SETTING
-                .read_in_txn(vault, &txn, &[], None)?
-                .value
-                .max(1),
-        )
-        .unwrap_or(usize::MAX)
+        max_ranges_in_txn(memory, &txn)?
     };
     validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
@@ -178,58 +182,77 @@ fn bound_evidence_spans(
         &[PointRead::id(input.source)],
         None,
         |txn, _rows| -> MemoryResult<EvidenceSpans> {
-            if let Some(asked) = &input.version {
-                match asked.recheck_in_txn(&read, txn)? {
-                    SourceVersionCheck::Current => {}
-                    SourceVersionCheck::Withheld => return Ok(withheld()),
-                    SourceVersionCheck::Moved => {
-                        let Some((version, _)) = source_version_in_txn(&read, txn, &input.source)?
-                        else {
-                            return Ok(withheld());
-                        };
-                        return Ok(EvidenceSpans {
-                            status: EvidenceSourceStatus::Moved,
-                            version: Some(version),
-                            spans: Vec::new(),
-                            masked: false,
-                        });
-                    }
-                }
-            }
-            let Some((version, text)) = source_version_in_txn(&read, txn, &input.source)? else {
-                return Ok(withheld());
-            };
-            let (spans, masked) = match text {
-                Some(turn) => {
-                    let keys = super::source_version::turn_lifted_keys_in_txn(
-                        memory,
-                        &read,
-                        txn,
-                        &input.source,
-                        &turn,
-                    )?;
-                    match keys {
-                        Some(keys) => masked_turn_spans(&turn, &keys, &input.ranges)?,
-                        None => (turn_spans(&turn, &input.ranges)?, false),
-                    }
-                }
-                None if input.ranges.is_empty() => (Vec::new(), false),
-                None => {
-                    return Err(MemoryError::bad_request(
-                        "byte ranges are served over a TURN's text only",
-                    ));
-                }
-            };
-            Ok(EvidenceSpans {
-                status: EvidenceSourceStatus::Current,
-                version: Some(version),
-                spans,
-                masked,
-            })
+            evidence_spans_in_txn(memory, &read, txn, input)
         },
     )
 }
 
+/// Serves one source and its masked spans through an existing live read transaction.
+///
+/// The caller proves its authority and binding before entering this shared body.
+/// The request's shape is checked here too, against the range cap `txn` reads,
+/// because the pack check enters with a request of its own.
+///
+/// # Errors
+///
+/// Invalid ranges, a projection that cannot serve masked spans, and storage failures.
+pub(crate) fn evidence_spans_in_txn(
+    memory: &Memory<'_>,
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    input: &EvidenceSpansRequest,
+) -> MemoryResult<EvidenceSpans> {
+    validate_evidence_spans(input, max_ranges_in_txn(memory, txn)?)?;
+    if let Some(asked) = &input.version {
+        match asked.recheck_in_txn(read, txn)? {
+            SourceVersionCheck::Current => {}
+            SourceVersionCheck::Withheld => return Ok(withheld()),
+            SourceVersionCheck::Moved => {
+                let Some((version, _)) = source_version_in_txn(read, txn, &input.source)? else {
+                    return Ok(withheld());
+                };
+                return Ok(EvidenceSpans {
+                    status: EvidenceSourceStatus::Moved,
+                    version: Some(version),
+                    spans: Vec::new(),
+                    masked: false,
+                });
+            }
+        }
+    }
+    let Some((version, text)) = source_version_in_txn(read, txn, &input.source)? else {
+        return Ok(withheld());
+    };
+    let (spans, masked) = match text {
+        Some(turn) => {
+            let keys = super::source_version::turn_lifted_keys_in_txn(
+                memory,
+                read,
+                txn,
+                &input.source,
+                &turn,
+            )?;
+            match keys {
+                Some(keys) => masked_turn_spans(&turn, &keys, &input.ranges)?,
+                None => (turn_spans(&turn, &input.ranges)?, false),
+            }
+        }
+        None if input.ranges.is_empty() => (Vec::new(), false),
+        None => {
+            return Err(MemoryError::bad_request(
+                "byte ranges are served over a TURN's text only",
+            ));
+        }
+    };
+    Ok(EvidenceSpans {
+        status: EvidenceSourceStatus::Current,
+        version: Some(version),
+        spans,
+        masked,
+    })
+}
+
+/// Returns a source response that reveals no withheld row.
 fn withheld() -> EvidenceSpans {
     EvidenceSpans {
         status: EvidenceSourceStatus::Withheld,
