@@ -86,6 +86,11 @@ pub(super) fn group_entities(
                 .rank(a.world_section.as_deref())
                 .cmp(&sections.rank(b.world_section.as_deref()))
                 .then_with(|| b.critical.cmp(&a.critical))
+                .then_with(|| {
+                    a.working_set_rank
+                        .unwrap_or(usize::MAX)
+                        .cmp(&b.working_set_rank.unwrap_or(usize::MAX))
+                })
                 .then_with(|| b.score.total_cmp(&a.score))
                 .then_with(|| a.id.cmp(&b.id))
         });
@@ -651,6 +656,17 @@ pub(super) fn append_stats_line(out: &mut String, stats: &PackStats, format: Pac
             stats.critical_count
         ));
     }
+    let working_set = &stats.working_set;
+    if !working_set.is_empty() {
+        stats_line.push_str(&format!(
+            " | working_set: {} of {} served, {} dropped, {} over_cap, {} overlap",
+            working_set.served.len(),
+            working_set.asked,
+            working_set.dropped,
+            working_set.over_cap,
+            working_set.overlap
+        ));
+    }
     if format == PackFormat::Yaml {
         out.push_str("# ");
         out.push_str(&stats_line);
@@ -717,5 +733,15 @@ pub(super) fn json_stats(pack_stats: &PackStats) -> Value {
         "critical_count".to_owned(),
         Value::from(pack_stats.critical_count),
     );
+    let working_set = &pack_stats.working_set;
+    if !working_set.is_empty() {
+        let mut counts = Map::new();
+        counts.insert("asked".to_owned(), Value::from(working_set.asked));
+        counts.insert("served".to_owned(), Value::from(working_set.served.len()));
+        counts.insert("dropped".to_owned(), Value::from(working_set.dropped));
+        counts.insert("over_cap".to_owned(), Value::from(working_set.over_cap));
+        counts.insert("overlap".to_owned(), Value::from(working_set.overlap));
+        stats.insert("working_set".to_owned(), Value::Object(counts));
+    }
     Value::Object(stats)
 }

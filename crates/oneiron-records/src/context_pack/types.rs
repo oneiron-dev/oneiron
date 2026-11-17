@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/context_pack/types.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::retrieval_signal::Signal;
 pub use oneiron_store::serialize::context_entity::ContextEntity;
 pub use oneiron_store::serialize::pack_accounting::ContextPackRetrievalBudget;
@@ -45,4 +46,48 @@ pub struct PackStats {
     pub critical_count: usize,
     /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
     pub deadline_exceeded: bool,
+    /// What the pack did with the working set its caller seeded
+    /// (`oneiron::context_pack::ContextPackBuilder::working_set`); all zero
+    /// when unseeded.
+    pub working_set: PackWorkingSetStats,
+}
+
+/// What a pack did with the working set its caller seeded
+/// (`oneiron::context_pack::ContextPackBuilder::working_set`). Every field is
+/// zero for a pack with no working set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct PackWorkingSetStats {
+    /// Refs the caller named, after duplicates were removed.
+    pub asked: usize,
+    /// The working-set rows the pack serves, in working-set order: the ones
+    /// its rows still hold after its last cut (a response limit, a scoped
+    /// read's filter, a serialized budget; a row inside a serialized pack's
+    /// L2 base prefix is held there). A superseded CLAIM ref is served as its
+    /// live successor.
+    pub served: Vec<EntityId>,
+    /// Refs the assembled pack does not serve: dead, hidden from the reader,
+    /// erased, quarantined, clamped, unusable as a row, outside the pack's
+    /// worlds, types or query, or cut by the world share. One count for every
+    /// reason. A later cut counts where that cut counts its rows.
+    pub dropped: usize,
+    /// Working-set rows a serialized pack cut because the working set's
+    /// rows passed half of the pack's token budget.
+    pub over_cap: usize,
+    /// Working-set rows the ranked fill also found. Each is served once, as
+    /// a working-set row.
+    pub overlap: usize,
+}
+
+impl PackWorkingSetStats {
+    /// Whether the pack was seeded at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.asked == 0
+    }
+
+    /// Keeps in [`Self::served`] only the rows `held` says the pack still
+    /// holds, in working-set order. Each cut that removes rows calls it.
+    pub fn settle(&mut self, held: impl Fn(&EntityId) -> bool) {
+        self.served.retain(held);
+    }
 }
