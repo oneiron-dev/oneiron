@@ -225,6 +225,7 @@ impl PackFitPolicy for Fit {
                     runtime_id: SANDBOX_JS_COMPONENT_NAME.to_owned(),
                     runtime_hash: "23".repeat(32),
                 }),
+            connector: None,
         }))
     }
 }
@@ -326,6 +327,7 @@ fn a_restore_never_reselects_a_script_pack_replaced_since() -> Result<()> {
     let restore = |image: &std::path::Path, destination: &std::path::Path| {
         Vault::restore_checkpoint_keeping_authority(
             image,
+            &vault.checkpoint_key()?,
             destination,
             vault.config.clone(),
             &vault,
@@ -360,6 +362,7 @@ fn a_restore_never_reselects_a_script_pack_replaced_since() -> Result<()> {
     assert!(vault.get_pack_source(&script.0)?.is_some());
     let (historical, _) = Vault::restore_checkpoint(
         &scripted,
+        &vault.checkpoint_key()?,
         &backups.path().join("historical"),
         vault.config.clone(),
         RestoreReason::Restore,
