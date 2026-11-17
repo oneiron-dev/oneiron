@@ -17,9 +17,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRequest,
-};
+use oneiron::calendar::ingest::feed_door::{self as feed, CalendarIcsFeedRequest};
 use oneiron::calendar::ingest::{IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse};
 use oneiron::calendar::{
     CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener, CalendarError, CalendarInboundBody,
@@ -27,6 +25,7 @@ use oneiron::calendar::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{KeyValuePut, Memory};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -70,14 +69,25 @@ impl Fixture {
             cadence_min_seconds: 300,
             cadence_max_seconds: 900,
         };
-        feed::configure(
-            &self.memory(),
-            &self.proof,
-            &CalendarIcsFeedConfigureRequest {
-                config: config.clone(),
-            },
-        )
-        .expect("install the feed");
+        // The owner installs a feed as the `calendar.ics_feed` setting, one item per system
+        // (#8937 replaced the configure door).
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.proof),
+                SetSetting {
+                    item: Some(system.to_owned()),
+                    ..SetSetting::vault_value(
+                        "calendar.ics_feed",
+                        serde_json::to_value(&config).expect("feed config as JSON"),
+                    )
+                },
+            )
+            .expect("install the feed");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's install applies: {outcome:?}"
+        );
         config
     }
 
