@@ -146575,7 +146575,17 @@
      "path": "src/native/cms/parse.rs",
      "purpose": "Strict CMS ContentInfo/SignerInfo parsing with version gating",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/cms/parse/issuer_link.rs",
+     "purpose": "Bounded certificate-signature issuer walks for CMS certificate bags",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -146585,7 +146595,7 @@
      "path": "src/native/cms/policy.rs",
      "purpose": "Attribute/ESS binding and frozen signature-suite verification gates",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -146966,7 +146976,7 @@
      "path": "src/native/verify/verify_evidence.rs",
      "purpose": "Private, bounded evidence collected before trust, time, and profile decisions",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -147208,6 +147218,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/seal_covered_set_includes_unrelated_cms_certs.rs",
+     "purpose": "An unrelated certificate carried in a CMS certificate bag is on no selected certification path",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -147284,7 +147302,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -147307,8 +147325,8 @@
    },
    "over_bar": 4,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 65,
-   "test_files": 16
+   "source_files": 66,
+   "test_files": 17
   },
   "oneiron-server": {
    "files": [
