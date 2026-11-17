@@ -17,6 +17,13 @@
 //!   as the engine's data, and the code-rendered offers are appended to its
 //!   words verbatim: no time or link passes through the model.
 //!
+//! The page's publication authorizes each step as it does the page's own
+//! listing: the kept event type and constraint must still be on it, and it is
+//! read again after each solve and, by the worker, after the agent's answer
+//! ([`Rung2Answer::still_published`]). A page that no longer publishes them,
+//! or whose publication changed meanwhile, makes the thread an ordinary one,
+//! and a solve made under the old one is never sent.
+//!
 //! The page's sponsor pays the parse and the answer, as it pays the page's
 //! own parses (RUNG2-SEND-PAYER = A); the vault owner pays when no sponsor is
 //! stored or live.
@@ -29,7 +36,8 @@ use oneiron::{EntityId, Vault, WriteActor};
 
 use super::free_text::{anonymous_payer, parse_disposition_on_seat, parse_seat_settings};
 use super::helpers::{engine_read_error, now_secs};
-use super::rung2::rung2_offers;
+use super::public_availability;
+use super::rung2::{continuation_listing, rung2_offers, rung2_solve_window};
 use super::rung2_copy::{
     render_rung2_first_send_text, render_rung2_off_topic_text, render_rung2_past_cap_text,
 };
@@ -60,6 +68,39 @@ pub(crate) struct Rung2Answer {
     pub(crate) offers: String,
     /// Who pays the answer: the page's sponsor, else the vault owner.
     pub(crate) payer: WriteActor,
+    /// The page the offers were solved for.
+    page_ref: EntityId,
+    /// The publication that authorized the solve.
+    publication: BookingPagePublication,
+}
+
+impl Rung2Answer {
+    /// Whether the page still publishes what authorized the offers, read
+    /// now: the worker asks after the agent's answer and before saving it,
+    /// so offers solved under a publication the owner has since changed or
+    /// revoked never go out.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn still_published(&self, vault: &Vault) -> oneiron::Result<bool> {
+        let now = now_secs().map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("booking rung-2 reply: {}", error.message()))
+        })?;
+        publication_holds(vault, self.page_ref, &self.publication, now)
+    }
+}
+
+/// Whether `page_ref`'s publication read at `now` is still `publication`:
+/// an owner edit of the event configuration, a republish or a revoke since
+/// it was read makes it another, or none.
+fn publication_holds(
+    vault: &Vault,
+    page_ref: EntityId,
+    publication: &BookingPagePublication,
+    now: u64,
+) -> oneiron::Result<bool> {
+    Ok(load_public_booking_page(vault, page_ref, now)?.as_ref() == Some(publication))
 }
 
 /// The rung-2 first send whose thread `thread_ref` is, when a reply came on
@@ -142,6 +183,15 @@ pub(super) fn rung2_reply_with(
     };
     let copy = front.copy();
     let continuation = &kept.continuation;
+    // The thread continues only what the page still offers: an event type
+    // the owner withdrew, or a constraint field turned off, makes it an
+    // ordinary thread, as a listing of them is refused.
+    let listing = continuation_listing(continuation, rung2_solve_window(now));
+    if public_availability::validate_public_request(&publication, &listing).is_err() {
+        return Ok(None);
+    }
+    let still_published =
+        || publication_holds(vault, kept.page_ref, &publication, now).map_err(engine_read_error);
     let admission = vault
         .admit_booking_rung2_reply(&kept.send_ref, event_id, &front.caps())
         .map_err(engine_read_error)?;
@@ -155,6 +205,9 @@ pub(super) fn rung2_reply_with(
             front.max_offered_slots,
             now,
         )?;
+        if !still_published()? {
+            return Ok(None);
+        }
         return Ok(Some(Rung2Reply::Fixed(render_rung2_past_cap_text(
             &copy, &offers,
         ))));
@@ -191,6 +244,11 @@ pub(super) fn rung2_reply_with(
         front.max_offered_slots,
         now,
     )?;
+    // The parse blocked on the seat: the solve read the event configuration
+    // as it stands now, which only the publication read now authorizes.
+    if !still_published()? {
+        return Ok(None);
+    }
     let offers = render_rung2_first_send_text(&copy, &offers);
     let payer = anonymous_payer(vault, publication.sponsor).map_err(|error| {
         tracing::warn!(code = %error.code, "a rung-2 reply's payer did not resolve");
@@ -200,5 +258,7 @@ pub(super) fn rung2_reply_with(
         context: format!("{RUNG2_REPLY_CONTEXT_LEAD}\n\n{offers}"),
         offers,
         payer,
+        page_ref: kept.page_ref,
+        publication,
     })))
 }

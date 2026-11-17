@@ -418,13 +418,9 @@ impl Rung2Send<'_> {
         }
     }
 
-    /// The window a first send solves over: from now over the event type's
-    /// own booking window.
+    /// The window a first send solves over: [`rung2_solve_window`].
     fn solve_window(&self) -> TimeRange {
-        TimeRange {
-            start: self.now,
-            end: self.now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
-        }
+        rung2_solve_window(self.now)
     }
 
     /// The first send's message: the template over the solver's offers for
@@ -475,10 +471,7 @@ pub(super) fn rung2_offers(
 ) -> Result<Vec<Rung2OfferLine>, ApiError> {
     let request = SolveRequest {
         event_type: event_type.clone(),
-        window: TimeRange {
-            start: now,
-            end: now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
-        },
+        window: rung2_solve_window(now),
         constraint: Some(constraint.clone()),
         visitor_tz: visitor_tz.to_owned(),
     };
@@ -535,6 +528,15 @@ fn offer_lines(
             }
         })
         .collect()
+}
+
+/// The window a rung-2 send or reply solves over: from `now` over the event
+/// type's own booking window.
+pub(super) fn rung2_solve_window(now: u64) -> TimeRange {
+    TimeRange {
+        start: now,
+        end: now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
+    }
 }
 
 /// The continuation the session's no-fit turn kept, while it is live.

@@ -181,6 +181,12 @@ fn answer(
                         return Ok(());
                     }
                     match rung2 {
+                        // Offers solved under a publication the owner has
+                        // since changed never go out.
+                        Some(rung2) if !rung2.still_published(vault)? => {
+                            result.reason = Some("booking_rung2_publication_changed".to_owned());
+                            return Ok(());
+                        }
                         Some(rung2) => format!("{answer}\n\n{}", rung2.offers),
                         None => answer.to_owned(),
                     }

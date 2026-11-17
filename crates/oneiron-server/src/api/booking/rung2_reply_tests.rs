@@ -193,6 +193,53 @@ fn a_reply_after_the_page_is_unpublished_is_an_ordinary_reply() {
     assert_eq!(parses.get(), 0);
 }
 
+/// A thread whose kept event type the page no longer publishes is an
+/// ordinary one: no parse and no offers for a withdrawn type (review #8258
+/// round 1).
+#[test]
+fn a_reply_for_an_event_type_the_page_withdrew_is_an_ordinary_reply() {
+    let page = Rung2Page::new(true);
+    let session = "rung2-reply-withdrawn";
+    let mut withdrawn = continuation(session);
+    withdrawn.event_type = EventTypeKey("withdrawn".to_owned());
+    let message = oneiron::channel_identity_provider::stalwart::NativeMailMessage::new(
+        VISITOR,
+        "Times that fit",
+        Some("The words kept for a type the page has since withdrawn.".to_owned()),
+        None,
+    )
+    .expect("message");
+    let kept = page
+        .server()
+        .vault
+        .keep_booking_rung2_first_send(&page.adapter, &page.sender(), withdrawn, message, now())
+        .expect("keep")
+        .expect("kept");
+    let parses = Cell::new(0);
+    assert!(reply(&page, &kept, "reply-1", &parses, unparsed()).is_none());
+    assert_eq!(parses.get(), 0, "a withdrawn type is never parsed for");
+}
+
+/// The parse blocks on the seat; a publication the owner changed meanwhile
+/// no longer authorizes the solve, so its offers never reach the answer
+/// (review #8258 round 1).
+#[test]
+fn a_publication_changed_during_the_parse_offers_nothing() {
+    let page = Rung2Page::new(true);
+    let kept = kept_send(&page, "rung2-reply-changed");
+    let answered = rung2_reply_with(page.server(), &kept, "reply-1", now(), |_| {
+        // The owner republishes the page meanwhile: another publication.
+        page.fixture
+            .publish_page(page.fixture.page, true, 1, now() + 2 * 86_400);
+        unparsed()
+    })
+    .expect("the reply");
+    assert!(
+        answered.is_none(),
+        "the thread is an ordinary one: {answered:?}"
+    );
+}
+
 /// Only an email reply on a thread can be a rung-2 reply, and a thread ref
 /// no passport can carry is the agent's ordinary reply, never an error. A
 /// held first send began no thread.
