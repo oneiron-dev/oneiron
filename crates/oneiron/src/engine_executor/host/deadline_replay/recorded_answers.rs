@@ -247,6 +247,14 @@ impl RecordingJsHost<'_, '_> {
             .is_some_and(DeadlineReplay::unreached)
     }
 
+    /// Whether a resumed step's walk still has recorded calls ahead (L8-23): a later call could
+    /// still turn it dry.
+    pub(in crate::engine_executor::host) fn pending_walk_open(&self) -> bool {
+        self.deadline_replay.as_ref().is_some_and(|replay| {
+            replay.held.is_none() && !replay.dry() && !replay.left && replay.unreached()
+        })
+    }
+
     /// Whether a resumed step's replay turned dry: an effect step changed or went unreached
     /// (L8-23).
     pub(in crate::engine_executor) fn pending_replay_dry(&self) -> bool {

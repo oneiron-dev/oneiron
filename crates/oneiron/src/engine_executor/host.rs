@@ -483,11 +483,15 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         if self.pending_replay_dry() {
             return Ok(None);
         }
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        // A walk the new body ends holds the pass: the reply stays inline.
+        if self.new_output_holds_walk(&mut sink, false)? {
+            return Ok(None);
+        }
         // A stored card stands for the reply: no skill body it holds reaches
         // the guest (FIX 3608).
         self.held_delivery.clear();
-        let mut sink = storage.code_run_output_sink()?;
-        write_json(&mut sink, reply)?;
         self.bind_stored(storage, sink, None).map(Some)
     }
 
