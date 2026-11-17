@@ -218,6 +218,7 @@ pub mod question_teardown;
 pub mod re_root_stale_sweep;
 pub mod read_exposure;
 pub mod removal_import_passes;
+pub mod repeated_key_lib_rows;
 pub mod replay_rows;
 pub mod reply_attachments;
 pub mod repo_base_manifest;
