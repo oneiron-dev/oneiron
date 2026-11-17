@@ -42,20 +42,20 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::actor_claims::{
-    ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_NOTE_MAX_BYTES, ActorNote, ActorNoteKind,
-    SessionActorDistiller, SessionDistillBrief,
+    ACTOR_DISTILL_CALL_PURPOSE_NAME, ActorNote, ActorNoteKind, SessionActorDistiller,
+    SessionDistillBrief,
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_ATTRIBUTION_AUDITS_FACET, COACH_ATTRIBUTION_LABELS_FACET, COACH_BROWSER_PROGRAMS_FACET,
-    COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET, COACH_EVAL_MEASUREMENT_FACET,
-    COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
-    COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
-    COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET, COACH_SITE_SKILLS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
-    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
-    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
-    ThinkThresholdPolicy,
+    COACH_ARCHIVE_AXES_FACET, COACH_ATTRIBUTION_AUDITS_FACET, COACH_ATTRIBUTION_LABELS_FACET,
+    COACH_BROWSER_PROGRAMS_FACET, COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET,
+    COACH_EVAL_MEASUREMENT_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
+    COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
+    COACH_SITE_SKILLS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_THINK_THRESHOLD_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
+    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
+    PersonThresholdPolicy, ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -79,17 +79,19 @@ use super::coach_health::coach_role;
 use super::code_fix::{HostModels, coach_model_call_principal, message};
 use crate::server::SyncServer;
 
+mod archive_axes;
 mod attribution_audits;
 mod attribution_labels;
 mod fork_promote;
 mod judge_label_rechecks;
 mod research_oracle;
-pub(super) mod seal_checks;
+pub(crate) mod seal_checks;
 mod topology_audit;
 mod type_tree_upkeep;
 mod weave_digest_settings;
 
-/// The jobs are nightly, so a minute's wait costs nothing.
+/// The jobs are nightly, so a minute's wait costs nothing. A per-request job
+/// wakes the worker at once instead ([`oneiron::Vault::coach_host_wake`]).
 const TICK: Duration = Duration::from_secs(60);
 /// The queue's own admission counter; each lease reserves one unit and gives
 /// it back.
@@ -139,11 +141,17 @@ pub(crate) fn spawn(
         alive: Arc::new(Mutex::new(true)),
     };
     let weak = Arc::downgrade(server);
+    // The wake holds no vault: the worker keeps none open between rounds.
+    let wake = server.vault().coach_host_wake();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
+            tokio::select! {
+                biased;
+                _ = tick.tick() => {}
+                () = wake.notified() => {}
+            }
             let Some(server) = weak.upgrade() else {
                 break;
             };
@@ -315,7 +323,7 @@ pub(super) fn run_one(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     match admitted.status.payload.attempt_type.as_str() {
-        COACH_SKILL_DISTILL_FACET => distill(server, admitted),
+        COACH_SKILL_DISTILL_FACET => distill(server, admitted, now),
         COACH_SKILL_DISCOVERY_FACET => super::skill_discovery::run(server, admitted),
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => {
@@ -336,6 +344,7 @@ pub(super) fn run_one(
         }
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
+        COACH_ARCHIVE_AXES_FACET => archive_axes::run(server, admitted),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         // FIX 12569: a version a trainer returned is evaluated first (FIX
         // 14975), its held-out side read before the night's corpus sweep, and
@@ -407,8 +416,29 @@ pub(super) fn run_one(
     }
 }
 
-/// One bounded pass of the session-end distill on the generative seat.
-fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::Result<()> {
+/// The skills job: the fixed-code workaround skills (CLIF-STEALS 2), then
+/// one bounded pass of the session-end distill on the generative seat.
+fn distill(
+    server: &SyncServer,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<()> {
+    // No model reads the workarounds, so they run on a night with no seat.
+    let workarounds = server.vault().run_coach_workaround_skills(admitted, now)?;
+    for error in &workarounds.errors {
+        tracing::warn!(%error, "a workaround-skill write rolled back");
+    }
+    tracing::info!(
+        captures = workarounds.captures,
+        unread = workarounds.unread,
+        groups = workarounds.groups,
+        nominations = workarounds.nominations,
+        created = workarounds.skills_created,
+        dup = workarounds.skills_dup,
+        collisions = workarounds.collisions,
+        withheld = workarounds.withheld,
+        "the Coach distilled workaround skills"
+    );
     // With no seat the sittings stay pending for a night that has one.
     let runtime = server.ai.model_runtime();
     if runtime.seat(coach_role(runtime)).is_none() {
@@ -556,6 +586,8 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let wire = parse_notes(&text).ok_or_else(|| {
             Error::InvalidConfig("the Coach's distill answer holds no notes".into())
         })?;
+        // The owner's cap on a note this vault writes (`actor_claims.note.max_bytes`).
+        let max_bytes = self.vault.actor_note_max_bytes()?;
         let notes: Vec<ActorNote> = wire
             .notes
             .into_iter()
@@ -567,7 +599,7 @@ impl SessionActorDistiller for HostDistiller<'_> {
                     _ => return None,
                 };
                 let text = note.text.trim();
-                if text.is_empty() || text.len() > ACTOR_NOTE_MAX_BYTES {
+                if text.is_empty() || text.len() > max_bytes {
                     return None;
                 }
                 Some(ActorNote {

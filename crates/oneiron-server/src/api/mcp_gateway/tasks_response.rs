@@ -959,8 +959,9 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
-/// takes the person's own proof (OF-417), an attendee ask's answer the
-/// owner's own authorship (OF-365), and the owner's own `vault.delete` his
+/// takes the person's own proof (OF-417), an ask's answer the owner's own
+/// authorship (OF-365) or else the answering person's person-tier proof
+/// (UC-05), and the owner's own `vault.delete` his
 /// authorship and this host's slip issuer, so deleting a Connect guest's
 /// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
 /// none here, and a code-mode call's host origin suppresses either in the

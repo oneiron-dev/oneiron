@@ -48,7 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
 | `src/llm/logprobs.rs` | src | s | 1 struct · 2 fn | TokenScore | Borrowed views over a reply token's reported scores |
-| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn · 1 type | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
+| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 2 fn · 1 type | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
 | `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 8 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
 | `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 6 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/replay.rs` | src | s | 1 enum · 3 fn | MediaReplayKey | A media call's replay key (FIX 465, FIX 2962): the name a repeat of one call shares with the first, so the… |
