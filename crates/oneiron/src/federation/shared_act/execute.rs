@@ -153,6 +153,12 @@ impl Vault {
         // signed withdrawal (FIX 12335).
         let mut handover_ids = (Vec::new(), Vec::new());
         let mut unsigned_withdrawals = Vec::new();
+        // An `add_owner` act that names a workspace seats that workspace's
+        // house mind, not a person (FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER).
+        let house_seat = kind == SharedActKind::AddOwner
+            && decode::<AddOwnerPlan>(&act.payload)?
+                .house_workspace
+                .is_some();
         let effect = match kind {
             SharedActKind::DeleteVault => {
                 let plan: DeleteVaultPlan = decode(&act.payload)?;
@@ -178,6 +184,9 @@ impl Vault {
                     detach: None,
                     notify: BTreeSet::new(),
                 }
+            }
+            SharedActKind::AddOwner if house_seat => {
+                self.house_owner_seat_effect_in_txn(&mut txn, &act, now)?
             }
             SharedActKind::AddOwner => {
                 let plan: AddOwnerPlan = decode(&act.payload)?;
