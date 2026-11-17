@@ -208,6 +208,12 @@ pub struct SyncServerConfig {
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
     /// everywhere else, and no config file, settings file or environment sets it.
     pub hosted_private_origins: std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateOrigin>,
+    /// The private networks a managed node's egress guard admits, from
+    /// `--hosted-private-network` in managed boot alone
+    /// (HOSTED-EGRESS-OPERATOR-SETTING); empty everywhere else, and no config
+    /// file, settings file or environment sets it.
+    pub hosted_private_networks:
+        std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateNetwork>,
 }
 
 /// Who authenticates the requests a server takes, as its serve entry
@@ -275,6 +281,7 @@ impl Default for SyncServerConfig {
             trusted_organ_builds: std::collections::BTreeSet::new(),
             release_payment_credentials_unfenced: false,
             hosted_private_origins: std::collections::BTreeSet::new(),
+            hosted_private_networks: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -687,8 +694,10 @@ impl ServeConfig {
             agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             release_payment_credentials_unfenced: self.release_payment_credentials_unfenced,
-            // Managed boot alone sets it (FIX 7657).
+            // Managed boot alone sets these (FIX 7657,
+            // HOSTED-EGRESS-OPERATOR-SETTING).
             hosted_private_origins: std::collections::BTreeSet::new(),
+            hosted_private_networks: std::collections::BTreeSet::new(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

@@ -174,6 +174,18 @@ impl Store {
         pins: &RetrievalPolicyPins,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         let previous = self.retrieval_blend_weight_table_in_txn(wtxn)?;
+        let entry = self.project_retrieval_policy_pins(pins, previous)?;
+        PINS.put(self, wtxn, &(), pins)?;
+        self.write_retrieval_pinned_weights_in_txn(wtxn, &entry)?;
+        Ok(entry)
+    }
+
+    /// Projects pins onto the current weights with the public writer's provenance and checks.
+    fn project_retrieval_policy_pins(
+        &self,
+        pins: &RetrievalPolicyPins,
+        previous: RetrievalBlendWeightTableEntry,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
         let mut provenance = previous.provenance.clone();
         provenance.insert("owner_pins".to_owned(), pins.pins.len().to_string());
         let entry = RetrievalBlendWeightTableEntry {
@@ -185,9 +197,77 @@ impl Store {
         };
         vet_retrieval_blend_weight_table_entry(&entry)
             .map_err(|_| Error::InvalidConfig("invalid retrieval blend weight table".to_owned()))?;
-        PINS.put(self, wtxn, &(), pins)?;
-        TABLE.put(self, wtxn, &(), &entry)?;
         Ok(entry)
+    }
+
+    /// Stores the vetted local projection without changing the source pin bytes.
+    fn write_retrieval_pinned_weights_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        entry: &RetrievalBlendWeightTableEntry,
+    ) -> Result<()> {
+        TABLE.put(self, txn, &(), entry)
+    }
+
+    /// Lands archived pins and their local active-weight projection under the import's guard.
+    pub(crate) fn land_archived_retrieval_pins_rows_in_txn(
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+        use crate::batch::export::RetainedSideHeldBackReason;
+        use crate::batch::export::archive_side_install::{
+            ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+        };
+
+        rows.iter()
+            .map(|row| {
+                let (key, pins) = match decode_archived_row(&PINS, row) {
+                    Ok(decoded) => decoded,
+                    Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+                };
+                if pins.validate().is_err() {
+                    return Ok(ArchivedSideRowOutcome::HeldBack(
+                        RetainedSideHeldBackReason::InvalidValue,
+                    ));
+                }
+                match PINS.get_bytes(vault, txn, &key)? {
+                    Some(stored) if stored == row.source_value => {
+                        return Ok(ArchivedSideRowOutcome::Unchanged);
+                    }
+                    Some(_) => return Ok(ArchivedSideRowOutcome::KeptLive),
+                    None => {}
+                }
+                // Read storage separately so an I/O failure still aborts the import.
+                let previous = match TABLE.get_bytes(vault, txn, &())? {
+                    Some(bytes) => match TABLE.decode_value(&bytes) {
+                        Ok(entry) => entry,
+                        Err(_) => {
+                            return Ok(ArchivedSideRowOutcome::HeldBack(
+                                RetainedSideHeldBackReason::InconsistentCompanion,
+                            ));
+                        }
+                    },
+                    None => RetrievalBlendWeightTableEntry::bootstrap(),
+                };
+                let entry = match vault.store.project_retrieval_policy_pins(&pins, previous) {
+                    Ok(entry) => entry,
+                    Err(_) => {
+                        return Ok(ArchivedSideRowOutcome::HeldBack(
+                            RetainedSideHeldBackReason::InconsistentCompanion,
+                        ));
+                    }
+                };
+                let outcome = install_archived_row(&PINS, vault, txn, permit, &key, row)?;
+                if matches!(outcome, ArchivedSideRowOutcome::Installed) {
+                    vault
+                        .store
+                        .write_retrieval_pinned_weights_in_txn(txn, &entry)?;
+                }
+                Ok(outcome)
+            })
+            .collect()
     }
 
     pub fn tune_retrieval_blend_weights(
@@ -205,6 +285,11 @@ impl Store {
         self.retrieval_blend_tuning_lock
             .lock()
             .map_err(|_| Error::InvariantViolation("retrieval blend tuning mutex poisoned"))
+    }
+
+    /// Acquires the retrieval tuning guard before an owner archive import opens its writer.
+    pub(crate) fn archive_retrieval_tuning_guard(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        self.tuning_guard("archive retrieval tuning skipped inside active write transaction")
     }
 
     /// [`Self::tune_retrieval_blend_weights`] for the Coach's nightly pass: a
