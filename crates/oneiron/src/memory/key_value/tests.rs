@@ -645,7 +645,7 @@ fn malformed_keyed_payloads_are_absent_without_fallback_to_superseded_values() {
         json!({"not_a_stored_value": true}),
     ] {
         let mut body = original.clone();
-        body.value = json_to_rmpv(&value);
+        body.value = json_to_msgpack_value(&value);
         malformed.push(body);
     }
     let mut bad_rung = original;
@@ -782,7 +782,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
         .iter_mut()
         .find(|(key, _)| key.as_str() == Some("generated"))
         .unwrap();
-    *generated = json_to_rmpv(
+    *generated = json_to_msgpack_value(
         &json!({"actor_ref": owner.to_hex(), "max_auto_sensitivity": 2, "auto": true, "receipted": true, "warned": true}),
     );
     let mut bytes = Vec::new();

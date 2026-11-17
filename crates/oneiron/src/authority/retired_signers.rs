@@ -34,11 +34,20 @@
 //!   installs nothing, so revocations can leave the roster with no live root
 //!   key: a cycle of them closes every fence in it, and two roots that each
 //!   revoke themselves on sibling branches both stand. No roster row settles
-//!   that state; FIX [OWNER-ANCHOR-NO-ROOT-RECOVERY] gives the owner anchor
-//!   the way out.
+//!   that state, and the fold names it (`NoRootKey`).
+//! - The pinned root's anchor is the way out (OWNER-ANCHOR-ROOT-RECOVERY): a
+//!   root appointment this install counts closes its fence first, and always.
+//!   It holds every key its ancestry names as a device other than its
+//!   successor, and its line is the appointment and its ancestry, which keeps
+//!   the verdicts its proof fold gave (`root_appointment_judge::Recovered`):
+//!   no fence of a row there closes again, and no such row is refused or
+//!   pruned. A row the appointment's fence excludes closes no fence either,
+//!   so it never makes the appointment, or a later handoff of its successor,
+//!   yield.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::root_appointment_judge::Recovered;
 use super::*;
 
 /// The closed fences: those of the handoffs and revocations that settled or
@@ -48,6 +57,11 @@ pub(super) struct Retirements {
     fences: Vec<Fence>,
     /// The entries that folded through an owner anchor's branch.
     anchored: BTreeSet<AuthorityEntryHash>,
+    /// The handoffs a counted appointment's proof fold closed in its line.
+    recovered_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// Each closed conflict's rows: the handoffs and revocations that fence
+    /// one another round a cycle, all of whose fences closed.
+    conflicts: Vec<BTreeSet<AuthorityEntryHash>>,
 }
 
 #[derive(Debug)]
@@ -71,9 +85,24 @@ enum FenceKind {
     Handoff,
     /// A `RevokeDevice`: it installs nothing.
     Revocation,
+    /// A counted `RootAppointment`: it installs its successor, and always
+    /// closes.
+    Appointment,
 }
 
 impl Fence {
+    /// A counted appointment's fence.
+    fn of_appointment(fence: &super::root_appointment_judge::AppointmentFence) -> Self {
+        Self {
+            row: fence.row,
+            kind: FenceKind::Appointment,
+            vault_id: fence.vault_id,
+            keys: fence.keys.clone(),
+            line: fence.line.clone(),
+            conflict: false,
+        }
+    }
+
     /// Whether `op` closes a fence.
     fn closes(op: &AuthorityOp) -> bool {
         matches!(
@@ -171,13 +200,42 @@ impl Retirements {
             .collect()
     }
 
-    /// The handoffs whose fences are closed, settled or in conflict.
+    /// The handoffs whose fences are closed, settled or in conflict, here or
+    /// in a counted appointment's proof fold.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {
         self.fences
             .iter()
             .filter(|fence| fence.kind == FenceKind::Handoff)
             .map(|fence| fence.row)
+            .chain(self.recovered_handoffs.iter().copied())
             .collect()
+    }
+
+    /// The issue a row refused as `issue` carries: a handoff a counted
+    /// appointment's fence excludes is sealed, not unsettled (PLAN v3 E4).
+    fn sealed_issue(
+        &self,
+        hash: &AuthorityEntryHash,
+        issue: &AuthorityFoldIssue,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &AncestorIndex,
+    ) -> AuthorityFoldIssue {
+        let appointments = || {
+            self.fences
+                .iter()
+                .filter(|fence| fence.kind == FenceKind::Appointment)
+        };
+        if !matches!(issue, AuthorityFoldIssue::UnsettledHandoff(_)) {
+            issue.clone()
+        } else if appointments().any(|fence| fence.signed_outside(hash, entries, &self.anchored)) {
+            AuthorityFoldIssue::RetiredSigner(*hash)
+        } else if appointments()
+            .any(|fence| fence.excludes(hash, entries, ancestors, &self.anchored))
+        {
+            AuthorityFoldIssue::InvalidAncestry(*hash)
+        } else {
+            issue.clone()
+        }
     }
 
     /// Whether a conflict retired a root and installed no successor, so the
@@ -187,6 +245,14 @@ impl Retirements {
         self.fences
             .iter()
             .any(|fence| fence.kind == FenceKind::Handoff && fence.conflict)
+    }
+
+    /// Each closed conflict of the settled graph, after contention and
+    /// pruning, as the set of its rows, of any fence kind: the evidence a
+    /// root appointment's door names as its witnesses, since a fold of its
+    /// ancestry then meets the same conflict (PLAN v3 section 7).
+    pub(super) fn closed_conflicts(&self) -> Vec<BTreeSet<AuthorityEntryHash>> {
+        self.conflicts.clone()
     }
 
     /// Whether `hash` is itself signed, as primary or co-signer, by a key a
@@ -236,6 +302,7 @@ pub(super) fn settle_handoffs(
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &AncestorIndex,
     eligible: Option<&BTreeSet<AuthorityEntryHash>>,
+    recovered: &Recovered,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) -> Retirements {
     let mut refused: BTreeMap<_, _> = states
@@ -243,14 +310,15 @@ pub(super) fn settle_handoffs(
         .filter(|hash| {
             matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
                 && eligible.is_some_and(|eligible| !eligible.contains(*hash))
+                && !recovered.holds(hash)
         })
         .map(|handoff| (*handoff, AuthorityFoldIssue::UnsettledHandoff(*handoff)))
         .collect();
-    let retirements = close_fences(states, entries, ancestors, &mut refused);
+    let retirements = close_fences(states, entries, ancestors, recovered, &mut refused);
     let gone = with_descendants(states, &refused, ancestors);
     states.retain(|hash, _| {
         if let Some(issue) = refused.get(hash) {
-            issues.push(issue.clone());
+            issues.push(retirements.sealed_issue(hash, issue, entries, ancestors));
         } else if gone.contains(hash) {
             issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
         }
@@ -289,6 +357,7 @@ fn close_fences(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &AncestorIndex,
+    recovered: &Recovered,
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
     let gone = with_descendants(states, refused, ancestors);
@@ -297,9 +366,24 @@ fn close_fences(
         .filter(|(hash, state)| state.anchor_entries.contains(*hash))
         .map(|(hash, _)| *hash)
         .collect();
+    // A counted appointment's fence closes first, and always: no row its
+    // line holds and no row it excludes takes part below.
+    let appointed: Vec<Fence> = recovered
+        .fences
+        .iter()
+        .filter(|fence| states.contains_key(&fence.row))
+        .map(Fence::of_appointment)
+        .collect();
     let fences: Vec<Fence> = states
         .keys()
-        .filter(|hash| !gone.contains(*hash) && Fence::closes(&entries[*hash].op))
+        .filter(|hash| {
+            !gone.contains(*hash)
+                && !recovered.holds(hash)
+                && Fence::closes(&entries[*hash].op)
+                && !appointed
+                    .iter()
+                    .any(|fence| fence.excludes(hash, entries, ancestors, &anchored))
+        })
         .map(|row| Fence::of(row, states, entries, ancestors))
         .collect();
     let count = fences.len();
@@ -367,21 +451,30 @@ fn close_fences(
         })
         .map(|i| fences[i].row)
         .collect();
+    let conflicts: BTreeSet<BTreeSet<AuthorityEntryHash>> = (0..count)
+        .filter(|&i| closed[i] == Some(true) && members[i].len() > 1)
+        .map(|i| members[i].iter().map(|&j| fences[j].row).collect())
+        .collect();
     let retirements = Retirements {
-        fences: fences
+        fences: appointed
             .into_iter()
-            .zip(closed)
-            .zip(&members)
-            .filter_map(|((fence, closed), members)| {
-                (closed == Some(true)).then_some(Fence {
-                    conflict: members.len() > 1,
-                    ..fence
-                })
-            })
+            .chain(fences.into_iter().zip(closed).zip(&members).filter_map(
+                |((fence, closed), members)| {
+                    (closed == Some(true)).then_some(Fence {
+                        conflict: members.len() > 1,
+                        ..fence
+                    })
+                },
+            ))
             .collect(),
         anchored,
+        recovered_handoffs: recovered.closed_handoffs.clone(),
+        conflicts: conflicts.into_iter().collect(),
     };
-    for hash in states.keys().filter(|hash| !gone.contains(*hash)) {
+    for hash in states
+        .keys()
+        .filter(|hash| !gone.contains(*hash) && !recovered.holds(hash))
+    {
         if retirements
             .fences
             .iter()
@@ -399,15 +492,19 @@ fn close_fences(
 }
 
 /// Whether a door reads `entry` as an owner anchor's row, which rests on no
-/// roster key: a root record its own anchor signs, or a machine mark signed
-/// alone by a key `anchor` names as the anchor of a root.
+/// roster key: a root record its own anchor signs, or a machine mark or a
+/// root appointment signed alone by a key `anchor` names as the anchor of a
+/// root.
 fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
     entry.cosigns.is_empty()
         && match (&entry.op, &entry.signer.public_key) {
             (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {
                 *key == record.anchor_key
             }
-            (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key)) => anchor(key),
+            (
+                AuthorityOp::MachineProfile(_) | AuthorityOp::RootAppointment(_),
+                AuthorityKey::Ed25519(key),
+            ) => anchor(key),
             _ => false,
         }
 }
@@ -496,6 +593,17 @@ impl AuthorityFold {
     /// pass together on their first arrival. A held root counts on any branch:
     /// a mark parented beside it passes here, and the fold routes it through
     /// the roster and fences it there, so it stays inert (Wonder W2-F1).
+    ///
+    /// The admission bridge (OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3 section 7):
+    /// a root appointment's own ancestry never counts against it, since its
+    /// witnesses are the refused rows that leave the roster with no root key
+    /// and the fold judges it over them; only its own signer does, as any
+    /// anchor row's. A row reached through an appointment this install counts
+    /// ([`Self::counts_arriving_appointment`]) stands on none of that
+    /// appointment's line: the walk stops there, so a row stands on a refused
+    /// row of the line only through a path that avoids the appointment
+    /// (E3's path-sensitive barrier). Every other appointment is walked
+    /// through as any row is.
     pub(crate) fn stands_on_retired_key(
         &self,
         hash: &AuthorityEntryHash,
@@ -524,6 +632,7 @@ impl AuthorityFold {
                 _ => None,
             })
             .collect();
+        let appointment = matches!(entry.op, AuthorityOp::RootAppointment(_));
         let mut arriving = vec![(*hash, entry.clone())];
         let mut seen = BTreeSet::new();
         let mut stack = entry.parent_hashes.clone();
@@ -537,7 +646,9 @@ impl AuthorityFold {
             let Some(ancestor) = row(&parent)? else {
                 continue;
             };
-            stack.extend(ancestor.parent_hashes.iter().copied());
+            if appointment || !self.counts_arriving_appointment(&parent, &ancestor, row)? {
+                stack.extend(ancestor.parent_hashes.iter().copied());
+            }
             arriving.push((parent, ancestor));
         }
         let anchors: BTreeSet<[u8; 32]> = arriving
@@ -548,10 +659,55 @@ impl AuthorityFold {
             })
             .chain(self.root_anchors.keys().copied())
             .collect();
-        Ok(arriving.iter().any(|(hash, row)| {
+        let stands_retired = |hash: &AuthorityEntryHash, row: &AuthorityLogEntry| {
             !self.valid_entries.contains(hash)
                 && !anchor_signed(row, |key| anchors.contains(key))
                 && entry_signer_keys(row).any(|key| self.retired_keys.contains(key))
-        }))
+        };
+        if appointment {
+            return Ok(stands_retired(hash, entry));
+        }
+        Ok(arriving.iter().any(|(hash, row)| stands_retired(hash, row)))
+    }
+
+    /// Whether this install counts `entry`, an appointment at `hash` it does
+    /// not hold yet: the anchor of its pinned root signs it for that root,
+    /// its log burns no such anchor, and its verdict over its own ancestry,
+    /// read through `row`, is valid (PLAN v3 sections 4 and 5). An
+    /// appointment with an ancestor `row` cannot read is not counted here,
+    /// and neither is any other row.
+    fn counts_arriving_appointment(
+        &self,
+        hash: &AuthorityEntryHash,
+        entry: &AuthorityLogEntry,
+        row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
+    ) -> crate::error::Result<bool> {
+        let (AuthorityOp::RootAppointment(appointment), Some(pin)) =
+            (&entry.op, self.pinned_root.as_ref())
+        else {
+            return Ok(false);
+        };
+        if appointment.root != pin.id
+            || RootAppointment::anchor_key(entry) != Some(pin.anchor_key)
+            || self.issues.iter().any(|issue| {
+                matches!(issue, AuthorityFoldIssue::AnchorBurned { anchor }
+                    if *anchor == pin.anchor_key)
+            })
+        {
+            return Ok(false);
+        }
+        let mut rows = BTreeMap::from([(*hash, entry.clone())]);
+        let mut stack = entry.parent_hashes.clone();
+        while let Some(parent) = stack.pop() {
+            if rows.contains_key(&parent) {
+                continue;
+            }
+            let Some(ancestor) = row(&parent)? else {
+                return Ok(false);
+            };
+            stack.extend(ancestor.parent_hashes.iter().copied());
+            rows.insert(parent, ancestor);
+        }
+        Ok(super::root_appointment_judge::verdict_of_row(&rows, hash) == AppointmentVerdict::Valid)
     }
 }
