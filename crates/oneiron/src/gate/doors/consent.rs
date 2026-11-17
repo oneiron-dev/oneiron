@@ -7,6 +7,7 @@ use crate::error::{Error, GateError, Result};
 use crate::gate::ceiling::PolicyApprovalCeiling;
 use crate::gate::constants::POLICY_SCHEMA_VERSION;
 use crate::gate::decision::{GateDecision, GateOutcome};
+use crate::gate::effect::ApprovalTarget;
 use crate::gate::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateContentKind, GateEvaluatorInput, GateProvenanceHandles,
@@ -54,6 +55,10 @@ impl GateConsentBinding {
 
 /// The diff handle an external-effect decision on `input` records: its
 /// actor, verb, channel, refs, standing grant, scoped call and risk, hashed.
+/// FIX [GATE-EFFECT-BINDING-NO-CALL-IDENTITY]: a scoped call pinned to its
+/// target is bound to that one call too (its attempt, call sequence and the
+/// digest of the bytes its preparation froze), so two held calls of one tool
+/// hold two pending receipts and a retry of either finds its own.
 fn external_effect_diff_handle(input: &GateEvaluatorInput) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hash_bytes(&mut hasher, b"oneiron.gate.external_effect.v0");
@@ -81,6 +86,15 @@ fn external_effect_diff_handle(input: &GateEvaluatorInput) -> Vec<u8> {
                     hash_str(&mut hasher, &call.tool);
                     hash_str(&mut hasher, call.payload_data_class.as_str());
                     hash_str(&mut hasher, &call.resolved_endpoint);
+                    // Appended only when set, so every input with no pinned
+                    // scoped target keeps the handle it had.
+                    if let Some(ApprovalTarget::ScopedMcp(facts)) =
+                        input.provenance.approval_target.as_ref()
+                    {
+                        hash_bytes(&mut hasher, &facts.attempt_id);
+                        hash_bytes(&mut hasher, &facts.call_seq.to_be_bytes());
+                        hash_bytes(&mut hasher, &facts.payload_digest);
+                    }
                 }
                 None => hash_bool(&mut hasher, false),
             }
