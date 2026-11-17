@@ -1657,7 +1657,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/agent_dispatch/resident_tests.rs",
@@ -6945,7 +6945,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/world_kit_gate.rs",
@@ -8174,6 +8174,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_rewrite_fixture.rs",
+     "purpose": "Test fixture: copies a whole-vault archive member by member with its manifest or one JSONL record file…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -8567,7 +8577,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 15
      }
     },
@@ -17030,7 +17040,7 @@
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -18736,14 +18746,6 @@
       "fn": 1,
       "re-export": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/code_run/agent_authoring/tests.rs",
-     "purpose": "`vault.agents.put` from guest code through the SDK bridge into the leased host dispatcher: dispositions, no…",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -28688,7 +28690,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/critic/review/tests.rs",
@@ -30706,13 +30708,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/assembly.rs",
      "purpose": "Store-backed mechanical inputs for the consolidation executor",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -30819,7 +30821,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "Conflict and bucket identities for consolidation candidates and swarm returns",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 8,
       "re-export": 1,
       "struct": 9
@@ -30832,7 +30834,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 39
      }
     },
     {
@@ -30858,7 +30860,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "Partition executor: runs one prepared consolidation partition end to end",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "re-export": 2,
       "struct": 1
      }
@@ -30882,9 +30884,19 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 36,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/decisions/execution.rs",
+     "purpose": "Runs the one typed pack execution every verdict read shares: the verdict shell, the role seal, the scoped…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -30894,7 +30906,17 @@
      "path": "src/dreamer_consolidation/executor/decisions/identity_choice.rs",
      "purpose": "The one final identity choice (FIX 8693)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/decisions/native_parity.rs",
+     "purpose": "Runs the native pack oracle for the extraction parity test: one whole resolution read over fixture operands…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -30904,7 +30926,7 @@
      "path": "src/dreamer_consolidation/executor/decisions/read.rs",
      "purpose": "The scoped typed read every Dreamer pack shares (OF-498a): questions over a state through the host's ladder…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -30916,7 +30938,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 20,
       "fn": 2,
       "struct": 1
      }
@@ -30938,7 +30960,7 @@
      "path": "src/dreamer_consolidation/executor/extraction/corrections.rs",
      "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: per candidate, one…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 13
      }
     },
     {
@@ -30968,7 +30990,7 @@
      "path": "src/dreamer_consolidation/executor/extraction/wire.rs",
      "purpose": "The extraction reply's wire (FIX 7506, ARCH-0026 row 1): its contract's shape, and how a reply's call-local…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -30988,7 +31010,7 @@
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
      "purpose": "A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 16
      }
     },
     {
@@ -31039,6 +31061,86 @@
      "purpose": "The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_pack.rs",
+     "purpose": "The bound Extraction verdict's checked pack rebuild and lent execution: question keys and canonical options…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_pack/checks.rs",
+     "purpose": "Shared extraction operand checks for the verdict and the observations page",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_pack/execution.rs",
+     "purpose": "Runs one checked extraction pack read through the native typed read with the lent wording",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_pack/finals.rs",
+     "purpose": "The final-round rebuilds behind `rebuild_checked_pack`: the correction and conflict identity finals with…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_pack/observed_beside.rs",
+     "purpose": "Rebuilds the crate's observed-beside conflict route over verified bound operands",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_pack/reads.rs",
+     "purpose": "The bound-only rebuild orchestration behind `rebuild_checked_pack`: checked candidate rows, native grouping…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_step.rs",
+     "purpose": "One bound generative extraction step over served TURN spans",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extraction_step/reply.rs",
+     "purpose": "Checks and decodes a bound reply through the native wire and quote binder",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31139,9 +31241,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 45,
       "mod": 5,
-      "re-export": 25
+      "re-export": 27
      }
     },
     {
@@ -31569,8 +31671,58 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 41,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/bound_read.rs",
+     "purpose": "A bound verdict's rebuilt read projection of its queued branch",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/bound_read/evidence.rs",
+     "purpose": "Bound observation verification through the shared native evidence reader",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/bound_read/extraction_routing_door.rs",
+     "purpose": "Native extraction routing choices for parity tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/bound_read/observations.rs",
+     "purpose": "Bound extraction observation reads in the caller transaction",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/extraction_scope.rs",
+     "purpose": "One child's attenuated extraction scope, shared by native slices and bound steps",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -31602,7 +31754,7 @@
      "path": "src/dreamer_consolidation/resources/parts.rs",
      "purpose": "A branch's declared sources (FIX 7524): every part's conversation and its queued TURNs, pinned at one revision",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -31612,7 +31764,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -31632,7 +31784,7 @@
      "path": "src/dreamer_consolidation/resources/restated.rs",
      "purpose": "A candidate that restates the Dreamer's own unvetted head is already said (FIX 12043), whether or not the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -31646,23 +31798,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources/signals.rs",
      "purpose": "Actor- and branch-filtered graph/vector inputs for mechanical selection",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 12
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources/slices.rs",
      "purpose": "Read-only extraction children attenuated from one prepared branch",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -31802,7 +31954,7 @@
      "path": "src/dreamer_consolidation/routing.rs",
      "purpose": "Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "re-export": 1,
       "struct": 1,
@@ -32068,7 +32220,6 @@
       "ConflictSettleReceipt",
       "ConflictSettlement",
       "OpenConflict",
-      "ParkedConflictPass",
       "RevertedSettlement",
       "SettledAnswer",
       "SettledConflict"
@@ -32077,10 +32228,10 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 2,
-      "fn": 4,
-      "struct": 8
+      "fn": 1,
+      "struct": 7
      }
     },
     {
@@ -32088,7 +32239,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/settle/decision_pages.rs",
-     "purpose": "A parked conflict's settlement in pages (Rule 5, FIX 7636, FIX 7637)",
+     "purpose": "The engine's single bound settlement ask and shared page splitting",
      "surface": {
       "crate-vis": 6
      }
@@ -32098,9 +32249,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/settle/decision_projection.rs",
-     "purpose": "A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained…",
+     "purpose": "The engine's projection of one bound settlement ask (FIX 7506 P2)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 5
      }
     },
     {
@@ -32202,11 +32353,16 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SpentObservation",
+      "StepChargeTally"
+     ],
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 20,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -32312,7 +32468,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/person_extraction.rs",
@@ -32988,17 +33144,87 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DreamerDecisionLender"
+     ],
+     "path": "src/dreamer_runner/attempt_binding/decisions.rs",
+     "purpose": "A conflict-settlement attempt's bound settlement ask (`ai.verdict`)",
+     "surface": {
+      "crate-vis": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/attempt_binding/extraction_decisions.rs",
+     "purpose": "Request rules and facet dispatch for a checked extraction verdict pack",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/attempt_binding/extraction_evidence.rs",
+     "purpose": "One-snapshot evidence checks for a bound extraction verdict pack",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExtractionDecisionLoan"
+     ],
+     "path": "src/dreamer_runner/attempt_binding/extraction_execution.rs",
+     "purpose": "The borrowed pass resources for one checked extraction pack read",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/attempt_binding/extraction_step_inputs.rs",
+     "purpose": "One-snapshot checks and served words for a bound extraction generation step",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExtractionStepLoan",
+      "ExtractionStepRequest"
+     ],
+     "path": "src/dreamer_runner/attempt_binding/extraction_steps.rs",
+     "purpose": "Bound extraction generation with borrowed pass resources and request-hash receipts",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/attempt_binding/invocation.rs",
-     "purpose": "A bound client's verb calls: the strength facet's two operations, each through its row's one verb-hook…",
+     "purpose": "A bound client's verb calls, limited to its admitted Dreamer facet",
      "surface": {
       "fn": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerAttemptBinding"
@@ -33006,8 +33232,9 @@
      "path": "src/dreamer_runner/attempt_binding/mod.rs",
      "purpose": "The native Dreamer attempt binding (untangle 6.9c, RULING S69C-DESIGN item 5): the in-process credential a…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
+      "crate-vis": 2,
+      "fn": 4,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -34361,6 +34588,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/conflict_settle.rs",
+     "purpose": "Conflict settlement runs on the maintenance lane with a host's lent runner",
+     "surface": {
+      "const": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ContributionForks",
       "ContributionReplayHost"
@@ -34892,8 +35130,8 @@
       "const": 3,
       "crate-vis": 23,
       "fn": 1,
-      "mod": 27,
-      "re-export": 12
+      "mod": 28,
+      "re-export": 13
      }
     },
     {
@@ -36762,7 +37000,7 @@
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 5,
       "re-export": 3,
       "struct": 1,
       "trait": 1
@@ -37076,7 +37314,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/delta/tests.rs",
@@ -38027,7 +38265,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/judgment_cells.rs",
@@ -38340,7 +38578,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
@@ -39901,7 +40139,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/code_check.rs",
-     "purpose": "The checked-in `src/task_verb/code-mode.d.ts`, which a shadow check's oracle fixtures read, is the verb…",
+     "purpose": "The checked-in `src/task_verb/code-mode.d.ts` is the verb table's rendering of `self.memory`, and the…",
      "surface": {}
     },
     {
@@ -39916,20 +40154,12 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/engine_executor/tests/host_services.rs",
-     "purpose": "F12 (H129): generated executor code reaches the host through `self.*` and its own recorded outputs alone",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
      "path": "src/engine_executor/tests/memory_rows.rs",
      "purpose": "The memory rows a run answers itself (`search`, `put_claim`, `supersede_claim`, `put_edge`) are verb-table…",
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/output_decay.rs",
@@ -44550,7 +44780,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/repair_tests.rs",
@@ -51267,7 +51497,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "mod": 12,
       "re-export": 33
      }
@@ -52076,7 +52306,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 3
      }
     },
@@ -52100,7 +52330,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 7
      }
@@ -52155,6 +52385,16 @@
      "purpose": "A durable step's recovery from its saved work, moved out of `execute` for FIX 4816: the memo or saved…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/request_hash_step.rs",
+     "purpose": "Request-hash durable steps: bound submits and receipts without a submission row",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -52279,6 +52519,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/step_result.rs",
+     "purpose": "Shared model-step result conversion: a durable outcome to its saved result",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -52345,7 +52595,7 @@
      "path": "src/llm/step/types.rs",
      "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "re-export": 3
      }
     },
@@ -54222,7 +54472,7 @@
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 8,
       "re-export": 1
      }
@@ -54287,7 +54537,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/conversation_list/tests.rs",
@@ -56972,7 +57222,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/witness_policy.rs",
@@ -68527,7 +68777,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/tests.rs",
@@ -78991,6 +79241,24 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConflictAlternative",
+      "ConflictMember",
+      "ConflictsPage",
+      "ConflictsPageRequest",
+      "ObservedConflict"
+     ],
+     "path": "src/snapshot_read/conflicts_page.rs",
+     "purpose": "Bounded pages of the open conflicts a reader may settle (untangle 6.9d PR 1): each `conflict.open` marker…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "EvidenceSpans",
       "EvidenceSpansRequest"
      ],
@@ -78998,9 +79266,88 @@
      "purpose": "`vault.evidence.spans`: exact byte spans of one TURN's text, or one source's version, through the caller's…",
      "surface": {
       "const": 2,
+      "crate-vis": 2,
       "fn": 2,
       "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExtractionInputsPage",
+      "ExtractionInputsPageRequest",
+      "ExtractionPolicy",
+      "ExtractionTurn"
+     ],
+     "path": "src/snapshot_read/extraction_inputs.rs",
+     "purpose": "Bounded pages of one queued extraction attempt's reachable TURNs and effective policy",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/snapshot_read/extraction_observations.rs",
+     "purpose": "Pinned, bounded facts for the operands of one live extraction attempt",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/snapshot_read/extraction_observations/facts.rs",
+     "purpose": "Native candidate, admitted prior, replay cohort and stored-vector observations",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/snapshot_read/extraction_observations/paging.rs",
+     "purpose": "Whole-row paging and request-bound pins for extraction observations",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/snapshot_read/extraction_observations/tokens.rs",
+     "purpose": "Domain-separated equality tokens over the native routing keys",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CandidateObservation",
+      "ExtractionObservationsPage",
+      "ExtractionObservationsPageRequest",
+      "ListedObservation",
+      "PriorObservation",
+      "ReplayObservation",
+      "SimilarityScore"
+     ],
+     "path": "src/snapshot_read/extraction_observations/types.rs",
+     "purpose": "Wire facts for a pinned, word-free extraction observations read",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 7
      }
     },
     {
@@ -79010,8 +79357,8 @@
      "path": "src/snapshot_read/mod.rs",
      "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 8
+      "crate-vis": 11,
+      "re-export": 11
      }
     },
     {
@@ -79117,7 +79464,7 @@
      "path": "src/snapshot_read/strength_observations.rs",
      "purpose": "Bounded pages of the Dreamer's strength observations, with the effective strength policy and scoring config…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "re-export": 2,
       "struct": 1
@@ -83830,13 +84177,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/subject_model/tests/authorization.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -91824,6 +92171,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/agent_authoring.rs",
+     "purpose": "Doors for `tests/executor_agent_runtime_tier.rs` (FIX LIBTEST-AGENT-RUNTIME-TIER): authoring an agent…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/agent_definition_scans.rs",
      "purpose": "The two scans that walk every agent definition by its wake cadence, for the proposed-change tests: the…",
      "surface": {
@@ -92288,7 +92645,7 @@
      "path": "src/test_doors/code_run_answer.rs",
      "purpose": "Doors for `tests/code_run_restricted_actor_answer.rs` (OPUS-E2E-1): the actor-bound approval ceiling a…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -92392,6 +92749,19 @@
      "purpose": "Door for `tests/vault_tasks_doors.rs`: the owner's recorded comm-widen choice on one run, which…",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoverageRow"
+     ],
+     "path": "src/test_doors/compaction.rs",
+     "purpose": "Doors for `tests/executor_agent_runtime_tier.rs` (FIX LIBTEST-AGENT-RUNTIME-TIER): the run-bound compaction…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -92677,10 +93047,10 @@
       "ObservedStrengthClaim"
      ],
      "path": "src/test_doors/dreamer_attempt_binding.rs",
-     "purpose": "An admitted strength attempt over one observed Dreamer claim, for the bound job client's tests (untangle…",
+     "purpose": "Admitted strength and conflict-settlement attempts for bound job clients",
      "surface": {
-      "const": 2,
-      "fn": 4,
+      "const": 4,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -92824,6 +93194,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExtractionConversation"
+     ],
+     "path": "src/test_doors/extraction_inputs.rs",
+     "purpose": "One Meso extraction attempt over witnessed TURNs, for integration tests",
+     "surface": {
+      "const": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -92834,6 +93218,68 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/extraction_routing.rs",
+     "purpose": "Thin read-only wrapper over the native extraction routing door",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/extraction_single_valued.rs",
+     "purpose": "Seeds the resolution policy's single-valued predicates for extraction tests",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExtractionStepFixture",
+      "NativeExtractionSlice"
+     ],
+     "path": "src/test_doors/extraction_steps.rs",
+     "purpose": "One admitted extraction attempt's bound step fixture: the verdict parity resources plus a lend switch",
+     "surface": {
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/extraction_verdict.rs",
+     "purpose": "Stored extraction claim fixtures and native-versus-bound verdict parity doors",
+     "surface": {
+      "fn": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExtractionVerdictFixture",
+      "ExtractionVerdictNativePack",
+      "ExtractionVerdictPassResources",
+      "NativePackAnswer",
+      "NativePackSpent"
+     ],
+     "path": "src/test_doors/extraction_verdict/lender.rs",
+     "purpose": "Provides the extraction verdict parity fixture, which lends scripted extraction resources to one admitted…",
+     "surface": {
+      "fn": 9,
+      "struct": 5
      }
     },
     {
@@ -93519,7 +93965,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 255,
+      "mod": 262,
       "re-export": 1
      }
     },
@@ -95994,7 +96440,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/vault/tests.rs",
@@ -97369,6 +97815,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AiVerdictPackEntry",
+      "CandidateOperand",
+      "EarlierAnswer",
+      "ExtractionPack",
+      "ExtractionPart",
+      "ExtractionRead",
+      "PackQuestion",
+      "PinnedClaim",
+      "TurnEvidence"
+     ],
+     "path": "src/verbs/extraction_verdict.rs",
+     "purpose": "The bound Extraction `ai.verdict` pack: the typed state a Dreamer extraction job sends and the engine rebuilds",
+     "surface": {
+      "enum": 2,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/verbs/fanout_launch.rs",
      "purpose": "The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out…",
@@ -97883,7 +98350,7 @@
       "crate-vis": 2,
       "fn": 9,
       "mod": 1,
-      "re-export": 144,
+      "re-export": 145,
       "struct": 9
      }
     },
@@ -104280,6 +104747,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conflicts_page.rs",
+     "purpose": "Pages the Dreamer's open conflicts under the caller's live read grant",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104976,6 +105451,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/executor_agent_runtime_tier.rs",
+     "purpose": "The 9 quarantined `FIX [LIBTEST-AGENT-RUNTIME-TIER]` lib unit tests, moved to one integration binary: they…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -104992,6 +105475,46 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_inputs_page.rs",
+     "purpose": "Pages one queued Meso extraction attempt's TURNs under the caller's live read",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_observations_listing.rs",
+     "purpose": "One bound extraction observations page with its correction-listing facts",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_observations_page.rs",
+     "purpose": "One bound extraction observations page, read as opaque facts without words",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_read_gate.rs",
+     "purpose": "Extraction reads use native's relationship gate without opening general reads",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_read_layout.rs",
+     "purpose": "Bound Extraction read layout refusals carry the rebuilt pages as a typed field",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -105000,12 +105523,64 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_step_listing.rs",
+     "purpose": "The bound extraction step shows the listing its native slice shows, names its layout, and skips an unbound…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_step_reply.rs",
+     "purpose": "Checks bound extraction replies without changing native extraction jobs",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_steps.rs",
+     "purpose": "One bound generative extraction step over served TURN spans",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_steps/support.rs",
+     "purpose": "Shared helpers for the bound extraction step test: vault setup, request builders and one capturing backend",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/extraction_uncitable_claim_head.rs",
      "purpose": "A listed Dreamer-extracted head is marked uncitable, the prompt no longer asks the model to cite one, and a…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_verdict.rs",
+     "purpose": "One bound Extraction `ai.verdict` pack, checked and rebuilt before any loan",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_verdict/support.rs",
+     "purpose": "Shared helpers for the bound extraction verdict tests: vault setup, request builders, and one counting backend",
+     "surface": {
+      "crate-vis": 16
+     }
     },
     {
      "bucket": "s",
@@ -110443,7 +111018,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -110625,7 +111200,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 274,
+     "files": 273,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -110870,7 +111445,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 176,
+     "files": 191,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -110898,7 +111473,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 235,
+     "files": 242,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -110954,7 +111529,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 75,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -111255,7 +111830,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 193,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -111773,7 +112348,7 @@
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
     "snapshot_read": {
-     "files": 11,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -111878,7 +112453,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 259,
+     "files": 267,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -111990,7 +112565,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 158,
+     "files": 159,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -112055,8 +112630,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7984,
-   "test_files": 1764
+   "source_files": 8025,
+   "test_files": 1775
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -120728,6 +121303,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ExtractionCorrectionPair",
+      "ExtractionLayout",
+      "ExtractionStepSlice",
       "MemoryError",
       "MemoryPending",
       "MemoryPolicyDenial",
@@ -120738,10 +121316,10 @@
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
       "const": 25,
-      "enum": 1,
+      "enum": 2,
       "fn": 7,
       "re-export": 1,
-      "struct": 4,
+      "struct": 6,
       "type": 1
      }
     },
@@ -121124,6 +121702,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/extraction_layout_wire.rs",
+     "purpose": "The bound extraction step's layout refusal carries its native slices as the typed `extraction_layout` field…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_id_prefix.rs",
      "purpose": "PLAN-UC-04 stage 0: the id rules against the fingerprint door",
      "surface": {}
@@ -121393,7 +121979,7 @@
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 71,
-   "test_files": 8
+   "test_files": 9
   },
   "oneiron-crypto": {
    "files": [
@@ -124970,15 +125556,232 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/lib.rs",
-     "purpose": "oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A)",
+     "notable": [
+      "AnsweredPack",
+      "ConflictDecision",
+      "Correction",
+      "DecisionAnswer",
+      "DecisionEntry",
+      "EarlierAnswer",
+      "Error",
+      "ExtractionCorrectionPair",
+      "ExtractionLayout",
+      "ExtractionPack",
+      "ExtractionPart",
+      "ExtractionRead",
+      "IdentityRound",
+      "Input",
+      "PackQuestion",
+      "Page",
+      "PinnedClaim",
+      "Resolution",
+      "ResolutionInput",
+      "Step"
+     ],
+     "path": "src/conflict_decisions.rs",
+     "purpose": "Builds bound extraction verdict packs and reduces their answers as pure policy",
      "surface": {
-      "mod": 1
+      "enum": 7,
+      "re-export": 3,
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conflict_decisions/answers.rs",
+     "purpose": "Reads ordered verdict entries and maps canonical claims through served facts",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2
      }
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conflict_decisions/questions.rs",
+     "purpose": "Builds canonical pack questions without wording, labels or byte measures",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conflict_decisions/steps.rs",
+     "purpose": "Reduces a successful verdict history to the next pack or a typed result",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Error",
+      "Input",
+      "Outcome"
+     ],
+     "path": "src/conflict_settle.rs",
+     "purpose": "The consolidation conflict settlement (untangle 6.9d): rules the Dreamer's open conflicts through bound…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conflict_settle/ask_state.rs",
+     "purpose": "The ask state the job mirrors: the bytes an ask reads, the engine's page split, and an ask's canonical options",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Error",
+      "Input",
+      "Outcome",
+      "SetOutcome",
+      "SkipRule"
+     ],
+     "path": "src/extraction_decisions.rs",
+     "purpose": "Decides one bound extraction reply without deriving or writing claims",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/extraction_decisions/skips.rs",
+     "purpose": "Mirrors native no-model rules at the retained conflict identity",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/extraction_decisions/verdict.rs",
+     "purpose": "Calls bound verdicts, consuming only one typed layout refusal per read",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CandidateObservation",
+      "Error",
+      "ListedObservation",
+      "Observations",
+      "Page",
+      "PriorObservation",
+      "ReplayObservation",
+      "SimilarityScore",
+      "SourceVersion"
+     ],
+     "path": "src/extraction_observations.rs",
+     "purpose": "One extraction attempt's consolidation observations, paged to the end",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BoundEvidenceRange",
+      "BoundExtractionCandidate",
+      "BoundExtractionPerson",
+      "BoundExtractionReply",
+      "BoundExtractionSubject",
+      "BoundSourceVersion",
+      "BoundTurnEvidence",
+      "ExtractionOperands",
+      "SkippedExtractionCandidate"
+     ],
+     "path": "src/extraction_reply.rs",
+     "purpose": "Mirrors one bound extraction reply and builds its verdict operands",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AlreadyRepresentedReason",
+      "CandidateRoute",
+      "Correction",
+      "Error",
+      "ExtractionRoutePlan",
+      "JudgeSet",
+      "Route"
+     ],
+     "path": "src/extraction_routing.rs",
+     "purpose": "Routes ready extraction groups against admitted priors and judge sets",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CandidateGroup",
+      "CandidateGroups",
+      "Error",
+      "ExtractionSelectionConfig",
+      "ExtractionSelectionPlan",
+      "ScoredCandidateGroup",
+      "SelectionHold"
+     ],
+     "path": "src/extraction_selection.rs",
+     "purpose": "Groups extraction operands and selects their verified evidence unions",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A)",
+     "surface": {
+      "mod": 8
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "Error",
@@ -124993,21 +125796,119 @@
       "fn": 2,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/strength_scoring.rs",
+     "purpose": "Shared consolidation strength scoring (F6 subset)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conflict_decisions.rs",
+     "purpose": "Pure public-API checks for bound extraction conflict decisions",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_decisions.rs",
+     "purpose": "Pure public-API checks for decision operands and D2 skip policy",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_routing.rs",
+     "purpose": "Checks ordinary routing and observed-beside policy through the public crate API",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_selection.rs",
+     "purpose": "Extraction grouping, union and selection over the shared fixture",
+     "surface": {}
     }
    ],
    "modules": {
-    "strength_archive": {
+    "conflict_decisions": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Builds bound extraction verdict packs and reduces their answers as pure policy"
+    },
+    "conflict_settle": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The consolidation conflict settlement (untangle 6.9d): rules the Dreamer's open conflicts through bound…"
+    },
+    "extraction_decisions": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Decides one bound extraction reply without deriving or writing claims"
+    },
+    "extraction_observations": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
+     "purpose": "One extraction attempt's consolidation observations, paged to the end"
+    },
+    "extraction_reply": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Mirrors one bound extraction reply and builds its verdict operands"
+    },
+    "extraction_routing": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Routes ready extraction groups against admitted priors and judge sets"
+    },
+    "extraction_selection": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Groups extraction operands and selects their verified evidence unions"
+    },
+    "strength_archive": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
      "purpose": "The consolidation strength archive (untangle 6.9c, F6): archives the Dreamer's old, weak claims through…"
+    },
+    "strength_scoring": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Shared consolidation strength scoring (F6 subset)"
     }
    },
    "over_bar": 0,
    "purpose": "oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A)",
-   "source_files": 2,
-   "test_files": 0
+   "source_files": 16,
+   "test_files": 4
   },
   "oneiron-driver": {
    "files": [
@@ -125136,13 +126037,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConflictSettleCursor",
       "DreamerJobsExecutor"
      ],
      "path": "src/supervisor/dreamer_jobs.rs",
      "purpose": "The host adapter for the Dreamer's job crate (untangle 6.9c PR 4, S69-RUN = A): a strength attempt runs…",
      "surface": {
-      "fn": 1,
-      "struct": 1
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExtractionAttemptLender",
+      "ExtractionDecisionGate",
+      "ExtractionDecisionResources"
+     ],
+     "path": "src/supervisor/extraction_decisions.rs",
+     "purpose": "Lends a prepared pass's resources to one extraction attempt's bound calls",
+     "surface": {
+      "fn": 2,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -125156,7 +126075,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 17,
+      "fn": 19,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -125359,7 +126278,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…",
      "surface": {
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -125633,12 +126552,132 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conflict_decisions_packs.rs",
+     "purpose": "Checks crate-built conflict packs against the bound verdict rebuild",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conflict_decisions_packs/support.rs",
+     "purpose": "Big-value bound fixtures for crate conflict pack checks",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_conflict_settle.rs",
+     "purpose": "The production conflict-settlement facet (untangle 6.9d S69D4)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_extraction_loan.rs",
+     "purpose": "Exercises the production extraction lender without switching native extraction jobs",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_extraction_steps.rs",
+     "purpose": "Exercises the production extraction step lender without switching native extraction jobs",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/dreamer_strength_archive.rs",
      "purpose": "The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_decisions.rs",
+     "purpose": "Bound extraction decision orchestration over lent scripted verdicts",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_decisions/support.rs",
+     "purpose": "Lent scripted verdict fixtures for bound extraction decision tests",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_observed_routing.rs",
+     "purpose": "Checks the observed-beside-stated route before any lender call or write",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_observed_routing/support.rs",
+     "purpose": "Adapts crate routing to the same small JSON shape as the native red adapter",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_routing_parity.rs",
+     "purpose": "Native versus crate extraction routing parity over real vaults",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_selection_flow.rs",
+     "purpose": "One extraction selection flow over a real vault without a model",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_selection_parity.rs",
+     "purpose": "Native selection parity for extraction grouping and scoring",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_verdict_observed.rs",
+     "purpose": "Checks crate-routed observed preferences against the engine's bound verdict rebuild",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/extraction_verdict_observed/support.rs",
+     "purpose": "Provides the minimal real-vault fixture for observed verdict checks",
+     "surface": {
+      "crate-vis": 5
+     }
     }
    ],
    "modules": {
@@ -125650,7 +126689,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125680,8 +126719,8 @@
    },
    "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 38,
-   "test_files": 11
+   "source_files": 39,
+   "test_files": 25
   },
   "oneiron-esign-render": {
    "files": [
@@ -145095,6 +146134,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_conflict_binding.rs",
+     "purpose": "A conflict-settlement attempt's job client (untangle 6.9d S69D3): `OneironClient::for_dreamer_attempt` over…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -145233,7 +146280,7 @@
    "over_bar": 0,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 26,
-   "test_files": 11
+   "test_files": 12
   },
   "oneiron-retrieval": {
    "files": [
@@ -148323,6 +149370,16 @@
      "purpose": "Where a Dreamer pass's every leg sends what it reads (FIX 12735): the bound the vending factory states for…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/dreamer/extraction_decisions.rs",
+     "purpose": "The Dreamer pass's live extraction and settlement loans",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -172713,7 +173770,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 145,
+     "files": 146,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -173296,7 +174353,7 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1979,
+   "source_files": 1980,
    "test_files": 455
   },
   "oneiron-setting-contract": {

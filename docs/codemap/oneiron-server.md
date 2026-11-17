@@ -66,6 +66,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer/claim_source_recheck.rs` | src | s | 1 crate-vis | — | The host's loan to the Dreamer's re-check of the claims drawn from a message deleted at the provider and… |
 | `src/ai_host/dreamer/compaction_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative… |
 | `src/ai_host/dreamer/destination_bound.rs` | src | s | 2 crate-vis | — | Where a Dreamer pass's every leg sends what it reads (FIX 12735): the bound the vending factory states for… |
+| `src/ai_host/dreamer/extraction_decisions.rs` | src | s | 3 crate-vis | — | The Dreamer pass's live extraction and settlement loans |
 | `src/ai_host/dreamer/free_time.rs` | src | s | 1 crate-vis | — | A resident's free-time items on this server (FIX 4453) |
 | `src/ai_host/dreamer/pause.rs` | src | s | 5 crate-vis | — | The owner's own pause cause over the Dreamer (`POST /dreamer/pause`, `POST /dreamer/resume`), apart from the… |
 | `src/ai_host/dreamer/request_sources.rs` | src | s | 5 crate-vis | — | The Dreamer's routes as this server sends on them, each able to send one call under the rows the engine read… |
