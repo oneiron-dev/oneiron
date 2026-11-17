@@ -2,7 +2,7 @@
 //! carry-over of a handed-off batch's other files, not TASK completion.
 //! Coverage that supersedes the sources also keeps what closed the conflict,
 //! and that save completes the reconciliation TASK (`update_overlap_links`).
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     BatchState, CheckPhase, MergeBatch, MergeProposal, MergeQueue, QUEUE_CHECK_CANDIDATE_PREFIX,
@@ -57,7 +57,7 @@ impl MergeQueue<'_> {
         // green batch has since landed that path. Those paths wait below,
         // beside the conflicted ones, before any source is superseded.
         let unshared = unshared_batch_paths(link, retained, &remaining);
-        let mut unshared_remaining = unshared.clone();
+        let mut unshared_remaining: BTreeSet<_> = unshared.keys().cloned().collect();
         let mut successor = None;
         let mut last_green = None;
         let mut recorded = false;
@@ -97,7 +97,7 @@ impl MergeQueue<'_> {
                         }
                         if !unshared.is_empty() {
                             carried.extend(
-                                self.applied_proposal_paths(&open, proposal, &batch.id, &unshared)?,
+                                self.applied_proposal_paths(&open, proposal, &batch, &unshared)?,
                             );
                         }
                     }
@@ -227,15 +227,20 @@ impl MergeQueue<'_> {
     /// The `wanted` paths `candidate` landed as an applied proposal of
     /// `applied_batch`, by any operation: an unshared file is carried by a
     /// fresh proposal that lands it, not by a resolution, whose guard
-    /// names only a conflicted path. The applied checks are the ones
-    /// [`Self::conflict_proposal_paths`] makes for a green batch.
+    /// names only a conflicted path. It must follow every pending source
+    /// that writes the path; the source's base green predates its acceptance.
+    /// Missing acceptance order proves no carry-over. The applied checks are
+    /// the ones [`Self::conflict_proposal_paths`] makes for a green batch.
     fn applied_proposal_paths(
         &self,
         open: &RepoConflictClaim,
         candidate: &MergeProposal,
-        applied_batch: &str,
-        wanted: &BTreeSet<String>,
+        applied_batch: &MergeBatch,
+        wanted: &BTreeMap<String, Option<u64>>,
     ) -> Result<Vec<String>> {
+        let Some(order) = &applied_batch.run_order else {
+            return Ok(Vec::new());
+        };
         let Some(row) = EntityId::from_hex(&candidate.id)
             .ok()
             .map(|id| self.vault.repo_proposal(id))
@@ -248,7 +253,7 @@ impl MergeQueue<'_> {
             != repo_mutation_repo_key(&open.repo_ref)
             || row.status != RepoProposalStatus::Applied
             || row.operation_seq.is_none()
-            || row.merge_stack.as_deref() != Some(applied_batch)
+            || row.merge_stack.as_deref() != Some(applied_batch.id.as_str())
         {
             return Ok(Vec::new());
         }
@@ -256,7 +261,11 @@ impl MergeQueue<'_> {
             .files
             .iter()
             .filter(|file| {
-                wanted.contains(&file.path)
+                wanted
+                    .get(&file.path)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|sequence| order.sequence > sequence)
                     && candidate
                         .files
                         .iter()
@@ -328,30 +337,34 @@ impl MergeQueue<'_> {
 }
 
 /// Every path an unlanded batch of `link` writes that `conflicted` does not
-/// name: the files that batch would lose when it ends Superseded, among
-/// them a bundle source's unshared files. A landed batch keeps its state
-/// and its receipt when its link supersedes, so only the states that end
-/// Superseded count, as in `update_overlap_links`.
+/// name, with the latest source acceptance sequence a carrying batch must
+/// follow. An unknown source order keeps the path uncarried. A landed batch
+/// keeps its state and its receipt when its link supersedes, so only the
+/// states that end Superseded count, as in `update_overlap_links`.
 fn unshared_batch_paths(
     link: &QueueConflictLink,
     retained: &[MergeBatch],
     conflicted: &BTreeSet<String>,
-) -> BTreeSet<String> {
-    retained
-        .iter()
-        .filter(|batch| {
-            link.batches.contains(&batch.id)
-                && matches!(
-                    batch.state,
-                    BatchState::Queued | BatchState::Staged | BatchState::Ready
-                )
-        })
-        .flat_map(|batch| {
-            batch
-                .proposals
-                .iter()
-                .flat_map(|proposal| proposal.files.iter().map(|file| file.path.clone()))
-        })
-        .filter(|path| !conflicted.contains(path))
-        .collect()
+) -> BTreeMap<String, Option<u64>> {
+    let mut unshared = BTreeMap::new();
+    for batch in retained.iter().filter(|batch| {
+        link.batches.contains(&batch.id)
+            && matches!(
+                batch.state,
+                BatchState::Queued | BatchState::Staged | BatchState::Ready
+            )
+    }) {
+        let sequence = batch.run_order.as_ref().map(|order| order.sequence);
+        for file in batch.proposals.iter().flat_map(|proposal| &proposal.files) {
+            if !conflicted.contains(&file.path) {
+                unshared
+                    .entry(file.path.clone())
+                    .and_modify(|latest: &mut Option<u64>| {
+                        *latest = (*latest).zip(sequence).map(|(a, b)| a.max(b));
+                    })
+                    .or_insert(sequence);
+            }
+        }
+    }
+    unshared
 }
