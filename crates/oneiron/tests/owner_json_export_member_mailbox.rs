@@ -45,7 +45,7 @@ use oneiron::temporal::TimeRange;
 use oneiron::write_envelope::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
-use oneiron::{EdgeActorClass, EntityId, Result, Vault, VaultConfig, WriteActor};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, Result, Vault, VaultConfig, WriteActor};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use serde_json::{Value, json};
 
@@ -1005,6 +1005,71 @@ fn owner_copy_withholds_two_hop_side_provenance() {
     assert!(
         !ids.contains(&r_row.to_hex()),
         "R, made from S, stays home with it"
+    );
+    assert!(
+        !mentions(&members, &m.to_hex()),
+        "no byte of the member's row"
+    );
+}
+
+/// A local row with no birth inputs and no binding, written from `from`: an
+/// ordinary `DerivedFrom` edge is the one record of where its words came
+/// from.
+fn a_row_derived_from(vault: &Vault, from: EntityId, words: &[u8]) -> EntityId {
+    let row = EntityId::now();
+    vault
+        .put_entity(
+            &row,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            words,
+        )
+        .expect("a derived row");
+    vault
+        .put_edge(&row, EdgeKind::DerivedFrom, &from, 1.0)
+        .expect("its DerivedFrom edge");
+    row
+}
+
+#[test]
+fn owner_copy_withholds_a_row_derived_from_a_side_provenance_ancestor() {
+    let (fx, (m, s_row, r_row, b_row, c_row)) = fixture_with(SharedVaultPreset::Family, |s| {
+        let m = a_turn(s.vault, s.member_rows);
+        let o = a_turn(s.vault, s.owner_rows);
+        // Only S's version's made_by names the member's mail; no edge does.
+        let s_row = artifact_made_by(
+            s.vault,
+            s.owner,
+            "s.bin",
+            b"s-bytes",
+            &made_by_naming(s.owner, &[m], None),
+        )
+        .artifact;
+        let b_row = artifact_made_by(
+            s.vault,
+            s.owner,
+            "b.bin",
+            b"b-bytes",
+            &made_by_naming(s.owner, &[o], None),
+        )
+        .artifact;
+        let r_row = a_row_derived_from(s.vault, s_row, b"words copied from s");
+        let c_row = a_row_derived_from(s.vault, b_row, b"words copied from b");
+        (m, s_row, r_row, b_row, c_row)
+    });
+    let (_, members, ids) = archive_of(&fx.vault);
+    assert!(
+        ids.contains(&b_row.to_hex()) && ids.contains(&c_row.to_hex()),
+        "control: a row derived from an artifact made from the Owner's own mail goes"
+    );
+    assert!(
+        !ids.contains(&s_row.to_hex()),
+        "FIXTURE: S, made from the member's mail, stays home"
+    );
+    assert!(
+        !ids.contains(&r_row.to_hex()),
+        "R, derived from S by an edge, stays home with it"
     );
     assert!(
         !mentions(&members, &m.to_hex()),

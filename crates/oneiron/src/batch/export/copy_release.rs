@@ -95,7 +95,7 @@ impl MemberMailPass {
 /// holds what the side ledgers record each row's body was made from, read
 /// once in the pass's snapshot, and judges it before any body is read.
 #[derive(Default)]
-pub(super) struct MailboxLineage {
+pub(crate) struct MailboxLineage {
     carried: BTreeSet<EntityId>,
     folded: Vec<(EntityId, EntityId)>,
     receipts: BTreeMap<(EntityId, String), BTreeSet<EntityId>>,
@@ -228,6 +228,25 @@ impl MailboxLineage {
         self.folded
             .extend(names.into_iter().flatten().map(|name| (row, *name)));
         Ok(true)
+    }
+
+    /// Whether the pass's `judge` carries every row `names` a side row
+    /// names, each with every row the side ledgers, its birth and its words
+    /// record it was made from, as [`Self::admits`] judges a row
+    /// ([`SideProvenance::carries_all`]): a side row then never names, nor
+    /// holds text of, a row the copy's entity rows leave out (fix list row
+    /// 15416). They count as carried only once the writer serializes that
+    /// side row ([`Self::ships`]).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(super) fn side_names_carried(
+        &mut self,
+        judge: &mut ExportJudge<'_, '_, '_>,
+        names: &[EntityId],
+    ) -> Result<bool> {
+        self.recorded.carries_all(judge, Some(names))
     }
 
     /// Whether the pass's `judge`, when it has one, carries the row `source`
