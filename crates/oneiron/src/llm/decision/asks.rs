@@ -557,6 +557,7 @@ impl Vault {
                 super::questions::land_owner_health_outcome_in_txn(self, txn, owner, &held)?;
             }
             crate::agent_dispatch::apply_run_budget_answer_in_txn(self, txn, &held)?;
+            crate::agent_dispatch::apply_budget_trap_answer_in_txn(self, txn, &held)?;
             Ok(held)
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).
@@ -567,6 +568,12 @@ impl Vault {
         // observers claim it at once.
         if crate::agent_dispatch::is_run_budget_ask(&answered) {
             self.store.notify_attempt_observers();
+        }
+        // A budget trap answer may have woken parks: admission claims them
+        // at once.
+        if crate::agent_dispatch::is_budget_trap_ask(&answered) {
+            self.store.notify_attempt_observers();
+            self.store.notify_proactivity_changes();
         }
         Ok(answered)
     }

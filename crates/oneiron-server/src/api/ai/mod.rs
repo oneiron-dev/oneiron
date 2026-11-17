@@ -117,11 +117,18 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
             tracing::warn!(%error, "the run-budget asks could not be read");
             Vec::new()
         });
+    // And about Dreamer work parked at a spend cap or a pinned share.
+    let budget_trap_questions = oneiron::agent_dispatch::budget_trap_questions(server.vault())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the budget trap asks could not be read");
+            Vec::new()
+        });
     Json(serde_json::json!({
         "ai": server.ai.status(),
         "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
         "budget_questions": budget_questions,
+        "budget_trap_questions": budget_trap_questions,
     }))
     .into_response()
 }
