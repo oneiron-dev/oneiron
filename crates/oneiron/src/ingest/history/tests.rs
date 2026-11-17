@@ -175,6 +175,7 @@ fn plain_turn(conversation_ref: String, turn_ref: Option<String>) -> WitnessTurn
         conversation_ref,
         turn_ref,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -441,6 +442,7 @@ fn an_import_never_lands_in_a_plain_conversation_at_its_derived_id() {
             conversation_ref: conversation_id.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

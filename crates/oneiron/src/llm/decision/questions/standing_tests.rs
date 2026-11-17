@@ -787,6 +787,7 @@ fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() ->
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 1,
             assertions: Default::default(),
             messages: vec![WitnessMessage {
@@ -871,6 +872,7 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 occurred_at: 1,
                 assertions: Default::default(),
                 messages: vec![WitnessMessage {

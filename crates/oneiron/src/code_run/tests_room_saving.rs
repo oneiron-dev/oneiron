@@ -344,6 +344,7 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
             conversation_ref: shell.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![crate::memory::WitnessMessage {
                 id: None,
                 author: crate::memory::WitnessAuthor::Companion,

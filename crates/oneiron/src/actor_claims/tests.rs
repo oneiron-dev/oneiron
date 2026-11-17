@@ -578,6 +578,7 @@ fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<
                 conversation_ref: conversation.clone(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: None,
                     author: WitnessAuthor::User,

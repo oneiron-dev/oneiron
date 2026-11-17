@@ -240,6 +240,7 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
             conversation_ref: id.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

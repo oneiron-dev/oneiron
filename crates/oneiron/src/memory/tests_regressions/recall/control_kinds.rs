@@ -21,6 +21,7 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
             )],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness");
@@ -137,6 +138,7 @@ fn recall_after_control_writes_fixture_in(
             messages: vec![message],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness message");

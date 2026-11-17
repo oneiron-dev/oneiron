@@ -291,6 +291,7 @@ fn witness_into(
             messages,
             occurred_at: 10,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witnessed turn");

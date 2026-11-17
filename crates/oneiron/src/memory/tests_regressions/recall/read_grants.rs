@@ -155,6 +155,7 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
             messages: vec![message],
             occurred_at: crate::unix_seconds_now(),
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .unwrap();
@@ -225,6 +226,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             messages: vec![allowed],
             occurred_at: crate::unix_seconds_now(),
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("allowed witness");
@@ -247,6 +249,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             messages: vec![message],
             occurred_at: crate::unix_seconds_now(),
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("hidden witness");
@@ -388,6 +391,7 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
             messages: vec![granted, withheld],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness a turn of two messages");

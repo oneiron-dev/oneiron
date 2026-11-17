@@ -39,6 +39,7 @@ fn witness(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages,
             occurred_at: at,
             assertions: Default::default(),

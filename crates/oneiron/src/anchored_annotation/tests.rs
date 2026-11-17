@@ -877,6 +877,7 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
             conversation_ref: other_room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 12,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),

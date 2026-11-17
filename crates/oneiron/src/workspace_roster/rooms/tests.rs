@@ -15,6 +15,7 @@ fn turn(
         conversation_ref: room.to_hex(),
         turn_ref: Some(id.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author,

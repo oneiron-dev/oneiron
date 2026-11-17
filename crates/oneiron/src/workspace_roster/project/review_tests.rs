@@ -57,6 +57,7 @@ fn room_fixture() -> Result<(
         }],
         occurred_at: 2,
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     };
     let user = vault.memory(host, EdgeActorClass::Human);

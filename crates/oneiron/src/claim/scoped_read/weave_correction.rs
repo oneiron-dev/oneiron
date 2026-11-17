@@ -854,6 +854,7 @@ mod tests {
                 conversation_ref: entity(0xc4).to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 occurred_at: 1_000,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),

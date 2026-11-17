@@ -79,6 +79,7 @@ fn quote_fixture() -> Result<SpanFixture> {
             conversation_ref: test_entity_id(55).to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

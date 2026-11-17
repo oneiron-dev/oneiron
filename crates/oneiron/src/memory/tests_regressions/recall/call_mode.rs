@@ -25,6 +25,7 @@ fn recall_at(
             query_affect: None,
             telemetry: None,
             filter: None,
+            operation_id: None,
         },
         |_| vector.map(<[f32]>::to_vec),
     )
@@ -40,6 +41,7 @@ fn witness_said(facade: &Memory<'_>, conversation: u8, said: &str, age_days: u64
             messages: vec![witness_message(0, WitnessAuthor::User, said)],
             occurred_at: crate::unix_seconds_now() - age_days * 86_400,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness");
@@ -152,6 +154,7 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
                 query_affect: None,
                 telemetry: None,
                 filter: None,
+                operation_id: None,
             },
             |_| None,
             &RecallDoor {
@@ -210,6 +213,7 @@ fn a_deadline_that_never_fires_ranks_exactly_as_no_deadline() {
                         query_affect: None,
                         telemetry: None,
                         filter: None,
+                        operation_id: None,
                     },
                     |_| vector.map(<[f32]>::to_vec),
                 )
@@ -267,6 +271,7 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
             )],
             occurred_at: crate::unix_seconds_now() - 3 * 86_400,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness");
@@ -386,6 +391,7 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
             query_affect: None,
             telemetry: None,
             filter: None,
+            operation_id: None,
         },
         |_| {
             // The empty pack is already published when the query embeds.
@@ -453,6 +459,7 @@ fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
                 query_affect: None,
                 telemetry: None,
                 filter: None,
+                operation_id: None,
             },
             |_| None,
             &RecallDoor {

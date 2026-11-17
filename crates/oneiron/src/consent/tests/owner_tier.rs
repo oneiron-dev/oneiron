@@ -186,6 +186,7 @@ fn a_non_owner_persons_proof_witnesses_nothing_into_a_roomless_stretch() {
         conversation_ref: String::new(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,

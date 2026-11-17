@@ -292,6 +292,7 @@ pub(super) fn resident_wakes() -> Result<Case> {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 2,
             messages: vec![WitnessMessage {
                 id: Some(node.to_hex()),
