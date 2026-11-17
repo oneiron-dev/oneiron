@@ -113,7 +113,7 @@ pub(in crate::sync) fn authorize_sync_selector_in_txn(
         .map(|_| ())
 }
 
-fn authorize_selector_export_in_txn(
+pub(super) fn authorize_selector_export_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     grant_scope: FederationGrantScope,
@@ -378,4 +378,4 @@ fn authorized_base_edge_endpoints(
 mod filter;
 mod release;
 pub(super) use filter::filter_window_doc;
-pub(super) use filter::{member_label_access, member_reads_labels};
+pub(super) use filter::{MemberAccess, member_access, member_reads_row, member_reads_word_sources};

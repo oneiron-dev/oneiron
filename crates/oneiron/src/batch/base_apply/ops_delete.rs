@@ -51,6 +51,10 @@ pub(super) fn apply_delete_arm(
     // owes it, and the next pass that can carry ends the line by its own
     // family, or finds a writer's own end already counted.
     crate::federation::owe_torn_grant_end_in_txn(store, wtxn, id)?;
+    // A PERSON or MACHINE row torn here is hard-deleted, marked as a hard
+    // delete marks it, so a slip it holds stops standing (RULING
+    // DELETED-SLIP-BATCH-DELETE = A).
+    crate::deletion::mark_torn_actor_row_in_txn(store, wtxn, &id)?;
     // Capture before tear (R2-F4): a PROJECT row's signed chain
     // is kept as revisions before the row goes.
     let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;

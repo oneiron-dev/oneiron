@@ -162,7 +162,9 @@ fn joining_profile(
 /// live machine under the same id and both the same keys, in the role it
 /// stands in: its role stays [`Vault::set_machine_role`]'s, its keys are
 /// never replaced, and a removed or conflicted machine never comes back. The
-/// next revision tops every chain's, as a role change's does.
+/// next revision tops every head the machine stands under here
+/// ([`FoldedMachine::standing_heads`]), as a role change's does; another
+/// anchor's chain neither numbers it nor refuses it.
 fn class_revision_profile(
     fold: &AuthorityFold,
     owner: EntityId,
@@ -172,7 +174,7 @@ fn class_revision_profile(
     let folded = fold
         .machine(request.machine)
         .ok_or_else(invalid_authority)?;
-    let mut heads: Vec<_> = folded.chains().map(|(_, head)| head).collect();
+    let mut heads = folded.standing_heads(fold.pinned_root.as_ref());
     heads.sort_by_key(|head| head.profile.revision);
     let current = heads.last().ok_or_else(invalid_authority)?;
     if fold.vault_id != Some(request.vault_id)
@@ -263,9 +265,16 @@ impl Vault {
     /// sealed again for the roster it changed. A held answer changes no
     /// roster, as for [`Self::enroll_machine`].
     ///
+    /// The answer is numbered above, copies the identity of, and is refused
+    /// by a removal in the heads the machine stands under on this install
+    /// alone ([`FoldedMachine::standing_heads`]): the roster's and the
+    /// pinned anchor's. The mark of an anchor this install does not pin
+    /// changes none of the three.
+    ///
     /// # Errors
     /// As [`Self::enroll_machine`], and [`invalid_authority`] for a machine no
-    /// revision names or one already removed.
+    /// roster revision and no mark of the pinned anchor names, or one already
+    /// removed there.
     pub fn set_machine_role(
         &self,
         owner: &AuthenticatedOwner,
@@ -278,9 +287,10 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let folded = fold.machine(machine).ok_or_else(invalid_authority)?;
-        // The machine's identity as its newest head names it, the roster's
-        // or an anchor's; the next revision tops every chain's.
-        let mut heads: Vec<_> = folded.chains().map(|(_, head)| head).collect();
+        // The machine's identity as the newest head it stands under names
+        // it, the roster's or the pinned anchor's; the next revision tops
+        // both.
+        let mut heads = folded.standing_heads(fold.pinned_root.as_ref());
         heads.sort_by_key(|head| head.profile.revision);
         let current = heads.last().ok_or_else(invalid_authority)?;
         if heads.iter().any(|head| head.removed) {

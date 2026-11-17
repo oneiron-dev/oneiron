@@ -11,8 +11,10 @@
 //!   row the caller set to `never_allow`, and an `all_manual` tightening.
 //!   Other rows, new grants and facets keep their ordinary checks.
 //! - `vault.shared.execute` (FIX 5139): its `act_id`, when the saved act it
-//!   names deletes the vault, erases or removes an owner. A transfer of
-//!   ownership is not restrictive here.
+//!   names deletes the vault, erases or removes an owner, and the
+//!   `owner_key_revokes` a device of the Owner signed for that removal (row
+//!   HOSTED-OWNER-MOVE-TWO-PHASE): without them a hosted removal is refused.
+//!   A transfer of ownership is not restrictive here.
 
 use serde_json::Value;
 
@@ -55,7 +57,10 @@ pub(super) fn restrictive(vault: &Vault, verb: &str, args: &Value) -> Option<Par
             .then(|| {
                 (
                     "vault.shared.execute",
-                    vec![pinned(&["act_id"], entity)],
+                    vec![
+                        pinned(&["act_id"], entity),
+                        pinned(&["owner_key_revokes"], owner_key_revoke_rows),
+                    ],
                     None,
                     Vec::new(),
                 )
@@ -95,6 +100,17 @@ pub(super) fn wholly_restrictive(vault: &Vault, verb: &str, args: &Value) -> cra
             })
         }
         _ => false,
+    })
+}
+
+/// `vault.shared.execute`'s `owner_key_revokes`, as its door decodes them:
+/// a list of lowercase-hex rows.
+fn owner_key_revoke_rows(value: &Value) -> bool {
+    value.as_array().is_some_and(|rows| {
+        rows.iter().all(|row| {
+            row.as_str()
+                .is_some_and(|text| oneiron_hex::decode_vec(text).is_some())
+        })
     })
 }
 

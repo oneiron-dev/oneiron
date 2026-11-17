@@ -184,6 +184,7 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         // Keep every env in the final full-replacement wake snapshot, then
         // stop. A start that never opened them stops nothing.
         server.stop_shared_envs().await;
+        server.stop_connector_stdio().await;
     }
     (stopped, telemetry_drained)
 }

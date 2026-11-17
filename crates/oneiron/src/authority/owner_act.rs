@@ -471,7 +471,7 @@ impl crate::Vault {
         grant: EntityId,
         act: OwnerActKind,
     ) -> crate::error::Result<GrantedAct> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         self.live_grant_names_act_in_txn(txn, grant, agent, act, now)?;
         Ok(GrantedAct { agent, grant, act })
     }
@@ -487,7 +487,7 @@ impl crate::Vault {
         granted: &GrantedAct,
         act: OwnerActKind,
     ) -> crate::error::Result<EntityId> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         if granted.act != act {
             return Err(authority_refused(GRANT_NAMES_NO_ACT));
         }
@@ -541,7 +541,7 @@ impl crate::Vault {
         agent: EntityId,
         world: EntityId,
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
@@ -574,7 +574,7 @@ impl crate::Vault {
         world: EntityId,
     ) -> crate::error::Result<EntityId> {
         let owner = self.granted_act_owner_in_txn(txn, granted, OwnerActKind::WorldPrivacy)?;
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if !self.grant_names_world_act_in_txn(
             &fold,
@@ -627,7 +627,7 @@ impl crate::Vault {
         agent: EntityId,
         act: OwnerActKind,
     ) -> crate::error::Result<EntityId> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut lapsed = false;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
@@ -683,7 +683,7 @@ impl crate::Vault {
         coach: EntityId,
         owner: EntityId,
     ) -> crate::error::Result<std::result::Result<EntityId, NoStanding>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let shared_scope = self.shared_vault_scope_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
