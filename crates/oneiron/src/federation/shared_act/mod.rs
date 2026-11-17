@@ -14,6 +14,7 @@ mod export_records;
 mod member_ask;
 mod membership;
 mod owner_add;
+mod owner_key_confirm;
 mod removal;
 mod removal_answer;
 mod removal_archive;
